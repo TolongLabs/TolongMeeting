@@ -126,7 +126,7 @@ async function findStageTarget(cdp: CDPSession): Promise<string> {
 
 // The page content area must be exactly the stage rectangle: that is what gets recorded.
 async function requireStageViewport(page: Page, stage: Rect): Promise<void> {
-  // muteDeskContext tells the stage from the desk by display mode: the stage must be an app window.
+  // muteDeskContext mutes only display-mode browser documents: the stage must be an app window, which is not one.
   if (!(await page.evaluate(() => matchMedia('(display-mode: standalone)').matches)))
     throw new Error('the stage is not an app-mode window (display-mode is not standalone)')
   const want = [stage.width, stage.height, stage.x, stage.y]
@@ -175,15 +175,28 @@ const originOf = (url: string): string => {
   }
 }
 
-// Every page except the stage is a desk page. A page opened from the stage window (a popup) is closed so it never
-// covers the recorded stage; any other page is muted and sits on the desk. A page that cannot be muted is closed rather
-// than left audible.
+const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+// Closes a page and logs a failure instead of rejecting. A page that is already closed is not a failure.
+async function closePage(page: Page, why: string): Promise<void> {
+  try {
+    await page.close()
+  } catch (error) {
+    if (!page.isClosed()) console.error(`[tm-worker] could not close ${why}: ${describe(error)}`)
+  }
+}
+
+// Every page except the stage is a desk page, muted at once (the page-level mute is the backstop for the context init
+// script, which skips documents that do not report display-mode browser). A page opened from the stage window (a popup)
+// is muted on creation and then closed, so it never plays and never covers the recorded stage; any other page sits on
+// the desk. A page that cannot be muted is closed rather than left audible.
 async function guardPage(guard: Guard, page: Page): Promise<void> {
   const { stage, desk } = guard
   const context = stage.context
   try {
     const targetId = await targetIdOf(context, page)
     if (targetId === stage.targetId) return
+    await muteDesk(page)
     const { windowId } = await stage.cdp.send('Browser.getWindowForTarget', { targetId })
     const opener = await page.opener()
     const fromStage =
@@ -193,14 +206,11 @@ async function guardPage(guard: Guard, page: Page): Promise<void> {
       await page.close()
       return
     }
-    await muteDesk(page)
     if (windowId !== desk.windowId) await placeWindow(stage.cdp, targetId, desk.rect)
   } catch (error) {
     if (page.isClosed()) return
-    console.error(
-      `[tm-worker] closing a page that could not be guarded: ${error instanceof Error ? error.message : error}`
-    )
-    await page.close()
+    console.error(`[tm-worker] closing a page that could not be guarded: ${describe(error)}`)
+    await closePage(page, 'a page that could not be guarded')
   }
 }
 
@@ -214,7 +224,9 @@ function track(guard: Guard, page: Page): Promise<void> {
 }
 
 function watchPages(guard: Guard): void {
-  guard.stage.context.on('page', (page) => void track(guard, page))
+  guard.stage.context.on('page', (page) => {
+    track(guard, page).catch((error) => console.error(`[tm-worker] page guard failed: ${describe(error)}`))
+  })
 }
 
 export async function launchBrowser(
@@ -275,7 +287,9 @@ export async function launchGuestStage(screen: Screen): Promise<{ browser: Brows
     const stage = await launchStage(dir, screen)
     const browser = stage.context.browser()
     if (!browser) throw new Error('Playwright returned no browser for the guest context')
-    browser.once('disconnected', () => void removeProfile(dir))
+    browser.once('disconnected', () => {
+      removeProfile(dir).catch((error) => console.error(`[tm-worker] ${describe(error)}`))
+    })
     watchPages({ stage, desk: null, handled: new WeakMap() })
     return { browser, stage: stage.page }
   } catch (error) {

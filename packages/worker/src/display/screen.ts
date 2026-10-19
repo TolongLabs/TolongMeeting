@@ -65,10 +65,18 @@ async function readDisplay(xvfb: Started, pipe: Readable): Promise<string> {
   const failed = xvfb.exited.then((): never => {
     throw new Error(`Xvfb exited with code ${xvfb.child.exitCode}: ${xvfb.stderr()}`)
   })
-  const timeout = sleep(READY_TIMEOUT_MS).then((): never => {
-    throw new Error(`Xvfb did not report a display within ${READY_TIMEOUT_MS / 1000} s`)
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Xvfb did not report a display within ${READY_TIMEOUT_MS / 1000} s`)),
+      READY_TIMEOUT_MS
+    )
   })
-  return await Promise.race([reported, failed, timeout])
+  try {
+    return await Promise.race([reported, failed, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function waitForDisplay(display: string, xvfb: Started): Promise<void> {

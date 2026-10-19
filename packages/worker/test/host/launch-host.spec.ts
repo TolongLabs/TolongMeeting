@@ -7,7 +7,7 @@ import { readdirSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test'
 import { launchBrowser, launchGuestStage, openDeskTab } from '../../src/chrome/launch'
 import { startScreen } from '../../src/display/screen'
 import type { Screen } from '../../src/types'
@@ -69,21 +69,23 @@ async function withBrowser(body: (s: Session) => Promise<void>, profileDir?: str
   }
 }
 
-// Serves `html` at http://desk.test/<name> to every page of the context (a real navigation, not setContent).
+// Serves `html` at http://desk.test/<name> and http://other.test/<name> (a second origin) to every page of the context
+// (a real navigation, not setContent).
 async function serve(context: BrowserContext, pages: Record<string, string>): Promise<void> {
-  await context.route('http://desk.test/**', (route) => {
-    const body = pages[new URL(route.request().url()).pathname.slice(1)]
-    return body === undefined ? route.fulfill({ status: 404 }) : route.fulfill({ contentType: 'text/html', body })
-  })
+  for (const origin of ['http://desk.test', 'http://other.test'])
+    await context.route(`${origin}/**`, (route) => {
+      const body = pages[new URL(route.request().url()).pathname.slice(1)]
+      return body === undefined ? route.fulfill({ status: 404 }) : route.fulfill({ contentType: 'text/html', body })
+    })
 }
 
 const autoplayPage = (wav: string) => `<!doctype html><audio id="a" autoplay loop src="${wav}"></audio>`
 
 // Reads the first media element of a page once it is playing.
-const mediaState = (page: Page) =>
-  page.evaluate(async () => {
+const mediaState = (page: Page | Frame) =>
+  (page as Pick<Page, 'evaluate'>).evaluate(async () => {
     const find = (root: ParentNode): HTMLMediaElement | null => {
-      const direct = root.querySelector('audio,video')
+      const direct = root.querySelector<HTMLMediaElement>('audio,video')
       if (direct) return direct
       for (const el of root.querySelectorAll('*')) {
         const inner = el.shadowRoot && find(el.shadowRoot)
@@ -244,6 +246,89 @@ test('every desk page is muted: parser autoplay, shadow roots, navigation, popup
     }
     expect(await stage.evaluate(() => Symbol.for('tm.deskMuted') in window)).toBe(false)
   })
+})
+
+test('the stage is never muted: HTML fullscreen and a cross-origin iframe, with and without the sandbox', async () => {
+  test.setTimeout(150_000)
+  const wav = wavUrl()
+  for (const inImage of [false, true]) {
+    const previous = process.env.TM_IN_IMAGE
+    if (inImage) process.env.TM_IN_IMAGE = '1'
+    try {
+      await withBrowser(async ({ context, stage, desk }) => {
+        await serve(context, {
+          autoplay: autoplayPage(wav),
+          framed: `<!doctype html><button id="b" onclick="document.documentElement.requestFullscreen()">fullscreen</button>
+            <iframe src="http://other.test/autoplay"></iframe>`
+        })
+
+        // (a) the stage enters HTML fullscreen through a user gesture: its media stays unmuted
+        await stage.goto('http://desk.test/framed')
+        await stage.click('#b')
+        await expect.poll(() => stage.evaluate(() => document.fullscreenElement !== null)).toBe(true)
+        expect(await stage.evaluate(() => matchMedia('(display-mode: browser)').matches)).toBe(false)
+        await stage.evaluate((src) => {
+          document.body.insertAdjacentHTML('beforeend', `<audio id="late" autoplay loop src="${src}"></audio>`)
+        }, wav)
+        expect(await stage.evaluate(() => document.fullscreenElement !== null)).toBe(true)
+        expect(
+          await stage.evaluate(async () => {
+            const el = document.getElementById('late') as HTMLAudioElement
+            for (let i = 0; i < 100 && el.paused; i++) await new Promise((r) => setTimeout(r, 50))
+            return { muted: el.muted, volume: el.volume, playing: !el.paused }
+          })
+        ).toEqual({ muted: false, volume: 1, playing: true })
+        expect(await stage.evaluate(() => Symbol.for('tm.deskMuted') in window)).toBe(false)
+        expect(await stage.evaluate(() => HTMLMediaElement.prototype.play.toString())).toContain('[native code]')
+
+        // a cross-origin iframe created while the stage is fullscreen: the frame's document starts in fullscreen mode
+        await stage.evaluate(() => {
+          document.body.insertAdjacentHTML('beforeend', '<iframe id="fs" src="http://other.test/autoplay"></iframe>')
+        })
+        const fsFrame = await (await stage.waitForSelector('#fs')).contentFrame()
+        if (!fsFrame) throw new Error('the fullscreen iframe did not load')
+        expect(await mediaState(fsFrame)).toEqual({ muted: false, volume: 1, playing: true })
+        expect(await fsFrame.evaluate(() => Symbol.for('tm.deskMuted') in window)).toBe(false)
+
+        // the stage window itself fullscreen (display-mode fullscreen): a new document and a new iframe stay unmuted
+        const cdp = await context.newCDPSession(stage)
+        const { windowId } = await cdp.send('Browser.getWindowForTarget')
+        await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } })
+        await stage.goto('http://desk.test/framed')
+        await expect.poll(() => stage.evaluate(() => matchMedia('(display-mode: fullscreen)').matches)).toBe(true)
+        await stage.reload()
+        expect(await mediaState(stage.frame({ url: 'http://other.test/autoplay' })!)).toEqual({
+          muted: false,
+          volume: 1,
+          playing: true
+        })
+        await stage.goto('http://desk.test/autoplay')
+        expect(await mediaState(stage)).toEqual({ muted: false, volume: 1, playing: true })
+        expect(await stage.evaluate(() => Symbol.for('tm.deskMuted') in window)).toBe(false)
+        await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } })
+        await cdp.detach()
+
+        // (b) a cross-origin iframe on the stage: unmuted and not patched
+        await stage.goto('http://desk.test/framed')
+        const frame = stage.frame({ url: 'http://other.test/autoplay' })
+        if (!frame) throw new Error('the cross-origin iframe did not load')
+        expect(await mediaState(frame)).toEqual({ muted: false, volume: 1, playing: true })
+        expect(await frame.evaluate(() => Symbol.for('tm.deskMuted') in window)).toBe(false)
+        expect(await frame.evaluate(() => HTMLMediaElement.prototype.play.toString())).toContain('[native code]')
+
+        // (c) the desk still mutes, its own cross-origin iframe too
+        await desk.goto('http://desk.test/framed')
+        expect(await mediaState(desk.frame({ url: 'http://other.test/autoplay' })!)).toEqual({
+          muted: true,
+          volume: 0,
+          playing: true
+        })
+      })
+    } finally {
+      if (previous === undefined) delete process.env.TM_IN_IMAGE
+      else process.env.TM_IN_IMAGE = previous
+    }
+  }
 })
 
 test('desk Web Audio goes through a zero gain and ctx.destination stays the real node', async () => {

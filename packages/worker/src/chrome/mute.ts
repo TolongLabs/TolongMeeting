@@ -152,13 +152,15 @@ function deskMuteScript(): void {
 }
 
 // Mutes every desk page from its first script on, with no gap between the page's creation and the mute: a context init
-// script runs in every new document before the page's own scripts, popups included. The stage is the only page in an
-// app window (display-mode standalone) and every desk page is in a browser window or tab, so the script installs
-// everywhere but there and the stage is never touched. A desk page then fails safe (muted) when its display mode is
-// not known yet; launchBrowser checks that the stage reports standalone.
+// script runs in every new document before the page's own scripts, popups included. The rule is that the stage's audio
+// is never muted, so the script installs only where the document reports display-mode "browser": a desk window or tab.
+// The stage is an app window (standalone), and an HTML fullscreen document, or a cross-origin iframe inside the stage,
+// reports standalone or fullscreen, so the script never touches them. A desk page that reports anything else is still
+// muted by the unconditional page-level mute that guardPage applies. launchBrowser checks that the stage reports
+// standalone.
 export async function muteDeskContext(context: BrowserContext): Promise<void> {
   await context.addInitScript({
-    content: `if (!matchMedia('(display-mode: standalone)').matches) (${deskMuteScript.toString()})()`
+    content: `if (matchMedia('(display-mode: browser)').matches) (${deskMuteScript.toString()})()`
   })
 }
 
