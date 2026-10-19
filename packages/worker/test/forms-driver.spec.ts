@@ -326,6 +326,32 @@ test.describe('typed failures', () => {
     await page.goto(googleUrl('widgets') + '#overlay')
     await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_failed' })
     expect(fx.submissions).toHaveLength(0)
+    expect(await page.evaluate(() => (window as unknown as { mouseEvents: number }).mouseEvents)).toBe(0)
+  })
+
+  test('an error banner outside every question after the click is submit_unconfirmed', async ({ page }) => {
+    await page.goto(googleUrl('widgets') + '#banner')
+    await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+  })
+
+  test('a second submit() on a page that was clicked never clicks again', async ({ page }) => {
+    fx.submitResult.set('widgets', 'still-form')
+    await page.goto(googleUrl('widgets'))
+    await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+    expect(fx.submissions).toHaveLength(1)
+    // The provider shows the form again, ready to submit: a second click would post a second response.
+    await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+    expect(fx.submissions).toHaveLength(1)
+  })
+
+  test('a question that vanishes during a fill is not_a_form', async ({ page }) => {
+    await page.goto(googleUrl('widgets'))
+    const form = await driver.readPage(page, 1)
+    const gone = { ...form, questions: [...form.questions, { ...form.questions[0]!, id: 'p1q9' }] }
+    await expect(driver.fill(page, gone, [text('p1q9', 'x')])).rejects.toMatchObject({ code: 'not_a_form' })
   })
 
   for (const [name, result] of [

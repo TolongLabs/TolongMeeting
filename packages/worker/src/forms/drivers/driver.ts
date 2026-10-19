@@ -12,8 +12,8 @@ const EMAIL = /[^\s@<>()[\]",;:]+@[^\s@<>()[\]",;:]+\.[^\s@<>()[\]",;:]*[^\s@<>(
 
 export type FormStepCode =
   | 'next_failed' // Next was not clicked, or no new page opened
-  | 'submit_failed' // Submit was NOT clicked, or the form refused it with a validation error: nothing was sent
-  | 'submit_unconfirmed' // Submit WAS clicked and the outcome is unknown: the response may have been recorded
+  | 'submit_failed' // Submit was NOT clicked, or the form refused it with a validation error on a question: nothing was sent
+  | 'submit_unconfirmed' // Submit WAS clicked (or an earlier call clicked it) and the outcome is unknown: maybe recorded
   | 'dropdown_failed' // a dropdown's options never showed, or the list stayed open
   | 'not_a_form' // the page is not a form page on a form host (sign-in, captcha, status page, other site)
 
@@ -139,6 +139,21 @@ function firstTicked(elements: Element[]): boolean | null {
   return el.getAttribute('aria-checked') === 'true' || (el as HTMLInputElement).checked === true
 }
 
+// Runs in the page: whether the element is on screen and is what the browser finds at its own centre (or contains it).
+// Reads only; it dispatches no mouse or pointer event, so a covered button is found without touching the page's scripts.
+function isUncoveredAtCentre(el: Element): boolean {
+  const box = el.getBoundingClientRect()
+  if (box.width === 0 || box.height === 0) return false
+  const x = box.left + box.width / 2
+  const y = box.top + box.height / 2
+  if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false
+  const hit = document.elementFromPoint(x, y)
+  return hit !== null && (hit === el || el.contains(hit))
+}
+
+// Pages whose Submit was really clicked. A page in here is never submitted again, whatever it shows now.
+const submitClicked = new WeakSet<Page>()
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -211,6 +226,7 @@ export function createDriver(
       await options.first().waitFor({ state: 'visible', timeout: stepMs })
     } catch (error) {
       if (!isTimeout(error)) throw error
+      await page.keyboard.press('Escape') // a popup that is only late must not stay open over the form
       throw new FormStepError('dropdown_failed', `the options of "${label}" did not show`, error)
     }
     return options
@@ -309,8 +325,11 @@ export function createDriver(
     const element = questions(page).nth(position)
     // The same reading as readPage: the stripped label must equal the planned one, and an empty label never matches.
     const [live] = await element.evaluateAll(extractQuestions, selectors)
-    const liveLabel = live === undefined ? '' : stripLabel(live)
-    if (liveLabel === '' || liveLabel !== question.label || live!.kind !== question.type) {
+    if (live === undefined) {
+      throw new FormStepError('not_a_form', `question ${question.id} is gone: the page left the form during the fill`)
+    }
+    const liveLabel = stripLabel(live)
+    if (liveLabel === '' || liveLabel !== question.label || live.kind !== question.type) {
       throw new Error(`question ${question.id} is not "${question.label}" on the page: the form changed under the fill`)
     }
     if (answer.kind === 'text') {
@@ -362,6 +381,10 @@ export function createDriver(
   // Visible alerts with a message; a validation error shows as one more than before the click.
   const alertCount = (page: Page) => visible(page, map.validationError).filter({ hasText: /\S/ }).count()
 
+  // Visible alerts with a message that sit inside a question, the way a validation error does.
+  const questionAlertCount = (page: Page) =>
+    questions(page).locator(map.validationError).filter({ visible: true }).filter({ hasText: /\S/ }).count()
+
   // The labels on show: the validation message sits inside a question, so only labels say the page changed.
   const labels = async (page: Page) =>
     (
@@ -403,18 +426,36 @@ export function createDriver(
     throw new FormStepError('next_failed', `no new page after ${stepMs / 1000} s`)
   }
 
+  // Everything here only reads the page: no click, hover or key is sent until the one real click.
+  async function submitTarget(page: Page): Promise<Locator> {
+    const found = visible(page, map.submitButton)
+    try {
+      const count = await found.count()
+      if (count !== 1) throw new FormStepError('submit_failed', `${count} Submit buttons on the page, not exactly one`)
+      if (!(await found.isEnabled({ timeout: stepMs }))) throw new FormStepError('submit_failed', 'Submit is disabled')
+      await found.scrollIntoViewIfNeeded({ timeout: stepMs })
+      if (!(await found.evaluate(isUncoveredAtCentre))) {
+        throw new FormStepError('submit_failed', 'something covers the Submit button, or it is off screen')
+      }
+    } catch (error) {
+      if (error instanceof FormStepError) throw error
+      throw new FormStepError('submit_failed', 'the Submit button could not be checked', error)
+    }
+    return found
+  }
+
   async function submit(page: Page): Promise<void> {
+    if (submitClicked.has(page)) {
+      throw new FormStepError('submit_unconfirmed', 'Submit was already clicked on this page: never submit twice')
+    }
     await assertForm(page)
     const alertsBefore = await alertCount(page)
-    const target = await button(page, map.submitButton, 'submit_failed', 'Submit')
-    // A trial click runs every check but the click, so a button that cannot be clicked fails here with nothing sent.
-    try {
-      await target.click({ timeout: stepMs, trial: true })
-    } catch (error) {
-      if (!isTimeout(error)) throw error
-      throw new FormStepError('submit_failed', 'the Submit button could not be clicked', error)
-    }
-    // From here on the response may be on its way: every failure is "unconfirmed", never "failed".
+    const inQuestionBefore = await questionAlertCount(page)
+    const labelsBefore = await labels(page)
+    const target = await submitTarget(page)
+    await assertForm(page) // the page may have moved on while the button was checked
+    // From the click on, the response may be on its way: every failure is "unconfirmed", never "failed".
+    submitClicked.add(page)
     try {
       await target.click({ timeout: stepMs })
     } catch (error) {
@@ -427,7 +468,13 @@ export function createDriver(
         last = await pageKind(page)
         if (last === 'confirmation' || last === 'already_answered') return
         if (last === 'form' && (await alertCount(page)) > alertsBefore) {
-          throw new FormStepError('submit_failed', 'the form shows a validation error')
+          // Only a new alert inside a question, on the same form and with no other new alert, is a validation error.
+          const newInQuestion = (await questionAlertCount(page)) - inQuestionBefore
+          const newAlerts = (await alertCount(page)) - alertsBefore
+          if (newInQuestion === newAlerts && (await labels(page)) === labelsBefore) {
+            throw new FormStepError('submit_failed', 'the form shows a validation error')
+          }
+          throw new FormStepError('submit_unconfirmed', 'the page shows an alert that is not a validation error')
         }
       } catch (error) {
         if (error instanceof FormStepError) throw error

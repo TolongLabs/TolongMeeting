@@ -92,7 +92,14 @@ document.addEventListener('click', (event) => {
     if (name === 'Next') {
       page.hidden = true
       page.nextElementSibling.hidden = false
-    } else if (name === 'Submit') submit()
+    } else if (name === 'Submit') {
+      // "#banner" answers Submit with a page-level error banner (outside every question) and sends nothing.
+      if (!location.hash.includes('banner')) return submit()
+      const banner = document.createElement('div')
+      banner.setAttribute('role', 'alert')
+      banner.textContent = 'Something went wrong. Try again later.'
+      document.body.prepend(banner)
+    }
   }
 })
 
@@ -105,6 +112,10 @@ if (location.hash.includes('overlay')) {
   const cover = document.createElement('div')
   cover.style.cssText = 'position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.4)'
   document.body.append(cover)
+  // Counts the mouse events that reach the page, so a test can show that a refused Submit sent none.
+  window.mouseEvents = 0
+  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click'])
+    window.addEventListener(type, () => window.mouseEvents++, true)
 }
 
 if (location.hash === '#copy-on') document.querySelector(COPY)?.setAttribute('aria-checked', 'true')
