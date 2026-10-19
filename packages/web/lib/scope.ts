@@ -330,6 +330,8 @@ export function adminScope(db: Db = getDb()): AdminScope {
     async setRole(id, role) {
       await db.transaction(async (tx) => {
         const admins = await lockAdmins(tx)
+        const [member] = await tx.select({ id: members.id }).from(members).where(eq(members.id, id)).for('update')
+        if (!member) throw new Error(`No member ${id}`)
         if (role === 'member' && admins.length === 1 && admins[0]!.id === id) throw new LastAdminError()
         await tx.update(members).set({ role }).where(eq(members.id, id))
       })

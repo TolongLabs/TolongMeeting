@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -111,13 +111,66 @@ test('home shows only the signed-in member its own meetings', async () => {
   expect(h.recent).toHaveLength(1)
 })
 
-test('home warns about a missing or failing AI key', async () => {
+test('home warns about a missing, untested or failing AI key', async () => {
   const db = await createTestDb()
   const { scope, memberId } = await homeFixture(db)
   await db.delete(aiKeys).where(eq(aiKeys.memberId, memberId))
   expect((await homeData(scope, NOW)).warnings).toContainEqual({ kind: 'no_ai_key' })
-  await db.insert(aiKeys).values({ memberId, dashscopeKeyEnc: 'sealed', testOk: false, testError: 'x' })
-  expect((await homeData(scope, NOW)).warnings).toContainEqual({ kind: 'ai_key_failing' })
+
+  // A key saved but never tested is "not tested yet", never "failing".
+  await db.insert(aiKeys).values({ memberId, dashscopeKeyEnc: 'sealed', testOk: false })
+  const untested = (await homeData(scope, NOW)).warnings
+  expect(untested).toContainEqual({ kind: 'ai_key_untested' })
+  expect(untested).not.toContainEqual({ kind: 'ai_key_failing' })
+
+  await db.update(aiKeys).set({ testedAt: NOW, testError: 'x' }).where(eq(aiKeys.memberId, memberId))
+  const failing = (await homeData(scope, NOW)).warnings
+  expect(failing).toContainEqual({ kind: 'ai_key_failing' })
+  expect(failing).not.toContainEqual({ kind: 'ai_key_untested' })
+})
+
+test('home shows "summary not available" for a summary that is a symlink to another member\'s file', async () => {
+  const db = await createTestDb()
+  const { scope, ids } = await homeFixture(db)
+  const other = await homeFixture(db)
+  const otherSummary = join(dataRoot, 'occurrences', other.ids.done, 'out', 'summary.md')
+  await writeFile(otherSummary, 'Do next: OTHER MEMBER SECRET')
+  await symlink(otherSummary, join(dataRoot, 'occurrences', ids.done, 'out', 'link.md'))
+  await db.update(artefacts).set({ path: 'out/link.md' }).where(eq(artefacts.occurrenceId, ids.done))
+
+  const h = await homeData(scope, NOW)
+  expect(h.recent.map((o) => [o.id, o.doNext])).toEqual([[ids.done, 'summary not available']])
+})
+
+test('home still renders when a summary file is missing', async () => {
+  const db = await createTestDb()
+  const { scope, memberId, ids } = await homeFixture(db)
+  const [identity] = await db.select({ id: identities.id }).from(identities).where(eq(identities.memberId, memberId))
+  const [gone] = await db
+    .insert(occurrences)
+    .values({
+      memberId,
+      identityId: identity!.id,
+      entryName: 'Lecture D',
+      entryType: 'lecture',
+      transcription: 'live',
+      scheduledStart: new Date('2026-10-17T06:00:00Z'),
+      scheduledEnd: new Date('2026-10-17T08:00:00Z'),
+      deleteAfter: new Date('2026-11-16T06:00:00Z'),
+      state: 'completed'
+    })
+    .returning({ id: occurrences.id })
+  await db
+    .insert(artefacts)
+    .values({ occurrenceId: gone!.id, memberId, kind: 'summary', path: 'out/gone.md', bytes: 1 })
+
+  const h = await homeData(scope, NOW)
+  expect(h.recent.map((o) => [o.id, o.doNext])).toEqual([
+    [ids.done, 'Do next: Submit lab 3 (due Fri 23 Oct, 23:59)'],
+    [gone!.id, 'summary not available']
+  ])
+  expect(h.upcoming.map((o) => o.id)).toEqual([ids.upcoming])
+  expect(h.inProgress.map((o) => o.id)).toEqual([ids.running])
 })
 
 test('home lists only scheduled meetings within 14 days', async () => {

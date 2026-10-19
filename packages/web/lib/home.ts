@@ -1,7 +1,8 @@
-import { readFile } from 'node:fs/promises'
 import { and, eq, gte, inArray, lte, ne, notInArray } from 'drizzle-orm'
 import { ACCOUNT_KINDS, ACTIVE_STATES, formatWhen, type AccountKind, type OccurrenceState } from '@tm/core'
 import { aiKeys, artefacts, identities, occurrences, profiles } from '../db/schema'
+import { openMemberFile } from './files'
+import { MAX_ARTEFACT_BYTES } from './meeting'
 import type { MemberScope } from './scope'
 
 const DAY = 24 * 3_600_000
@@ -12,6 +13,8 @@ const RECENT_LIMIT = 5
 /** States after the worker has left the meeting: the pipeline is still running. */
 const AFTER_MEETING: OccurrenceState[] = ['transcribing', 'waiting_for_pc', 'post_processing']
 const DELETING_SOON_DAYS = 3
+/** The `doNext` of a recent meeting whose summary is missing, refused or too big to read. */
+const SUMMARY_UNAVAILABLE = 'summary not available'
 
 export interface OccurrenceCard {
   id: string
@@ -21,7 +24,8 @@ export interface OccurrenceCard {
 }
 
 export interface HomeWarning {
-  kind: 'no_ai_key' | 'ai_key_failing' | 'ntfy_not_set_up' | 'account_signed_out'
+  /** `ai_key_untested` is a saved key no test has run on yet: the page shows "not tested yet", not a failure. */
+  kind: 'no_ai_key' | 'ai_key_untested' | 'ai_key_failing' | 'ntfy_not_set_up' | 'account_signed_out'
   identity?: string
   account?: AccountKind
 }
@@ -36,16 +40,28 @@ export interface HomeData {
 
 const DO_NEXT = 'Do next:'
 
-/** The first line of the member's summary that starts with `Do next:`, or `null` when there is none. */
+/**
+ * The first line of the member's summary that starts with `Do next:`, or `null` when there is none. `found` is false when
+ * the occurrence has no summary row. A summary that is missing, refused by `openMemberFile` or over `MAX_ARTEFACT_BYTES`
+ * gives `SUMMARY_UNAVAILABLE` for that occurrence only; the page still renders.
+ */
 async function doNextOf(scope: MemberScope, occurrenceId: string): Promise<{ found: boolean; doNext: string | null }> {
   const [summary] = await scope.select(
     artefacts,
     and(eq(artefacts.occurrenceId, occurrenceId), eq(artefacts.kind, 'summary'))
   )
   if (!summary) return { found: false, doNext: null }
-  const file = await scope.artefactFile(occurrenceId, summary.path)
-  if (!file) throw new Error(`Summary artefact ${summary.id} is outside its occurrence directory`)
-  const lines = (await readFile(file, 'utf8')).split(/\r?\n/)
+  const file = await openMemberFile(scope, occurrenceId, summary.path)
+  if (file === null) return { found: true, doNext: SUMMARY_UNAVAILABLE }
+  let text: string
+  try {
+    const { size } = await file.handle.stat()
+    if (size > MAX_ARTEFACT_BYTES) return { found: true, doNext: SUMMARY_UNAVAILABLE }
+    text = await file.handle.readFile('utf8')
+  } finally {
+    await file.handle.close()
+  }
+  const lines = text.split(/\r?\n/)
   return { found: true, doNext: lines.find((line) => line.startsWith(DO_NEXT)) ?? null }
 }
 
@@ -111,6 +127,7 @@ export async function homeData(scope: MemberScope, now: Date): Promise<HomeData>
   const warnings: HomeWarning[] = []
   const [key] = await scope.select(aiKeys)
   if (!key) warnings.push({ kind: 'no_ai_key' })
+  else if (key.testedAt === null) warnings.push({ kind: 'ai_key_untested' })
   else if (!key.testOk) warnings.push({ kind: 'ai_key_failing' })
   if (!me.ntfyTopic || !me.ntfyTokenEnc) warnings.push({ kind: 'ntfy_not_set_up' })
 

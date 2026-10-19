@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import {
   aiKeys,
@@ -104,6 +105,28 @@ test("admin results hold none of a member's content", async () => {
   const listed = JSON.stringify(await admin.listMembers())
   expect(listed).toContain('rich-member')
   for (const secret of secrets) expect(listed).not.toContain(secret)
+
+  // Refusals and the helpers' results carry fixed words only, whatever the member holds.
+  const busy = await admin.removeMember(a.memberId, fakeNtfyAdmin()).catch((e: unknown) => e)
+  expect(busy).toBeInstanceOf(MemberBusyError)
+  await db.update(members).set({ role: 'admin' }).where(eq(members.id, a.memberId))
+  const lastAdmin = await admin.setRole(a.memberId, 'member').catch((e: unknown) => e)
+  expect(lastAdmin).toBeInstanceOf(LastAdminError)
+  const results = [
+    busy,
+    lastAdmin,
+    await removeMemberFor(admin, a.memberId, fakeNtfyAdmin()),
+    await setRoleFor(admin, a.memberId, 'member'),
+    await addMemberFor(admin, {
+      githubLogin: 'rich-member',
+      displayName: 'Dup',
+      timeZone: 'Asia/Kuala_Lumpur',
+      role: 'member'
+    })
+  ]
+  const refused = JSON.stringify(results.map((r) => (r instanceof Error ? { error: r.message } : r)))
+  expect(refused).toContain('already a member')
+  for (const secret of secrets) expect(refused).not.toContain(secret)
 })
 
 test("a member with a meeting in progress can't be removed", async () => {
@@ -216,4 +239,11 @@ test('setRoleFor refuses to demote the last admin as a message', async () => {
     ok: false,
     error: 'The last admin cannot be removed or made a member.'
   })
+})
+
+test('setRole on an unknown member id throws, as removeMember does', async () => {
+  const db = await createTestDb()
+  await seedMember(db, { role: 'admin' })
+  await expect(adminScope(db).setRole(randomUUID(), 'member')).rejects.toThrow('No member')
+  await expect(adminScope(db).removeMember(randomUUID(), fakeNtfyAdmin())).rejects.toThrow('No member')
 })
