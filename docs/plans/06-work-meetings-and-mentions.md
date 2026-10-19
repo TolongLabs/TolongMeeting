@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Bun 1.x, `bun test`, zod, Playwright on Node 24 (worker), Next.js App Router with server actions, React server rendering for component tests, DashScope through 1A's `chatJson`, self-hosted ntfy.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
 
 Contents:
 
@@ -33,7 +33,7 @@ Contents:
 - **Take over**: the worker leaves first, confirms within 10 seconds that it is no longer in the meeting (otherwise closes the stage page), and only then reports `left_by_member`; the page opens the meeting link only after it sees that state, or after 60 seconds if the member chooses to open it anyway.
 - **Passcodes**: the meeting link reaches the browser only in the take-over action's response to the owning member; it never appears in ping text, URL query strings of the app's own API, events or logs.
 - **Pings**: at most 3 actions each (ntfy's limit); wording exactly as in the tasks; times through `formatWhen` in the member's time zone.
-- **Copy and commits**: plain British English; conventional commits with headers of at most 50 characters; each task's commit copies its "adds to contracts" names into `docs/plans/architecture.md`.
+- **Copy and commits**: plain British English; conventional commits with headers of at most 50 characters; each task's commit copies its "adds to contracts" names into `docs/TRD.md`.
 
 ## Review Focus
 
@@ -45,7 +45,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there by the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there by the task that creates them:
 
 - **Pipeline**: `WorkInventorySchema`, `WorkInventory`, `buildWorkInventory`, `renderWorkSummary`, `pickDoNext` (`packages/pipeline/src/summary/work.ts`); `chooseDue` widened to `Pick<InventoryItem, 'source' | 'due' | 'conflicts'>`.
 - **Core**: `normaliseName` (`packages/core/src/names.ts`); `StateEventData.command`; `Heartbeat.linkUsed`.
@@ -253,7 +253,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/names* packages/core/src/index.ts packages/pipeline/src docs/plans/architecture.md
+git add packages/core/src/names* packages/core/src/index.ts packages/pipeline/src docs/TRD.md
 git commit -m "feat(pipeline): add work-meeting summary"
 ```
 
@@ -325,7 +325,7 @@ Expected: PASS, `8 pass, 0 fail`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/mentions docs/plans/architecture.md
+git add packages/worker/src/mentions docs/TRD.md
 git commit -m "feat(worker): match the member's names"
 ```
 
@@ -502,7 +502,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src packages/notify/src docs/plans/architecture.md
+git add packages/worker/src packages/notify/src docs/TRD.md
 git commit -m "feat(worker): ping when the member is named"
 ```
 
@@ -620,7 +620,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src packages/core/src docs/plans/architecture.md
+git add packages/worker/src packages/core/src docs/TRD.md
 git commit -m "feat(worker): leave first on take over"
 ```
 
@@ -785,7 +785,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/web docs/plans/architecture.md
+git add packages/web docs/TRD.md
 git commit -m "feat(web): add leave and take-over pages"
 ```
 

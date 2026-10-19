@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright on Node 24 driving the pinned Chrome, Playwright Test, `bun test`, zod, Next.js (the Teams chat option and presence note).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
 
 Contents:
 
@@ -56,7 +56,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there in the commit of the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there in the commit of the task that creates them:
 
 - **Selector map**: `config/selectors/teams.json` and `TeamsSelectorsSchema` (Task 1), in the layout of 01a's `zoom.json`.
 - **Worker**: `teamsAdapter`, `TEAMS_TIMEOUTS` and the modules under `packages/worker/src/adapters/teams/` (Tasks 1 to 8); `teamsChatReader` (Task 9).
@@ -1200,7 +1200,7 @@ Expected: all pass; `tsc` reports no errors.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/teams/adapter.spec.ts docs/plans/architecture.md
+git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/teams/adapter.spec.ts docs/TRD.md
 git commit -m "feat(worker): register the teams adapter"
 ```
 
@@ -1438,7 +1438,7 @@ Expected: PASS (4 browser tests; the `watcherFor` test).
 - [ ] **Step 10: Commit**
 
 ```bash
-git add packages/core/src/teams-chat.ts packages/core/src/teams-chat.test.ts packages/web/lib/timetable.ts packages/web/lib/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/plans/architecture.md
+git add packages/core/src/teams-chat.ts packages/core/src/teams-chat.test.ts packages/web/lib/timetable.ts packages/web/lib/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/TRD.md
 git commit -m "feat(worker): watch a teams chat for links"
 ```
 
@@ -1546,7 +1546,7 @@ Expected: PASS (the 8 new tests and plan 02's existing ones); `tsc` reports no e
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib/link-notices.ts packages/web/lib/link-notices.test.ts packages/web/app/timetable packages/web/app/accounts docs/plans/architecture.md
+git add packages/web/lib/link-notices.ts packages/web/lib/link-notices.test.ts packages/web/app/timetable packages/web/app/accounts docs/TRD.md
 git commit -m "feat(web): offer teams chats and presence note"
 ```
 
@@ -1675,7 +1675,7 @@ Expected: PASS (1 and 2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/teams docs/plans/architecture.md
+git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/teams docs/TRD.md
 git commit -m "test(worker): add teams monthly smoke entry"
 ```
 

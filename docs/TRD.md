@@ -1,6 +1,6 @@
-# Architecture and contracts
+# TolongMeeting TRD
 
-The code-level decisions every TolongMeeting plan shares: repository layout, tooling, shared types, interfaces between packages, on-disk data layout and environment variables. Each milestone plan builds against this page, so names here are binding; a plan that needs to change one updates this page in the same commit. It implements the [TolongMeeting design](../app-design/2026-10-20-meeting-bot-design.md), revision 2.
+The code-level decisions every TolongMeeting plan shares: repository layout, tooling, shared types, interfaces between packages, on-disk data layout and environment variables. Each milestone plan builds against this page, so names here are binding; a plan that needs to change one updates this page in the same commit. It implements the [TolongMeeting design](app-design/2026-10-20-meeting-bot-design.md), revision 2.
 
 Contents:
 
@@ -53,7 +53,7 @@ TolongMeeting/
 ## Tooling and conventions
 
 - **Runtimes**: Bun 1.x for everything except the worker. The worker runs on Node 24, because Playwright officially supports Node; it is still written in TypeScript and built with `bun build --target=node`.
-- **Workspace setup**: copied from `TolongLabs/sdp-hack`: `AGENTS.md` (with `CLAUDE.md` and `GEMINI.md` linking to it), `docs/agents/`, `docs/references/`, the skills in `.agents/skills/` and `.claude/skills/`, `.claude/settings.json`, `.codex/hooks.json`, husky hooks, CI and the Graphify graph in `graphify-out/graph.json`. [Project conventions](../references/project-conventions.md) apply to every plan.
+- **Workspace setup**: copied from `TolongLabs/sdp-hack`: `AGENTS.md` (with `CLAUDE.md` and `GEMINI.md` linking to it), `docs/agents/`, `docs/references/`, the skills in `.agents/skills/` and `.claude/skills/`, `.claude/settings.json`, `.codex/hooks.json`, husky hooks, CI and the Graphify graph in `graphify-out/graph.json`. [Project conventions](references/project-conventions.md) apply to every plan.
 - **Language**: TypeScript strict everywhere; `bun run typecheck` runs `tsc` at the root (scripts and tests) and then each package's `tsc` (its `src`).
 - **Validation**: zod for every config file, API body and JSON produced by a model.
 - **Tests**: `bun test`, in `packages/<package>/test/*.test.ts` and the root `test/` and `e2e/`. Following the project conventions, tests prove behaviour through each package's public entry points the way its callers use it (the worker against fixture pages, the pipeline CLI against an occurrence directory, the website and scheduler against a real Postgres), not private helpers. The behaviour cases each plan lists (state machines, trust rules, link unwrapping, summary rendering, schedulers) are kept, exercised through those entry points.
@@ -243,7 +243,7 @@ export function nextOccurrenceState(from: OccurrenceState, event: OccurrenceTrig
 export function nextFormState(from: FormState, event: FormTrigger): FormState // throws IllegalTransition
 ```
 
-`OccurrenceTrigger` and `FormTrigger` are string unions defined by milestone 1A (form) and 1C (occurrence), following the transitions in the design's [state machines](../app-design/2026-10-20-meeting-bot-design.md#state-machines).
+`OccurrenceTrigger` and `FormTrigger` are string unions defined by milestone 1A (form) and 1C (occurrence), following the transitions in the design's [state machines](app-design/2026-10-20-meeting-bot-design.md#state-machines).
 
 ## Worker interfaces
 
@@ -426,7 +426,7 @@ pg-boss uses its own schema in the same database. Plan 1C defines the columns.
 
 ## Plan conventions
 
-- **Files**: plans live in `docs/plans/`, named `NN-<slug>.md` in build order (see the [roadmap](README.md)).
+- **Files**: plans live in `docs/plans/`, named `NN-<slug>.md` in build order (see the [roadmap](plans/README.md)).
 - **Format**: each plan follows the writing-plans format: a header with Goal, Architecture, Tech Stack, Spec, Global Constraints and Review Focus, then tasks with Files, Interfaces and checkbox steps (failing test, run, implement, run, commit).
 - **Execution**: plans are executed with the superpowers `subagent-driven-development` or `executing-plans` skills.
 - **Order**: a plan never assumes code from a later milestone. When a later plan changes an earlier interface, it says so in its Interfaces block and updates this page.

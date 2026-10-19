@@ -12,7 +12,7 @@ Contents:
 
 - [Docs index](docs/README.md): what's in this repository and how to read it.
 - [Design](docs/app-design/2026-10-20-meeting-bot-design.md): goals, decisions, components, state machines and build order (revision 2).
-- [Build plans](docs/plans/README.md): the roadmap, the shared [architecture and contracts](docs/plans/architecture.md), and one plan per milestone.
+- [Build plans](docs/plans/README.md): the roadmap, the shared [architecture and contracts](docs/TRD.md), and one plan per milestone.
 - [Research](docs/research/README.md): open-source meeting bots, platform constraints, AI providers and three expert reviews.
 - [Session record](docs/session-record/overview.md): the manual run on 19 October 2026 that the app automates.
 

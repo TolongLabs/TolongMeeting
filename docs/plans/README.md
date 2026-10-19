@@ -1,6 +1,6 @@
 # Build plans
 
-The step-by-step plans for building TolongMeeting, one per milestone of the [design's build order](../app-design/2026-10-20-meeting-bot-design.md#build-order). Every plan builds against the shared [architecture and contracts](architecture.md). Nothing has been built yet; one person builds it, with no deadline.
+The step-by-step plans for building TolongMeeting, one per milestone of the [design's build order](../app-design/2026-10-20-meeting-bot-design.md#build-order). Every plan builds against the shared [architecture and contracts](../TRD.md). Nothing has been built yet; one person builds it, with no deadline.
 
 Contents:
 
@@ -39,7 +39,7 @@ A milestone is done when its plan's tasks pass and the matching [acceptance test
 
 ## How to execute a plan
 
-1.  Read the design and [architecture and contracts](architecture.md) first, then the plan.
+1.  Read the design and [architecture and contracts](../TRD.md) first, then the plan.
 1.  Execute the plan with the superpowers `subagent-driven-development` skill (a fresh implementer and a fresh reviewer per task), or `executing-plans` (one session, one review at the end).
 1.  Tick the checkboxes in the plan as tasks land, so the plan doubles as a progress record.
 1.  If reality disagrees with a plan, for example a selector or an API response, fix the plan in the same commit as the code.

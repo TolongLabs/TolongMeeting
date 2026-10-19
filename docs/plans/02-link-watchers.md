@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright and Playwright Test on Node 24, `bun test`, zod, Next.js App Router (website notes), React server rendering for component tests.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
 
 Contents:
 
@@ -42,7 +42,7 @@ Contents:
 - **Selectors**: `config/selectors/discord.json` and `config/selectors/whatsapp.json`, read from `TM_SELECTORS_DIR` and validated with zod; a UI change is fixed there without rebuilding.
 - **Secrets**: meeting links (which may carry passcodes) never appear in ping text, logs or event data; events keep host and path only. Watched chat messages aren't stored; only form records keep a sender.
 - **Copy**: plain British English; ping and notice wording is exactly as written in the tasks; times through `formatWhen` (`Wed 21 Oct, 14:00`) in the member's time zone.
-- **Commits**: conventional commits, header at most 50 characters; each task's commit also copies its "adds to contracts" names into `docs/plans/architecture.md`.
+- **Commits**: conventional commits, header at most 50 characters; each task's commit also copies its "adds to contracts" names into `docs/TRD.md`.
 
 ## Review Focus
 
@@ -54,7 +54,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there by the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there by the task that creates them:
 
 - **Core**: `normaliseDiscordChannelUrl` (`packages/core/src/discord-chat.ts`); `ChatApp`, `WatchGate`, `WatchGateError`, `watchGateFromEnv`, `chatWatchAllowed`, `gateLinkSource` (`packages/core/src/watch-gate.ts`); `SpecEnv.watchGate`; the optional `StateEventData.link`.
 - **Worker**: `WatchPhase`, `POLL_MS`, `nextPollDelayMs`, `chooseMeetingLink`, `splitLinks`, `messageSignature` (`watchers/rules.ts`); `ChatSourceReader`, `WatcherEnv`, `WatcherStatus`, `WatcherSigninError`, `WatcherChatError`, `configureWatchers`, `resetWatcherEnv`, `runChatWatcher` (`watchers/loop.ts`); `discordSelectors`, `whatsappSelectors` (`watchers/selectors.ts`); `discordReader`, `whatsappReader`, `parseWhatsAppPrePlain`; `watcherFor` (`watchers/index.ts`); `decideLinkWait`, `waitForMeetingLink`, `LinkChoice` (`watchers/link-wait.ts`); test helpers `serveWatcherFixtures` and `watchHarness` (`packages/worker/test/watchers/`), which plan 04 reuses.
@@ -193,7 +193,7 @@ Expected: PASS, `11 pass, 0 fail`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/discord-chat* packages/core/src/watch-gate* packages/core/src/index.ts docs/plans/architecture.md
+git add packages/core/src/discord-chat* packages/core/src/watch-gate* packages/core/src/index.ts docs/TRD.md
 git commit -m "feat(core): add chat ids and watch gate"
 ```
 
@@ -281,7 +281,7 @@ Expected: PASS, `4 pass, 0 fail`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/watchers/rules* docs/plans/architecture.md
+git add packages/worker/src/watchers/rules* docs/TRD.md
 git commit -m "feat(worker): add watcher rules"
 ```
 
@@ -506,7 +506,7 @@ Expected: PASS, `11 pass, 0 fail`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/watchers/loop* docs/plans/architecture.md
+git add packages/worker/src/watchers/loop* docs/TRD.md
 git commit -m "feat(worker): add read-only watcher loop"
 ```
 
@@ -722,7 +722,7 @@ Expected: PASS, `5 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add config/selectors/discord.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/discord docs/plans/architecture.md
+git add config/selectors/discord.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/discord docs/TRD.md
 git commit -m "feat(worker): add Discord watcher"
 ```
 
@@ -942,7 +942,7 @@ Expected: PASS, `7 pass, 0 fail`, then `6 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add config/selectors/whatsapp.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/whatsapp docs/plans/architecture.md
+git add config/selectors/whatsapp.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/whatsapp docs/TRD.md
 git commit -m "feat(worker): add WhatsApp watcher"
 ```
 
@@ -1163,7 +1163,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src packages/notify/src packages/core/src/control.ts docs/plans/architecture.md
+git add packages/worker/src packages/notify/src packages/core/src/control.ts docs/TRD.md
 git commit -m "feat(worker): wait for links and ping no-link"
 ```
 
@@ -1347,7 +1347,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib packages/web/app/timetable docs/plans/architecture.md
+git add packages/web/lib packages/web/app/timetable docs/TRD.md
 git commit -m "feat(web): add chat link sources and notice"
 ```
 
@@ -1454,7 +1454,7 @@ Expected: PASS, `0 fail`; typecheck exits 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/control.ts packages/web packages/scheduler docker/compose.yaml .env.example docs/plans/architecture.md
+git add packages/core/src/control.ts packages/web packages/scheduler docker/compose.yaml .env.example docs/TRD.md
 git commit -m "feat: apply spike 7 watch gate"
 ```
 

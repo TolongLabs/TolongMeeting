@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Bun 1.x, Next.js (App Router), Drizzle ORM and drizzle-kit, Postgres 17, PGlite (tests), pg-boss, Better Auth (GitHub provider), Luxon, zod, noVNC, x11vnc, websockify, Caddy 2 (`forward_auth`), ntfy, Docker Compose, iptables.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
 
 Contents:
 
@@ -52,7 +52,7 @@ Contents:
 - **Pings**: meeting passcodes never appear in ping text; screenshots are never attached; every 1C ping's wording is fixed in `packages/notify/src/messages.ts`.
 - **Phasing**: only the `server` run location launches (plan 08 enables the others); chat link sources can't be saved yet (plan 02); native-mode occurrences stop at `waiting_for_pc` (plan 03); export buttons and Connections arrive with plan 07; plan 06 owns "Take over", so 1C's worker treats `take_over` as `leave_now`.
 - **Copy and time**: plain British English; times are shown in the member's IANA time zone (default `Asia/Kuala_Lumpur`) as `Wed 21 Oct, 14:00`.
-- **Contracts**: every name marked "adds to contracts" is copied into `docs/plans/architecture.md` in the commit of the task that introduces it.
+- **Contracts**: every name marked "adds to contracts" is copied into `docs/TRD.md` in the commit of the task that introduces it.
 
 ## Review Focus
 

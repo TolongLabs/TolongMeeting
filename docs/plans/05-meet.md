@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright on Node 24 driving the pinned Chrome, Playwright Test, `bun test`, zod.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
 
 Contents:
 
@@ -51,7 +51,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there in the commit of the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there in the commit of the task that creates them:
 
 - **Selector map**: `config/selectors/meet.json` and `MeetSelectorsSchema` (Task 1), in the layout of 01a's `zoom.json`.
 - **Worker**: `meetAdapter`, `MEET_TIMEOUTS` and the modules under `packages/worker/src/adapters/meet/` (Tasks 1 to 8).
@@ -1093,7 +1093,7 @@ Expected: all pass; `tsc` reports no errors.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/meet/adapter.spec.ts docs/plans/architecture.md
+git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/meet/adapter.spec.ts docs/TRD.md
 git commit -m "feat(worker): register the meet adapter"
 ```
 
@@ -1200,7 +1200,7 @@ Expected: PASS (1 and 2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/meet docs/plans/architecture.md
+git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/meet docs/TRD.md
 git commit -m "test(worker): add meet monthly smoke entry"
 ```
 

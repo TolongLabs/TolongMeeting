@@ -8,7 +8,7 @@
 
 **Tech Stack:** Docker Desktop (WSL 2 backend) and the Docker CLI, Electron, `node:http`, iptables, Tailscale (pinned `tailscale/tailscale` image, API v2 through an OAuth client), x11vnc and noVNC (from plan 01c), Next.js, Drizzle, pg-boss.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
 
 **Order:** Spike 1 can move this plan to right after 01c, if university sign-ins fail from the server; plan 03 then moves with it, because local mode runs inside the companion app. The home-route tasks (11 to 13) need only plan 01c.
 

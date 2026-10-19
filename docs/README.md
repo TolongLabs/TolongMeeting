@@ -23,11 +23,11 @@ Contents:
 ```text
 docs/
 ├── README.md                          this index
+├── TRD.md                             technical requirements: binding repository layout, types and interfaces
 ├── app-design/
 │   └── 2026-10-20-meeting-bot-design.md   the design: goals, decisions, components, state machines, build order
 ├── plans/
 │   ├── README.md                      roadmap, exit criteria, how to execute
-│   ├── architecture.md                binding repository layout, types and interfaces
 │   └── 00-spikes.md … 08-run-locations.md   one plan per milestone
 ├── research/
 │   ├── README.md                      index
@@ -57,7 +57,7 @@ docs/
 ## How to use these docs
 
 - **People**: start with the [design](app-design/2026-10-20-meeting-bot-design.md)'s summary and decisions. For the story behind it, read the session [overview](session-record/overview.md).
-- **Agents building the app**: read the [design](app-design/2026-10-20-meeting-bot-design.md), [architecture and contracts](plans/architecture.md) and the [roadmap](plans/README.md), then execute plans in order with the superpowers `subagent-driven-development` or `executing-plans` skill. Read [problems and fixes](session-record/problems-and-fixes.md) and the [expert reviews](research/expert-reviews/README.md) before touching the meeting worker.
+- **Agents building the app**: read the [design](app-design/2026-10-20-meeting-bot-design.md), [architecture and contracts](TRD.md) and the [roadmap](plans/README.md), then execute plans in order with the superpowers `subagent-driven-development` or `executing-plans` skill. Read [problems and fixes](session-record/problems-and-fixes.md) and the [expert reviews](research/expert-reviews/README.md) before touching the meeting worker.
 - **Agents repeating the job by hand** with Claude Code and the claude-in-chrome extension: follow the [runbook](session-record/runbook.md) and use [techniques](session-record/techniques.md) and the [reference scripts](reference-scripts/README.md).
 - **Code reuse**: the reference scripts are session-grade (Windows-only, hard-coded layouts and thresholds); each one's README entry says what it assumes and what to generalise.
 
