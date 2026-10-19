@@ -1573,7 +1573,7 @@ File URLs are `/api/meetings/<id>/files/<relPath>`; the route resolves them only
 
 Action rules: `makeBotLeave` appends `leave_now` to `pending_commands` only while the occurrence is in `ACTIVE_STATES`, else `InUseError('The bot is not in this meeting.')`; `pasteLink` needs an `https:` URL and a state of `scheduled`, `starting`, `verifying_accounts`, `waiting_for_signin` or `watching_for_link`, and sets `pasted_link`; `requestDeleteNow` throws `InUseError('Make the bot leave before deleting this meeting.')` in `ACTIVE_STATES`, and otherwise sets `state_reason` to `deleting` and sends `delete-occurrence` with `{ occurrenceId }` (the scheduler deletes, Task 20); `rerunPipeline` works only in `post_processing` with `state_reason` `ai_key_error`, and sends `pipeline` with `{ occurrenceId }`. Export buttons are plan 07's.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/meeting.test.ts
@@ -1640,7 +1640,7 @@ test('no range returns the whole file; a bad range returns 416', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/meeting.test.ts packages/web/lib/files.test.ts`
 
@@ -1648,7 +1648,7 @@ Expected: FAIL with `Cannot find module './meeting'`.
 
 - [ ] **Step 3: Implement the loader, the file server, the actions, the route and the page**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/meeting.test.ts packages/web/lib/files.test.ts && bun run typecheck`
 
