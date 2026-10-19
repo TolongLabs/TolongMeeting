@@ -14,7 +14,7 @@ import {
 import { sampleRecord } from '@tm/core/testing'
 import type { Ping } from '@tm/notify'
 import type { Page } from 'playwright'
-import { startFormDispatcher } from '../src/forms/dispatcher'
+import { MAX_FORMS_IN_FLIGHT, startFormDispatcher } from '../src/forms/dispatcher'
 import { loadFormRecords, saveFormRecord } from '../src/forms/store'
 import type { FormContext, FormContextBase } from '../src/forms/types'
 import { testJob } from './forms/job'
@@ -195,8 +195,9 @@ test('a handler that throws is reported with a redacted message and the form is 
   d.offer(formFor('F', 'qr'))
   await d.close()
   expect(handle).toHaveBeenCalledTimes(1)
-  expect(events).toHaveLength(1)
-  expect(events[0]).toMatchObject({ type: 'error', where: 'form_dispatcher', message: 'boom for [value]' })
+  const errors = events.filter((e) => e.type === 'error')
+  expect(errors).toHaveLength(1)
+  expect(errors[0]).toMatchObject({ type: 'error', where: 'form_dispatcher', message: 'boom for [value]' })
 })
 
 test('after a form_tab_not_closed alert later forms are not opened and the member is pinged', async () => {
@@ -212,6 +213,181 @@ test('after a form_tab_not_closed alert later forms are not opened and the membe
   d.offer(formFor('B', 'qr'))
   await d.close()
   expect(handle).toHaveBeenCalledTimes(1)
-  expect(byName((await loadFormRecords(dir)).records, 'B').state).toBe('failed')
+  expect(byName((await loadFormRecords(dir)).records, 'B')).toMatchObject({ state: 'failed', reason: 'tab_stuck' })
   expect(pings.map((p) => p.title)).toEqual(['Form needs you'])
+  expect(pings[0]!.message).toContain('an earlier form tab could not be closed')
+})
+
+// A first run that ends untrusted after a form_tab_not_closed alert.
+const stuckThenUntrusted = (f: ResolvedForm, ctx: FormContext) =>
+  ctx.previous
+    ? Promise.resolve(recFor('F', 'submitted'))
+    : ctx
+        .emitEvent('alert', { kind: 'form_tab_not_closed', formId: formIdFor(f.finalUrl), message: 'stuck' })
+        .then(() => recFor('F', 'untrusted'))
+
+test('a queued trusted upgrade is refused with one ping when the first run left a tab open', async () => {
+  const { base, pings } = fakeBase(await tmp())
+  const handle = mock(stuckThenUntrusted)
+  const d = await startFormDispatcher(base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr'))
+  await settle()
+  d.offer(formFor('F', 'qr')) // a later trusted sighting is refused without a second ping
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+  expect(pings).toHaveLength(1)
+  expect(pings[0]!.message).toContain('an earlier form tab could not be closed')
+})
+
+test('a handler that throws on an upgrade is never run again for that form', async () => {
+  const { base, events } = fakeBase(await tmp())
+  const handle = mock(async (_f: ResolvedForm, ctx: FormContext): Promise<FormRecord> => {
+    if (ctx.previous) throw new Error('upgrade blew up')
+    return recFor('F', 'untrusted')
+  })
+  const d = await startFormDispatcher(base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  await settle()
+  d.offer(formFor('F', 'qr'))
+  await settle()
+  d.offer(formFor('F', 'qr'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(2)
+  expect(events.filter((e) => e.type === 'error')).toHaveLength(1)
+  expect(events).toContainEqual(expect.objectContaining({ type: 'form', outcome: 'ignored', reason: 'handler_failed' }))
+})
+
+test('a new form whose handler throws gets a failed record and a ping', async () => {
+  const dir = await tmp()
+  const { base, pings } = fakeBase(dir)
+  const d = await startFormDispatcher(
+    base,
+    mock(async (_f: ResolvedForm): Promise<FormRecord> => {
+      throw new Error('boom')
+    })
+  )
+  d.offer(formFor('F', 'qr'))
+  const records = await d.close()
+  expect(records).toHaveLength(1)
+  expect(records[0]).toMatchObject({ state: 'failed', reason: 'unexpected_error' })
+  expect(byName((await loadFormRecords(dir)).records, 'F')).toMatchObject({
+    state: 'failed',
+    pings: [{ state: 'failed' }]
+  })
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you'])
+})
+
+function failingPing(base: FormContextBase, failures: number) {
+  let left = failures
+  return {
+    ...base,
+    ping: async (p: Ping) => {
+      if (left-- > 0) throw new Error('ntfy is down for Test Student')
+      await base.ping(p)
+    }
+  }
+}
+
+test('a ping that fails at runtime is reported, the form settles and the dispatcher keeps working', async () => {
+  const dir = await tmp()
+  const { base, events, pings } = fakeBase(dir)
+  const handle = mock(async (_f: ResolvedForm): Promise<FormRecord> => {
+    throw new Error('boom')
+  })
+  const d = await startFormDispatcher(failingPing(base, 1), handle)
+  d.offer(formFor('A', 'qr'))
+  await settle()
+  expect(byName((await loadFormRecords(dir)).records, 'A')).toMatchObject({ state: 'failed', pings: [] })
+  d.offer(formFor('B', 'qr'))
+  expect((await d.close()).map((r) => r.state)).toEqual(['failed', 'failed'])
+  expect(events.filter((e) => e.type === 'error' && e.message === 'ntfy is down for [value]')).toHaveLength(1)
+  expect(pings).toHaveLength(1)
+})
+
+test('a ping that fails while refusing a blocked form does not escape', async () => {
+  const { base, events } = fakeBase(await tmp())
+  const handle = mock(stuckThenUntrusted)
+  const d = await startFormDispatcher(failingPing(base, 2), handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr'))
+  d.offer(formFor('G', 'qr')) // refused unopened: its ping fails too
+  await settle()
+  await d.close()
+  expect(events.filter((e) => e.type === 'error')).toHaveLength(2)
+})
+
+test('the blocked-tab ping is retried until one goes out', async () => {
+  const { base, pings } = fakeBase(await tmp())
+  const d = await startFormDispatcher(failingPing(base, 1), mock(stuckThenUntrusted))
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr')) // refused after the first run; its ping fails
+  await settle()
+  d.offer(formFor('F', 'qr')) // refused again; this ping goes out
+  await settle()
+  d.offer(formFor('F', 'qr')) // and now it is done
+  await d.close()
+  expect(pings).toHaveLength(1)
+})
+
+test('a ping that fails at start does not abort the dispatcher', async () => {
+  const dir = await tmp()
+  await saveFormRecord(dir, recFor('C', 'filling'))
+  const { base, events } = fakeBase(dir)
+  const d = await startFormDispatcher(
+    failingPing(base, 1),
+    mock(async () => recFor('X', 'submitted'))
+  )
+  expect(await d.close()).toHaveLength(1)
+  expect(events).toContainEqual(expect.objectContaining({ type: 'error', message: 'ntfy is down for [value]' }))
+  expect(byName((await loadFormRecords(dir)).records, 'C')).toMatchObject({ state: 'failed', pings: [] })
+})
+
+test('at most three forms are handled at once, the rest wait their turn, and all are handled', async () => {
+  const gates = ['A', 'B', 'C', 'D', 'E'].map(() => deferred<void>())
+  let active = 0
+  let peak = 0
+  const order: string[] = []
+  const handle = mock(async (f: ResolvedForm): Promise<FormRecord> => {
+    const n = f.finalUrl.split('/')[6]!
+    order.push(n)
+    active++
+    peak = Math.max(peak, active)
+    await gates[order.length - 1]!.promise
+    active--
+    return recFor(n, 'submitted')
+  })
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  for (const n of ['A', 'B', 'C', 'D', 'E']) d.offer(formFor(n, 'qr'))
+  await settle()
+  expect(handle).toHaveBeenCalledTimes(MAX_FORMS_IN_FLIGHT)
+  gates[0]!.resolve()
+  await settle()
+  expect(handle).toHaveBeenCalledTimes(4)
+  for (const g of gates) g.resolve()
+  expect((await d.close()).length).toBe(5)
+  expect(order).toEqual(['A', 'B', 'C', 'D', 'E'])
+  expect(peak).toBe(MAX_FORMS_IN_FLIGHT)
+})
+
+test('at start a failed record with no ping is pinged and an unreadable record is reported', async () => {
+  const dir = await tmp()
+  await saveFormRecord(dir, { ...recFor('F', 'failed'), reason: 'deadline', pings: [] })
+  await saveFormRecord(dir, {
+    ...recFor('G', 'failed'),
+    reason: 'deadline',
+    pings: [{ state: 'failed', at: new Date().toISOString() }]
+  })
+  await mkdir(join(dir, 'forms', formIdFor(formFor('D', 'qr').finalUrl)), { recursive: true })
+  const { base, pings, events } = fakeBase(dir)
+  const d = await startFormDispatcher(
+    base,
+    mock(async () => recFor('X', 'submitted'))
+  )
+  await d.close()
+  expect(pings).toHaveLength(1)
+  expect(byName((await loadFormRecords(dir)).records, 'F').pings).toHaveLength(1)
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: 'error', formId: formIdFor(formFor('D', 'qr').finalUrl) })
+  )
 })

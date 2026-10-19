@@ -96,6 +96,7 @@ export type StopReason =
   | 'deadline'
   | 'interrupted'
   | 'interrupted_submitting'
+  | 'tab_stuck'
   | 'unexpected_error'
 
 export interface FilledField {
@@ -543,6 +544,7 @@ failed (high) "Form needs you"
   deadline                it wasn't ready to submit within 2 minutes
   interrupted             the worker restarted while handling it
   interrupted_submitting  the worker restarted while submitting it (check whether your response was recorded)
+  tab_stuck               an earlier form tab could not be closed
   unexpected_error        of an unexpected error
 ```
 
@@ -2283,12 +2285,13 @@ Rules:
 
 - **At start**: `loadFormRecords(cfg.dataDir)`. Each record not in a terminal state fails with reason `interrupted_submitting` if it was `submitting`, else `interrupted`; it is saved, its `form` event emitted and the member pinged. Every loaded formId, and every `invalid` one, counts as handled.
 - **`offer(f)`**, with `id = formIdFor(f.finalUrl)` and `trusted = checkTrust(f, cfg.entry.trustedSenders).trusted`:
-  - **New id**: run `handle(f, { ...base, previous: null, signal })` at once. There is no concurrency cap; each form gets its own tab.
+  - **New id**: run `handle(f, { ...base, previous: null, signal })` at once while fewer than `MAX_FORMS_IN_FLIGHT` (3) forms are in flight, each in its own tab; otherwise queue it FIFO. Queued time counts against the deadline, which runs from `seenAt` (the handler enforces it). Upgrades take a slot too.
   - **Id running**: if `trusted` and the running candidate wasn't, keep `f` as its pending upgrade; otherwise ignore it.
   - **Id finished**: if the record is `untrusted` and `trusted`, run `handle(f, { ...base, previous: record, signal })`; otherwise ignore it.
   - **Pending upgrade**: when a run ends `untrusted` with an upgrade waiting, the upgrade runs immediately with that record as `previous`.
 - **`close`**: abort `signal`, await every running and pending handler, and return the records.
-- **From the Task 11 review**: the dispatcher must never call `handle` with `previous: null` for a form that already has a `record.json` (`handleForm` would start from `detected` and could submit a second time). A restart maps `submitting` to `interrupted_submitting`. After a `form_tab_not_closed` alert the dispatcher opens no more tabs.
+- **From the Task 11 review**: the dispatcher must never call `handle` with `previous: null` for a form that already has a `record.json` (`handleForm` would start from `detected` and could submit a second time). A restart maps `submitting` to `interrupted_submitting`. After a `form_tab_not_closed` alert the dispatcher opens no more tabs: a new form fails `tab_stuck` unopened (record and ping), and a pending or later trusted upgrade gets one `tab_stuck` ping (retried until a ping goes out) and no run.
+- **From the Task 13 review**: a handler that throws kills the form: every later sighting or upgrade is ignored (a `form` event with `outcome: 'ignored'`, `reason: 'handler_failed'`), and a new form that threw is saved as `failed` / `unexpected_error` and pinged. No ping or save failure escapes: it becomes a redacted `error` event and the form settles; `track()` never rejects; a failure during startup does not abort `startFormDispatcher`. At start, loaded `failed` records with an empty pings log are pinged again, and each invalid record id is reported as an `error` event.
 
 - [x] **Step 1: Write the failing tests**
 

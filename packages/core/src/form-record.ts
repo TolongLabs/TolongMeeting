@@ -21,6 +21,7 @@ export type StopReason =
   | 'deadline'
   | 'interrupted'
   | 'interrupted_submitting'
+  | 'tab_stuck'
   | 'unexpected_error'
 
 export interface FilledField {
@@ -101,6 +102,7 @@ const STOP_REASONS: Record<StopReason, true> = {
   deadline: true,
   interrupted: true,
   interrupted_submitting: true,
+  tab_stuck: true,
   unexpected_error: true
 }
 

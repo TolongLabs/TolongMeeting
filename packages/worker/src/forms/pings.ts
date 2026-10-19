@@ -40,6 +40,7 @@ const FAILED_REASON: Record<Exclude<StopReason, 'untrusted_source' | 'not_org_re
   deadline: "it wasn't ready to submit within 2 minutes",
   interrupted: 'the worker restarted while handling it',
   interrupted_submitting: 'the worker restarted while submitting it (check whether your response was recorded)',
+  tab_stuck: 'an earlier form tab could not be closed',
   unexpected_error: 'of an unexpected error'
 }
 
