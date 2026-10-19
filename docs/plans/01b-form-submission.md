@@ -1805,7 +1805,7 @@ export async function waitForTabSignin(
 - **`openForm`**: navigates, then polls `pageKind` every 250 ms until it isn't `unknown`. It throws `OpenTimeoutError` if navigation or a recognised kind takes longer than `timeoutMs`.
 - **`waitForTabSignin`**: polls `pageKind(tab)` every `SIGNIN_POLL_MS` and resolves `true` once it is `form` (the member finished signing in in that tab through the desk view), or `false` on abort or timeout. It only reads the page: it never clicks, types or navigates.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const windowOf = async (p: Page) =>
@@ -1865,19 +1865,19 @@ test('stops waiting on abort or timeout', async ({ context, page: desk }) => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-open.spec.ts`
 Expected: FAIL with "Cannot find module '../src/forms/open'".
 
-- [ ] **Step 3: Implement `packages/worker/src/forms/open.ts`**
+- [x] **Step 3: Implement `packages/worker/src/forms/open.ts`**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-open.spec.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/open.ts packages/worker/test/forms-open.spec.ts

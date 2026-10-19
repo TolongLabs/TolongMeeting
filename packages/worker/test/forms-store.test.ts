@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sampleRecord } from '@tm/core/testing'
-import { formEventData, loadFormRecords, saveFormRecord } from '../src/forms/store'
+import { formEventData, loadFormRecords, loadHandledFormIds, saveFormRecord } from '../src/forms/store'
 
 const rec = sampleRecord({
   formId: '0123456789abcdef',
@@ -141,5 +141,34 @@ test('the store writes the same record file the pinger reads', async () => {
   await saveFormRecord(dir, rec)
   const text = await readFile(join(dir, 'forms', rec.formId, 'record.json'), 'utf8')
   expect(JSON.parse(text)).toEqual(rec)
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('loadHandledFormIds: a 1B failure that never pinged is not handled, a 1A record is by its pingedAt', async () => {
+  const dir = await tempDir()
+  const write = async (formId: string, body: string | object) => {
+    await mkdir(join(dir, 'forms', formId), { recursive: true })
+    await writeFile(join(dir, 'forms', formId, 'record.json'), typeof body === 'string' ? body : JSON.stringify(body))
+  }
+  const at = '2026-10-20T12:00:00.000Z'
+  await write('1111111111111111', sampleRecord({ formId: '1111111111111111', state: 'failed', pings: [] }))
+  await write(
+    '2222222222222222',
+    sampleRecord({ formId: '2222222222222222', state: 'failed', pings: [{ state: 'failed', at }] })
+  )
+  await write('3333333333333333', sampleRecord({ formId: '3333333333333333', state: 'filling', pings: [] }))
+  const pingRecord = { url: 'https://docs.google.com/forms/d/e/x/viewform', source: 'qr', state: 'needs_member' }
+  await write('4444444444444444', { ...pingRecord, formId: '4444444444444444', pingedAt: at })
+  await write('5555555555555555', { ...pingRecord, formId: '5555555555555555', pingedAt: null, state: 'failed' })
+  await write('6666666666666666', 'not json')
+  await write('7777777777777777', { unrelated: true })
+
+  expect(await loadHandledFormIds(dir)).toEqual([
+    '2222222222222222',
+    '3333333333333333',
+    '4444444444444444',
+    '6666666666666666',
+    '7777777777777777'
+  ])
   await rm(dir, { recursive: true, force: true })
 })

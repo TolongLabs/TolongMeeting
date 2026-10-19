@@ -14,7 +14,7 @@ import type {
 import { canonicalFormUrl, formIdFor, IllegalTransition, localParts, nextFormState } from '@tm/core'
 import { formNotSubmittedPing, formToSubmitPing, linkUncheckedPing, type Ping } from '@tm/notify'
 import { LinkResolveError, normaliseFormUrl, resolveFormLink } from './links'
-import { loadFormRecords } from './store'
+import { loadHandledFormIds } from './store'
 import { checkTrust } from './trust'
 
 export interface FormPingerDeps {
@@ -96,12 +96,11 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
   const offered = new Set<string>() // raw URLs seen in flight or done
   const formKeys = new Set<string>() // normalised final URLs: one ping per form
   const tasks = new Set<Promise<void>>()
-  // Forms already handled by an earlier run of this occurrence: every forms/<formId>/ directory counts, whatever its
-  // record holds, so a restart never pings or submits one again.
+  // Forms an earlier run of this occurrence already pinged, or cannot be read: see loadHandledFormIds. A form whose
+  // record shows no ping went out is not here, so a restart pings it.
   const handled = new Set<string>()
-  const ready = loadFormRecords(cfg.dataDir).then(({ records, invalid }) => {
-    for (const r of records) handled.add(r.formId)
-    for (const id of invalid) handled.add(id)
+  const ready = loadHandledFormIds(cfg.dataDir).then((ids) => {
+    for (const id of ids) handled.add(id)
   })
   // A caller that never reads `ready` must not trigger an unhandled rejection: `offer` rethrows it.
   ready.catch(() => {})
@@ -169,7 +168,7 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
         return
       }
 
-      // A form an earlier run left on disk is not pinged again, whatever state it stopped in.
+      // A form an earlier run already pinged is not pinged again. One whose ping never went out is pinged here.
       const found = formIdFor(form.finalUrl)
       if (handled.has(found)) {
         location = locate(form.finalUrl)
@@ -251,7 +250,18 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
   return {
     ready,
     async offer(c) {
-      await ready
+      try {
+        await ready
+      } catch (err) {
+        // The forms directory cannot be read, so no form can be checked for a ping. Every offer says so, then fails.
+        await emitOrStderr(
+          emit,
+          'error',
+          { where: 'form', formId: null, state: null, host: null, path: null, message: messageOf(err) },
+          { host: null, path: null }
+        )
+        throw err
+      }
       if (offered.has(c.url)) return
       offered.add(c.url)
       const task: Promise<void> = run(c).finally(() => tasks.delete(task))

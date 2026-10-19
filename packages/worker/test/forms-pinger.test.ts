@@ -367,3 +367,64 @@ test('a restart does not ping a form that already has a directory, valid record 
   ])
   expect(await readdir(join(dataDir, 'forms'))).toHaveLength(2)
 })
+
+test('a restart pings the form whose record shows no ping went out, and no other', async () => {
+  const other = 'https://docs.google.com/forms/d/e/1FAOther/viewform'
+  const first = createFormPinger({ cfg, send, emit, resolve })
+  await first.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await first.idle()
+  expect(sent).toHaveLength(1)
+  // A form whose ping never went out: its record is valid, failed, and has no pingedAt.
+  const unpinged: FormPingRecord = {
+    formId: formIdFor(other),
+    url: other,
+    source: 'meeting_chat',
+    sender: 'Dr Lecturer',
+    senderRole: 'host',
+    seenAt: t0,
+    provider: 'google',
+    state: 'failed',
+    trustReason: null,
+    pingedAt: null
+  }
+  await mkdir(join(dataDir, 'forms', unpinged.formId), { recursive: true })
+  await writeFile(join(dataDir, 'forms', unpinged.formId, 'record.json'), JSON.stringify(unpinged))
+
+  sent = []
+  ev = []
+  const direct = async (c: FormCandidate) => ({ ...c, finalUrl: c.url, provider: 'google' as const })
+  const fresh = createFormPinger({ cfg, send, emit, resolve: direct })
+  for (const url of [FORM, other]) {
+    await fresh.offer({ url, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  }
+  await fresh.idle()
+
+  expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
+  expect(ev.filter((e) => e.data.outcome === 'ignored').map((e) => e.data.formId)).toEqual([formIdFor(PLAIN_FORM)])
+  const rec = JSON.parse(await readFile(join(dataDir, 'forms', formIdFor(other), 'record.json'), 'utf8'))
+  expect(rec).toMatchObject({ state: 'needs_member' })
+  expect(rec.pingedAt).not.toBeNull()
+})
+
+test('a forms directory that cannot be read rejects ready and fails every offer loudly', async () => {
+  await writeFile(join(dataDir, 'forms'), 'not a directory')
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  const candidate = {
+    url: FORM,
+    source: 'meeting_chat' as const,
+    sender: 'Dr Lecturer',
+    senderRole: 'host' as const,
+    seenAt: t0
+  }
+
+  await expect(p.ready).rejects.toThrow('ENOTDIR')
+  await expect(p.offer(candidate)).rejects.toThrow('ENOTDIR')
+  await expect(p.offer(candidate)).rejects.toThrow('ENOTDIR')
+  await p.idle()
+
+  expect(sent).toEqual([])
+  const errors = ev.filter((e) => e.type === 'error')
+  expect(errors).toHaveLength(2)
+  expect(errors[0].data).toMatchObject({ where: 'form', formId: null })
+  expect(String(errors[0].data.message)).toContain('ENOTDIR')
+})
