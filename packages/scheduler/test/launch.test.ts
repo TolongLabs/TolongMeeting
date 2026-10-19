@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { JobConfigSchema, type OccurrenceState } from '@tm/core'
@@ -9,7 +9,16 @@ import { QUEUES } from '@tm/web/db/queues'
 import { sealColumn } from '@tm/web/db/secrets'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
 import { validateRequest } from '../src/docker-gate/validate'
-import { FakeDocker, launchOccurrence, startAttempt, stopJobFileWatchers, type LaunchDeps } from '../src/index'
+import {
+  DockerError,
+  FakeDocker,
+  dockerClient,
+  launchOccurrence,
+  resumeJobFileWatchers,
+  startAttempt,
+  stopJobFileWatchers,
+  type LaunchDeps
+} from '../src/index'
 
 const MASTER = Buffer.alloc(32, 3)
 const sha256hex = (t: string) => createHash('sha256').update(t).digest('hex')
@@ -130,7 +139,7 @@ async function launchFixture(o: Options = {}) {
     ntfyUrl: 'https://ntfy.tm.example'
   }
   const docker = new FakeDocker()
-  if (o.dockerFails) docker.createError = new Error('image not found')
+  if (o.dockerFails) docker.createError = new DockerError('create', 404, 'image not found')
   const queue = new FakeQueue()
   const notifier = new FakeNotifier()
   const deps: LaunchDeps = { db, queue, docker, notifier, master: MASTER, env, exitPollMs: 10 }
@@ -208,7 +217,7 @@ test('a due occurrence launches with a private job file and a hashed token', asy
 test('the machine-id and job directories are real directories before create', async () => {
   const f = await launchFixture()
   // A worker could plant a symlink at the machine-id path between launches.
-  await mkdir(`${f.env.profileRoot}/.machine-ids`, { recursive: true })
+  await mkdir(`${f.env.profileRoot}/.machine-ids`, { recursive: true, mode: 0o755 })
   await writeFile(`${tmp}/${f.id}/victim`, 'secret')
   await symlink(`${tmp}/${f.id}/victim`, `${f.env.profileRoot}/.machine-ids/${f.identityId}`)
   expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
@@ -364,4 +373,170 @@ test('no secret reaches the logs', async () => {
   }
   expect(logs.length).toBeGreaterThan(0)
   expect(logs.join('\n')).not.toMatch(/sk-dash-secret|ntfy-secret|pwd=/)
+})
+
+test('a Docker call that never answers times out and fails the launch with the profile key deleted', async () => {
+  const f = await launchFixture()
+  const hang = ((_url: unknown, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true })
+    })) as unknown as typeof fetch
+  const docker = dockerClient('http://docker-proxy:2375', hang, { quickMs: 20, slowMs: 20 })
+  expect(await launchOccurrence({ ...f.deps, docker }, f.job, f.tMinus60)).toBe('failed')
+  expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'launch_failed' })
+  expect(await f.heldBy()).toBeNull()
+  expect(await readdir(`${f.env.profileRoot}/${f.identityId}/job`)).toEqual([])
+})
+
+test('an error that is not a Docker or filesystem failure is not hidden as launch_failed, and the key is deleted', async () => {
+  const f = await launchFixture()
+  f.docker.createError = new Error('something else')
+  await expect(launchOccurrence(f.deps, f.job, f.tMinus60)).rejects.toThrow('something else')
+  expect(await readdir(`${f.env.profileRoot}/${f.identityId}/job`)).toEqual([])
+  expect((await f.occurrence()).state).toBe('scheduled') // the transaction rolled back
+})
+
+test('a filesystem error while preparing the job directory fails the launch', async () => {
+  const f = await launchFixture()
+  // A job directory the scheduler can't write to: opening the temp file fails with EACCES.
+  const jobDir = `${f.env.profileRoot}/${f.identityId}/job`
+  await mkdir(`${f.env.profileRoot}/${f.identityId}`, { recursive: true, mode: 0o755 })
+  await mkdir(jobDir, { mode: 0o500 })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'launch_failed' })
+})
+
+describe('an occurrence that can no longer launch never stays scheduled', () => {
+  test('its member is gone', async () => {
+    const f = await launchFixture()
+    // The foreign keys make this impossible in practice; drop them (and the events' one) to model a corrupt row.
+    const fks = await f.db.execute(
+      sql`select conrelid::regclass::text as tbl, conname from pg_constraint
+        where conrelid in ('occurrences'::regclass, 'events'::regclass) and contype = 'f'`
+    )
+    for (const { tbl, conname } of fks.rows as { tbl: string; conname: string }[]) {
+      await f.db.execute(sql.raw(`alter table ${tbl} drop constraint "${conname}"`))
+    }
+    await f.db.update(occurrences).set({ memberId: randomUUID() }).where(eq(occurrences.id, f.id))
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'member_missing' })
+    expect(f.notifier.sent).toEqual([])
+    expect(f.docker.created).toEqual([])
+  })
+
+  test('its timetable entry was deleted', async () => {
+    const f = await launchFixture()
+    await f.db.delete(schema.timetableEntries)
+    expect((await f.occurrence()).entryId).toBeNull()
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'entry_missing' })
+    expect(f.notifier.sent[0]!.ping.message).toContain("it couldn't start")
+    expect(f.docker.created).toEqual([])
+  })
+
+  test('its identity has no profile', async () => {
+    const f = await launchFixture()
+    await f.db.delete(profiles).where(eq(profiles.identityId, f.identityId))
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'profile_missing' })
+    expect(f.docker.created).toEqual([])
+  })
+
+  test('its profile is held by something the launcher does not know', async () => {
+    const f = await launchFixture()
+    await f.db.update(profiles).set({ heldBy: 'who-knows' }).where(eq(profiles.identityId, f.identityId))
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'holder_unknown' })
+    expect(await f.heldBy()).toBe('who-knows')
+    expect(f.queue.sent).toEqual([])
+  })
+})
+
+test('two launches for one identity window at once: one launches, the other is skipped', async () => {
+  const f = await launchFixture()
+  const [entry] = await f.db
+    .insert(schema.timetableEntries)
+    .values({
+      memberId: f.memberId,
+      identityId: f.identityId,
+      name: 'Second',
+      type: 'lecture',
+      repeat: { kind: 'once', date: '2026-10-21' },
+      startTime: '14:00',
+      endTime: '16:00',
+      link: { kind: 'fixed', url: 'https://example.zoom.us/j/22222222222' },
+      transcription: 'live'
+    })
+    .returning()
+  const start = new Date(START)
+  const [second] = await f.db
+    .insert(occurrences)
+    .values({
+      memberId: f.memberId,
+      identityId: f.identityId,
+      entryId: entry!.id,
+      entryName: 'Second',
+      entryType: 'lecture',
+      transcription: 'live',
+      scheduledStart: start,
+      scheduledEnd: new Date(start.getTime() + 2 * HOUR),
+      deleteAfter: new Date(start.getTime() + 30 * 24 * HOUR)
+    })
+    .returning()
+  const results = await Promise.all([
+    launchOccurrence(f.deps, f.job, f.tMinus60),
+    launchOccurrence(f.deps, { occurrenceId: second!.id, scheduledStart: START }, f.tMinus60)
+  ])
+  expect([...results].sort()).toEqual(['launched', 'skipped_identity_clash'])
+  expect(f.docker.created.length).toBe(1)
+  expect(f.notifier.sent.length).toBe(1)
+})
+
+test('after a scheduler restart, leftover job files go with their dead container and the running one is watched', async () => {
+  const f = await launchFixture()
+  const dir = `${f.env.profileRoot}/${f.identityId}/job`
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  await mkdir(`${f.env.profileRoot}/.machine-ids`, { recursive: true })
+  const dead = `tm-worker-${randomUUID()}-a1`
+  const alive = `tm-worker-${randomUUID()}-a2`
+  for (const name of [dead, alive]) {
+    await writeFile(`${dir}/${name}.json`, '{}')
+    await writeFile(`${dir}/${name}.key`, 'key')
+  }
+  await writeFile(`${dir}/.tmp.0123abcd`, 'half-written key')
+  await writeFile(`${dir}/notes.txt`, 'not ours')
+
+  const docker = new FakeDocker() // a fresh process: it remembers nothing
+  docker.inspectResults.set(dead, null)
+  docker.inspectResults.set(alive, { running: true })
+  expect(await resumeJobFileWatchers({ ...f.deps, docker })).toEqual({ removed: 1, watching: 1 })
+  expect((await readdir(dir)).sort()).toEqual(['notes.txt', `${alive}.json`, `${alive}.key`])
+
+  docker.inspectResults.set(alive, { running: false })
+  await until(async () => (await readdir(dir)).join() === 'notes.txt')
+})
+
+test('a Docker that is down at restart leaves the files to the watcher, which deletes them once it answers', async () => {
+  const f = await launchFixture()
+  const dir = `${f.env.profileRoot}/${f.identityId}/job`
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  const name = `tm-signin-${randomUUID()}`
+  await writeFile(`${dir}/${name}.key`, 'key')
+  let up = false
+  const docker = new FakeDocker()
+  docker.inspect = async () => {
+    if (!up) throw new DockerError('inspect', 0, 'proxy unreachable')
+    return null
+  }
+  const spy = console.error
+  console.error = () => {}
+  try {
+    expect(await resumeJobFileWatchers({ ...f.deps, docker })).toEqual({ removed: 0, watching: 1 })
+    await Bun.sleep(40)
+    expect(await readdir(dir)).toEqual([`${name}.key`])
+    up = true
+    await until(async () => (await readdir(dir)).length === 0)
+  } finally {
+    console.error = spy
+  }
 })

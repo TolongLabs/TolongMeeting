@@ -5,7 +5,7 @@ import { identityClashes, syncOccurrences } from '../db/occurrences'
 import { dropAllTestDbs, FakeQueue, seedMember, withEntry, type EntryShape } from '../db/testing'
 import { createScope } from '../lib/scope'
 
-afterAll(dropAllTestDbs)
+afterAll(dropAllTestDbs, 60_000)
 
 const now = new Date('2026-10-20T00:00:00Z')
 const WEDNESDAY_14: EntryShape = {
@@ -201,9 +201,16 @@ describe('identityClashes', () => {
     ).toEqual([])
   })
 
-  test('skipped, failed and deleted occurrences do not clash', async () => {
+  test('skipped, failed, deleted and ended occurrences do not clash', async () => {
     const { db, identityId, memberId } = await twoEntries()
-    for (const state of ['skipped_identity_clash', 'skipped_capacity', 'failed', 'deleted'] as const) {
+    for (const state of [
+      'skipped_identity_clash',
+      'skipped_capacity',
+      'failed',
+      'deleted',
+      'completed',
+      'left_by_member'
+    ] as const) {
       await db
         .update(occurrences)
         .set({ state })

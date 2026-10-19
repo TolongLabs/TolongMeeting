@@ -11,13 +11,15 @@ const DAY = 24 * 60 * MINUTE
 const LAUNCH_LEAD = 60 * MINUTE
 const RETENTION = 30 * DAY
 
-/** Occurrences that are not worth running: they never clash and are never counted. */
+/** Occurrences that are not worth running, or are over: they never clash and are never counted. */
 const OUT_OF_PLAY: OccurrenceState[] = [
   'skipped_capacity',
   'skipped_identity_clash',
   'skipped_pc_offline',
   'failed',
-  'deleted'
+  'deleted',
+  'completed',
+  'left_by_member'
 ]
 
 interface Wanted {

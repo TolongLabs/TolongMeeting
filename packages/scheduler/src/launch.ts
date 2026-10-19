@@ -2,16 +2,23 @@ import { createHash, randomBytes } from 'node:crypto'
 import { ACTIVE_STATES, formatWhen, profileKey, type SpecEnv } from '@tm/core'
 import { pings, type WorkerFailureReason } from '@tm/notify'
 import { and, eq, inArray, sql } from 'drizzle-orm'
-import { identities, members, occurrences, profiles, signinSessions, type Db } from '@tm/web/db'
-import { safeDbError } from '@tm/web/db/errors'
+import { identities, members, occurrences, profiles, signinSessions, timetableEntries, type Db } from '@tm/web/db'
+import { DbError, safeDbError } from '@tm/web/db/errors'
 import { buildEntrySnapshot, loadJobConfig } from '@tm/web/db/job-config'
 import type { Notifier } from '@tm/web/db/notifier'
 import { identityClashes } from '@tm/web/db/occurrences'
 import { QUEUES, queueDbOf, type Queue } from '@tm/web/db/queues'
 import { applyTrigger } from '@tm/web/db/transitions'
 import { containerName, containerSpec, jobFileBase, resolveEnv, type SpecParams } from './container-spec'
-import type { DockerClient } from './docker'
-import { prepareHostDirs, removeJobFiles, removeStaleJobFiles, writeJobFiles } from './job-files'
+import { DockerError, type DockerClient } from './docker'
+import {
+  HostDirError,
+  findJobFileBases,
+  prepareHostDirs,
+  removeJobFiles,
+  removeStaleJobFiles,
+  writeJobFiles
+} from './job-files'
 import { acquireProfile, releaseProfile } from './locks'
 
 /** At most this many server workers run at once (revised only from spike 6's report). */
@@ -60,7 +67,7 @@ const sleep = (ms: number, signal: AbortSignal) =>
   })
 
 /** Polls Docker until the container is gone or stopped, then deletes its job and key files. */
-function removeFilesWhenExited(deps: LaunchDeps, container: string, base: string): void {
+function removeFilesWhenExited(deps: Pick<LaunchDeps, 'docker' | 'exitPollMs'>, container: string, base: string): void {
   const stop = new AbortController()
   const poll = deps.exitPollMs ?? EXIT_POLL_MS
   const done = (async () => {
@@ -83,11 +90,53 @@ function removeFilesWhenExited(deps: LaunchDeps, container: string, base: string
   void done.finally(() => watchers.delete(entry))
 }
 
+/**
+ * Call once when the scheduler starts, before the first launch. A restart forgets the exit watchers, so this scans
+ * `<profileRoot>/*\/job/` for job and key files, deletes the ones whose container is gone or stopped, and watches the
+ * others. It also deletes `.tmp.<hex>` files left by a crash, which can hold the profile key. A Docker that can't be
+ * asked now leaves the files to the watcher, which retries.
+ */
+export async function resumeJobFileWatchers(
+  deps: Pick<LaunchDeps, 'docker' | 'env' | 'exitPollMs'>
+): Promise<{ removed: number; watching: number }> {
+  const found = { removed: 0, watching: 0 }
+  for (const base of await findJobFileBases(deps.env.profileRoot)) {
+    const container = base.slice(base.lastIndexOf('/') + 1)
+    const state = await deps.docker.inspect(container).catch((e: unknown) => {
+      console.error(`job file resume: inspect failed (${e instanceof Error ? e.name : 'unknown'})`)
+      return { running: true }
+    })
+    if (state === null || !state.running) {
+      await removeJobFiles(base)
+      found.removed++
+    } else {
+      removeFilesWhenExited(deps, container, base)
+      found.watching++
+    }
+  }
+  return found
+}
+
 // --- startAttempt --------------------------------------------------------------------------------------------------
 
-/** What is safe to log about a failure: Docker's own short message, or else only the error's name. */
+/** What is safe to log about a failure: Docker's or the directory check's own short message, else the error's name. */
 const describe = (e: unknown): string =>
-  e instanceof Error ? (e.name === 'DockerError' ? e.message : e.name) : 'unknown'
+  e instanceof DockerError || e instanceof HostDirError ? e.message : e instanceof Error ? e.name : 'unknown'
+
+const ERRNO_CODE = /^E[A-Z0-9]+$/
+
+/**
+ * Whether `e` is a Docker or host-filesystem failure: a refused or timed-out Docker call, a refused directory, or an
+ * errno such as `EACCES`. Those fail the launch. Anything else (a Postgres error above all, which would leave the
+ * transaction aborted) is not this function's to hide.
+ */
+function isLaunchFailure(e: unknown): boolean {
+  if (e instanceof DockerError || e instanceof HostDirError) return true
+  if (!(e instanceof Error)) return false
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return true
+  const code = (e as { code?: unknown }).code
+  return typeof code === 'string' && ERRNO_CODE.test(code)
+}
 
 /** Starts attempt `attempt` of an occurrence. Resolves `false` after failing the occurrence when it can't start. */
 async function startAttemptIn(
@@ -105,26 +154,8 @@ async function startAttemptIn(
   const base = jobFileBase(spec)
   const { publicUrl } = resolveEnv(env)
 
-  try {
-    const token = `${attempt}.${randomBytes(32).toString('base64url')}`
-    await db
-      .update(occurrences)
-      .set({ controlTokenHash: sha256hex(token), attempt, containerName: name, lastHeartbeatAt: now })
-      .where(eq(occurrences.id, occurrenceId))
-    const job = await loadJobConfig(db, deps.master, occurrenceId, {
-      attempt,
-      control: { url: `${publicUrl}/api/control`, token },
-      env
-    })
-    const jobDir = await prepareHostDirs(env, row.identityId, occurrenceId)
-    // The profile is ours alone, so files of earlier containers (a crashed scheduler's leftovers) can go.
-    await removeStaleJobFiles(jobDir, base)
-    await writeJobFiles(base, job, profileKey(deps.master, row.identityId))
-    const id = await deps.docker.create(name, containerSpec(spec))
-    await deps.docker.start(id)
-    removeFilesWhenExited(deps, name, base)
-    return true
-  } catch (e) {
+  /** Fails the occurrence with `launch_failed`, gives the profile back and queues the ping. */
+  const failLaunch = async (e: unknown): Promise<false> => {
     // Only the error's name (and Docker's own message) is logged: other messages can carry paths or values.
     console.error(`launch failed for ${occurrenceId} attempt ${attempt}: ${describe(e)}`)
     await removeJobFiles(base)
@@ -133,6 +164,41 @@ async function startAttemptIn(
     outbox.push(() => failedPing(deps, row, "it couldn't start"))
     return false
   }
+
+  const token = `${attempt}.${randomBytes(32).toString('base64url')}`
+  await db
+    .update(occurrences)
+    .set({ controlTokenHash: sha256hex(token), attempt, containerName: name, lastHeartbeatAt: now })
+    .where(eq(occurrences.id, occurrenceId))
+  let job: Awaited<ReturnType<typeof loadJobConfig>>
+  try {
+    job = await loadJobConfig(db, deps.master, occurrenceId, {
+      attempt,
+      control: { url: `${publicUrl}/api/control`, token },
+      env
+    })
+  } catch (e) {
+    // A database error stays one: the transaction is aborted and fail() could not run in it.
+    const safe = safeDbError(e)
+    if (safe instanceof DbError) throw safe
+    return failLaunch(e)
+  }
+  const key = profileKey(deps.master, row.identityId)
+
+  try {
+    const jobDir = await prepareHostDirs(env, row.identityId, occurrenceId)
+    // The profile is ours alone, so files of earlier containers (a crashed scheduler's leftovers) can go.
+    await removeStaleJobFiles(jobDir, base)
+    await writeJobFiles(base, job, key)
+    const id = await deps.docker.create(name, containerSpec(spec))
+    await deps.docker.start(id)
+  } catch (e) {
+    if (isLaunchFailure(e)) return failLaunch(e)
+    await removeJobFiles(base) // the key never outlives a failed launch, whatever the failure
+    throw e
+  }
+  removeFilesWhenExited(deps, name, base)
+  return true
 }
 
 /**
@@ -146,18 +212,6 @@ export async function startAttempt(deps: LaunchDeps, occurrenceId: string, attem
 }
 
 // --- Pings ---------------------------------------------------------------------------------------------------------
-
-async function memberOf(db: Db, memberId: string) {
-  const [member] = await db.select({ timeZone: members.timeZone }).from(members).where(eq(members.id, memberId))
-  if (!member) throw new Error(`No member ${memberId}`)
-  return member
-}
-
-async function identityName(db: Db, identityId: string): Promise<string> {
-  const [row] = await db.select({ name: identities.name }).from(identities).where(eq(identities.id, identityId))
-  if (!row) throw new Error(`No identity ${identityId}`)
-  return row.name
-}
 
 async function failedPing(deps: LaunchDeps, row: OccurrenceRow, reason: WorkerFailureReason): Promise<void> {
   const { publicUrl } = resolveEnv(deps.env)
@@ -203,26 +257,36 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
     return 'stale'
   }
   const { publicUrl } = resolveEnv(env)
-  const member = await memberOf(db, occ.memberId)
+  /** Fails an occurrence that can't launch, so a past or due one never stays `scheduled`. */
+  const refuse = async (reason: string, ping = true): Promise<LaunchResult> => {
+    await launchThen(db, occ.id, 'fail', reason)
+    if (ping) outbox.push(() => failedPing(deps, occ, "it couldn't start"))
+    return 'failed'
+  }
+
+  const [member] = await db.select({ timeZone: members.timeZone }).from(members).where(eq(members.id, occ.memberId))
+  // Nobody to ping, and no time zone to word the pings in.
+  if (!member) return refuse('member_missing', false)
   const when = formatWhen(occ.scheduledStart, member.timeZone)
 
   // A job that runs after the meeting has ended never leaves a past occurrence in `scheduled`.
-  if (now.getTime() >= occ.scheduledEnd.getTime()) {
-    await launchThen(db, occ.id, 'fail', 'launch_missed')
-    outbox.push(() => failedPing(deps, occ, "it couldn't start"))
-    return 'failed'
-  }
+  if (now.getTime() >= occ.scheduledEnd.getTime()) return refuse('launch_missed')
 
   const [identity] = await db
     .select()
     .from(identities)
     .where(and(eq(identities.id, occ.identityId), eq(identities.memberId, occ.memberId)))
-  if (!identity) {
-    // The gate can't tell whose identity this is, so the launcher refuses it.
-    await launchThen(db, occ.id, 'fail', 'identity_not_owned')
-    outbox.push(() => failedPing(deps, occ, "it couldn't start"))
-    return 'failed'
-  }
+  // The gate can't tell whose identity this is, so the launcher refuses it.
+  if (!identity) return refuse('identity_not_owned')
+
+  // The entry was deleted after the occurrence was made: there is nothing to attend.
+  const [entry] = occ.entryId
+    ? await db
+        .select({ id: timetableEntries.id })
+        .from(timetableEntries)
+        .where(and(eq(timetableEntries.id, occ.entryId), eq(timetableEntries.memberId, occ.memberId)))
+    : []
+  if (!entry) return refuse('entry_missing')
 
   const clash = (await identityClashes(db, occ.identityId, occ.scheduledStart, occ.scheduledEnd, occ.memberId)).find(
     (c) => c.loser.id === occ.id
@@ -244,19 +308,15 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
     return 'skipped_identity_clash'
   }
 
-  if (identity.runLocation !== 'server') {
-    // Plan 08 replaces this step.
-    await launchThen(db, occ.id, 'fail', 'run_location_unavailable')
-    outbox.push(() => failedPing(deps, occ, "it couldn't start"))
-    return 'failed'
-  }
+  // Plan 08 replaces this step.
+  if (identity.runLocation !== 'server') return refuse('run_location_unavailable')
 
   const [profile] = await db
     .select({ heldBy: profiles.heldBy })
     .from(profiles)
     .where(and(eq(profiles.identityId, occ.identityId), eq(profiles.memberId, occ.memberId)))
-  if (!profile) throw new Error(`Identity ${occ.identityId} has no profile`)
-  if (profile.heldBy !== null) return defer(deps, job, occ, profile.heldBy, now)
+  if (!profile) return refuse('profile_missing')
+  if (profile.heldBy !== null) return defer(deps, job, occ, profile.heldBy, now, refuse)
 
   const [{ active }] = await db
     .select({ active: sql<number>`count(*)::int` })
@@ -284,7 +344,7 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
       .select({ heldBy: profiles.heldBy })
       .from(profiles)
       .where(eq(profiles.identityId, occ.identityId))
-    return defer(deps, job, occ, taken?.heldBy ?? null, now)
+    return taken ? defer(deps, job, occ, taken.heldBy, now, refuse) : refuse('profile_missing')
   }
   try {
     const entrySnapshot = await buildEntrySnapshot(db, occ.id)
@@ -305,11 +365,13 @@ async function defer(
   job: LaunchJob,
   occ: OccurrenceRow,
   heldBy: string | null,
-  now: Date
+  now: Date,
+  refuse: (reason: string) => Promise<LaunchResult>
 ): Promise<LaunchResult> {
   const { db } = deps
   const holder = heldBy === null ? null : /^(signin|occ):([0-9a-f-]{36})$/.exec(heldBy)
-  if (heldBy !== null && !holder) throw new Error(`Profile of identity ${occ.identityId} has an unknown holder`)
+  // Waiting would never end: the profile is held by something this launcher can't ask to finish.
+  if (heldBy !== null && !holder) return refuse('holder_unknown')
   if (holder?.[1] === 'signin') {
     await db
       .update(signinSessions)
