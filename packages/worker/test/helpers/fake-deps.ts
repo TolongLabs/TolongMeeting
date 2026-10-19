@@ -35,6 +35,27 @@ export interface FakeOptions {
   onState?: (call: number) => void | Promise<void>
   /** Called by `recorder.stop`. */
   recorderStop?: () => Promise<void>
+  /** The time teardown has in all (a short one lets a test hang a step). */
+  teardownBudgetMs?: number
+  /** Called by `adapter.leave`; it may throw or never settle. */
+  leave?: () => Promise<void>
+  /** Called by `context.close`. */
+  contextClose?: () => Promise<void>
+  /** Called by `checkpointProfile`. */
+  checkpoint?: () => Promise<void>
+  /** Called by `joinRecording`. */
+  joinRecording?: () => Promise<void>
+  /** Called by `adapter.join` with its 1-based call number; it may never settle. */
+  onJoin?: (call: number) => void | Promise<void>
+  /** Called by `adapter.waitUntilAdmitted`; it may never settle. */
+  onAdmission?: () => Promise<void>
+  /** Called by every `assertDevicesOff` that finds the devices off, with its 1-based call number; it may throw. */
+  assertDevices?: (call: number) => void
+  /** Replace the adapter's `participantCount` / `dismissNotices`. */
+  participantCount?: () => Promise<number | null>
+  dismissNotices?: () => Promise<string[]>
+  /** Make a start step throw (the optional parts of the run). */
+  startFails?: Partial<Record<'chat' | 'frames' | 'asr', Error>>
 }
 
 export interface FakeDeps extends RunDeps {
@@ -43,6 +64,8 @@ export interface FakeDeps extends RunDeps {
   pings: Ping[]
   joinCount: number
   joinOpts: unknown[]
+  /** Every URL the stage pages were sent to, in order. */
+  gotos: string[]
   leftAt: Date | null
   formPinger: (FormPinger & { offers: FormCandidate[] }) | null
   /** Hooks into what the runner wired up. */
@@ -116,12 +139,14 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
   const level = opts.level === undefined ? -20 : opts.level
   let stateIndex = 0
   let stateCalls = 0
+  let deviceChecks = 0
   let unknownFrom: number | null = null
   const fake = {
     calls,
     pings,
     joinCount: 0,
     joinOpts: [] as unknown[],
+    gotos: [] as string[],
     leftAt: null as Date | null,
     formPinger: null as FakeDeps['formPinger'],
     hooks: {
@@ -137,7 +162,10 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
 
   const page = (): Page =>
     ({
-      goto: async () => rec('goto'),
+      goto: async (url: string) => {
+        rec('goto')
+        fake.gotos.push(url)
+      },
       url: () => 'https://app.zoom.us/wc/12345678901/join',
       isClosed: () => false,
       screenshot: async () => Buffer.from('png'),
@@ -165,12 +193,14 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     join: async (_page, joinOpts) => {
       rec('join')
       fake.joinOpts.push(joinOpts)
+      await opts.onJoin?.(fake.joinCount + 1)
       const result = joins[Math.min(fake.joinCount, joins.length - 1)]!
       fake.joinCount += 1
       return result
     },
     waitUntilAdmitted: async (_page, deadline) => {
       rec('waitUntilAdmitted')
+      await opts.onAdmission?.()
       const answer = admissions.shift() ?? 'admitted'
       if (answer === 'lobby_expired') t = Math.max(t, deadline.getTime())
       return answer
@@ -178,6 +208,8 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     assertDevicesOff: async () => {
       rec('assertDevicesOff')
       if (opts.devicesOn) throw new DevicesOnError(['Mute'])
+      deviceChecks += 1
+      opts.assertDevices?.(deviceChecks)
     },
     connectOutputAudio: async () => rec('connectOutputAudio'),
     ensureLayout: async () => rec('ensureLayout'),
@@ -190,7 +222,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     sharedScreenRegion: async () => null,
     participantCount: async () => {
       rec('participantCount')
-      return 5
+      return opts.participantCount ? opts.participantCount() : 5
     },
     meetingState: async () => {
       stateCalls += 1
@@ -199,11 +231,12 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     dismissNotices: async () => {
       rec('dismissNotices')
-      return []
+      return opts.dismissNotices ? opts.dismissNotices() : []
     },
     leave: async () => {
       rec('leave')
       fake.leftAt = clock()
+      await opts.leave?.()
     }
   }
 
@@ -228,7 +261,16 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     launchBrowser: async () => {
       rec('launchBrowser')
-      return { context: { close: async () => rec('context.close') } as never, stage, desk: page() }
+      return {
+        context: {
+          close: async () => {
+            rec('context.close')
+            await opts.contextClose?.()
+          }
+        } as never,
+        stage,
+        desk: page()
+      }
     },
     launchGuestStage: async () => {
       rec('launchGuestStage')
@@ -241,6 +283,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     checkpointProfile: async () => {
       rec('checkpointProfile')
+      await opts.checkpoint?.()
       return 'checkpoint'
     },
     checkFormProviders: async () => {
@@ -271,17 +314,20 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     joinRecording: async () => {
       rec('joinRecording')
+      await opts.joinRecording?.()
       return 'meeting.mkv'
     },
     adapterFor: () => adapter,
     startChatCapture: async (_page, _adapter, _file, onMessage, chatOpts) => {
       rec('startChatCapture')
+      if (opts.startFails?.chat) throw opts.startFails.chat
       fake.hooks.chat.onMessage = onMessage
       fake.hooks.chat.opts = chatOpts
       return { loaded: [], sweepNow: async () => rec('sweepNow'), stop: async () => rec('chat.stop') }
     },
     startFrameLoop: (_screen, handler) => {
       rec('startFrameLoop')
+      if (opts.startFails?.frames) throw opts.startFails.frames
       fake.hooks.frames.handler = handler
       return {
         onFatal: (cb) => void fake.hooks.frames.fatal.push(cb),
@@ -290,6 +336,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     startLiveAsr: async (_audio, _ai, _out, asrOpts) => {
       rec('startLiveAsr')
+      if (opts.startFails?.asr) throw opts.startFails.asr
       fake.hooks.asr.opts = asrOpts
       return { stop: async () => rec('asr.stop') }
     },
@@ -307,6 +354,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       fake.formPinger = pinger
       return pinger
     },
+    ...(opts.teardownBudgetMs === undefined ? {} : { teardownBudgetMs: opts.teardownBudgetMs }),
     sendPing: async (_cfg, ping) => void pings.push(ping),
     now: clock,
     sleep: async (ms) => {

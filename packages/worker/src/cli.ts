@@ -5,8 +5,9 @@ import { seedProfile } from './seed'
 
 const USAGE = 'usage: tm-worker [--seed] --job <path>'
 
-// Exit codes: 0 completed, 1 any other outcome or a crash, 64 usage, 65 invalid job.
-const EXIT = { completed: 0, other: 1, usage: 64, invalid: 65 } as const
+// Exit codes: 0 completed, 1 any other outcome or a crash, 64 usage, 65 invalid job, 143 stopped by SIGTERM or SIGINT
+// (128 + 15, the shell's code for a process ended by SIGTERM: a stop is not a normal end and not a failure).
+const EXIT = { completed: 0, other: 1, usage: 64, invalid: 65, terminated: 143 } as const
 
 function parseArgs(argv: string[]): { seed: boolean; job: string } | null {
   let seed = false
@@ -59,6 +60,7 @@ async function main(): Promise<number> {
   }
   const outcome = await runOccurrence(cfg, { signal: abort.signal })
   console.error(`outcome: ${outcome.result}${outcome.reason ? ` (${outcome.reason})` : ''}`)
+  if (outcome.endedBy === 'terminated') return EXIT.terminated
   return outcome.result === 'completed' ? EXIT.completed : EXIT.other
 }
 

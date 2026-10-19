@@ -22,6 +22,7 @@ let dataDir: string
 let offers: FormCandidate[]
 let events: { type: EventType; data: Record<string, unknown> }[]
 let alerts: AlertKind[]
+let alertDetails: (string | undefined)[]
 let deps: FrameHandlerDeps
 
 beforeEach(async () => {
@@ -29,6 +30,7 @@ beforeEach(async () => {
   offers = []
   events = []
   alerts = []
+  alertDetails = []
   const pinger: FormPinger = {
     ready: Promise.resolve(),
     offer: async (c) => void offers.push(c),
@@ -43,7 +45,10 @@ beforeEach(async () => {
     participants: () => 5,
     levelDb: () => -20,
     emit: async (type, data) => void events.push({ type, data }),
-    onAlert: (k) => void alerts.push(k),
+    onAlert: (k, detail) => {
+      alerts.push(k)
+      alertDetails.push(detail)
+    },
     pinger
   }
 })
@@ -52,8 +57,11 @@ afterEach(() => rm(dataDir, { recursive: true, force: true }))
 test('QR seen twice is offered once; keyframes saved with clock names', async () => {
   const h = createFrameHandler({ ...deps, timeZone: 'Asia/Kuala_Lumpur' })
   const f = await qrFrame('https://forms.gle/abc', 300, { x: 800, y: 300 })
-  for (const at of ['2026-10-21T12:00:00Z', '2026-10-21T12:00:02Z', '2026-10-21T12:00:04Z'])
+  // The scanner reads the latest frame while it is free: wait for it between frames, as a quick decoder would.
+  for (const at of ['2026-10-21T12:00:00Z', '2026-10-21T12:00:02Z', '2026-10-21T12:00:04Z']) {
     await h({ at: new Date(at), png: f })
+    await h.flush()
+  }
   expect(offers).toEqual([
     expect.objectContaining({
       url: 'https://forms.gle/abc',
@@ -90,8 +98,55 @@ test('black frames raise the health alert; an unknown level and a failing decode
       throw new Error('bridge died')
     }
   })
-  for (let i = 0; i <= 5; i++) await h({ at: new Date(Date.parse('2026-10-21T12:00:00Z') + i * 2000), png: black })
+  for (let i = 0; i <= 5; i++) {
+    await h({ at: new Date(Date.parse('2026-10-21T12:00:00Z') + i * 2000), png: black })
+    await h.flush()
+  }
   expect(alerts).toContain('black_frames')
-  expect(alerts).toContain('form_ping_failed')
+  expect(alerts).toContain('component_failed')
+  expect(alertDetails[alerts.indexOf('component_failed')]).toBe('QR scanning')
+  // The decode failed on all six frames; the error event is written once a minute.
+  expect(events.filter((e) => e.type === 'error' && e.data.where === 'qr')).toHaveLength(1)
+})
+
+test('a hung decode does not stop health samples or keyframes, and times out as a QR scanning fault', async () => {
+  const black = await sharp({ create: { width: 1920, height: 1080, channels: 3, background: '#000000' } })
+    .png()
+    .toBuffer()
+  const lit = await qrFrame('https://forms.gle/abc', 300, { x: 800, y: 300 })
+  let decodes = 0
+  const h = createFrameHandler({
+    ...deps,
+    levelDb: () => null,
+    decodeTimeoutMs: 150,
+    decode: () => {
+      decodes += 1
+      return new Promise(() => undefined)
+    }
+  })
+  const started = Date.now()
+  await h({ at: new Date('2026-10-21T12:00:00Z'), png: lit })
+  // The scanner is stuck on the first frame; the next frames are still handled at once.
+  for (let i = 1; i <= 6; i++) await h({ at: new Date(Date.parse('2026-10-21T12:00:00Z') + i * 2000), png: black })
+  expect(Date.now() - started).toBeLessThan(150)
+  expect(alerts).toContain('black_frames')
+  expect(events.filter((e) => e.type === 'keyframe').length).toBeGreaterThan(0)
+  expect(alerts).not.toContain('component_failed')
+  await h.flush()
+  expect(alerts).toContain('component_failed')
+  expect(alertDetails[alerts.indexOf('component_failed')]).toBe('QR scanning')
   expect(events.some((e) => e.type === 'error' && e.data.where === 'qr')).toBe(true)
+  // Frames that came while the scanner was stuck were not queued one by one: only the latest waited.
+  expect(decodes).toBeLessThanOrEqual(2)
+})
+
+test('after stop the scanner offers nothing', async () => {
+  const f = await qrFrame('https://forms.gle/abc', 300, { x: 800, y: 300 })
+  const h = createFrameHandler(deps)
+  await h({ at: new Date('2026-10-21T12:00:00Z'), png: f })
+  await h.flush()
+  h.stop()
+  await h({ at: new Date('2026-10-21T12:00:02Z'), png: f })
+  await h.flush()
+  expect(offers).toEqual([])
 })

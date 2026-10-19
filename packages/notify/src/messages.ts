@@ -21,6 +21,9 @@ export type AlertKind =
   | 'recording_unstable'
   | 'recorder_failed'
   | 'component_failed'
+  | 'run_failed'
+  | 'device_check_failed'
+  | 'device_check_stopped'
 
 const SUMMARY_LIMIT_BYTES = 3900
 
@@ -248,6 +251,12 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
       return 'The recorder stopped and could not restart. Nothing is recorded from now on.'
     case 'component_failed':
       return `The bot's ${requireDetail(kind, detail)} stopped working. The recording continues.`
+    case 'run_failed':
+      return 'The bot stopped unexpectedly. The meeting is no longer being recorded.'
+    case 'device_check_failed':
+      return 'The bot could not check that its microphone and camera are off, so it is rejoining the meeting.'
+    case 'device_check_stopped':
+      return 'The bot could not check its microphone and camera again, so it stopped.'
   }
 }
 

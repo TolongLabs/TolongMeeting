@@ -85,6 +85,15 @@ test('recorder and component alerts', () => {
     "The bot's chat capture stopped working. The recording continues."
   )
   expect(() => alertPing('Data Mining', 'component_failed')).toThrow('component_failed needs a detail')
+  expect(alertPing('Data Mining', 'run_failed').message).toBe(
+    'The bot stopped unexpectedly. The meeting is no longer being recorded.'
+  )
+  expect(alertPing('Data Mining', 'device_check_failed').message).toBe(
+    'The bot could not check that its microphone and camera are off, so it is rejoining the meeting.'
+  )
+  expect(alertPing('Data Mining', 'device_check_stopped').message).toBe(
+    'The bot could not check its microphone and camera again, so it stopped.'
+  )
 })
 
 test('summary cut to 3900 bytes never splits a multi-byte character', () => {

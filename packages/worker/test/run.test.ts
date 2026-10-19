@@ -68,12 +68,12 @@ test('happy path: order of steps and outcome', async () => {
     'asr.stop',
     'pinger.idle',
     'recorder.stop',
-    'joinRecording',
     'audio.stop',
     'context.close',
     'checkpoints.stop',
     'checkpointProfile',
-    'screen.stop'
+    'screen.stop',
+    'joinRecording'
   ])
   expect(d.pings.map((p) => p.title)).toEqual(['Joined: Data Mining'])
   expect(JSON.parse(await readFile(join(lectureCfg.dataDir, 'outcome.json'), 'utf8'))).toEqual(o)
@@ -96,6 +96,8 @@ test('busy Zoom account falls back to a guest stage', async () => {
   await runOccurrence(lectureCfg, d)
   expect(d.calls).toContain('launchGuestStage')
   expect(d.calls).toContain('guest.close')
+  // The account's own page leaves the call before the guest joins.
+  expect(d.gotos.map((u) => (u === 'about:blank' ? u : 'link'))).toEqual(['link', 'about:blank', 'link'])
   expect(d.joinOpts[1]).toEqual({
     guestName: lectureCfg.identity.zoomGuestName
   })
@@ -128,6 +130,8 @@ test('devices on: leave at once, ping, fail', async () => {
     reason: 'devices_on'
   })
   expect(d.calls.indexOf('leave')).toBe(d.calls.indexOf('assertDevicesOff') + 1)
+  // The browser closes right after the leave, before any slow step.
+  expect(d.calls.indexOf('context.close')).toBe(d.calls.indexOf('leave') + 1)
   expect(messages(d)).toContain('A microphone or camera showed as on, so the bot left the meeting.')
 })
 
@@ -293,7 +297,7 @@ test('a failing teardown step is reported and the later steps still run', async 
     }
   })
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({ result: 'completed' })
-  for (const step of ['joinRecording', 'audio.stop', 'context.close', 'checkpointProfile', 'screen.stop'])
+  for (const step of ['audio.stop', 'context.close', 'checkpointProfile', 'screen.stop', 'joinRecording'])
     expect(d.calls).toContain(step)
   expect((await events(lectureCfg)).find((e) => e.data.where === 'teardown recorder.stop')?.type).toBe('error')
 })
@@ -307,7 +311,195 @@ test('SIGTERM ends the meeting through the normal teardown', async () => {
     }
   })
   const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
-  expect(o).toMatchObject({ result: 'completed', endedBy: 'hard_stop', reason: 'terminated' })
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'terminated', reason: 'terminated' })
+  expect(d.calls).toContain('leave')
+  expect(d.calls).toContain('checkpointProfile')
+})
+
+const hang = (): Promise<never> => new Promise(() => undefined)
+const outcomeFile = async (cfg: JobConfig) => JSON.parse(await readFile(join(cfg.dataDir, 'outcome.json'), 'utf8'))
+const errorsAt = async (cfg: JobConfig, where: string) =>
+  (await events(cfg)).filter((e) => e.type === 'error' && e.data.where === where)
+
+// --- teardown fits the stop timeout ---
+
+test('a hung leave and a hung recorder stop: the checkpoint still runs, inside the budget', async () => {
+  const d = fakeDeps({ states: 'always_in_meeting', leave: hang, recorderStop: hang, teardownBudgetMs: 1000 })
+  const started = Date.now()
+  const o = await runOccurrence(lectureCfg, d)
+  const elapsed = Date.now() - started
+  expect(o.endedBy).toBe('hard_stop')
+  expect(d.calls).toContain('checkpointProfile')
+  expect(d.calls).toContain('screen.stop')
+  expect(d.calls.indexOf('checkpointProfile')).toBeGreaterThan(d.calls.indexOf('context.close'))
+  expect(elapsed).toBeLessThan(1000 + 500)
+  expect(await errorsAt(lectureCfg, 'teardown leave')).toHaveLength(1)
+  expect(await errorsAt(lectureCfg, 'teardown recorder.stop')).toHaveLength(1)
+  expect(await outcomeFile(lectureCfg)).toEqual(o)
+})
+
+test('a failed or timed-out leave closes the browser at once, before the next step', async () => {
+  for (const leave of [hang, async () => Promise.reject(new Error('page crashed'))]) {
+    const cfg = await makeCfg('lecture')
+    const d = fakeDeps({ states: 'always_in_meeting', leave, teardownBudgetMs: 800 })
+    await runOccurrence(cfg, d)
+    expect(d.calls.indexOf('context.close')).toBe(d.calls.indexOf('leave') + 1)
+    expect(d.calls.indexOf('chat.stop')).toBeGreaterThan(d.calls.indexOf('context.close'))
+    await rm(join(cfg.dataDir, '..'), { recursive: true, force: true })
+  }
+})
+
+test('joinRecording runs last, and is skipped with an event when no time is left', async () => {
+  const d = fakeDeps({ states: ['ended'], checkpoint: hang, teardownBudgetMs: 600 })
+  const started = Date.now()
+  const o = await runOccurrence(lectureCfg, d)
+  expect(Date.now() - started).toBeLessThan(600 + 500)
+  expect(d.calls).toContain('checkpointProfile')
+  expect(d.calls).not.toContain('joinRecording')
+  const [skip] = await errorsAt(lectureCfg, 'teardown joinRecording')
+  expect(String(skip!.data.message)).toContain('no teardown time left')
+  expect(await outcomeFile(lectureCfg)).toEqual(o)
+})
+
+test('the checkpoint is skipped, with an event, only when the browser did not close', async () => {
+  const d = fakeDeps({
+    states: ['ended'],
+    contextClose: async () => Promise.reject(new Error('chrome is stuck'))
+  })
+  await runOccurrence(lectureCfg, d)
+  expect(d.calls).not.toContain('checkpointProfile')
+  expect(d.calls).toContain('joinRecording')
+  expect(await errorsAt(lectureCfg, 'teardown checkpointProfile')).toHaveLength(1)
+})
+
+// --- extras never end the meeting ---
+
+test.each([
+  ['participant count', { participantCount: async () => Promise.reject(new Error('no roster')) }],
+  ['notice dismissal', { dismissNotices: async () => Promise.reject(new Error('no dialog')) }],
+  ['chat capture', { startFails: { chat: new Error('no chat panel') } }],
+  ['screen capture', { startFails: { frames: new Error('ffmpeg missing') } }],
+  ['live transcription', { startFails: { asr: new Error('no socket') } }]
+])('%s failing is pinged and the recording goes on', async (component, fault) => {
+  const d = fakeDeps({ states: ['in_meeting', 'in_meeting', 'ended'], ...fault })
+  const o = await runOccurrence(lectureCfg, d)
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'page' })
+  expect(messages(d)).toContain(`The bot's ${component} stopped working. The recording continues.`)
+  expect(d.calls).toContain('startRecorder')
+  expect(d.calls.indexOf('joinRecording')).toBeGreaterThan(-1)
+  expect((await events(lectureCfg)).some((e) => e.type === 'error' && e.data.where === component)).toBe(true)
+})
+
+test('a failure after the join in the audio set-up stays fatal', async () => {
+  const d = fakeDeps({ states: 'always_in_meeting' })
+  const real = d.adapterFor
+  d.adapterFor = (url) => ({
+    ...real(url)!,
+    connectOutputAudio: async () => Promise.reject(new Error('no sink'))
+  })
+  expect(await runOccurrence(lectureCfg, d)).toMatchObject({
+    result: 'failed',
+    reason: 'step_failed: connectOutputAudio'
+  })
+  expect(d.calls).not.toContain('startFrameLoop')
+})
+
+// --- alerts ---
+
+test('a supervisor crash pings run_failed, not a component fault', async () => {
+  const d = fakeDeps({})
+  d.adapterFor = () => {
+    throw new Error('adapter table broken')
+  }
+  expect(await runOccurrence(lectureCfg, d)).toMatchObject({ result: 'failed', reason: 'internal_error' })
+  expect(messages(d)).toEqual(['The bot stopped unexpectedly. The meeting is no longer being recorded.'])
+})
+
+test('a device check that cannot run says so; it is not called a drop', async () => {
+  const d = fakeDeps({
+    states: 'always_in_meeting',
+    assertDevices: (n) => {
+      if (n > 1) throw new Error('toolbar not found')
+    }
+  })
+  expect(await runOccurrence(lectureCfg, d)).toMatchObject({
+    result: 'failed',
+    endedBy: 'dropped',
+    reason: 'device_check_failed'
+  })
+  expect(messages(d).filter((m) => !m.startsWith('In the meeting'))).toEqual([
+    'The bot could not check that its microphone and camera are off, so it is rejoining the meeting.',
+    'The bot could not check its microphone and camera again, so it stopped.'
+  ])
+})
+
+test('a corrupt attempts.json falls back to this attempt and says so', async () => {
+  await mkdir(join(lectureCfg.dataDir, 'recording'), { recursive: true })
+  await writeFile(join(lectureCfg.dataDir, 'recording', 'attempts.json'), '{not json')
+  const d = fakeDeps({ states: ['ended'] })
+  expect(await runOccurrence(lectureCfg, d)).toMatchObject({ result: 'completed' })
+  expect(await errorsAt(lectureCfg, 'attempts.json')).toHaveLength(1)
+})
+
+// --- SIGTERM ---
+
+test('SIGTERM during a join that hangs ends as terminated, without a leave', async () => {
+  const abort = new AbortController()
+  const d = fakeDeps({
+    onJoin: () => {
+      abort.abort()
+      return hang()
+    }
+  })
+  const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(o).toMatchObject({ result: 'failed', endedBy: 'terminated', reason: 'terminated', joinedAt: null })
+  expect(d.calls).not.toContain('leave')
+  expect(d.calls).toContain('checkpointProfile')
+  expect(d.calls).toContain('joinRecording')
+})
+
+test('SIGTERM in the lobby ends as terminated, not as not admitted', async () => {
+  const abort = new AbortController()
+  const d = fakeDeps({
+    joins: [{ kind: 'lobby' }],
+    onAdmission: () => {
+      abort.abort()
+      return hang()
+    }
+  })
+  const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(o).toMatchObject({ result: 'failed', endedBy: 'terminated', reason: 'terminated' })
+  expect(messages(d)).toEqual([])
+  expect(d.calls).toContain('checkpointProfile')
+})
+
+test('SIGTERM during a rejoin is not a failed rejoin', async () => {
+  const abort = new AbortController()
+  const d = fakeDeps({
+    states: ['in_meeting', 'unknown'],
+    unknownMs: 30_000,
+    onJoin: (n) => {
+      if (n !== 2) return
+      abort.abort()
+      return hang()
+    }
+  })
+  const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'terminated', reason: 'terminated' })
+  expect(messages(d).some((m) => m.includes('dropped out of the meeting again'))).toBe(false)
+})
+
+test('SIGTERM right after the join starts none of the extras', async () => {
+  const abort = new AbortController()
+  const d = fakeDeps({ states: 'always_in_meeting' })
+  const real = d.adapterFor
+  d.adapterFor = (url) => ({
+    ...real(url)!,
+    connectOutputAudio: async () => abort.abort()
+  })
+  const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'terminated' })
+  for (const step of ['startChatCapture', 'startFrameLoop', 'startLiveAsr']) expect(d.calls).not.toContain(step)
   expect(d.calls).toContain('leave')
   expect(d.calls).toContain('checkpointProfile')
 })

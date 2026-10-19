@@ -13,7 +13,7 @@ import type { ChatCapture } from './chat/capture'
 import { createEventLog, type EventLog } from './events'
 import type { FormPinger } from './forms/pinger'
 import { writeFileAtomic } from './forms/store'
-import { createFrameHandler } from './frames/handler'
+import { createFrameHandler, type FrameHandler } from './frames/handler'
 import type { FrameLoop } from './frames/frames'
 import type { LiveAsr } from './asr/live'
 import { setupProfile, type ProfileSetup } from './profile-setup'
@@ -41,23 +41,36 @@ const TICK_ERROR_WINDOW_MS = MINUTE
 const GOTO_TIMEOUT_MS = 30_000
 const ARTEFACT_TIMEOUT_MS = 10_000
 
-// Bounds for the teardown steps. Each step that overruns is reported and the next one still runs.
+/**
+ * `docker stop` gives the worker 60 s (run-job.sh --stop-timeout 60) between SIGTERM and SIGKILL. Teardown must end
+ * inside that: it has this much time in all, counted from its start.
+ */
+const TEARDOWN_BUDGET_MS = 50_000
+/** The last part of the budget belongs to the final profile checkpoint: the steps before it cannot use it. */
+const CHECKPOINT_RESERVE_MS = 15_000
+
+// The most each teardown step may take; the time left in the budget cuts it shorter. A step that overruns is reported
+// and the next one still runs.
 const BOUND = {
-  sweep: 20_000,
-  leave: 15_000,
-  stopChat: 10_000,
-  stopFrames: 10_000,
-  stopQr: 5_000,
-  stopAsr: 10_000,
-  pinger: 30_000,
-  stopRecorder: 20_000,
-  join: 300_000,
-  stopAudio: 10_000,
-  closeBrowser: 30_000,
-  stopCheckpoints: 30_000,
+  sweep: 10_000,
+  leave: 10_000,
+  stopChat: 5_000,
+  stopFrames: 5_000,
+  stopQr: 3_000,
+  stopAsr: 5_000,
+  pinger: 8_000,
+  stopRecorder: 15_000,
+  stopAudio: 5_000,
+  closeBrowser: 10_000,
+  stopCheckpoints: 5_000,
   checkpoint: 120_000,
-  stopScreen: 15_000
+  alerts: 5_000,
+  stopScreen: 5_000,
+  join: 300_000
 }
+
+/** What a race against the abort signal returns when the signal wins. */
+const ABORTED = Symbol('aborted')
 
 interface Verdict {
   result: OccurrenceOutcome['result']
@@ -123,6 +136,14 @@ class OccurrenceRun {
   private chat: ChatCapture | null = null
   private frames: FrameLoop | null = null
   private asr: LiveAsr | null = null
+  private handler: FrameHandler | null = null
+
+  // Teardown clock (real time, ms since the epoch): the end of the whole budget, and the end of the part the steps
+  // before the final checkpoint may use. Both are unlimited until teardown starts.
+  private teardownEnd = Number.POSITIVE_INFINITY
+  private preEnd = Number.POSITIVE_INFINITY
+  private minSlice = 0
+  private contextClosed = false
 
   private inMeeting = false
   private joinedAt: Date | null = null
@@ -131,6 +152,8 @@ class OccurrenceRun {
   private breakoutShown = false
   private rejoins = 0
   private badSince: number | null = null
+  /** Why the meeting looks gone: no known state, or a device check that cannot run. */
+  private badWhy: 'state' | 'devices' = 'state'
   private lastRefresh = Number.NEGATIVE_INFINITY
   private quietSince: number | null = null
   private audioChecked = false
@@ -170,13 +193,14 @@ class OccurrenceRun {
       verdict = await this.runFailed(error)
     }
     await this.teardown()
-    await this.alerter.idle()
     const outcome: OccurrenceOutcome = {
       ...verdict,
       joinedAt: this.joinedAt?.toISOString() ?? null,
       endedAt: this.deps.now().toISOString()
     }
     await writeFileAtomic(join(dataDir, 'outcome.json'), `${JSON.stringify(outcome, null, 2)}\n`)
+    // Last: the pipeline can join the segments later, so this is the one step that may be skipped for lack of time.
+    await this.finishRecording()
     return outcome
   }
 
@@ -199,6 +223,27 @@ class OccurrenceRun {
   private fault(component: string, error: unknown): void {
     void this.report(component, error)
     this.alerter.alert('component_failed', component)
+  }
+
+  // A part of the run the meeting can do without: if it fails, the failure is reported and pinged, and the run goes on.
+  private async optional<T>(component: string, fn: () => T | Promise<T>): Promise<T | null> {
+    try {
+      return await fn()
+    } catch (error) {
+      this.fault(component, error)
+      return null
+    }
+  }
+
+  // Waits for a step, or for the abort signal, whichever comes first. A step abandoned by the abort is left running.
+  private async abortable<T>(name: string, fn: () => T | Promise<T>): Promise<T | typeof ABORTED> {
+    const run = this.step(name, fn)
+    run.catch(() => undefined)
+    return Promise.race([run, this.aborted.then((): typeof ABORTED => ABORTED)])
+  }
+
+  private terminated(): Verdict {
+    return { result: this.joinedAt === null ? 'failed' : 'completed', endedBy: 'terminated', reason: 'terminated' }
   }
 
   private async sendQuiet(ping: Ping): Promise<void> {
@@ -241,7 +286,7 @@ class OccurrenceRun {
       return failed(`step_failed: ${error.step}`)
     }
     await this.report('run', error)
-    this.alerter.alert('component_failed', 'run supervisor')
+    this.alerter.alert('run_failed')
     return failed('internal_error')
   }
 
@@ -259,16 +304,33 @@ class OccurrenceRun {
     )
   }
 
-  // Runs one teardown or cleanup action with a time limit. A failure or a timeout is reported; it never throws.
-  private async bounded(name: string, ms: number, fn: () => Promise<unknown>): Promise<void> {
+  // Runs one teardown or cleanup action with a time limit and says whether it finished. The limit is the step's own,
+  // cut to the time left: a step before the final checkpoint (phase 'pre') may not use the checkpoint's reserve, but
+  // always gets a short slice; a later step (phase 'end') may use all that is left. A failure, a timeout or no time
+  // left is reported; it never throws.
+  private async bounded(
+    name: string,
+    ms: number,
+    fn: () => Promise<unknown>,
+    phase: 'pre' | 'end' = 'pre'
+  ): Promise<boolean> {
+    const now = Date.now()
+    const endLeft = this.teardownEnd - now
+    const limit = Math.min(ms, phase === 'pre' ? Math.max(this.preEnd - now, this.minSlice) : endLeft, endLeft)
+    if (limit <= 0) {
+      await this.report(`teardown ${name}`, new Error('skipped: no teardown time left'))
+      return false
+    }
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${name} did not finish within ${ms / 1000} s`)), ms)
+      timer = setTimeout(() => reject(new Error(`${name} did not finish within ${limit / 1000} s`)), limit)
     })
     try {
       await Promise.race([Promise.resolve().then(fn), timeout])
+      return true
     } catch (error) {
       await this.report(`teardown ${name}`, error)
+      return false
     } finally {
       clearTimeout(timer)
     }
@@ -321,7 +383,7 @@ class OccurrenceRun {
     if (this.lecture) await this.checkFormSignIns(browser.desk)
 
     await this.waitUntil(this.start - JOIN_LEAD_MS)
-    if (this.isAborted) return failed('terminated')
+    if (this.isAborted) return this.terminated()
     if (this.now() >= this.hardStop) return failed('past_hard_stop')
 
     const audio = await this.step('startAudioSource', () => deps.startAudioSource())
@@ -334,15 +396,19 @@ class OccurrenceRun {
     this.watchRecorder(recorder)
     this.recordingStart = await this.firstRecordingStart(recorder)
 
+    // From here the bot is in the meeting: only the join checks below are fatal. The rest is optional (see `optional`).
     const entered = await this.enter()
     if (entered) return entered
+    if (this.isAborted) return this.terminated()
     const set = await this.afterJoin()
     if (set) return set
+    if (this.isAborted) return this.terminated()
     await this.dismiss()
-    this.participants = await this.step('participantCount', () => adapter.participantCount(this.stage!))
+    this.participants = await this.optional('participant count', () => adapter.participantCount(this.stage!))
     await this.sendQuiet(joinedPing(entry.name, this.participants))
     await this.ev('joined', { participants: this.participants })
 
+    if (this.isAborted) return this.terminated()
     await this.startComponents()
     return this.supervise()
   }
@@ -359,17 +425,25 @@ class OccurrenceRun {
     }
   }
 
-  // The recording's time origin is its first attempt's start, which attempts.json holds.
+  // The recording's time origin is its first attempt's start, which attempts.json holds. A file that cannot be read
+  // or parsed is reported, and the origin falls back to this attempt's start: the run must not die for a bad time origin.
   private async firstRecordingStart(recorder: Recorder): Promise<Date> {
     let text: string
     try {
       text = await readFile(join(this.cfg.dataDir, 'recording', 'attempts.json'), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return recorder.startedAt
-      throw error
+      await this.report('attempts.json', error)
+      return recorder.startedAt
     }
-    const starts = AttemptsSchema.parse(JSON.parse(text)).map((a) => Date.parse(a.startedAt))
-    return new Date(Math.min(recorder.startedAt.getTime(), ...starts))
+    try {
+      const starts = AttemptsSchema.parse(JSON.parse(text)).map((a) => Date.parse(a.startedAt))
+      if (starts.some(Number.isNaN)) throw new Error('an attempt has a start time that is not a date')
+      return new Date(Math.min(recorder.startedAt.getTime(), ...starts))
+    } catch (error) {
+      await this.report('attempts.json', error)
+      return recorder.startedAt
+    }
   }
 
   private watchRecorder(recorder: Recorder): void {
@@ -390,23 +464,27 @@ class OccurrenceRun {
 
   // --- joining ---
 
-  // Opens the link and joins. A busy Zoom account falls back to a guest browser, once.
-  private async gotoAndJoin(): Promise<JoinResult> {
+  // Opens the link and joins. A busy Zoom account falls back to a guest browser, once. Gives up at once when the abort
+  // signal fires, even while a page call hangs.
+  private async gotoAndJoin(): Promise<JoinResult | typeof ABORTED> {
     const { adapter, deps, cfg } = this
     const opts = { guestName: cfg.identity.zoomGuestName }
-    await this.step('goto', () =>
-      this.stage!.goto(this.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT_MS })
-    )
-    let result = await this.step('join', () => adapter!.join(this.stage!, opts))
-    if (result.kind === 'account_busy' && this.guest === null) {
+    const open = () =>
+      this.abortable('goto', () =>
+        this.stage!.goto(this.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT_MS })
+      )
+    if ((await open()) === ABORTED) return ABORTED
+    let result = await this.abortable('join', () => adapter!.join(this.stage!, opts))
+    if (result !== ABORTED && result.kind === 'account_busy' && this.guest === null) {
+      // The account's own page leaves the call before the guest joins.
+      const old = this.stage!
+      await this.bounded('blank old stage', ARTEFACT_TIMEOUT_MS, () => old.goto('about:blank'))
       const guest = await this.step('launchGuestStage', () => deps.launchGuestStage(this.screen!))
       this.guest = guest
       this.stage = guest.stage
       await this.restartChat()
-      await this.step('goto', () =>
-        this.stage!.goto(this.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT_MS })
-      )
-      result = await this.step('join', () => adapter!.join(this.stage!, opts))
+      if ((await open()) === ABORTED) return ABORTED
+      result = await this.abortable('join', () => adapter!.join(this.stage!, opts))
     }
     return result
   }
@@ -417,6 +495,7 @@ class OccurrenceRun {
     let retries = 0
     let result = await this.gotoAndJoin()
     for (;;) {
+      if (result === ABORTED) return this.terminated()
       switch (result.kind) {
         case 'in_meeting':
           return this.entered()
@@ -432,11 +511,10 @@ class OccurrenceRun {
           return failed(result.reason)
         case 'lobby': {
           const deadline = new Date(Math.min(this.now() + LOBBY_ATTEMPT_MS, this.hardStop))
-          const admission = await Promise.race([
-            this.step('waitUntilAdmitted', () => adapter!.waitUntilAdmitted(this.stage!, deadline)),
-            this.aborted.then(() => 'aborted' as const)
-          ])
-          if (admission === 'aborted') return failed('terminated')
+          const admission = await this.abortable('waitUntilAdmitted', () =>
+            adapter!.waitUntilAdmitted(this.stage!, deadline)
+          )
+          if (admission === ABORTED) return this.terminated()
           if (admission === 'admitted') return this.entered()
           if (admission === 'lobby_denied') {
             this.alerter.alert('lobby_denied')
@@ -473,64 +551,85 @@ class OccurrenceRun {
     return null
   }
 
+  // Leave at once and close the browser right after, before anything slow.
   private async devicesOn(): Promise<Verdict> {
     await this.leave()
+    await this.closeBrowser()
     this.alerter.alert('devices_on')
     return failed('devices_on')
   }
 
+  // Leaves the meeting. A leave that failed or timed out may have left the bot in the call, so the browser is closed at
+  // once: closing it is what ends the participant.
   private async leave(): Promise<void> {
-    await this.bounded('leave', BOUND.leave, () => this.adapter!.leave(this.stage!))
+    const left = await this.bounded('leave', BOUND.leave, () => this.adapter!.leave(this.stage!))
     this.inMeeting = false
+    if (!left) await this.closeBrowser()
+  }
+
+  // Closes the guest browser and the main context, each once; a context that failed to close is tried again.
+  private async closeBrowser(): Promise<void> {
+    if (this.guest) {
+      const guest = this.guest
+      this.guest = null
+      await this.bounded('guest browser', BOUND.closeBrowser, () => guest.browser.close())
+    }
+    if (this.context && !this.contextClosed) {
+      const context = this.context
+      this.contextClosed = await this.bounded('context.close', BOUND.closeBrowser, () => context.close())
+    }
   }
 
   private async dismiss(): Promise<void> {
-    for (const text of await this.step('dismissNotices', () => this.adapter!.dismissNotices(this.stage!))) {
-      await this.ev('notice_dismissed', { text })
-    }
+    const texts = await this.optional('notice dismissal', () => this.adapter!.dismissNotices(this.stage!))
+    for (const text of texts ?? []) await this.ev('notice_dismissed', { text })
   }
 
   // --- capture ---
 
+  // The parts of the recording that are extras. Each one that fails to start is reported and pinged, and the meeting goes
+  // on: the recording itself does not depend on them.
   private async startComponents(): Promise<void> {
     const { cfg, deps } = this
     if (this.lecture) {
-      const pinger = deps.createFormPinger({
-        cfg,
-        send: (p) => deps.sendPing(cfg.ntfy, p),
-        emit: async (type, data) => {
-          // The pinger reports a form it could not ping as an `alert` event; the ping follows from it.
-          if (type === 'alert' && data.kind === 'form_ping_failed')
-            this.alerter.alert('form_ping_failed', undefined, { recorded: true })
-          await this.ev(type, data)
-        }
-      })
-      this.pinger = pinger
-      pinger.ready.catch((e: unknown) => {
-        void this.report('form pinger', e)
-        this.alerter.alert('form_ping_failed')
+      this.pinger = await this.optional('form pinger', () => {
+        const pinger = deps.createFormPinger({
+          cfg,
+          send: (p) => deps.sendPing(cfg.ntfy, p),
+          emit: async (type, data) => {
+            // The pinger reports a form it could not ping as an `alert` event; the ping follows from it.
+            if (type === 'alert' && data.kind === 'form_ping_failed')
+              this.alerter.alert('form_ping_failed', undefined, { recorded: true })
+            await this.ev(type, data)
+          }
+        })
+        pinger.ready.catch((e: unknown) => {
+          void this.report('form pinger', e)
+          this.alerter.alert('form_ping_failed')
+        })
+        return pinger
       })
     }
-    this.chat = await this.step('startChatCapture', () => this.openChat())
-    const recordingStart = this.recordingStart!
+    this.chat = await this.optional('chat capture', () => this.openChat())
     const handler = createFrameHandler({
       dataDir: cfg.dataDir,
       timeZone: cfg.entry.timeZone,
-      recordingStart,
+      recordingStart: this.recordingStart!,
       lecture: this.lecture,
       region: () => this.region,
       participants: () => this.participants,
       levelDb: () => this.audio!.levelDb(1000),
       emit: this.ev,
-      onAlert: (kind) => this.alerter.alert(kind),
+      onAlert: (kind, detail) => this.alerter.alert(kind, detail),
       pinger: this.pinger
     })
-    const frames = await this.step('startFrameLoop', () => deps.startFrameLoop(this.screen!, handler))
+    this.handler = handler
+    const frames = await this.optional('screen capture', () => deps.startFrameLoop(this.screen!, handler))
     this.frames = frames
-    frames.onFatal((e) => this.fault('screen capture', e))
+    frames?.onFatal((e) => this.fault('screen capture', e))
     if (cfg.entry.transcription === 'live') {
       const audio = this.audio!
-      this.asr = await this.step('startLiveAsr', () =>
+      this.asr = await this.optional('live transcription', () =>
         deps.startLiveAsr(audio, cfg.ai, join(cfg.dataDir, 'transcript', 'live.jsonl'), {
           baseMs: audio.startedAt.getTime() - this.recorder!.startedAt.getTime(),
           onError: (e) => this.asrError(e)
@@ -568,7 +667,8 @@ class OccurrenceRun {
     const old = this.chat
     this.chat = null
     await this.bounded('chat.stop', BOUND.stopChat, () => old.stop())
-    this.chat = await this.step('startChatCapture', () => this.openChat())
+    // Only a rejoin gets here, and the bot is in the meeting by then: a chat that does not restart is a fault.
+    this.chat = await this.optional('chat capture', () => this.openChat())
   }
 
   // Awaited one link at a time. A failure pings and is rethrown, so chat capture retries the delivery.
@@ -595,7 +695,7 @@ class OccurrenceRun {
 
   private async supervise(): Promise<Verdict> {
     for (;;) {
-      if (this.isAborted) return ended('hard_stop', 'terminated')
+      if (this.isAborted) return this.terminated()
       if (this.now() >= this.hardStop) return ended('hard_stop')
       const verdict = await this.tick()
       if (verdict) return verdict
@@ -652,8 +752,12 @@ class OccurrenceRun {
     }
     await this.guard('audio level', () => this.watchAudio(now))
 
-    if (state === 'unknown' || !devicesChecked) this.badSince ??= now
-    else this.badSince = null
+    if (state === 'unknown' || !devicesChecked) {
+      this.badSince ??= now
+      this.badWhy = state === 'unknown' ? 'state' : 'devices'
+    } else {
+      this.badSince = null
+    }
     if (this.badSince !== null && now - this.badSince >= UNKNOWN_MS) return this.drop()
     return null
   }
@@ -675,12 +779,14 @@ class OccurrenceRun {
     this.alerter.alert('no_audio')
   }
 
-  // The first drop rejoins; the second stops.
+  // The first drop rejoins; the second stops. A device check that cannot run is not a drop of the meeting, and its
+  // alerts say so.
   private async drop(): Promise<Verdict | null> {
-    if (this.rejoins >= 1) return this.dropped()
+    const why = this.badWhy
+    if (this.rejoins >= 1) return this.dropped(why)
     this.rejoins += 1
     this.badSince = null
-    this.alerter.alert('dropped')
+    this.alerter.alert(why === 'devices' ? 'device_check_failed' : 'dropped')
     let verdict: Verdict | null
     try {
       verdict = (await this.enter()) ?? (await this.afterJoin())
@@ -691,20 +797,34 @@ class OccurrenceRun {
       verdict = failed(`step_failed: ${error.step}`)
     }
     if (verdict === null) return null
-    return verdict.reason === 'devices_on' ? verdict : this.dropped()
+    // SIGTERM during the rejoin is an end, not a failed rejoin: the verdict stands as it is.
+    if (this.isAborted) return verdict
+    return verdict.reason === 'devices_on' ? verdict : this.dropped(why)
   }
 
-  private dropped(): Verdict {
+  private dropped(why: 'state' | 'devices'): Verdict {
     this.inMeeting = false
+    if (why === 'devices') {
+      this.alerter.alert('device_check_stopped')
+      return failed('device_check_failed', 'dropped')
+    }
     this.alerter.alert('rejoin_failed')
     return failed('rejoin_failed', 'dropped')
   }
 
   // --- teardown ---
 
-  // Always runs, in this order, and a step that fails or overruns is reported without stopping the later steps:
-  // chat sweep, leave, chat, frames, live ASR, forms, recorder, join the segments, audio, browser, checkpoints, screen.
+  // Always runs, inside the stop timeout: 50 s in all, counted from now. Order: chat sweep, leave, chat, frames, live ASR,
+  // forms, recorder, audio, browser, checkpoint timer, final checkpoint, held-back alerts, screen. The checkpoint comes
+  // before the work the pipeline can redo later (joining the segments, `finishRecording`), and the steps before it
+  // leave it a share of the budget. It is skipped only when the browser would not close: a profile that is still open
+  // could be copied half-written. A step that fails or overruns is reported without stopping the later ones.
   private async teardown(): Promise<void> {
+    const budget = this.deps.teardownBudgetMs ?? TEARDOWN_BUDGET_MS
+    this.teardownEnd = Date.now() + budget
+    this.preEnd = this.teardownEnd - Math.min(CHECKPOINT_RESERVE_MS, budget * 0.3)
+    this.minSlice = Math.min(1000, budget / 20)
+
     if (this.inMeeting) {
       const chat = this.chat
       if (chat) await this.bounded('chat.sweepNow', BOUND.sweep, () => chat.sweepNow())
@@ -712,25 +832,39 @@ class OccurrenceRun {
     }
     if (this.chat) await this.bounded('chat.stop', BOUND.stopChat, () => this.chat!.stop())
     if (this.frames) await this.bounded('frames.stop', BOUND.stopFrames, () => this.frames!.stop())
+    this.handler?.stop()
     await this.bounded('qr bridge', BOUND.stopQr, () => closeQr())
     if (this.asr) await this.bounded('asr.stop', BOUND.stopAsr, () => this.asr!.stop())
     if (this.pinger) await this.bounded('pinger.idle', BOUND.pinger, () => this.pinger!.idle())
-    if (this.recorder) {
-      await this.bounded('recorder.stop', BOUND.stopRecorder, () => this.recorder!.stop())
-      await this.bounded('joinRecording', BOUND.join, () =>
-        this.deps.joinRecording(join(this.cfg.dataDir, 'recording'))
-      )
-    }
+    if (this.recorder) await this.bounded('recorder.stop', BOUND.stopRecorder, () => this.recorder!.stop())
     if (this.audio) await this.bounded('audio.stop', BOUND.stopAudio, () => this.audio!.stop())
-    if (this.guest) await this.bounded('guest browser', BOUND.closeBrowser, () => this.guest!.browser.close())
-    if (this.context) await this.bounded('context.close', BOUND.closeBrowser, () => this.context!.close())
+    await this.closeBrowser()
     if (this.checkpoints) await this.bounded('checkpoints.stop', BOUND.stopCheckpoints, () => this.checkpoints!.stop())
     if (this.context && this.profile) {
       const { checkpointsDir, key } = this.profile
-      await this.bounded('checkpointProfile', BOUND.checkpoint, () =>
-        this.deps.checkpointProfile(this.cfg.profileDir, checkpointsDir, key)
-      )
+      if (this.contextClosed) {
+        await this.bounded(
+          'checkpointProfile',
+          BOUND.checkpoint,
+          () => this.deps.checkpointProfile(this.cfg.profileDir, checkpointsDir, key),
+          'end'
+        )
+      } else {
+        await this.report('teardown checkpointProfile', new Error('skipped: the browser did not close'))
+      }
     }
-    if (this.screen) await this.bounded('screen.stop', BOUND.stopScreen, () => this.screen!.stop())
+    await this.bounded('alerts', BOUND.alerts, () => this.alerter.idle(), 'end')
+    if (this.screen) await this.bounded('screen.stop', BOUND.stopScreen, () => this.screen!.stop(), 'end')
+  }
+
+  // Joins the recording's segments into the final file. The pipeline can do this later if the run has no time left.
+  private async finishRecording(): Promise<void> {
+    if (!this.recorder) return
+    await this.bounded(
+      'joinRecording',
+      BOUND.join,
+      () => this.deps.joinRecording(join(this.cfg.dataDir, 'recording')),
+      'end'
+    )
   }
 }

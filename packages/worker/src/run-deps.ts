@@ -15,7 +15,7 @@ import { startRecorder } from './recorder/recorder'
 
 export interface OccurrenceOutcome {
   result: 'completed' | 'denied' | 'not_admitted' | 'failed'
-  endedBy: 'page' | 'removed' | 'hard_stop' | 'dropped' | null
+  endedBy: 'page' | 'removed' | 'hard_stop' | 'dropped' | 'terminated' | null
   reason: string | null
   joinedAt: string | null
   endedAt: string
@@ -45,6 +45,8 @@ export interface RunDeps {
   sleep(ms: number): Promise<void>
   /** Aborted by the CLI on SIGTERM or SIGINT: the run leaves the meeting and finishes its teardown. */
   signal?: AbortSignal
+  /** Test seam: the time teardown has in all, in milliseconds. Default 50 000, inside the 60 s stop timeout. */
+  teardownBudgetMs?: number
 }
 
 export const defaultDeps: RunDeps = {

@@ -33,6 +33,19 @@ function waitForEnd(signal?: AbortSignal): Promise<void> {
  */
 export async function seedProfile(cfg: JobConfig, overrides: Partial<RunDeps> = {}): Promise<void> {
   const deps = { ...defaultDeps, ...overrides }
+  // The first cleanup failure is thrown once the cleanup is done, unless the seed itself already threw.
+  let failure: Error | null = null
+  const cleanup = async (what: string, fn: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      await fn()
+      return true
+    } catch (error) {
+      const e = error instanceof Error ? error : new Error(String(error))
+      console.error(`seed: could not ${what}: ${e.message}`)
+      failure ??= new Error(`could not ${what}`, { cause: e })
+      return false
+    }
+  }
   const profile = await setupProfile(cfg, deps)
   const screen = await deps.startScreen()
   let context: Awaited<ReturnType<RunDeps['launchBrowser']>>['context'] | null = null
@@ -71,12 +84,18 @@ export async function seedProfile(cfg: JobConfig, overrides: Partial<RunDeps> = 
     )
     await Promise.race([waitForEnd(deps.signal), started])
   } finally {
+    // Each cleanup step has its own try: one that fails must not skip the checkpoint or leave Xvfb running.
     if (vnc && vnc.exitCode === null && vnc.signalCode === null) vnc.kill('SIGTERM')
-    await rm(passDir, { recursive: true, force: true })
+    await cleanup('remove the password file', () => rm(passDir, { recursive: true, force: true }))
     if (context) {
-      await context.close()
-      await deps.checkpointProfile(cfg.profileDir, profile.checkpointsDir, profile.key)
+      // The profile is copied only once the browser has closed: an open profile could be copied half-written.
+      const closed = await cleanup('close the browser', () => context!.close())
+      if (closed)
+        await cleanup('write the checkpoint', () =>
+          deps.checkpointProfile(cfg.profileDir, profile.checkpointsDir, profile.key)
+        )
     }
-    await screen.stop()
+    await cleanup('stop the screen', () => screen.stop())
   }
+  if (failure !== null) throw failure
 }
