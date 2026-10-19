@@ -38,7 +38,9 @@ export const ZoomSelectorsSchema = z.object({
     chatTime: selector,
     chatText: selector,
     chatReplyQuote: selector,
-    shareSurface: selector
+    shareSurface: selector,
+    // Where Zoom shows a notice: a button outside one is never clicked, and ended/removed/breakout are read from inside.
+    noticeContainer: selector
   }),
   // Regular expression sources, matched case-insensitively against page text or labels.
   texts: z.object({
@@ -50,7 +52,9 @@ export const ZoomSelectorsSchema = z.object({
     removed: pattern,
     breakout: pattern,
     roleLabel: pattern,
-    devicesOnLabel: pattern
+    devicesOnLabel: pattern,
+    // A dialog matching one of these asks for something: an OK or Got it in it is not a plain acknowledgement.
+    noticeDanger: z.array(z.object({ name: z.string().min(1), source: pattern })).min(1)
   }),
   noticeAllowlist: z.array(z.string().min(1)).min(1)
 })

@@ -132,6 +132,13 @@ test('a regular expression that does not compile fails when the selector map loa
   await expect(loadSelectors('zoom', ZoomSelectorsSchema)).rejects.toThrow(/zoom\.json is invalid[\s\S]*lobby/)
 })
 
+test('a notice danger pattern that does not compile fails when the selector map loads', async () => {
+  const map = JSON.parse(await readFile(join(SELECTORS_DIR, 'zoom.json'), 'utf8'))
+  map.texts.noticeDanger[1].source = 'start (my video'
+  await selectorsIn({ 'zoom.json': JSON.stringify(map) })
+  await expect(loadSelectors('zoom', ZoomSelectorsSchema)).rejects.toThrow(/zoom\.json is invalid[\s\S]*noticeDanger/)
+})
+
 test('a selector map that is not JSON names its file', async () => {
   await selectorsIn({ 'zoom.json': '{ "rootIframe": ' })
   await expect(loadSelectors('zoom', ZoomSelectorsSchema)).rejects.toThrow(/zoom\.json is not valid JSON/)

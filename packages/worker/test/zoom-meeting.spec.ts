@@ -14,6 +14,9 @@ type Driver =
   | 'startVideoNotice'
   | 'recordingNotice'
   | 'vanishingNotice'
+  | 'plainEnd'
+  | 'plainRemoved'
+  | 'nestedNotice'
   | 'stopShare'
   | 'showNotice'
 const drive = (page: Page, name: Driver, ...args: unknown[]) =>
@@ -230,6 +233,36 @@ for (const root of ['top', 'iframe']) {
     expect(await zoomAdapter.meetingState(page)).toBe('in_meeting')
     await drive(page, 'remove')
     expect(await zoomAdapter.meetingState(page)).toBe('removed')
+    expect(await read(page, 'forbiddenClicks')).toEqual([])
+  })
+
+  test(`an end screen outside a dialog is still the end (${root})`, async ({ page }) => {
+    await page.goto(url())
+    await drive(page, 'plainEnd')
+    expect(await zoomAdapter.meetingState(page)).toBe('ended')
+    await page.goto(url())
+    await drive(page, 'plainRemoved')
+    expect(await zoomAdapter.meetingState(page)).toBe('removed')
+    expect(await read(page, 'forbiddenClicks')).toEqual([])
+  })
+
+  test(`a live meeting whose chat says it ended stays in_meeting (${root})`, async ({ page }) => {
+    await page.goto(url())
+    await drive(page, 'addMessage', {
+      sender: 'Student B',
+      time: '8:50 PM',
+      text: 'This meeting has been ended by host'
+    })
+    expect(await zoomAdapter.meetingState(page)).toBe('in_meeting')
+  })
+
+  test(`nested containers: the whole dialog decides (${root})`, async ({ page }) => {
+    await page.goto(url())
+    await drive(page, 'nestedNotice')
+    expect(await zoomAdapter.meetingState(page)).toBe('breakout_prompt')
+    // The inner modal's text is harmless, the outer dialog's is not: the OK is left alone.
+    expect(await zoomAdapter.dismissNotices(page)).toEqual([])
+    expect(await read(page, 'clicks')).toEqual([])
     expect(await read(page, 'forbiddenClicks')).toEqual([])
   })
 

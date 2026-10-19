@@ -18,7 +18,8 @@
     "chatTime": ".new-chat-item__chat-info-time-stamp",
     "chatText": ".new-chat-message__text-box, .new-chat-message__content, .chat-item__chat-msg-container",
     "chatReplyQuote": ".chat-item__quote",
-    "shareSurface": "#sharee-container canvas, .sharee-container__canvas"
+    "shareSurface": "#sharee-container canvas, .sharee-container__canvas",
+    "noticeContainer": "[role='dialog'], [role='alertdialog'], .zm-modal, .ReactModal__Content"
   },
   "texts": {
     "signInRequired": "sign in to join|authorized attendees only",
@@ -29,7 +30,18 @@
     "removed": "you have been removed from this meeting",
     "breakout": "breakout room",
     "roleLabel": "\\s*\\((host|co-host)\\)\\s*$",
-    "devicesOnLabel": "^(mute my microphone|mute|stop my video|stop video)"
+    "devicesOnLabel": "^(mute my microphone|mute|stop my video|stop video)",
+    "noticeDanger": [
+      { "name": "join", "source": "\\bjoin\\b" },
+      { "name": "start video", "source": "start (my |your )?video" },
+      { "name": "allow", "source": "\\ballow\\b" },
+      { "name": "unmute", "source": "\\bunmute\\b" },
+      { "name": "share", "source": "\\bshare\\b" },
+      {
+        "name": "record",
+        "source": "record\\w*[^.\\n]*(consent|permission|agree|request)|(consent|permission|agree|request\\w*)[^.\\n]*record"
+      }
+    ]
   },
   "noticeAllowlist": ["OK", "Got it"]
 }

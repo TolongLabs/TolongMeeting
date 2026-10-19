@@ -298,6 +298,26 @@
           const el = notice('Notice', [['OK']])
           el.querySelector('button').addEventListener('mouseover', () => el.remove())
         },
+        // End and removal screens as plain page text, with no dialog container around them.
+        plainEnd() {
+          document.getElementById('leave').remove()
+          document.querySelector('main').append(element('p', '', 'This meeting has been ended by host'))
+        },
+        plainRemoved() {
+          document.getElementById('leave').remove()
+          document.querySelector('main').append(element('p', '', 'You have been removed from this meeting'))
+        },
+        // Nested containers: the breakout text is in the outer dialog, the OK button in an inner modal.
+        nestedNotice() {
+          const outer = notice('Breakout Room 3 is open', [])
+          const inner = element('div', 'zm-modal')
+          inner.append(element('p', '', 'Notice'))
+          const button = element('button', '', 'OK')
+          button.type = 'button'
+          button.dataset.click = 'unsafe ok'
+          inner.append(button)
+          outer.append(inner)
+        },
         stopShare() {
           document.querySelector('#sharee-container canvas')?.remove()
         },

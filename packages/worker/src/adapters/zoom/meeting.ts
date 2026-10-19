@@ -4,25 +4,11 @@ import { logStep, shown, visible, ZOOM_TIMEOUTS } from './join'
 import { duringNavigation, zoomRoot } from './root'
 import { textPattern, zoomSelectors } from './selectors'
 
-// Where Zoom shows a notice. A button outside one is never clicked, and the ended/removed/breakout phrases are read
-// only from inside one.
-const NOTICE_CONTAINER = "[role='dialog'], [role='alertdialog'], .zm-modal, .ReactModal__Content"
 // Toolbar and chat controls are never notice buttons, whatever their text.
 const NEVER_A_NOTICE = 'footer'
-// A dialog whose text matches one of these asks the user to do something (or says something is on offer): an OK or
-// Got it in it is not a plain acknowledgement. The breakout pattern comes from the selector map (texts.breakout).
-// "record" matches a consent request, not the notice "this meeting is being recorded".
-const DANGER_TEXTS: { name: string; source: string }[] = [
-  { name: 'join', source: '\\bjoin\\b' },
-  { name: 'start video', source: 'start (my |your )?video' },
-  { name: 'allow', source: '\\ballow\\b' },
-  { name: 'unmute', source: '\\bunmute\\b' },
-  { name: 'share', source: '\\bshare\\b' },
-  {
-    name: 'record',
-    source: 'record\\w*[^.\\n]*(consent|permission|agree|request)|(consent|permission|agree|request\\w*)[^.\\n]*record'
-  }
-]
+// The dialog containers and the danger patterns come from the selector map (selectors.noticeContainer,
+// texts.noticeDanger, texts.breakout), so a UI change is a config edit. A dialog whose text matches a danger pattern
+// asks the user to do something (or says something is on offer): an OK or Got it in it is not a plain acknowledgement.
 
 // The race a notice button can lose: it closed between the query and the click. Task 13 removed the generic swallow of
 // this error, so it is handled here, at the one place where it is a race and not a fault.
@@ -30,9 +16,14 @@ const NOT_ATTACHED = /Element is not attached to the DOM/
 
 // The text a person sees, as lines: all of it ('page'), and the part inside notices ('notices'). The chat is left out
 // of both: a message that says "the meeting has ended" or "breakout room" must not change the meeting state.
+// 'notices' is the text inside a notice container (sel.noticeContainer).
 //
 // Serialised by Playwright and evaluated in the page: do not bundle it with `--minify` or `--keep-names`.
-async function visibleText(root: PwFrame, chatList: string): Promise<{ page: string; notices: string }> {
+async function visibleText(
+  root: PwFrame,
+  chatList: string,
+  container: string
+): Promise<{ page: string; notices: string }> {
   return root.evaluate(
     (r) => {
       const page: string[] = []
@@ -49,7 +40,7 @@ async function visibleText(root: PwFrame, chatList: string): Promise<{ page: str
       }
       return { page: page.join('\n'), notices: notices.join('\n') }
     },
-    { chatList, container: NOTICE_CONTAINER }
+    { chatList, container }
   )
 }
 
@@ -57,12 +48,16 @@ export async function zoomMeetingState(page: Page): Promise<MeetingState> {
   const { selectors: sel, texts } = await zoomSelectors()
   const state = await duringNavigation('meetingState', async (): Promise<MeetingState> => {
     const root = await zoomRoot(page)
-    const text = await visibleText(root, sel.chatList)
-    if (textPattern(texts.ended).test(text.notices)) return 'ended'
-    if (textPattern(texts.removed).test(text.notices)) return 'removed'
+    const text = await visibleText(root, sel.chatList, sel.noticeContainer)
+    // With Leave showing, the meeting is live: ended/removed count only inside a dialog, so toolbar or other page text
+    // cannot end it. Without Leave there is nothing to protect, so an end screen counts wherever it is on the page.
+    const live = await visible(root, sel.leaveButton)
+    const endScope = live ? text.notices : text.page
+    if (textPattern(texts.ended).test(endScope)) return 'ended'
+    if (textPattern(texts.removed).test(endScope)) return 'removed'
     if (textPattern(texts.breakout).test(text.notices)) return 'breakout_prompt'
     if (textPattern(texts.lobby).test(text.page)) return 'lobby'
-    if (await visible(root, sel.leaveButton)) return 'in_meeting'
+    if (live) return 'in_meeting'
     return 'unknown'
   })
   // A page that is navigating shows no state yet.
@@ -86,9 +81,9 @@ export async function zoomDismissNotices(page: Page): Promise<string[]> {
         try {
           const verdict = await noticeVerdict(button, {
             allowlist: noticeAllowlist.map((t) => t.toLowerCase()),
-            danger: [{ name: 'breakout', source: texts.breakout }, ...DANGER_TEXTS],
+            danger: [{ name: 'breakout', source: texts.breakout }, ...texts.noticeDanger],
             excluded: [NEVER_A_NOTICE, sel.chatList].join(', '),
-            container: NOTICE_CONTAINER
+            container: sel.noticeContainer
           })
           if (verdict.kind === 'ignore') continue
           if (verdict.kind === 'skip') {
@@ -128,7 +123,12 @@ function noticeVerdict(
     const text = el.innerText.trim()
     if (!r.allowlist.includes(text.toLowerCase())) return { kind: 'ignore' }
     if (el.closest(r.excluded)) return { kind: 'ignore' }
-    const container = el.closest<HTMLElement>(r.container)
+    // The outermost container, so the danger check reads the whole dialog even when containers are nested.
+    let container = el.closest<HTMLElement>(r.container)
+    for (let outer = container?.parentElement?.closest<HTMLElement>(r.container); outer;) {
+      container = outer
+      outer = outer.parentElement?.closest<HTMLElement>(r.container) ?? null
+    }
     if (!container) return { kind: 'skip', text, reason: 'no dialog around it' }
     const dialogText = container.innerText
     const hit = r.danger.find((d) => new RegExp(d.source, 'i').test(dialogText))
