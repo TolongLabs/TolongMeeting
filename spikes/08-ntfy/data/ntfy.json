@@ -1,0 +1,48 @@
+{
+  "3h": {
+    "ntfyVersion": "2.32.0",
+    "expiryLabel": "3h",
+    "checkedAt": "2026-10-19T20:09:53Z",
+    "publishedAt": 1792440592,
+    "attachmentExpires": 1792451392,
+    "expiresMinusPublishedSeconds": 10800,
+    "fileOnDiskAfterPublish": true,
+    "N1_anonymousStatus": 200,
+    "N2_member2TokenStatus": 200,
+    "N2_member1TokenStatus": 200,
+    "N2_member1BytesIdenticalToSource": true,
+    "N3": null,
+    "pingAttachmentPriority": 4,
+    "pingAttachmentActionCount": 3,
+    "pingAttachmentActionKinds": "view",
+    "pingJsonPriority": 4,
+    "pingJsonActionCount": 3,
+    "pingJsonFiveActionsStatus": 400,
+    "pingJsonFiveActionsError": "invalid request: actions invalid; only 3 actions allowed"
+  },
+  "2m": {
+    "ntfyVersion": "2.32.0",
+    "expiryLabel": "2m",
+    "checkedAt": "2026-10-19T21:40:05Z",
+    "publishedAt": 1792441844,
+    "attachmentExpires": 1792441964,
+    "expiresMinusPublishedSeconds": 120,
+    "fileOnDiskAfterPublish": true,
+    "N1_anonymousStatus": 200,
+    "N2_member2TokenStatus": 200,
+    "N2_member1TokenStatus": 200,
+    "N2_member1BytesIdenticalToSource": true,
+    "N3": {
+      "memberTokenStatusAfterExpiry": 404,
+      "fileGone": true,
+      "secondsSincePublish": 4161
+    },
+    "pingAttachmentPriority": 4,
+    "pingAttachmentActionCount": 3,
+    "pingAttachmentActionKinds": "view",
+    "pingJsonPriority": 4,
+    "pingJsonActionCount": 3,
+    "pingJsonFiveActionsStatus": 400,
+    "pingJsonFiveActionsError": "invalid request: actions invalid; only 3 actions allowed"
+  }
+}

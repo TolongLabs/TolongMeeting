@@ -1,0 +1,33 @@
+name: tm-spike-08
+
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.32.0
+    command: serve
+    restart: unless-stopped
+    volumes:
+      - ./server.yml:/etc/ntfy/server.yml:ro
+      - ntfy-data:/var/lib/ntfy
+    ports:
+      # Deviation: 18090 instead of 8090, which another process holds on this machine.
+      - '127.0.0.1:18090:80'
+
+  caddy:
+    # Phone check only (plan step 3). Not run in this spike.
+    image: caddy:2.11.7-alpine
+    profiles: ['phone']
+    restart: unless-stopped
+    environment:
+      NTFY_HOST: ${NTFY_HOST:-ntfy-test.invalid} # set to the throwaway test name before the phone check
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports:
+      - '80:80'
+      - '443:443'
+    depends_on:
+      - ntfy
+
+volumes:
+  ntfy-data:
+  caddy-data:

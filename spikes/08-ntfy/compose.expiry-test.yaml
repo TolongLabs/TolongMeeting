@@ -1,0 +1,7 @@
+# Test-only override: shortens attachment expiry so the expiry mechanism can be seen in minutes.
+# Use: docker compose -f compose.yaml -f compose.expiry-test.yaml up -d ntfy
+# Production keeps attachment-expiry-duration: '3h' from server.yml.
+services:
+  ntfy:
+    environment:
+      NTFY_ATTACHMENT_EXPIRY_DURATION: '2m'
