@@ -2369,17 +2369,18 @@ git commit -m "feat(pipeline): build transcript and chat files"
 **Files:**
 
 - Create: `packages/pipeline/src/slides.ts`, `packages/pipeline/src/crop.ts`
-- Test: `packages/pipeline/src/crop.test.ts`, `packages/pipeline/src/slides.test.ts`
+- Modify: `packages/pipeline/package.json` (adds `sharp`, at the worker's version, and `zod`)
+- Test: `packages/pipeline/test/crop.test.ts`, `packages/pipeline/test/slides.test.ts`
 
 **Interfaces:**
 
 - Consumes: `keyframe` events in `events.jsonl` and PNGs in `frames/` (Task 18); `GreyImage`, `meanLuma`, `dHash256`, `hamming` (Task 10); `chatJson` (Task 4).
 - Produces (adds to contracts): `interface Slide { n: number; file: string; atMs: number; title: string; text: string }` (`file` is `slides/NN.webp`); `interface KeptFrame { file: string; offsetMs: number; region: Rect | null }`; `brightnessCrop(img: GreyImage, search: Rect): Rect | null`; `selectSlides(frames: { frame: KeptFrame; hash: bigint; luma: number }[]): KeptFrame[]`; `buildSlides(cfg: JobConfig, opts?: { concurrency?: number }): Promise<{ slides: Slide[]; mdPath: string }>`; `slides/slides.json` holds `Slide[]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/pipeline/src/crop.test.ts
+// packages/pipeline/test/crop.test.ts
 test('brightness crop finds the shared screen on a dark stage', () => {
   const img = dark(1920, 1080)
   paint(img, { x: 100, y: 200, width: 1000, height: 600 }, 200)
@@ -2396,7 +2397,7 @@ test('near-duplicates, build-ups and black frames are dropped', () => {
     k('a', 0, 0b0n, 90),
     k('a2', 10_000, 0b111n, 90),
     k('black', 15_000, 0xffffn, 3),
-    k('b-part', 20_000, 1n << 100n, 90),
+    k('b-part', 20_000, (1n << 100n) | 0xffffffffn, 90),
     k('b', 24_000, (1n << 100n) | 0xfffffn, 90)
   ])
   expect(kept.map((f) => f.file)).toEqual(['a', 'b'])
@@ -2404,7 +2405,7 @@ test('near-duplicates, build-ups and black frames are dropped', () => {
 ```
 
 ```ts
-// packages/pipeline/src/slides.test.ts (a data dir with three keyframes, one with a region; a fake AI server answers {title, text})
+// packages/pipeline/test/slides.test.ts (a data dir with three keyframes, one with a region; a fake AI server answers {title, text})
 test('slides are cropped, saved as WebP, read by the vision model and written to slides.md', async () => {
   const { slides, mdPath } = await buildSlides(cfg)
   expect(slides.map((s) => [s.n, s.file])).toEqual([
@@ -2425,14 +2426,14 @@ test('slides are cropped, saved as WebP, read by the vision model and written to
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/pipeline/src/crop.test.ts packages/pipeline/src/slides.test.ts`
+Run: `bun test packages/pipeline/test/crop.test.ts packages/pipeline/test/slides.test.ts`
 Expected: FAIL with "Cannot find module".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-`brightnessCrop` keeps the span of columns and rows in `search` where at least 4% of pixels (sampling every second pixel) are brighter than 40, or returns null when none qualify (the session's `crop.py` rule). Per keyframe, the crop is the event's `region` (clamped to 1920x1080), else `brightnessCrop` over the left 74% of the stage (`{ x: 0, y: 0, width: 1421, height: 1080 }`); a frame with no crop, or a crop with mean luma below 10, is dropped. `selectSlides` (input sorted by time, hashes of the crops): drop luma below 10; drop a frame whose hash is within 12 bits of an already kept one; drop a frame when the next remaining frame is within 6,000 ms and within 30 bits (a build-up). Each kept crop becomes `slides/NN.webp` (`sharp().webp({ quality: 90, effort: 6 })`, two digits, three past 99) and goes to `chatJson(cfg.ai, cfg.ai.models.vision, ..., z.object({ title: z.string(), text: z.string() }), 60_000)`, at most `concurrency` (default 4) at once, with this system prompt (exact copy):
+`brightnessCrop` keeps the span of columns and rows in `search` where at least 4% of pixels (counting every pixel) are brighter than 40, or returns null when none qualify (the session's `crop.py` rule). Per keyframe, the crop is the event's `region` (clamped to 1920x1080), else `brightnessCrop` over the left 74% of the stage (`{ x: 0, y: 0, width: 1421, height: 1080 }`); a frame with no crop, or a crop with mean luma below 10, is dropped. `selectSlides` (input sorted by time, hashes of the crops): drop luma below 10; drop a frame whose hash is within 12 bits of an already kept one; drop a frame when the next remaining frame is within 6,000 ms and within 30 bits (a build-up). Each kept crop becomes `slides/NN.webp` (`sharp().webp({ quality: 90, effort: 6 })`, two digits, three past 99) and goes to `chatJson(cfg.ai, cfg.ai.models.vision, ..., z.object({ title: z.string(), text: z.string() }), 60_000)`, at most `concurrency` (default 4) at once, with this system prompt (exact copy):
 
 ```text
 You read one slide from a lecture's shared screen. Reply with JSON {"title": string, "text": string} and nothing else.
@@ -2446,16 +2447,16 @@ You read one slide from a lecture's shared screen. Reply with JSON {"title": str
 
 `out/slides.md`: the H1 and intro line from the test, then per slide `## Slide NN: <title>`, the image line and the text.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/pipeline/src/crop.test.ts packages/pipeline/src/slides.test.ts`
+Run: `bun test packages/pipeline/test/crop.test.ts packages/pipeline/test/slides.test.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline docs/TRD.md
-git commit -m "feat(pipeline): curate and read slides"
+git commit -m "feat(pipeline): extract slides"
 ```
 
 ### Task 21: Lecture summary and tm-pipeline CLI
