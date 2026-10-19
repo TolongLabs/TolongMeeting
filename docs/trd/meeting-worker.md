@@ -11,6 +11,8 @@ Contents:
 
 One container per meeting occurrence, Linux, no GPU, started with `--shm-size=2g`.
 
+![Inside of one meeting worker container: stage and desk, tm-worker, the PulseAudio sink, ffmpeg, the frame loop, live ASR, the occurrence directory and the control client](../images/diagrams/meeting-worker.svg)
+
 - **Screen**: one virtual X display (Xvfb) of 3840x1080 with a simple window manager (openbox) and fixed window placement.
   - **Stage**: the left half (1920x1080) holds only the meeting, in a Chrome app-mode window (`--app=<url>`) with no tabs or toolbar. Only the stage is recorded, scanned for QR codes and used for slides.
   - **Desk**: the right half holds a second Chrome window with the chat-watcher tabs and any form tabs. The remote sign-in view shows only the desk, so credentials and forms are never recorded.

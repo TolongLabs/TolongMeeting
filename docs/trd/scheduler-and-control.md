@@ -19,6 +19,8 @@ Contents:
 
 ## Control channel
 
+![Control channel: the 5 second heartbeat and reply, a member command, crash recovery after 30 seconds of silence, and the companion relay in local mode](../images/diagrams/control-sequence.svg)
+
 - Each worker sends a heartbeat to the server every 5 seconds over HTTPS, with its state, recording status, participant count and pending events.
 - The reply carries commands: `leave_now` (the member pressed "Make the bot leave"), `take_over` (leave, then the member's ping opens the meeting link), `pause_for_signin`, `resume_after_signin`, and `stop`.
 - In local mode, the companion app relays the same heartbeat and commands, so the member's home network never needs to accept incoming connections.

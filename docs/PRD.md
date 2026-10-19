@@ -124,6 +124,8 @@ The requester wasn't sure, so these are the designer's calls. Each would make th
 
 Times relative to the scheduled start (T).
 
+![Lecture sequence from T-60 to the summary ping, as messages between the scheduler, the meeting worker, the outside sites, the pipeline and the member](images/diagrams/lecture-sequence.svg)
+
 1.  **T-60**: the scheduler starts a meeting worker for the entry's identity, at the identity's run location. The worker restores the identity's browser profile and checks the accounts the entry needs are still signed in: the meeting platform and the chat source, plus the form provider for lectures. If one isn't, it pings the member at high priority with a "Sign in again" button (see [website](DESIGN.md#website-pages)).
 1.  **T-60 to T-5**: if the entry's link comes from a chat, the worker opens that chat and first scans the last 24 hours for meeting links, then keeps watching; the newest link wins. A link pasted on the website always overrides watched links.
 1.  **T-10 to T-5**: for lectures, the worker loads the form provider's page once to confirm the session still works there. It then joins as the member with microphone and camera off, connects meeting audio output, waits in any lobby, and confirms it's in. It pings "joined", with the participant count, at normal priority.
@@ -188,6 +190,8 @@ Each requirement has an ID so plans and tests can cite it. Detail on how a requi
 
 Lectures only.
 
+![How a form link travels from QR frames, meeting chat or watched chat through resolve, domain filter, duplicate key, trust and attendance checks to a submission or a ping](images/diagrams/form-dataflow.svg)
+
 - **FORM-1 Detection.** The app detects forms from QR codes on the shared screen, links in the meeting chat, and links in the watched chat during the meeting.
 - **FORM-2 Providers.** Only final URLs on Google Forms (`docs.google.com/forms`, `forms.gle`) or Microsoft Forms (`forms.office.com`, `forms.microsoft.com`) count. Anything else is logged and ignored. The same form URL is handled once per meeting.
 - **FORM-3 Trust (decision 40).** The form must come from a trusted source. Otherwise the member gets a "form seen, not submitted" ping at high priority with the link and the reason. The trusted sources are:
@@ -250,6 +254,8 @@ Live transcription mode only.
 - **APP-6 Revocable access.** It signs in to the website once with a device token the member can revoke.
 
 ### Run locations
+
+![What runs where for server, server through home and local, and where each browser profile lives](images/diagrams/run-locations.svg)
 
 - **LOC-1 Three places.** Each identity runs in one of three places, set per identity and not per entry (decision 39). The [spike 1](TRD.md#early-spikes) results decide the default for a member's university and work identities.
 - **LOC-2 Server.** The default. The worker runs on the TolongLabs server in Singapore.

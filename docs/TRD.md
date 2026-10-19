@@ -35,6 +35,8 @@ Contents:
 
 TolongMeeting is one TypeScript repository deployed with Docker Compose on one server. The member's browser reaches a Caddy reverse proxy, which serves the Next.js website and API, the self-hosted ntfy server and, for the signed-in owner only, the remote view of a worker's desk. Postgres holds the data and the job queue. The scheduler turns timetable entries into occurrences and starts one worker container per occurrence through a restricted Docker socket proxy. The worker attends the meeting, records and watches it, and sends heartbeats to the server; the reply carries the member's commands. When the worker exits, the pipeline builds the transcript, slides, chat and summary, and the member is pinged. On the member's PC, the Electron companion app shows notifications, saves summaries, runs native transcription and, for identities set to run locally, runs the same worker container.
 
+![TolongLabs server, the member's PC, the home exit node and outside services, with the main connections between them](images/diagrams/system-architecture.svg)
+
 | Process               | What it does                                                           | Where                                      |
 | --------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
 | `tm-web`              | Website and API                                                        | Server, behind Caddy                       |
@@ -93,6 +95,18 @@ All designer's calls.
 - **Deployment**: Docker Compose on one server.
 
 ## State machines
+
+The diagrams show each state machine as three occurrence parts and two form parts, in reading order. The text blocks below list the same states and transitions.
+
+![Meeting occurrence states from scheduled to joining, with the skipped, waiting, no_link and failed exits](images/diagrams/occurrence-lifecycle-start.svg)
+
+![Meeting occurrence states from joining to leaving, with in_lobby, denied, restarting, left_by_member and failed](images/diagrams/occurrence-lifecycle-meeting.svg)
+
+![Meeting occurrence states from leaving to deleted, with waiting_for_pc and failed](images/diagrams/occurrence-lifecycle-after.svg)
+
+![Attendance form states from detected to inspecting, with untrusted, awaiting_signin, not_attendance and quiz](images/diagrams/form-lifecycle-start.svg)
+
+![Attendance form states from inspecting to submitted, with needs_member, already_answered and failed](images/diagrams/form-lifecycle-submit.svg)
 
 Meeting occurrence (stored in Postgres; every transition is an event):
 

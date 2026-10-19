@@ -28,6 +28,8 @@ Built with Electron, for a reliable tray icon, click-to-open notifications with 
 
 ## Run locations
 
+![What runs where for server, server through home and local, and where each browser profile lives](../images/diagrams/run-locations.svg)
+
 - **Server**: the default. The worker runs on the TolongLabs server in Singapore.
 - **Server through home**: the worker runs on the server, but its internet traffic leaves through the member's home connection over a Tailscale exit node on a device at home. Sign-ins then come from the member's usual address, but the home device must be on during meetings.
 - **My PC (local mode)**: the companion app runs the same worker container through Docker Desktop.
