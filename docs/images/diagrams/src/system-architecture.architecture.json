@@ -1,0 +1,410 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TolongMeeting System Architecture",
+    "output": ".archify/system-architecture/system-architecture.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "components": [
+    {
+      "id": "whisper",
+      "type": "backend",
+      "label": "Whisper",
+      "sublabel": "whisper-transcriber, GPU",
+      "pos": [30, 70],
+      "size": [138, 60]
+    },
+    {
+      "id": "companion",
+      "type": "frontend",
+      "label": "Companion app",
+      "sublabel": "Electron, tray icon",
+      "pos": [30, 200],
+      "size": [138, 60]
+    },
+    {
+      "id": "localworker",
+      "type": "backend",
+      "label": "Local worker",
+      "sublabel": "Docker Desktop",
+      "pos": [30, 330],
+      "size": [138, 60]
+    },
+    {
+      "id": "member",
+      "type": "external",
+      "label": "Member",
+      "sublabel": "browser, phone",
+      "pos": [30, 590],
+      "size": [138, 60],
+      "icon": "person"
+    },
+    {
+      "id": "ntfy",
+      "type": "messagebus",
+      "label": "ntfy",
+      "sublabel": "self-hosted pings",
+      "pos": [258, 200],
+      "size": [138, 60]
+    },
+    {
+      "id": "caddy",
+      "type": "cloud",
+      "label": "Caddy",
+      "sublabel": "HTTPS, forward_auth",
+      "pos": [258, 330],
+      "size": [138, 70]
+    },
+    {
+      "id": "novnc",
+      "type": "frontend",
+      "label": "noVNC desk view",
+      "sublabel": "x11vnc, desk only",
+      "pos": [258, 590],
+      "size": [138, 60]
+    },
+    {
+      "id": "screen",
+      "type": "frontend",
+      "label": "Stage + desk",
+      "sublabel": "Xvfb 3840x1080",
+      "pos": [448, 590],
+      "size": [138, 60]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Meeting worker",
+      "sublabel": "Chrome, ffmpeg, Node 24",
+      "pos": [638, 590],
+      "size": [138, 70]
+    },
+    {
+      "id": "proxy",
+      "type": "security",
+      "label": "Docker proxy",
+      "sublabel": "restricted socket API",
+      "pos": [828, 590],
+      "size": [138, 60]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Website + API",
+      "sublabel": "Next.js, GitHub sign-in",
+      "pos": [638, 330],
+      "size": [138, 60]
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "Postgres + pg-boss",
+      "sublabel": "records and job queue",
+      "pos": [819, 330],
+      "size": [156, 60]
+    },
+    {
+      "id": "pipeline",
+      "type": "backend",
+      "label": "Pipeline",
+      "sublabel": "text, slides, summary",
+      "pos": [1018, 330],
+      "size": [138, 60]
+    },
+    {
+      "id": "exports",
+      "type": "backend",
+      "label": "Exports",
+      "sublabel": "tm-exports, on demand",
+      "pos": [828, 200],
+      "size": [138, 60]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "T-60 start, health",
+      "pos": [828, 460],
+      "size": [138, 60]
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub",
+      "sublabel": "sign-in, org check",
+      "pos": [638, 70],
+      "size": [138, 60]
+    },
+    {
+      "id": "targets",
+      "type": "external",
+      "label": "Export targets",
+      "sublabel": "Docs, Notion, GitHub",
+      "pos": [828, 70],
+      "size": [138, 60]
+    },
+    {
+      "id": "tailscale",
+      "type": "cloud",
+      "label": "Home exit node",
+      "sublabel": "Tailscale",
+      "pos": [258, 840],
+      "size": [138, 60]
+    },
+    {
+      "id": "platforms",
+      "type": "external",
+      "label": "Meeting clients",
+      "sublabel": "Zoom, Teams, Meet web",
+      "pos": [448, 840],
+      "size": [138, 60]
+    },
+    {
+      "id": "forms",
+      "type": "external",
+      "label": "Attendance forms",
+      "sublabel": "Google, Microsoft Forms",
+      "pos": [638, 840],
+      "size": [138, 60]
+    },
+    {
+      "id": "chatapps",
+      "type": "external",
+      "label": "Chat web apps",
+      "sublabel": "WhatsApp Web, Discord",
+      "pos": [828, 840],
+      "size": [138, 60]
+    },
+    {
+      "id": "dashscope",
+      "type": "external",
+      "label": "DashScope",
+      "sublabel": "ASR, chat, vision",
+      "pos": [1018, 840],
+      "size": [138, 60]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "TolongLabs server (Singapore, Docker Compose)",
+      "wraps": ["ntfy", "caddy", "web", "pg", "pipeline", "exports", "scheduler", "proxy", "novnc", "screen", "worker"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Worker container (one per occurrence)",
+      "wraps": ["novnc", "screen", "worker"]
+    },
+    {
+      "kind": "region",
+      "label": "Member's PC",
+      "wraps": ["whisper", "companion", "localworker"]
+    },
+    {
+      "kind": "region",
+      "label": "Member's home",
+      "wraps": ["tailscale"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "member-to-caddy",
+      "from": "member",
+      "to": "caddy",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "caddy-to-web",
+      "from": "caddy",
+      "to": "web"
+    },
+    {
+      "id": "caddy-to-novnc",
+      "from": "caddy",
+      "to": "novnc",
+      "label": "WebSocket",
+      "variant": "security"
+    },
+    {
+      "id": "caddy-to-ntfy",
+      "from": "caddy",
+      "to": "ntfy"
+    },
+    {
+      "id": "web-to-github",
+      "from": "web",
+      "to": "github",
+      "label": "sign-in"
+    },
+    {
+      "id": "web-to-pg",
+      "from": "web",
+      "to": "pg",
+      "label": "SQL"
+    },
+    {
+      "id": "pipeline-to-pg",
+      "from": "pipeline",
+      "to": "pg",
+      "label": "job",
+      "variant": "dashed"
+    },
+    {
+      "id": "scheduler-to-pg",
+      "from": "scheduler",
+      "to": "pg",
+      "label": "queue",
+      "variant": "dashed"
+    },
+    {
+      "id": "exports-to-pg",
+      "from": "exports",
+      "to": "pg",
+      "label": "job",
+      "variant": "dashed"
+    },
+    {
+      "id": "exports-to-targets",
+      "from": "exports",
+      "to": "targets",
+      "label": "on demand",
+      "variant": "dashed"
+    },
+    {
+      "id": "scheduler-to-proxy",
+      "from": "scheduler",
+      "to": "proxy",
+      "label": "launch"
+    },
+    {
+      "id": "proxy-to-worker",
+      "from": "proxy",
+      "to": "worker",
+      "label": "create",
+      "variant": "security"
+    },
+    {
+      "id": "worker-to-screen",
+      "from": "worker",
+      "to": "screen"
+    },
+    {
+      "id": "screen-to-novnc",
+      "from": "screen",
+      "to": "novnc",
+      "label": "desk",
+      "variant": "security"
+    },
+    {
+      "id": "worker-to-web",
+      "from": "worker",
+      "to": "web",
+      "label": "heartbeat every 5 s",
+      "variant": "emphasis"
+    },
+    {
+      "id": "worker-to-platforms",
+      "from": "worker",
+      "to": "platforms",
+      "label": "joins"
+    },
+    {
+      "id": "worker-to-forms",
+      "from": "worker",
+      "to": "forms",
+      "label": "submits"
+    },
+    {
+      "id": "worker-to-chatapps",
+      "from": "worker",
+      "to": "chatapps",
+      "label": "reads chat"
+    },
+    {
+      "id": "worker-to-dashscope",
+      "from": "worker",
+      "to": "dashscope",
+      "label": "live ASR"
+    },
+    {
+      "id": "pipeline-to-dashscope",
+      "from": "pipeline",
+      "to": "dashscope",
+      "label": "summary, slides",
+      "variant": "dashed"
+    },
+    {
+      "id": "worker-to-tailscale",
+      "from": "worker",
+      "to": "tailscale",
+      "label": "via home",
+      "variant": "dashed"
+    },
+    {
+      "id": "tailscale-to-platforms",
+      "from": "tailscale",
+      "to": "platforms",
+      "label": "home IP",
+      "variant": "dashed"
+    },
+    {
+      "id": "ntfy-to-companion",
+      "from": "ntfy",
+      "to": "companion",
+      "label": "pings"
+    },
+    {
+      "id": "companion-to-caddy",
+      "from": "companion",
+      "to": "caddy",
+      "label": "jobs, relay"
+    },
+    {
+      "id": "companion-to-localworker",
+      "from": "companion",
+      "to": "localworker",
+      "label": "runs"
+    },
+    {
+      "id": "companion-to-whisper",
+      "from": "companion",
+      "to": "whisper",
+      "label": "native job",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Server",
+      "items": [
+        "Caddy fronts the website, ntfy and the noVNC WebSocket",
+        "The scheduler launches workers only through the restricted Docker socket proxy",
+        "At most 2 server workers run at once"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Worker container",
+      "items": [
+        "Stage is recorded; desk (chat watchers, forms, sign-in) is not",
+        "The worker sends a heartbeat every 5 s and writes its files to the occurrence directory"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Run locations",
+      "items": [
+        "Server, server through the home exit node, or the member's PC",
+        "On the PC the companion app runs the same worker image and relays its control channel"
+      ]
+    }
+  ]
+}
