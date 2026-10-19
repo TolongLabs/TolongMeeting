@@ -146,7 +146,7 @@ export const sampleForm: ResolvedForm // Google form G below, source 'qr', seenA
 export function sampleRecord(patch?: Partial<FormRecord>): FormRecord // newFormRecord(sampleForm, 'occ-1') with the patch applied
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/form-record.test.ts
@@ -208,12 +208,12 @@ test('identity.organisation defaults to null and accepts an OrgConfig', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/core/src/form-record.test.ts packages/core/src/job.test.ts`
 Expected: FAIL with "Cannot find module './form-record'" and the organisation test failing on `undefined`.
 
-- [ ] **Step 3: Implement `form-record.ts`, `testing.ts` and the `identity.organisation` field**
+- [x] **Step 3: Implement `form-record.ts`, `testing.ts` and the `identity.organisation` field**
 
 Canonical URL rules (the host is lower-cased in every case):
 
@@ -223,12 +223,12 @@ Canonical URL rules (the host is lower-cased in every case):
 
 `formIdFor` hashes with `node:crypto` `createHash('sha256')`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/core/src/form-record.test.ts packages/core/src/job.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/form-record.ts packages/core/src/form-record.test.ts packages/core/src/testing.ts packages/core/src/job.ts packages/core/src/job.test.ts packages/core/src/index.ts

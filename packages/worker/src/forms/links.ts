@@ -1,4 +1,4 @@
-import type { FormCandidate, FormProvider, ResolvedForm } from '@tm/core'
+import { canonicalFormUrl, type FormCandidate, type FormProvider, type ResolvedForm } from '@tm/core'
 
 export interface ResolveOptions {
   fetch?: typeof fetch
@@ -89,25 +89,11 @@ function isShortOrWrapperLink(url: string): boolean {
   return (u.hostname === 'www.google.com' || u.hostname === 'google.com') && u.pathname === '/url'
 }
 
-function trimTrailingSlash(path: string): string {
-  return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path
-}
-
-// The per-meeting duplicate key: one key per form, whatever shape the link was posted in.
+// The per-meeting duplicate key: the canonical form URL, the same one that gives the form id. It never carries
+// pre-filled answers or the direct-submit path. A URL that is not on a form provider is refused.
 export function normaliseFormUrl(url: string): string {
-  const u = parseUrl(url)
-  const provider = u ? formProviderOf(url) : null
-  if (!u || provider === null) throw new Error('not a form URL')
-  if (provider === 'microsoft') {
-    const id = u.searchParams.get('id')
-    if (u.pathname.toLowerCase() === '/pages/responsepage.aspx' && id) return `https://forms.office.com/id/${id}`
-    return `https://forms.office.com${trimTrailingSlash(u.pathname)}`
-  }
-  // Google's account-index shape (/forms/u/<n>/d/...) collapses to the plain /forms/d/... key.
-  const google = /^\/forms\/(?:u\/\d+\/)?d\/(e\/)?([^/]+)/.exec(u.pathname)
-  if (u.hostname === 'docs.google.com' && google)
-    return `https://docs.google.com/forms/d/${google[1] ?? ''}${google[2]}`
-  return `https://${u.hostname}${trimTrailingSlash(u.pathname)}`
+  if (formProviderOf(url) === null) throw new Error('not a form URL')
+  return canonicalFormUrl(url)
 }
 
 async function requestOnce(fetchFn: typeof fetch, url: string, signal: AbortSignal): Promise<Response> {

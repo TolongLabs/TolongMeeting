@@ -2,12 +2,13 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseJob, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
+import { formIdFor, parseJob, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
 import { sendPing, type Ping } from '@tm/notify'
 import { createFormPinger, type FormPingRecord } from '../src/forms/pinger'
 import { resolveFormLink } from '../src/forms/links'
 
-const FORM = 'https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=pp_url&entry.1=x'
+const PLAIN_FORM = 'https://docs.google.com/forms/d/e/1FAIpQ/viewform'
+const FORM = `${PLAIN_FORM}?usp=pp_url&entry.1=x`
 const SAFE_LINK = `https://nam01.safelinks.protection.outlook.com/?url=${encodeURIComponent(
   'https://docs.google.com/forms/d/e/1FAIpQ/viewform'
 )}&data=05`
@@ -116,7 +117,7 @@ test('trusted QR form: manual-submission ping within 30 s and a record', async (
   expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
   expect(ntfyBodies.map((b) => b.title)).toEqual(['Form to submit: Data Mining'])
   expect(ntfyBodies[0].priority).toBe(4)
-  expect(ntfyBodies[0].actions).toEqual([{ action: 'view', label: 'Open form', url: FORM, clear: false }])
+  expect(ntfyBodies[0].actions).toEqual([{ action: 'view', label: 'Open form', url: PLAIN_FORM, clear: false }])
 
   const rec = await onlyRecord()
   expect(rec).toMatchObject({
@@ -126,6 +127,7 @@ test('trusted QR form: manual-submission ping within 30 s and a record', async (
     url: 'https://forms.gle/abc'
   })
   expect(rec.formId).toMatch(/^[0-9a-f]{16}$/)
+  expect(rec.formId).toBe(formIdFor(PLAIN_FORM))
   expect(Date.parse(rec.pingedAt!) - Date.parse(rec.seenAt)).toBeLessThan(30_000)
   expect(ev.filter((e) => e.type === 'form').map((e) => e.data.state)).toEqual([
     'resolving',
@@ -323,4 +325,17 @@ test('a record write that fails right after resolution releases the form', async
 
   expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
   expect(await onlyRecord()).toMatchObject({ state: 'needs_member' })
+})
+
+test('a prefilled or direct-submit link pings the plain form, so opening it never submits', async () => {
+  const direct = 'https://docs.google.com/forms/d/e/1FAIpQ/formResponse?entry.1=Present&submit=Submit'
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  await p.offer({ url: direct, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.idle()
+
+  expect(sent).toHaveLength(1)
+  expect(ntfyBodies[0].actions).toEqual([{ action: 'view', label: 'Open form', url: PLAIN_FORM, clear: false }])
+  expect(JSON.stringify(ntfyBodies)).not.toMatch(/formResponse|entry\.1|submit=/)
+  expect((await onlyRecord()).formId).toBe(formIdFor(PLAIN_FORM))
 })

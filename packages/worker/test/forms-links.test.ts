@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import type { FormCandidate } from '@tm/core'
+import { canonicalFormUrl, type FormCandidate } from '@tm/core'
 import {
   extractLinks,
   formProviderOf,
@@ -172,13 +172,13 @@ test('Review Focus: one form in three shapes has one key', async () => {
   expect(fromShortAfterRedirect?.finalUrl).toBe('https://docs.google.com/forms/d/e/1FAIpQ/viewform')
 
   const keys = new Set([long, unwrapLink(wrapped), fromShort!, fromShortAfterRedirect!.finalUrl].map(normaliseFormUrl))
-  expect([...keys]).toEqual(['https://docs.google.com/forms/d/e/1FAIpQ'])
+  expect([...keys]).toEqual(['https://docs.google.com/forms/d/e/1FAIpQ/viewform'])
   expect(normaliseFormUrl('https://forms.office.com/Pages/ResponsePage.aspx?id=AbC&origin=lprLink')).toBe(
-    'https://forms.office.com/id/AbC'
+    'https://forms.office.com/Pages/ResponsePage.aspx?id=AbC'
   )
   expect(normaliseFormUrl('https://forms.microsoft.com/r/AbC?origin=x')).toBe('https://forms.office.com/r/AbC')
   expect(normaliseFormUrl('https://docs.google.com/forms/d/XyZ/edit?usp=sharing')).toBe(
-    'https://docs.google.com/forms/d/XyZ'
+    'https://docs.google.com/forms/d/XyZ/viewform'
   )
   expect(formProviderOf('https://forms.microsoft.com/r/AbC')).toBe('microsoft')
   expect(formProviderOf('https://docs.google.com/document/d/x')).toBeNull()
@@ -276,5 +276,29 @@ test('the account-index shape has the same key as the plain shape', () => {
   const plain = normaliseFormUrl('https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=sf_link')
   expect(normaliseFormUrl('https://docs.google.com/forms/u/0/d/e/1FAIpQ/viewform')).toBe(plain)
   expect(normaliseFormUrl('https://docs.google.com/forms/u/2/d/e/1FAIpQ/viewform?usp=pp_url')).toBe(plain)
-  expect(normaliseFormUrl('https://docs.google.com/forms/u/0/d/XyZ/edit')).toBe('https://docs.google.com/forms/d/XyZ')
+  expect(normaliseFormUrl('https://docs.google.com/forms/u/0/d/XyZ/edit')).toBe(
+    'https://docs.google.com/forms/d/XyZ/viewform'
+  )
+})
+
+test('normaliseFormUrl is the shared canonicalFormUrl; prefilled and direct-submit links open the plain form', () => {
+  const plain = 'https://docs.google.com/forms/d/e/1FAIpQ/viewform'
+  const links = [
+    `${plain}?usp=pp_url&entry.123=Absent`,
+    'https://docs.google.com/forms/d/e/1FAIpQ/formResponse?entry.123=Present&submit=Submit',
+    'https://docs.google.com/forms/u/1/d/e/1FAIpQ/formResponse?usp=pp_url&entry.123=Absent&submit=Submit#x'
+  ]
+  for (const link of links) {
+    expect(normaliseFormUrl(link)).toBe(plain)
+    expect(normaliseFormUrl(link)).toBe(canonicalFormUrl(link))
+  }
+  expect(normaliseFormUrl('https://forms.office.com/Pages/ResponsePage.aspx?id=AbC&r1a2b=Absent&embed=true')).toBe(
+    'https://forms.office.com/Pages/ResponsePage.aspx?id=AbC'
+  )
+  // The look-alike, https and port guards still refuse before canonicalising.
+  expect(() => normaliseFormUrl('https://docs.google.com.evil.example/forms/d/e/1FAIpQ/viewform')).toThrow(
+    'not a form URL'
+  )
+  expect(() => normaliseFormUrl('http://docs.google.com/forms/d/e/1FAIpQ/viewform')).toThrow('not a form URL')
+  expect(() => normaliseFormUrl('https://docs.google.com:8443/forms/d/e/1FAIpQ/viewform')).toThrow('not a form URL')
 })

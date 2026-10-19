@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
@@ -12,7 +11,7 @@ import type {
   SenderRole,
   TrustReason
 } from '@tm/core'
-import { IllegalTransition, localParts, nextFormState } from '@tm/core'
+import { canonicalFormUrl, formIdFor, IllegalTransition, localParts, nextFormState } from '@tm/core'
 import { formNotSubmittedPing, formToSubmitPing, linkUncheckedPing, type Ping } from '@tm/notify'
 import { LinkResolveError, normaliseFormUrl, resolveFormLink } from './links'
 import { checkTrust } from './trust'
@@ -52,11 +51,6 @@ interface Location {
 function locate(url: string): Location {
   const u = new URL(url)
   return { host: u.host, path: u.pathname }
-}
-
-// One id per form per meeting: the first 16 hex characters of SHA-256 of the duplicate key.
-function formIdOf(key: string): string {
-  return createHash('sha256').update(key).digest('hex').slice(0, 16)
 }
 
 // Only some states have a 'fail' edge. Terminal states such as needs_member keep their state.
@@ -167,7 +161,7 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       if (formKeys.has(key)) return
       formKeys.add(key)
       claimedKey = key
-      formId = formIdOf(key)
+      formId = formIdFor(form.finalUrl)
 
       location = locate(form.finalUrl)
       state = nextFormState(state, 'resolved')
@@ -185,14 +179,17 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       }
       await commit(rec, location)
 
+      // The member opens the link from the ping, so it is the plain form page: no prefilled answers, no direct submit.
+      const plainForm: ResolvedForm = { ...form, finalUrl: canonicalFormUrl(form.finalUrl) }
+
       // The ping goes out before the state moves, so a failed send leaves the form in a state that can still fail.
       const decision = checkTrust(form, cfg.entry.trustedSenders)
       if (decision.reason !== null) {
-        await send(formToSubmitPing(cfg.entry.name, form, decision.reason, clockOf(c.seenAt)))
+        await send(formToSubmitPing(cfg.entry.name, plainForm, decision.reason, clockOf(c.seenAt)))
         pinged = true
         state = nextFormState(state, 'manual_only')
       } else {
-        await send(formNotSubmittedPing(cfg.entry.name, form, clockOf(c.seenAt)))
+        await send(formNotSubmittedPing(cfg.entry.name, plainForm, clockOf(c.seenAt)))
         pinged = true
         state = nextFormState(state, 'untrusted')
       }

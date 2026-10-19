@@ -13,6 +13,11 @@ export interface AiConfig {
   models: { summary: string; vision: string; formMatch: string; asr: string }
 }
 
+export interface OrgConfig {
+  name: string
+  emailDomain: string // e.g. { name: 'Example University', emailDomain: 'example.edu.my' }
+}
+
 export interface NtfyConfig {
   url: string
   topic: string
@@ -34,7 +39,13 @@ export interface JobConfig {
     formDetails: Record<string, string> // per-entry: course_code, section, lecturer
     attendanceKeywords: string[]
   }
-  identity: { id: string; name: string; zoomGuestName: string; formProviders: FormProvider[] }
+  identity: {
+    id: string
+    name: string
+    zoomGuestName: string
+    formProviders: FormProvider[]
+    organisation: OrgConfig | null // the university organisation forms may be restricted to
+  }
   member: {
     id: string
     displayName: string
@@ -109,7 +120,8 @@ export const JobConfigSchema: z.ZodType<JobConfig> = z.object({
     id: nonEmpty,
     name: nonEmpty,
     zoomGuestName: nonEmpty,
-    formProviders: z.array(z.enum(['google', 'microsoft']))
+    formProviders: z.array(z.enum(['google', 'microsoft'])),
+    organisation: z.object({ name: nonEmpty, emailDomain: nonEmpty }).nullable().default(null)
   }),
   member: z.object({
     id: nonEmpty,

@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { parseJob } from '../src/job'
+import { JobConfigSchema, parseJob } from '../src/job'
 
 const validJob = {
   occurrenceId: 'occ_2026-10-21_lecture-1',
@@ -20,7 +20,8 @@ const validJob = {
     id: 'identity-1',
     name: 'Alice Tan',
     zoomGuestName: 'Alice Tan (Bot)',
-    formProviders: ['google']
+    formProviders: ['google'],
+    organisation: null
   },
   member: {
     id: 'member-1',
@@ -71,4 +72,16 @@ test('end after start, safe occurrence id, absolute dirs, wss asr url', () => {
   expect(() => parseJob({ ...validJob, occurrenceId: '../x' })).toThrow('occurrenceId')
   expect(() => parseJob({ ...validJob, dataDir: 'rel/dir' })).toThrow('dataDir')
   expect(() => parseJob({ ...validJob, ai: { ...validJob.ai, asrUrl: 'https://x' } })).toThrow('ai.asrUrl')
+})
+
+test('identity.organisation defaults to null and accepts an OrgConfig', () => {
+  const { organisation: _omitted, ...identity } = validJob.identity
+  expect(JobConfigSchema.parse({ ...validJob, identity }).identity.organisation).toBeNull()
+  const org = { name: 'Example University', emailDomain: 'example.edu.my' }
+  expect(
+    JobConfigSchema.parse({ ...validJob, identity: { ...validJob.identity, organisation: org } }).identity.organisation
+  ).toEqual(org)
+  expect(() =>
+    parseJob({ ...validJob, identity: { ...validJob.identity, organisation: { name: '', emailDomain: 'x' } } })
+  ).toThrow('identity.organisation.name')
 })
