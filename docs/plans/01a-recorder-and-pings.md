@@ -974,15 +974,16 @@ git commit -m "feat(worker): add encrypted profile checkpoints"
 **Files:**
 
 - Create: `packages/worker/src/recorder/recorder.ts`, `packages/worker/src/recorder/join.ts`
-- Test: `packages/worker/src/recorder/recorder.test.ts`, `packages/worker/src/recorder/join.test.ts`, `packages/worker/src/recorder/recorder.int.test.ts` (image only)
+- Test: `packages/worker/test/recorder.test.ts` (arguments, plus a real Xvfb display on the host), `packages/worker/test/join.test.ts`, `packages/worker/test/image/recorder.int.test.ts` (image only; shared helpers in `packages/worker/test/helpers/media.ts`)
+- Modify: `bunfig.toml` (ignore `**/test/image/**`)
 
 **Interfaces:**
 
 - Consumes: `Screen` from Task 7.
-- Produces: `startRecorder(screen: Screen, outDir: string, attempt: number, opts?: { segmentSeconds?: number }): Promise<Recorder>` (`outDir` is `<dataDir>/recording`).
-- Produces (adds to contracts): `interface Recorder { startedAt: Date; stop(): Promise<void>; onGap(cb: (g: { from: Date; to: Date }) => void): void }`; `recorderArgs(screen: Screen, outDir: string, attempt: number, startNumber: number, segmentSeconds = 300): string[]`; `joinRecording(recordingDir: string): Promise<string>` (returns the path of `meeting.mkv`); `recording/attempts.json`, an array of `{ attempt: number; startedAt: string; stoppedAt: string | null }`, which the pipeline uses as the transcript's time origin.
+- Produces: `startRecorder(screen: Screen, outDir: string, attempt: number, opts?: RecorderOptions): Promise<Recorder>`, with `interface RecorderOptions { segmentSeconds?: number; testAudio?: 'silence' }`. `testAudio: 'silence'` swaps the PulseAudio input for ffmpeg's `anullsrc` and exists only for hosts without PulseAudio; without it the recorder requires the PulseAudio source `tm_sink.monitor` and throws if it is absent (`outDir` is `<dataDir>/recording`).
+- Produces (adds to contracts): `interface Recorder { startedAt: Date; stop(): Promise<void>; onGap(cb: (g: { from: Date; to: Date }) => void): void; onFatal(cb: (error: Error) => void): void }`; `recorderArgs(screen: Screen, outDir: string, attempt: number, startNumber: number, segmentSeconds = 300, audio: AudioInput = 'pulse'): string[]`; `joinRecording(recordingDir: string): Promise<string>` (returns the path of `meeting.mkv`); `recording/attempts.json`, an array of `{ attempt: number; startedAt: string; stoppedAt: string | null; gaps?: { from: string; to: string }[] }` (`gaps` lists each ffmpeg death that was resumed), which the pipeline uses as the transcript's time origin.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/recorder/recorder.test.ts
@@ -1086,21 +1087,21 @@ test('records 1920x1080 at 15 fps with AAC, survives an ffmpeg kill, logs the ga
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/recorder/recorder.test.ts packages/worker/src/recorder/join.test.ts`
+Run: `bun test packages/worker/test/recorder.test.ts packages/worker/test/join.test.ts`
 Expected: FAIL with "Cannot find module './recorder'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-`startRecorder` appends `{ attempt, startedAt, stoppedAt: null }` to `attempts.json` (atomic rewrite), spawns `ffmpeg` with `recorderArgs` and resolves once the first segment file exists (at most 10 s). When ffmpeg exits while not stopping, it waits 1 s, restarts with `-segment_start_number` one past the highest existing number for this attempt and calls the gap callbacks with the exit and restart times. `stop()` sends `q` on stdin, waits up to 10 s, then SIGINT, and sets `stoppedAt`. The preset is `veryfast` unless spike 6's report sets another. `joinRecording` sorts `attempt_<N>_seg_<NNN>.mkv` by attempt then number, remuxes each with `ffmpeg -err_detect ignore_err -i <seg> -c copy` into a temporary directory (which repairs a truncated tail), and concatenates them with the concat demuxer (`-f concat -safe 0 -c copy`) into `recording/meeting.mkv`. Gaps between attempts are not filled; they live in `attempts.json` and the event log.
+`startRecorder` spawns `ffmpeg` with `recorderArgs`, waits for the first segment file (at most 10 s; it throws with ffmpeg's last output otherwise), then appends `{ attempt, startedAt, stoppedAt: null }` to `attempts.json` (atomic rewrite; it throws if the attempt is already there). Without `testAudio` it first checks `pactl list short sources` for `tm_sink.monitor` and throws if PulseAudio or the sink is missing. When ffmpeg exits while not stopping, it waits 1 s, restarts with `-segment_start_number` one past the highest existing number for this attempt, and once the new segment file exists it adds `{ from, to }` (the exit time and the resume time) to the attempt's `gaps` and calls the gap callbacks. After 5 restarts in a row that write no segment, it gives up: it sets `stoppedAt`, calls the `onFatal` callbacks, and `stop()` rejects with the error. `stop()` sends SIGINT (the arguments carry `-nostdin`, so ffmpeg ignores `q` on stdin), waits up to 10 s, then SIGKILL, and sets `stoppedAt`. The preset is `veryfast` unless spike 6's report sets another. `joinRecording` sorts `attempt_<N>_seg_<NNN>.mkv` by attempt then number, remuxes each with `ffmpeg -err_detect ignore_err -i <seg> -c copy` into a temporary directory (which repairs a truncated tail), and concatenates them with the concat demuxer (`-f concat -safe 0 -c copy`) into `recording/meeting.mkv`. Gaps between attempts are not filled; they live in `attempts.json` and the event log.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/recorder/recorder.test.ts packages/worker/src/recorder/join.test.ts && bun run image:worker && docker run --rm --shm-size=2g tm-worker:dev unit packages/worker/src/recorder/recorder.int.test.ts`
+Run: `bun test packages/worker/test/recorder.test.ts packages/worker/test/join.test.ts && bun run image:worker && docker run --rm --shm-size=2g tm-worker:dev unit packages/worker/test/image/recorder.int.test.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/recorder docs/TRD.md
