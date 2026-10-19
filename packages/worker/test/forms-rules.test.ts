@@ -111,7 +111,12 @@ test('confirmation options', () => {
     'Present (late)',
     'Present, online',
     'Hadir online',
-    'Attending in person'
+    'Attending in person',
+    'Presence',
+    'Kehadiran',
+    "I'm present",
+    'I am present',
+    "I'm here"
   ])
     expect(confirmsAttendance(o)).toBe(true)
   for (const o of [
@@ -151,7 +156,13 @@ test('confirmation options', () => {
     'Present - Section T',
     'Hadir - Kumpulan B',
     'Present (Room No. 3)',
-    'Presentation done'
+    'Presentation done',
+    // A bare "i" or "m" is a group label unless it sits in "I am", "I'm" or "I confirm".
+    'Present - Class I',
+    'Hadir - Kelas M',
+    'Present, Session M',
+    'Hadir (Kelas I)',
+    'Present M'
   ])
     expect(confirmsAttendance(o)).toBe(false)
 })

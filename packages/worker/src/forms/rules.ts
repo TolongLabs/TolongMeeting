@@ -9,7 +9,7 @@ const UNIT = String.raw`(?:pts?|points?|marks?|mata|markah|poin)`
 const POINTS_LINE = new RegExp(
   String.raw`^(?:${NUMBER} ${UNIT}(?: s)?|${NUMBER} (?:out )?of ${NUMBER} ${UNIT}(?: s)?|(?:${UNIT}|score|skor|jumlah markah) ${NUMBER}(?: (?:(?:out )?of )?${NUMBER})?|total ${NUMBER} ${UNIT}|total ${UNIT} ${NUMBER})$`
 )
-const CONFIRM_POSITIVE = /\b(present|hadir|attend|attending|attended|attendance|here)\b/
+const CONFIRM_POSITIVE = /\b(present|presence|hadir|kehadiran|attend|attending|attended|attendance|here)\b/
 // A negation word, or a lone "t" left when an apostrophe splits a contraction ("can't" -> "can t", "T/Hadir" -> "t hadir").
 const CONFIRM_NEGATIVE =
   /\b(not|no|non|neither|nor|never|absent|unavailable|unable|unattend\w*|cannot|cant|dont|wont|didnt|isnt|wasnt|arent|werent|havent|hasnt|couldnt|wouldnt|tidak|tak|tiada|bukan|belum|takde|tdk|gak|ketiadaan|skip|skipping|nope)\b|\bt\b/
@@ -61,19 +61,18 @@ export function orgRestricted(r: Restriction, org: OrgConfig | null): boolean {
   return r.orgOnly || (r.organisation !== null && normaliseText(r.organisation) === normaliseText(org.name))
 }
 
-// Every word of a confirming option must come from this list. "I'm" normalises to "i m", so both halves are listed.
+// Every word of a confirming option must come from this list, or be an "i" or "m" in context (see wordsAllowed).
 const CONFIRM_VOCABULARY = new Set([
   'present',
   'presence',
   'hadir',
+  'kehadiran',
   'attend',
   'attending',
   'attended',
   'attendance',
   'here',
-  'i',
   'im',
-  'm',
   'am',
   'is',
   'me',
@@ -112,10 +111,35 @@ const CONFIRM_VOCABULARY = new Set([
   'dah'
 ])
 
+// A bare "i" or "m" is a group label ("Class I", "Kelas M"), so it counts only in "I am", "I'm" or "I confirm".
+// "I'm" normalises to "i m": the "i" is followed by "m", and the "m" follows the "i".
+const I_FOLLOWERS = new Set([
+  'am',
+  'm',
+  'confirm',
+  'confirmed',
+  'confirming',
+  'attend',
+  'attending',
+  'attended',
+  'was',
+  'will',
+  'have',
+  'hereby'
+])
+
+function wordsAllowed(words: string[]): boolean {
+  return words.every((word, i) => {
+    if (word === 'i') return I_FOLLOWERS.has(words[i + 1] ?? '')
+    if (word === 'm') return words[i - 1] === 'i'
+    return CONFIRM_VOCABULARY.has(word)
+  })
+}
+
 // An option confirms only with a confirmation word, no negation, and nothing but confirmation vocabulary. Any other
 // word (a letter like "tk", a group label, a section, a room number) leaves it unconfirmed, so the member is pinged.
 export function confirmsAttendance(option: string): boolean {
   const t = normaliseText(option)
   if (!CONFIRM_POSITIVE.test(t) || CONFIRM_NEGATIVE.test(t)) return false
-  return t.split(' ').every((word) => CONFIRM_VOCABULARY.has(word))
+  return wordsAllowed(t.split(' '))
 }
