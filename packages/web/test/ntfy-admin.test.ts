@@ -42,7 +42,7 @@ test('ensureNtfy creates a user, grants one topic and stores a sealed token, onc
   const { memberId } = await seedMember(db, { full: false })
   const fetchFn = fakeFetch({ '/v1/account/token': { token: 'tk_test' } })
   const scope = createScope(db, memberId)
-  const { topic } = await ensureNtfy(db, scope, admin(fetchFn), master)
+  const { topic } = await ensureNtfy(scope, admin(fetchFn), master)
   expect(topic).toMatch(/^tm-[a-z2-7]{24}$/)
   expect(fetchFn.calls).toEqual([
     'POST /v1/users Bearer',
@@ -55,7 +55,7 @@ test('ensureNtfy creates a user, grants one topic and stores a sealed token, onc
   const me = await scope.me()
   expect(openColumn(master, memberId, 'members.ntfy_token', me.ntfyTokenEnc!)).toBe('tk_test')
   expect(me.ntfyTopic).toBe(topic)
-  const again = await ensureNtfy(db, scope, admin(fetchFn), master)
+  const again = await ensureNtfy(scope, admin(fetchFn), master)
   expect(again.topic).toBe(topic)
   expect(fetchFn.calls).toHaveLength(3)
 })
@@ -63,7 +63,7 @@ test('ensureNtfy creates a user, grants one topic and stores a sealed token, onc
 test('a member who already has a topic and token gets it back with no ntfy call', async () => {
   const { db, memberId, topic } = await withNtfy('tk_test', master)
   const fetchFn = fakeFetch()
-  const got = await ensureNtfy(db, createScope(db, memberId), admin(fetchFn), master)
+  const got = await ensureNtfy(createScope(db, memberId), admin(fetchFn), master)
   expect(got).toEqual({ topic })
   expect(fetchFn.calls).toEqual([])
 })
@@ -74,8 +74,8 @@ test('concurrent calls for one member provision once, under the advisory lock', 
   const fetchFn = fakeFetch({ '/v1/account/token': { token: 'tk_test' } })
   const scope = createScope(db, memberId)
   const [first, second] = await Promise.all([
-    ensureNtfy(db, scope, admin(fetchFn), master),
-    ensureNtfy(db, scope, admin(fetchFn), master)
+    ensureNtfy(scope, admin(fetchFn), master),
+    ensureNtfy(scope, admin(fetchFn), master)
   ])
   expect(second.topic).toBe(first.topic)
   expect(fetchFn.calls.filter((c) => c === 'POST /v1/users Bearer')).toHaveLength(1)
@@ -87,7 +87,7 @@ test('the ntfy password is never stored', async () => {
   const { memberId } = await seedMember(db, { full: false })
   const fetchFn = fakeFetch({ '/v1/account/token': { token: 'tk_test' } })
   const scope = createScope(db, memberId)
-  await ensureNtfy(db, scope, admin(fetchFn), master)
+  await ensureNtfy(scope, admin(fetchFn), master)
   const password = (fetchFn.bodies[0] as { password: string }).password
   expect(password).toMatch(/^[0-9a-f]{64}$/)
   expect(JSON.stringify(await scope.me())).not.toContain(password)
@@ -103,7 +103,7 @@ test('a failed token call deletes the new user, throws the original error, store
   let caught: unknown
   await expectNotLogged('tk_test', async () => {
     try {
-      await ensureNtfy(db, scope, admin(fetchFn), master)
+      await ensureNtfy(scope, admin(fetchFn), master)
     } catch (e) {
       caught = e
     }
@@ -127,8 +127,8 @@ test('after a failed token call the next ensureNtfy succeeds', async () => {
     key === 'POST /v1/account/token' && n === 0 ? new Response('no', { status: 500 }) : undefined
   )
   const scope = createScope(db, memberId)
-  await expect(ensureNtfy(db, scope, admin(fetchFn), master)).rejects.toThrow('ntfy admin request failed (HTTP 500)')
-  const { topic } = await ensureNtfy(db, scope, admin(fetchFn), master)
+  await expect(ensureNtfy(scope, admin(fetchFn), master)).rejects.toThrow('ntfy admin request failed (HTTP 500)')
+  const { topic } = await ensureNtfy(scope, admin(fetchFn), master)
   expect(topic).toMatch(/^tm-[a-z2-7]{24}$/)
   expect((await scope.me()).ntfyTopic).toBe(topic)
   expect(fetchFn.calls.slice(4)).toEqual([
@@ -145,7 +145,7 @@ test('a user left behind without a stored token is replaced, then provisioned', 
     key === 'POST /v1/users' && n === 0 ? new Response('', { status: 409 }) : undefined
   )
   const scope = createScope(db, memberId)
-  const { topic } = await ensureNtfy(db, scope, admin(fetchFn), master)
+  const { topic } = await ensureNtfy(scope, admin(fetchFn), master)
   expect(fetchFn.calls).toEqual([
     'POST /v1/users Bearer',
     'DELETE /v1/users Bearer',
@@ -166,7 +166,7 @@ test('a non-JSON token reply throws a fixed error without echoing the reply', as
   let caught: unknown
   await expectNotLogged('tk_test', async () => {
     try {
-      await ensureNtfy(db, scope, admin(fetchFn), master)
+      await ensureNtfy(scope, admin(fetchFn), master)
     } catch (e) {
       caught = e
     }

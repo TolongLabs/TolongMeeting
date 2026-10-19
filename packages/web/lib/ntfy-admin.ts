@@ -1,10 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import { pings } from '@tm/notify'
-import { sql } from 'drizzle-orm'
-import type { Db } from '../db/index'
 import type { Notifier } from '../db/notifier'
 import { sealColumn } from '../db/secrets'
-import { createScope, type MemberScope } from './scope'
+import type { MemberScope } from './scope'
 
 // The ntfy admin API. Only this module and the scope-taking helpers below hold the admin token; a member's publish
 // token is the only credential that leaves the server, and it is never logged or returned to the client.
@@ -106,16 +104,10 @@ export function ntfyAdminFromEnv(): NtfyAdmin {
  * after the user exists, the user is deleted again, so the next call starts clean. The lock is held until the
  * transaction ends, so two calls for one member can't both create a user.
  */
-export async function ensureNtfy(
-  db: Db,
-  scope: MemberScope,
-  admin: NtfyAdmin,
-  master: Buffer
-): Promise<{ topic: string }> {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'ntfy:' + scope.memberId}, 0))`)
-    const member = createScope(tx, scope.memberId)
-    const me = await member.me()
+export async function ensureNtfy(scope: MemberScope, admin: NtfyAdmin, master: Buffer): Promise<{ topic: string }> {
+  return scope.transaction(async (s) => {
+    await s.lock('ntfy')
+    const me = await s.me()
     if (me.ntfyTopic && me.ntfyTokenEnc) return { topic: me.ntfyTopic }
 
     const username = ntfyUsername(scope.memberId)
@@ -125,7 +117,7 @@ export async function ensureNtfy(
     try {
       await admin.allow(username, topic)
       const token = await admin.createToken(username, password)
-      await member.updateMe({
+      await s.updateMe({
         ntfyTopic: topic,
         ntfyTokenEnc: sealColumn(master, scope.memberId, 'members.ntfy_token', token)
       })
@@ -139,8 +131,9 @@ export async function ensureNtfy(
 
 /**
  * Creates the ntfy user. With the lock held and no token stored, a 409 means an earlier run left the user behind
- * without saving its token (the user is stranded), so it is replaced. A 409 with a token stored is not reached: the
- * caller has already returned.
+ * without saving its token (the user is stranded), so it is replaced. A 409 with a token stored is rethrown. `ensureNtfy`
+ * never stores a token without its topic (both go in one `updateMe` call), so a token with a null topic comes only from
+ * a row written some other way, and its 409 is an error, not a stranded user.
  */
 async function addUser(admin: NtfyAdmin, username: string, password: string, noToken: boolean): Promise<void> {
   try {

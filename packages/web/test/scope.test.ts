@@ -179,6 +179,13 @@ describe('scope operations', () => {
     expect(memberIds.every((id) => id === b.memberId)).toBe(true)
   })
 
+  test('lock is refused outside a transaction and taken inside one', async () => {
+    const b = await seedMember(db)
+    const scope = createScope(db, b.memberId)
+    await expect(scope.lock('ntfy')).rejects.toThrow('only valid inside scope.transaction()')
+    await scope.transaction((s) => s.lock('ntfy'))
+  })
+
   test('artefact files resolve only for the owner registered paths', async () => {
     const a = await seedMember(db)
     const b = await seedMember(db)
