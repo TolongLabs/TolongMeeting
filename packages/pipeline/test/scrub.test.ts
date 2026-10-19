@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { gateLinks, linksIn, scrub } from '../src/scrub'
+import { gateLinks, linksIn, normalizeText, scrub } from '../src/scrub'
 
 const REMOVED = '[meeting link removed]'
 
@@ -75,4 +75,95 @@ test('gateLinks keeps only links in the allowed set, exactly', () => {
   expect(
     gateLinks('a https://real.example/slides. b https://real.example/slides/extra c www.evil.example/x d', allowed)
   ).toBe('a https://real.example/slides. b [link removed] c [link removed] d')
+})
+
+// What the summary does to a model string before it keeps it.
+const gate = (text: string, allowed: string[] = []): string =>
+  gateLinks(scrub(normalizeText(text)), new Set(allowed.map((a) => scrub(normalizeText(a)))))
+
+test('a bare host, in any case or script, and every odd scheme is removed from running text', () => {
+  const cases = [
+    'evil.com/login',
+    'EVIL.COM/x',
+    'evil.com:8080',
+    'evil.example/a?b=1#c',
+    'xn--80ak6aa92e.com/pay',
+    'аррӏе.com/pay',
+    'bit.ly/xyz',
+    'sub.domain.evil.co.uk/x',
+    'ftp://evil.example/x',
+    'file:///etc/passwd',
+    'mailto:a@evil.example',
+    'data:text/html;base64,PHNjcmlwdD4=',
+    'javascript:alert#1',
+    'JAVASCRIPT:alert#1',
+    'tel:+60123',
+    'sms:+60123',
+    'intent://scan/#Intent;scheme=zxing;end',
+    'hxxps://evil.example/x',
+    'hxxp://evil.example/x',
+    'h**ps://evil.example/x',
+    'https:evil.example',
+    'htt\u200bps://evil.example/x',
+    'https://evil\u200b.example/x',
+    '\uff48\uff54\uff54\uff50\uff53://evil.example/x',
+    'https://evil\u3002example/x',
+    'evil[.]example/x'
+  ]
+  for (const url of cases) expect(gate(`see ${url} now`), url).toBe('see [link removed] now')
+})
+
+test('a script link loses its code', () => {
+  expect(gate('x javascript:alert(document.cookie) y')).not.toContain('alert')
+})
+
+test('a bare or odd-scheme link that the sources carry exactly survives; a near miss does not', () => {
+  const allowed = ['real.example/slides', 'https://real.example/deck', 'mailto:ta@real.example']
+  expect(gate('a real.example/slides b', allowed)).toBe('a real.example/slides b')
+  expect(gate('a https://real.example/deck. b', allowed)).toBe('a https://real.example/deck. b')
+  expect(gate('a mailto:ta@real.example b', allowed)).toBe('a mailto:ta@real.example b')
+  expect(gate('a real.example/slides/x b', allowed)).toBe('a [link removed] b')
+  expect(gate('a REAL.EXAMPLE/slides b', allowed)).toBe('a [link removed] b')
+  expect(gate('a real.example/deck b', allowed)).toBe('a [link removed] b')
+  expect(gate('a http://real.example/deck b', allowed)).toBe('a [link removed] b')
+})
+
+test('versions, file names, email addresses and ordinary prose are not links', () => {
+  for (const text of [
+    'version 1.2.3 is out',
+    'Python 3.12.1 and v2.0.0-beta',
+    'read notes.pdf and slides.pptx, then lab1.ipynb',
+    'open index.html, style.css and src/app.js',
+    'e.g. this, i.e. that, U.S.A. 8.30pm RM1.50',
+    'mail john.doe@school.edu.my about it',
+    'tel: 555 and data: the results',
+    'The password is the thing.'
+  ]) {
+    const kept = text.replace('The password is the thing.', 'The password: [removed] thing.')
+    expect(gate(text), text).toBe(kept)
+  }
+  expect(linksIn('notes.pdf, 1.2.3, evil.com')).toEqual(['evil.com'])
+})
+
+test('a file extension that is also a TLD, or a file name with a path or port, is a link', () => {
+  expect(gate('see main.py')).toBe('see [link removed]')
+  expect(gate('see notes.pdf/extra')).toBe('see [link removed]')
+  expect(gate('see notes.pdf:8080')).toBe('see [link removed]')
+  expect(gate('see main.py', ['main.py'])).toBe('see main.py')
+})
+
+test('a join link percent-encoded inside a scheme-less link is removed', () => {
+  expect(scrub('example.com/r?u=https%3A%2F%2Fzoom.us%2Fj%2F1')).toBe(REMOVED)
+  expect(scrub('see www.example.com/r?u=https%253A%252F%252Fzoom.us%252Fj%252F1.')).toBe(`see ${REMOVED}.`)
+  expect(scrub('(example.com/r?u=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij)')).toContain(REMOVED)
+  expect(scrub('example.com/r?u=https%3A%2F%2Fexample.org%2Fa')).toBe('example.com/r?u=https%3A%2F%2Fexample.org%2Fa')
+})
+
+test('a passcode parameter with an encoded "=" is stripped from any query', () => {
+  expect(scrub('https://example.com/x?pwd%3Dabc')).toBe('https://example.com/x')
+  expect(scrub('https://example.com/x?a=1&passcode%3D123&b=2#top')).toBe('https://example.com/x?a=1&b=2#top')
+  expect(scrub('https://example.com/x?PWD%3dabc&a=1')).toBe('https://example.com/x?a=1')
+  expect(scrub('example.com/x?pwd%3Dabc')).toBe('example.com/x')
+  expect(scrub('https://example.com/x?a=1')).toBe('https://example.com/x?a=1')
+  expect(scrub(scrub('https://example.com/x?pwd%3Dabc'))).toBe('https://example.com/x')
 })

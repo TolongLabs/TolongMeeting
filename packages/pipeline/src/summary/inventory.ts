@@ -3,7 +3,7 @@ import { chatJson } from '@tm/ai'
 import { localParts, type ChatMessage, type JobConfig } from '@tm/core'
 import { z } from 'zod'
 import { orderChat } from '../chat'
-import { escapeHeadings, gateLinks, LINK_REMOVED, linksIn, oneLine, scrub } from '../scrub'
+import { escapeHeadings, gateLinks, LINK_REMOVED, linksIn, normalizeText, oneLine, scrub } from '../scrub'
 import type { Slide } from '../slides'
 
 const Source = z.enum(['slide', 'lecturer_chat', 'speech'])
@@ -83,8 +83,8 @@ const ATTENDANCE = /^(?:[\s\W_]|\d+(?=[.):]))*attendance(?![a-z0-9])/i
  * the transcript or other students' chat can add neither.
  */
 function vetted(inv: Inventory, allowed: ReadonlySet<string>): Inventory {
-  const clear = (text: string): string => gateLinks(scrub(text), allowed)
-  const usable = (text: string): boolean => !ATTENDANCE.test(text)
+  const clear = (text: string): string => gateLinks(scrub(normalizeText(text)), allowed)
+  const usable = (text: string): boolean => !ATTENDANCE.test(normalizeText(text))
   const single = (text: string | null): string | null => (text === null || !usable(text) ? null : clear(text))
   const items = inv.items.flatMap((i): Inventory['items'] => {
     if (!usable(i.text)) return []
@@ -128,8 +128,8 @@ export async function buildInventory(
   const system = SYSTEM_PROMPT.replace('<YYYY-MM-DD>', lectureDate)
   const allowed = new Set(
     [
-      ...src.slides.filter((s) => s.failed !== true).map((s) => scrub(`${s.title}\n${s.text}`)),
-      ...lecturerChat.map((m) => scrub(m.text))
+      ...src.slides.filter((s) => s.failed !== true).map((s) => scrub(normalizeText(`${s.title}\n${s.text}`))),
+      ...lecturerChat.map((m) => scrub(normalizeText(m.text)))
     ].flatMap(linksIn)
   )
   const inventory = await chatJson(

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { link, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { AiKeyError } from '@tm/ai'
 import { canonicalFormUrl, type JobConfig } from '@tm/core'
 import { sendPing, summaryFailedPing, summaryReadyPing } from '@tm/notify'
@@ -101,9 +101,25 @@ async function writeAtomic(path: string, text: string): Promise<void> {
   }
 }
 
+// Removes `<lock>.<uuid>` files that a run died holding (it took over a stale lock and never finished), once they
+// are older than LOCK_STALE_MS. A live takeover is a moment long and its file is removed by that run itself.
+async function removeStaleTakeovers(lock: string): Promise<void> {
+  const name = basename(lock)
+  for (const file of await readdir(dirname(lock))) {
+    if (!file.startsWith(`${name}.`)) continue
+    const path = join(dirname(lock), file)
+    const info = await stat(path).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return null
+      throw err
+    })
+    if (info !== null && Date.now() - info.mtimeMs >= LOCK_STALE_MS) await rm(path, { force: true })
+  }
+}
+
 // Takes the lock beside the marker, or says another run holds it. A lock older than LOCK_STALE_MS is taken over by
 // renaming it to a name of this run's own: of several runs that see the same stale lock, one rename wins.
 async function claimLock(lock: string): Promise<boolean> {
+  await removeStaleTakeovers(lock)
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await (await open(lock, 'wx')).close()
@@ -124,16 +140,23 @@ async function claimLock(lock: string): Promise<boolean> {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue // another run took it over first
       throw err
     }
-    // The file this run now holds may be a live lock that replaced the stale one in between: put it back.
-    const grabbed = await stat(taken)
-    if (Date.now() - grabbed.mtimeMs < LOCK_STALE_MS) {
-      await link(taken, lock).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== 'EEXIST') throw err
+    try {
+      // The file this run now holds may be a live lock that replaced the stale one in between: put it back. When
+      // the lock name is taken again (EEXIST), another run owns it: this run does not ping.
+      const grabbed = await stat(taken).catch((err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') return null // a clean-up by another run removed it: the lock is free again
+        throw err
       })
+      if (grabbed === null) continue
+      if (Date.now() - grabbed.mtimeMs < LOCK_STALE_MS) {
+        await link(taken, lock).catch((err: NodeJS.ErrnoException) => {
+          if (err.code !== 'EEXIST') throw err
+        })
+        return false
+      }
+    } finally {
       await rm(taken, { force: true })
-      return false
     }
-    await rm(taken, { force: true })
   }
   return false
 }

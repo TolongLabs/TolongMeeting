@@ -268,6 +268,91 @@ test('every model string that is rendered loses a link no slide or lecturer mess
   expect(JSON.stringify(inv)).not.toContain('evil.example')
 })
 
+const DISGUISED_LINKS = [
+  'evil.com/login',
+  'EVIL.COM/x',
+  'xn--80ak6aa92e.com/pay',
+  'bit.ly/xyz',
+  'ftp://evil.example/x',
+  'file:///etc/passwd',
+  'mailto:a@evil.example',
+  'data:text/html;base64,PHNjcmlwdD4=',
+  'javascript:alert#1',
+  'htt\u200bps://evil.example/x',
+  '\uff48\uff54\uff54\uff50\uff53://evil.example/x',
+  'hxxps://evil.example/x',
+  'example.com/r?u=https%3A%2F%2Fzoom.us%2Fj%2F1',
+  'https://example.com/x?pwd%3Dabc'
+]
+
+test('a bare host, an odd scheme or a disguised link is removed from every rendered model string', async () => {
+  for (const leak of DISGUISED_LINKS) {
+    fake.requests.length = 0
+    fake.reply(
+      reply(
+        [
+          item({ kind: 'announcement', text: `Go to ${leak} now` }),
+          item({ kind: 'link', text: leak }),
+          item({ kind: 'task', text: 'Read notes.pdf, version 1.2.3 and real.example/slides' }),
+          item({
+            kind: 'announcement',
+            text: 'Details',
+            conflicts: [{ source: 'speech', due: null, text: `or ${leak}` }]
+          })
+        ],
+        { sessionLabel: `Week 7 ${leak}`, nextAction: `Open ${leak}`, covered: [`See ${leak}`, 'k-means'] }
+      )
+    )
+    const inv = await buildInventory(config(), {
+      transcriptMd: '',
+      slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Slides: real.example/slides' }],
+      chat: []
+    })
+    const gone = /\[(?:meeting )?link removed\]/
+    expect(
+      inv.items.map((i) => i.text),
+      leak
+    ).toEqual([expect.stringMatching(gone), 'Read notes.pdf, version 1.2.3 and real.example/slides', 'Details'])
+    expect(inv.items[2]!.conflicts[0]!.text, leak).toMatch(gone)
+    expect(inv.sessionLabel, leak).toMatch(gone)
+    expect(inv.nextAction, leak).toMatch(gone)
+    expect(inv.covered[0], leak).toMatch(gone)
+    expect(inv.covered[1]).toBe('k-means')
+    const rendered = JSON.stringify(inv)
+    for (const bit of [
+      'evil',
+      'EVIL',
+      'bit.ly',
+      'xn--',
+      'ftp',
+      'passwd',
+      'mailto',
+      'base64',
+      'alert',
+      'zoom',
+      'pwd',
+      'abc'
+    ])
+      if (leak.includes(bit)) expect(rendered, leak).not.toContain(bit)
+  }
+})
+
+test('a bare link that a slide carries survives where the sources carry it exactly', async () => {
+  fake.requests.length = 0
+  fake.reply(
+    reply([
+      item({ kind: 'link', text: 'Deck: real.example/slides' }),
+      item({ kind: 'link', text: 'real.example/other' })
+    ])
+  )
+  const inv = await buildInventory(config(), {
+    transcriptMd: '',
+    slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Deck at real.example/slides' }],
+    chat: []
+  })
+  expect(inv.items.map((i) => i.text)).toEqual(['Deck: real.example/slides'])
+})
+
 test('a string opening with Attendance is dropped, however it is dressed', async () => {
   const forged = [
     '**Attendance**: submitted',

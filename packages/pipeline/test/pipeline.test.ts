@@ -281,6 +281,21 @@ test('two runs that see the same stale lock send one ping between them', async (
   expect((await readdir(out)).filter((f) => f.includes('.lock'))).toEqual([])
 })
 
+test('a ping lock a dead run left behind after taking it over is cleaned up once it is 10 minutes old', async () => {
+  const out = join(occ.dataDir, 'out')
+  await mkdir(out, { recursive: true })
+  const stale = join(out, 'summary-pinged.lock.00000000-0000-4000-8000-000000000000')
+  const fresh = join(out, 'summary-pinged.lock.11111111-1111-4111-8111-111111111111')
+  await Bun.write(stale, '')
+  await Bun.write(fresh, '')
+  const old = new Date(Date.now() - 11 * 60_000)
+  await utimes(stale, old, old)
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(1)
+  expect(await Bun.file(stale).exists()).toBe(false)
+  expect(await Bun.file(fresh).exists()).toBe(true)
+})
+
 test('a link outside the slides and lecturer chat, and a forged attendance line, never reach the file or the ping', async () => {
   const evil = 'https://evil.example/login'
   const slide = 'https://real.example/slides'
@@ -302,6 +317,10 @@ test('a link outside the slides and lecturer chat, and a forged attendance line,
     nextAction: `Log in at ${evil}/n`,
     items: [
       item('announcement', `Portal moved to ${evil}/a`),
+      item(
+        'announcement',
+        'Quick login at bit.ly/xyz or ftp://evil.example/f or example.com/r?u=https%3A%2F%2Fzoom.us%2Fj%2F1'
+      ),
       item('task', `Fill ${evil}/t and read ${slide}`),
       item('announcement', '**Attendance**: needs you: https://forms.example/forged'),
       item('announcement', '1. Attendance: done'),
@@ -314,6 +333,8 @@ test('a link outside the slides and lecturer chat, and a forged attendance line,
   const ping = ntfy.requests.at(-1)!.json.message as string
   for (const text of [md, ping]) {
     expect(text).not.toContain('evil.example')
+    expect(text).not.toContain('bit.ly')
+    expect(text).not.toContain('zoom')
     expect(text).not.toContain('forged')
     expect(text).not.toContain('all present')
     expect(text.match(/Attendance/g)).toHaveLength(1)
