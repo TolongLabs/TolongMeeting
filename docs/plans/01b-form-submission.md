@@ -1956,7 +1956,7 @@ Handler sequence. "Apply T" means `applyFormTrigger`, then `saveFormRecord`, the
 6.  **Advancing**: with `hasSubmit`, apply `submit_clicked`, run `driver.submit` (`FormStepError`: fail `submit_failed`), then by `pageKind`: `confirmation` screenshots `confirmation.png`, sets `submittedAt` and applies `confirmed`; `already_answered` applies `already_answered_seen`; anything else fails `submit_failed`. With `hasNext`, run `driver.next` (`FormStepError`: fail `next_failed`), apply `next_page` and go to step 4 with n + 1. With neither, fail `unknown_page`.
 7.  **Wrapping up**: any other exception emits an `error` event with its message and fails `unexpected_error`. The tab is closed whenever the record reaches a terminal state.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 let fx: FixtureServer
@@ -2114,19 +2114,19 @@ test('stops at the 2-minute deadline', async ({ page: desk }) => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-handler.spec.ts`
 Expected: FAIL with "Cannot find module '../src/forms/handler'".
 
-- [ ] **Step 3: Implement `handleForm`, `makeFormContextBase` and the test context as specified**
+- [x] **Step 3: Implement `handleForm`, `makeFormContextBase` and the test context as specified**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-handler.spec.ts && bun run typecheck`
 Expected: PASS (11 tests), and the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/handler.ts packages/worker/src/forms/context.ts packages/worker/src/forms/types.ts packages/worker/test/forms/context.ts packages/worker/test/forms-handler.spec.ts

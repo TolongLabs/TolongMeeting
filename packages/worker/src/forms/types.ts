@@ -1,3 +1,8 @@
+import type { EventType, FormProvider, FormRecord, JobConfig } from '@tm/core'
+import type { Ping } from '@tm/notify'
+import type { Page } from 'playwright'
+import type { FormLinks } from './pings'
+
 export type QuestionType = 'text' | 'paragraph' | 'radio' | 'checkbox' | 'dropdown' | 'other' // other: date, time, grid, file upload
 
 export interface FormQuestion {
@@ -55,4 +60,19 @@ export type Answer =
 export interface PagePlan {
   answers: Answer[]
   unmatchedRequired: FormQuestion[]
+}
+
+export interface FormContextBase {
+  cfg: JobConfig
+  desk: Page
+  links: FormLinks
+  emitEvent(type: EventType, data: Record<string, unknown>): Promise<void>
+  ping(p: Ping): Promise<void>
+  matchLabels(questions: MatchQuestion[], detailKeys: string[]): Promise<Map<string, string>>
+  waitForSignin(tab: Page, provider: FormProvider, signal: AbortSignal): Promise<boolean>
+}
+
+export interface FormContext extends FormContextBase {
+  previous: FormRecord | null // the record to continue after a trust upgrade (Task 13), else null
+  signal: AbortSignal // aborted when the dispatcher closes
 }

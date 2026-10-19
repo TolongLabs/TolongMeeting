@@ -35,6 +35,8 @@ const FAILED_REASON: Record<Exclude<StopReason, 'untrusted_source' | 'not_org_re
   fill_failed: "an answer didn't stay filled in",
   next_failed: "its next page didn't open",
   submit_failed: "it didn't confirm the submission (check whether your response was recorded)",
+  submit_unconfirmed:
+    'it may have been submitted but never confirmed it (please check whether your response was recorded)',
   deadline: "it wasn't ready to submit within 2 minutes",
   interrupted: 'the worker restarted while handling it',
   interrupted_submitting: 'the worker restarted while submitting it (check whether your response was recorded)',

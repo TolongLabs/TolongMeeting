@@ -17,6 +17,7 @@ export type StopReason =
   | 'fill_failed'
   | 'next_failed'
   | 'submit_failed'
+  | 'submit_unconfirmed'
   | 'deadline'
   | 'interrupted'
   | 'interrupted_submitting'
@@ -96,6 +97,7 @@ const STOP_REASONS: Record<StopReason, true> = {
   fill_failed: true,
   next_failed: true,
   submit_failed: true,
+  submit_unconfirmed: true,
   deadline: true,
   interrupted: true,
   interrupted_submitting: true,
