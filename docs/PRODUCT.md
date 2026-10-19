@@ -64,19 +64,19 @@ The full wording of the anti-goals is in the [PRD](PRD.md#anti-goals).
 
 ## Capabilities at a glance
 
-| Capability       | One line                                                                                           | Requirements                                        |
-| ---------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Website          | Timetable, identities, saved details, meeting pages, settings                                      | [Website and accounts](PRD.md#website-and-accounts) |
-| Scheduling       | Turns the timetable into meeting occurrences and starts a worker for each                          | [Scheduling](PRD.md#scheduling)                     |
-| Link watching    | Finds the meeting link and form links in the member's chosen chats                                 | [Link watching](PRD.md#link-watching)               |
-| Attendance forms | Detects, vets, fills and submits attendance forms on Google Forms and Microsoft Forms              | [Attendance forms](PRD.md#attendance-forms)         |
-| Name mentions    | Pings the member when their name is spoken (live mode)                                             | [Name mentions](PRD.md#name-mentions)               |
-| Transcription    | Live with a cloud model, or native with the member's local Whisper                                 | [Transcription](PRD.md#transcription)               |
-| Summaries        | A short file in i-have-adhd format, one template for lectures and one for work meetings            | [Summaries](PRD.md#summaries)                       |
-| Notifications    | Pings through a private ntfy topic and desktop notifications                                       | [Notifications](PRD.md#notifications)               |
-| Companion app    | A tray app on the member's PC for notifications, summary files, native mode and local mode         | [Companion app](PRD.md#companion-app)               |
-| Run locations    | Each identity runs on the server, on the server through the member's home connection, or on the PC | [Run locations](PRD.md#run-locations)               |
-| Exports          | Downloads, Google Docs, GitHub and Notion, on demand                                               | [Exports](PRD.md#exports)                           |
+| Capability       | One line                                                                                           | Requirements                                                |
+| ---------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Website          | Timetable, identities, saved details, meeting pages, settings                                      | [Website and accounts](PRD.md#website-and-accounts)         |
+| Scheduling       | Turns the timetable into meeting occurrences and starts a worker for each                          | [Scheduling and attending](PRD.md#scheduling-and-attending) |
+| Link watching    | Finds the meeting link and form links in the member's chosen chats                                 | [Link watching](PRD.md#link-watching)                       |
+| Attendance forms | Detects, vets, fills and submits attendance forms on Google Forms and Microsoft Forms              | [Attendance forms](PRD.md#attendance-forms)                 |
+| Name mentions    | Pings the member when their name is spoken (live mode)                                             | [Name mentions](PRD.md#name-mentions)                       |
+| Transcription    | Live with a cloud model, or native with the member's local Whisper                                 | [Transcription](PRD.md#transcription)                       |
+| Summaries        | A short file in i-have-adhd format, one template for lectures and one for work meetings            | [Summaries](PRD.md#summaries)                               |
+| Notifications    | Pings through a private ntfy topic and desktop notifications                                       | [Notifications](PRD.md#notifications)                       |
+| Companion app    | A tray app on the member's PC for notifications, summary files, native mode and local mode         | [Companion app](PRD.md#companion-app)                       |
+| Run locations    | Each identity runs on the server, on the server through the member's home connection, or on the PC | [Run locations](PRD.md#run-locations)                       |
+| Exports          | Downloads, Google Docs, GitHub and Notion, on demand                                               | [Exports](PRD.md#exports)                                   |
 
 ## AI layer at a glance
 
