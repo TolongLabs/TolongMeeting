@@ -88,28 +88,22 @@ Assumed from earlier plans (use their real names if they differ, and fix this pl
 
 ```ts
 // packages/core/src/discord-chat.ts
-export function normaliseDiscordChannelUrl(url: string): string | null;
+export function normaliseDiscordChannelUrl(url: string): string | null
 
 // packages/core/src/watch-gate.ts
-export type ChatApp = Extract<LinkSource, { kind: "chat" }>["app"];
+export type ChatApp = Extract<LinkSource, { kind: 'chat' }>['app']
 export interface WatchGate {
-  whatsapp: "allowed" | "home_only" | "none";
-  discord: "allowed" | "home_only";
+  whatsapp: 'allowed' | 'home_only' | 'none'
+  discord: 'allowed' | 'home_only'
 }
 export class WatchGateError extends Error {} // message names the variable, never its value
-export function watchGateFromEnv(
-  env: Record<string, string | undefined>,
-): WatchGate;
-export function chatWatchAllowed(
-  app: ChatApp,
-  runLocation: RunLocation,
-  gate: WatchGate,
-): boolean;
+export function watchGateFromEnv(env: Record<string, string | undefined>): WatchGate
+export function chatWatchAllowed(app: ChatApp, runLocation: RunLocation, gate: WatchGate): boolean
 export function gateLinkSource(
   link: LinkSource,
   runLocation: RunLocation,
-  gate: WatchGate,
-): { link: LinkSource; blockedApp: ChatApp | null };
+  gate: WatchGate
+): { link: LinkSource; blockedApp: ChatApp | null }
 ```
 
 `normaliseDiscordChannelUrl` accepts `https:` only, hosts `discord.com`, `www.discord.com`, `ptb.discord.com`, `canary.discord.com` and `discordapp.com`, and paths `/channels/<server>/<channel>` with an optional trailing message id, where `<server>` is `@me` or 17 to 20 digits and `<channel>` is 17 to 20 digits; it drops the message id, query and fragment. `chatWatchAllowed` is true for `teams`; for WhatsApp and Discord, `allowed` is true, `home_only` is true unless `runLocation` is `server`, and `none` is false. `gateLinkSource` returns the link unchanged unless it is a chat the gate refuses, which becomes `{ kind: 'paste' }` with `blockedApp` set.
@@ -118,84 +112,68 @@ export function gateLinkSource(
 
 ```ts
 // packages/core/src/discord-chat.test.ts
-const G = "123456789012345678",
-  C = "234567890123456789";
+const G = '123456789012345678',
+  C = '234567890123456789'
 test.each([
-  [
-    `https://discord.com/channels/${G}/${C}`,
-    `https://discord.com/channels/${G}/${C}`,
-  ],
-  [
-    `https://ptb.discord.com/channels/${G}/${C}/345678901234567890?x=1#y`,
-    `https://discord.com/channels/${G}/${C}`,
-  ],
-  [
-    `https://discordapp.com/channels/@me/${C}/`,
-    `https://discord.com/channels/@me/${C}`,
-  ],
-  ["https://discord.gg/abcdef", null],
+  [`https://discord.com/channels/${G}/${C}`, `https://discord.com/channels/${G}/${C}`],
+  [`https://ptb.discord.com/channels/${G}/${C}/345678901234567890?x=1#y`, `https://discord.com/channels/${G}/${C}`],
+  [`https://discordapp.com/channels/@me/${C}/`, `https://discord.com/channels/@me/${C}`],
+  ['https://discord.gg/abcdef', null],
   [`https://discord.com.example.com/channels/${G}/${C}`, null],
   [`http://discord.com/channels/${G}/${C}`, null],
-  ["https://discord.com/channels/123/456", null],
-  ["general", null],
-])("normaliseDiscordChannelUrl(%s) is %p", (url, want) =>
-  expect(normaliseDiscordChannelUrl(url)).toBe(want),
-);
+  ['https://discord.com/channels/123/456', null],
+  ['general', null]
+])('normaliseDiscordChannelUrl(%s) is %p', (url, want) => expect(normaliseDiscordChannelUrl(url)).toBe(want))
 ```
 
 ```ts
 // packages/core/src/watch-gate.test.ts
-test("the gate defaults to WhatsApp at home only and Discord everywhere", () => {
+test('the gate defaults to WhatsApp at home only and Discord everywhere', () => {
   expect(watchGateFromEnv({})).toEqual({
-    whatsapp: "home_only",
-    discord: "allowed",
-  });
+    whatsapp: 'home_only',
+    discord: 'allowed'
+  })
   expect(
     watchGateFromEnv({
-      TM_WHATSAPP_FROM_SERVER: "none",
-      TM_DISCORD_FROM_SERVER: "home_only",
-    }),
-  ).toEqual({ whatsapp: "none", discord: "home_only" });
-  expect(() => watchGateFromEnv({ TM_DISCORD_FROM_SERVER: "none" })).toThrow(
-    "TM_DISCORD_FROM_SERVER must be allowed or home_only",
-  );
-});
+      TM_WHATSAPP_FROM_SERVER: 'none',
+      TM_DISCORD_FROM_SERVER: 'home_only'
+    })
+  ).toEqual({ whatsapp: 'none', discord: 'home_only' })
+  expect(() => watchGateFromEnv({ TM_DISCORD_FROM_SERVER: 'none' })).toThrow(
+    'TM_DISCORD_FROM_SERVER must be allowed or home_only'
+  )
+})
 
-test("home_only refuses only server identities; none refuses all", () => {
-  const g: WatchGate = { whatsapp: "home_only", discord: "allowed" };
-  expect(chatWatchAllowed("whatsapp", "server", g)).toBe(false);
-  expect(chatWatchAllowed("whatsapp", "server_via_home", g)).toBe(true);
-  expect(chatWatchAllowed("whatsapp", "local", g)).toBe(true);
-  expect(chatWatchAllowed("discord", "server", g)).toBe(true);
+test('home_only refuses only server identities; none refuses all', () => {
+  const g: WatchGate = { whatsapp: 'home_only', discord: 'allowed' }
+  expect(chatWatchAllowed('whatsapp', 'server', g)).toBe(false)
+  expect(chatWatchAllowed('whatsapp', 'server_via_home', g)).toBe(true)
+  expect(chatWatchAllowed('whatsapp', 'local', g)).toBe(true)
+  expect(chatWatchAllowed('discord', 'server', g)).toBe(true)
+  expect(chatWatchAllowed('whatsapp', 'local', { ...g, whatsapp: 'none' })).toBe(false)
   expect(
-    chatWatchAllowed("whatsapp", "local", { ...g, whatsapp: "none" }),
-  ).toBe(false);
-  expect(
-    chatWatchAllowed("teams", "server", {
-      whatsapp: "none",
-      discord: "home_only",
-    }),
-  ).toBe(true);
-});
+    chatWatchAllowed('teams', 'server', {
+      whatsapp: 'none',
+      discord: 'home_only'
+    })
+  ).toBe(true)
+})
 
-test("a refused chat becomes a pasted link", () => {
-  const g: WatchGate = { whatsapp: "home_only", discord: "allowed" };
-  expect(
-    gateLinkSource(
-      { kind: "chat", app: "whatsapp", chat: "Class group" },
-      "server",
-      g,
-    ),
-  ).toEqual({ link: { kind: "paste" }, blockedApp: "whatsapp" });
+test('a refused chat becomes a pasted link', () => {
+  const g: WatchGate = { whatsapp: 'home_only', discord: 'allowed' }
+  expect(gateLinkSource({ kind: 'chat', app: 'whatsapp', chat: 'Class group' }, 'server', g)).toEqual({
+    link: { kind: 'paste' },
+    blockedApp: 'whatsapp'
+  })
   const fixed = {
-    kind: "fixed",
-    url: "https://example.zoom.us/j/00000000000",
-  } as const;
-  expect(gateLinkSource(fixed, "server", g)).toEqual({
+    kind: 'fixed',
+    url: 'https://example.zoom.us/j/00000000000'
+  } as const
+  expect(gateLinkSource(fixed, 'server', g)).toEqual({
     link: fixed,
-    blockedApp: null,
-  });
-});
+    blockedApp: null
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -232,24 +210,18 @@ git commit -m "feat(core): add chat ids and watch gate"
 - Produces (adds to contracts):
 
 ```ts
-export type WatchPhase = "before" | "during";
+export type WatchPhase = 'before' | 'during'
 export const POLL_MS = {
   before: [25_000, 45_000],
-  during: [12_000, 25_000],
-} as const;
-export function nextPollDelayMs(
-  phase: WatchPhase,
-  random: () => number,
-): number; // min + floor(random() * (max - min + 1))
-export function chooseMeetingLink(
-  watched: string | null,
-  pasted: string | null,
-): string | null; // pasted ?? watched
+  during: [12_000, 25_000]
+} as const
+export function nextPollDelayMs(phase: WatchPhase, random: () => number): number // min + floor(random() * (max - min + 1))
+export function chooseMeetingLink(watched: string | null, pasted: string | null): string | null // pasted ?? watched
 export function splitLinks(m: ChatMessage): {
-  meeting: string[];
-  other: string[];
-};
-export function messageSignature(m: ChatMessage): string; // `${key}|${sorted links joined by ' '}`
+  meeting: string[]
+  other: string[]
+}
+export function messageSignature(m: ChatMessage): string // `${key}|${sorted links joined by ' '}`
 ```
 
 `splitLinks` keeps `https:` links only, removes duplicates and keeps message order; `meeting` holds those for which `adapterFor(url)` isn't null, `other` the rest.
@@ -258,48 +230,40 @@ export function messageSignature(m: ChatMessage): string; // `${key}|${sorted li
 
 ```ts
 // packages/worker/src/watchers/rules.test.ts
-const ZOOM = "https://example.zoom.us/j/00000000001?pwd=PASSCODE";
-const FORM = "https://forms.gle/TESTFORM1";
-const msg = (links: string[], key = "k1"): ChatMessage => ({
+const ZOOM = 'https://example.zoom.us/j/00000000001?pwd=PASSCODE'
+const FORM = 'https://forms.gle/TESTFORM1'
+const msg = (links: string[], key = 'k1'): ChatMessage => ({
   key,
-  sender: "Lecturer",
-  senderRole: "unknown",
-  time: "",
-  seenAt: "",
-  text: "",
+  sender: 'Lecturer',
+  senderRole: 'unknown',
+  time: '',
+  seenAt: '',
+  text: '',
   links,
-  replyTo: null,
-});
+  replyTo: null
+})
 
-test("poll delays stay inside 25 to 45 s before and 12 to 25 s during", () => {
-  expect(nextPollDelayMs("before", () => 0)).toBe(25_000);
-  expect(nextPollDelayMs("before", () => 0.9999999)).toBe(45_000);
-  expect(nextPollDelayMs("during", () => 0)).toBe(12_000);
-  expect(nextPollDelayMs("during", () => 0.9999999)).toBe(25_000);
-});
+test('poll delays stay inside 25 to 45 s before and 12 to 25 s during', () => {
+  expect(nextPollDelayMs('before', () => 0)).toBe(25_000)
+  expect(nextPollDelayMs('before', () => 0.9999999)).toBe(45_000)
+  expect(nextPollDelayMs('during', () => 0)).toBe(12_000)
+  expect(nextPollDelayMs('during', () => 0.9999999)).toBe(25_000)
+})
 
-test("a pasted link beats a watched one", () => {
-  expect(chooseMeetingLink(ZOOM, null)).toBe(ZOOM);
-  expect(chooseMeetingLink(ZOOM, "https://example.zoom.us/j/00000000009")).toBe(
-    "https://example.zoom.us/j/00000000009",
-  );
-  expect(chooseMeetingLink(null, null)).toBeNull();
-});
+test('a pasted link beats a watched one', () => {
+  expect(chooseMeetingLink(ZOOM, null)).toBe(ZOOM)
+  expect(chooseMeetingLink(ZOOM, 'https://example.zoom.us/j/00000000009')).toBe('https://example.zoom.us/j/00000000009')
+  expect(chooseMeetingLink(null, null)).toBeNull()
+})
 
-test("links split into meeting and other, https only, without duplicates", () => {
-  expect(
-    splitLinks(msg([FORM, ZOOM, FORM, "http://forms.gle/TESTFORM2"])),
-  ).toEqual({ meeting: [ZOOM], other: [FORM] });
-});
+test('links split into meeting and other, https only, without duplicates', () => {
+  expect(splitLinks(msg([FORM, ZOOM, FORM, 'http://forms.gle/TESTFORM2']))).toEqual({ meeting: [ZOOM], other: [FORM] })
+})
 
-test("an edited message with a new link has a new signature", () => {
-  expect(messageSignature(msg([ZOOM]))).not.toBe(
-    messageSignature(msg([ZOOM, FORM])),
-  );
-  expect(messageSignature(msg([FORM, ZOOM]))).toBe(
-    messageSignature(msg([ZOOM, FORM])),
-  );
-});
+test('an edited message with a new link has a new signature', () => {
+  expect(messageSignature(msg([ZOOM]))).not.toBe(messageSignature(msg([ZOOM, FORM])))
+  expect(messageSignature(msg([FORM, ZOOM]))).toBe(messageSignature(msg([ZOOM, FORM])))
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -387,158 +351,142 @@ candidate = { url, source: 'watched_chat', sender: m.sender || null, senderRole:
 // m(key, sender, links) builds a ChatMessage. Z1 to Z4 are https://example.zoom.us/j/0000000000N?pwd=PASSCODE, P is a
 // pasted Zoom link, F is https://forms.gle/TESTFORM1.
 
-test("the history scan reports only the newest meeting link", async () => {
+test('the history scan reports only the newest meeting link', async () => {
   const r = fakeReader({
-    history: [m("a", "Rep", [Z1]), m("b", "Rep", [Z2]), m("c", "Rep", [])],
-  });
-  const h = harness();
-  await runChatWatcher(desk, r, h.onLink);
-  expect(r.sinces[0].toISOString()).toBe("2026-10-20T05:00:00.000Z");
-  expect(h.meeting).toEqual([{ meetingUrl: Z2 }]);
-});
+    history: [m('a', 'Rep', [Z1]), m('b', 'Rep', [Z2]), m('c', 'Rep', [])]
+  })
+  const h = harness()
+  await runChatWatcher(desk, r, h.onLink)
+  expect(r.sinces[0].toISOString()).toBe('2026-10-20T05:00:00.000Z')
+  expect(h.meeting).toEqual([{ meetingUrl: Z2 }])
+})
 
-test("a corrected link replaces the first; a pasted link overrides; nothing repeats", async () => {
+test('a corrected link replaces the first; a pasted link overrides; nothing repeats', async () => {
   // Review Focus
-  const r = fakeReader({ history: [m("a", "Rep", [Z1])] });
-  const h = harness();
-  await runChatWatcher(desk, r, h.onLink);
-  r.latest = [m("a", "Rep", [Z1]), m("b", "Rep", [Z2])];
-  await h.tick();
-  h.set({ pastedLink: () => P });
-  r.latest.push(m("c", "Rep", [Z3]));
-  await h.tick();
-  await h.tick();
-  expect(h.meeting).toEqual([
-    { meetingUrl: Z1 },
-    { meetingUrl: Z2 },
-    { meetingUrl: P },
-  ]);
-});
+  const r = fakeReader({ history: [m('a', 'Rep', [Z1])] })
+  const h = harness()
+  await runChatWatcher(desk, r, h.onLink)
+  r.latest = [m('a', 'Rep', [Z1]), m('b', 'Rep', [Z2])]
+  await h.tick()
+  h.set({ pastedLink: () => P })
+  r.latest.push(m('c', 'Rep', [Z3]))
+  await h.tick()
+  await h.tick()
+  expect(h.meeting).toEqual([{ meetingUrl: Z1 }, { meetingUrl: Z2 }, { meetingUrl: P }])
+})
 
-test("an edited message with a new link counts", async () => {
+test('an edited message with a new link counts', async () => {
   // Review Focus
-  const r = fakeReader({ history: [m("a", "Rep", [])] });
-  const h = harness();
-  await runChatWatcher(desk, r, h.onLink);
-  r.latest = [m("a", "Rep", [Z4])];
-  await h.tick();
-  expect(h.meeting).toEqual([{ meetingUrl: Z4 }]);
-});
+  const r = fakeReader({ history: [m('a', 'Rep', [])] })
+  const h = harness()
+  await runChatWatcher(desk, r, h.onLink)
+  r.latest = [m('a', 'Rep', [Z4])]
+  await h.tick()
+  expect(h.meeting).toEqual([{ meetingUrl: Z4 }])
+})
 
-test("a form first seen after T-10 but before joining is offered when joining starts", async () => {
+test('a form first seen after T-10 but before joining is offered when joining starts', async () => {
   // Review Focus
-  const r = fakeReader({ history: [] });
-  const h = harness({ formsSince: () => new Date("2026-10-21T04:55:00Z") });
-  await runChatWatcher(desk, r, h.onLink);
-  r.latest = [m("f", "Lecturer", [F])];
-  await h.tick();
-  expect(h.forms).toEqual([]);
-  h.set({ phase: () => "during" });
-  await h.tick();
+  const r = fakeReader({ history: [] })
+  const h = harness({ formsSince: () => new Date('2026-10-21T04:55:00Z') })
+  await runChatWatcher(desk, r, h.onLink)
+  r.latest = [m('f', 'Lecturer', [F])]
+  await h.tick()
+  expect(h.forms).toEqual([])
+  h.set({ phase: () => 'during' })
+  await h.tick()
   expect(h.forms).toEqual([
     {
       url: F,
-      source: "watched_chat",
-      sender: "Lecturer",
-      senderRole: "unknown",
-      seenAt: "2026-10-21T05:00:00.000Z",
-    },
-  ]);
-});
+      source: 'watched_chat',
+      sender: 'Lecturer',
+      senderRole: 'unknown',
+      seenAt: '2026-10-21T05:00:00.000Z'
+    }
+  ])
+})
 
-test("a form first seen before T-10 is never offered", async () => {
-  const r = fakeReader({ history: [m("f", "Lecturer", [F])] });
-  const h = harness({ formsSince: () => new Date("2026-10-21T05:10:00Z") });
-  await runChatWatcher(desk, r, h.onLink);
-  h.set({ phase: () => "during" });
-  await h.tick();
-  expect(h.forms).toEqual([]);
-});
+test('a form first seen before T-10 is never offered', async () => {
+  const r = fakeReader({ history: [m('f', 'Lecturer', [F])] })
+  const h = harness({ formsSince: () => new Date('2026-10-21T05:10:00Z') })
+  await runChatWatcher(desk, r, h.onLink)
+  h.set({ phase: () => 'during' })
+  await h.tick()
+  expect(h.forms).toEqual([])
+})
 
-test("a restart during the meeting reads from T-10 and reports no meeting link", async () => {
+test('a restart during the meeting reads from T-10 and reports no meeting link', async () => {
   // Review Focus
   const r = fakeReader({
-    history: [m("a", "Rep", [Z1]), m("f", "Lecturer", [F])],
-  });
+    history: [m('a', 'Rep', [Z1]), m('f', 'Lecturer', [F])]
+  })
   const h = harness({
-    phase: () => "during",
-    formsSince: () => new Date("2026-10-21T04:50:00Z"),
-  });
-  await runChatWatcher(desk, r, h.onLink);
-  expect(r.sinces[0].toISOString()).toBe("2026-10-21T04:50:00.000Z");
-  expect(h.meeting).toEqual([]);
-  expect(h.forms.map((c) => c.url)).toEqual([F]);
-});
+    phase: () => 'during',
+    formsSince: () => new Date('2026-10-21T04:50:00Z')
+  })
+  await runChatWatcher(desk, r, h.onLink)
+  expect(r.sinces[0].toISOString()).toBe('2026-10-21T04:50:00.000Z')
+  expect(h.meeting).toEqual([])
+  expect(h.forms.map((c) => c.url)).toEqual([F])
+})
 
-test("polls use the delay for the current phase", async () => {
-  const h = harness({ random: () => 0.5 });
-  await runChatWatcher(desk, fakeReader({ history: [] }), h.onLink);
-  await h.tick();
-  h.set({ phase: () => "during" });
-  await h.tick();
-  expect(h.delays.slice(0, 3)).toEqual([35_000, 35_000, 18_500]);
-});
+test('polls use the delay for the current phase', async () => {
+  const h = harness({ random: () => 0.5 })
+  await runChatWatcher(desk, fakeReader({ history: [] }), h.onLink)
+  await h.tick()
+  h.set({ phase: () => 'during' })
+  await h.tick()
+  expect(h.delays.slice(0, 3)).toEqual([35_000, 35_000, 18_500])
+})
 
-test("nothing touches the desk while it is paused", async () => {
-  const r = fakeReader({ history: [] });
-  const h = harness();
-  await runChatWatcher(desk, r, h.onLink);
-  const gate = Promise.withResolvers<void>();
-  h.set({ deskOpen: () => gate.promise });
-  h.release(); // release the sleep without waiting for a poll
-  await Bun.sleep(50);
-  expect(r.calls.latest).toBe(0);
-  gate.resolve();
-  await h.settle();
-  expect(r.calls.latest).toBe(1);
-});
+test('nothing touches the desk while it is paused', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  await runChatWatcher(desk, r, h.onLink)
+  const gate = Promise.withResolvers<void>()
+  h.set({ deskOpen: () => gate.promise })
+  h.release() // release the sleep without waiting for a poll
+  await Bun.sleep(50)
+  expect(r.calls.latest).toBe(0)
+  gate.resolve()
+  await h.settle()
+  expect(r.calls.latest).toBe(1)
+})
 
-test("a sign-out is reported once, and so is the recovery", async () => {
-  const r = fakeReader({ history: [] });
-  const h = harness();
-  await runChatWatcher(desk, r, h.onLink);
-  r.throwNext = [
-    new WatcherSigninError("web.whatsapp.com"),
-    new WatcherSigninError("web.whatsapp.com"),
-  ];
-  await h.tick();
-  await h.tick();
-  await h.tick();
-  expect(h.statuses).toEqual([
-    { kind: "signed_out", host: "web.whatsapp.com" },
-    { kind: "signed_in" },
-  ]);
-});
+test('a sign-out is reported once, and so is the recovery', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  await runChatWatcher(desk, r, h.onLink)
+  r.throwNext = [new WatcherSigninError('web.whatsapp.com'), new WatcherSigninError('web.whatsapp.com')]
+  await h.tick()
+  await h.tick()
+  await h.tick()
+  expect(h.statuses).toEqual([{ kind: 'signed_out', host: 'web.whatsapp.com' }, { kind: 'signed_in' }])
+})
 
-test("a lost chat is reopened at most 3 times, then the loop ends", async () => {
-  const r = fakeReader({ history: [] });
-  const h = harness();
-  await runChatWatcher(desk, r, h.onLink);
-  r.alwaysThrow = new WatcherChatError("lost");
-  for (let i = 0; i < 6; i++) await h.tick();
-  expect(r.calls.open).toBe(4);
-  expect(h.statuses).toEqual([{ kind: "chat_lost" }]);
-  expect(r.calls.latest).toBe(4);
-});
+test('a lost chat is reopened at most 3 times, then the loop ends', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  await runChatWatcher(desk, r, h.onLink)
+  r.alwaysThrow = new WatcherChatError('lost')
+  for (let i = 0; i < 6; i++) await h.tick()
+  expect(r.calls.open).toBe(4)
+  expect(h.statuses).toEqual([{ kind: 'chat_lost' }])
+  expect(r.calls.latest).toBe(4)
+})
 
-test("stop ends a sleeping loop at once; an open error rejects the start", async () => {
-  const h = harness({ sleep: () => new Promise(() => {}) });
-  const stop = await runChatWatcher(
-    desk,
-    fakeReader({ history: [] }),
-    h.onLink,
-  );
-  const t = performance.now();
-  await stop();
-  expect(performance.now() - t).toBeLessThan(100);
-  const bad = fakeReader({ history: [] });
+test('stop ends a sleeping loop at once; an open error rejects the start', async () => {
+  const h = harness({ sleep: () => new Promise(() => {}) })
+  const stop = await runChatWatcher(desk, fakeReader({ history: [] }), h.onLink)
+  const t = performance.now()
+  await stop()
+  expect(performance.now() - t).toBeLessThan(100)
+  const bad = fakeReader({ history: [] })
   bad.open = async () => {
-    throw new WatcherSigninError("discord.com");
-  };
-  await expect(runChatWatcher(desk, bad, h.onLink)).rejects.toBeInstanceOf(
-    WatcherSigninError,
-  );
-});
+    throw new WatcherSigninError('discord.com')
+  }
+  await expect(runChatWatcher(desk, bad, h.onLink)).rejects.toBeInstanceOf(WatcherSigninError)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -612,202 +560,149 @@ Fixture `channel.html` uses the markup the selectors above match, and reads `win
 // Z0 to Z5 are https://example.zoom.us/j/0000000000N?pwd=PASSCODE; P is a pasted Zoom link; F2 and F3 are Google Forms links.
 // filler(60) is 60 linkless messages from 19 hours to 3 hours ago.
 const messages = [
-  { id: "old", sender: "Rep", datetime: ago(30), text: "Last week", href: Z0 },
-  { id: "a", sender: "Rep", datetime: ago(20), text: "Yesterday", href: Z1 },
+  { id: 'old', sender: 'Rep', datetime: ago(30), text: 'Last week', href: Z0 },
+  { id: 'a', sender: 'Rep', datetime: ago(20), text: 'Yesterday', href: Z1 },
   ...filler(60),
-  { id: "b", sender: "Rep", datetime: ago(2), text: "Today", href: Z2 },
+  { id: 'b', sender: 'Rep', datetime: ago(2), text: 'Today', href: Z2 },
   {
-    id: "c",
-    sender: "Rep",
+    id: 'c',
+    sender: 'Rep',
     datetime: ago(1),
-    text: "Early form",
-    href: "https://forms.gle/TESTFORM1",
+    text: 'Early form',
+    href: 'https://forms.gle/TESTFORM1'
   },
-  { id: "d", sender: "Rep", datetime: ago(0.2), text: "See you soon" },
-];
+  { id: 'd', sender: 'Rep', datetime: ago(0.2), text: 'See you soon' }
+]
 
-test("the 24-hour scan reports only the newest meeting link, without touching the page", async ({
-  context,
-  page,
-}) => {
+test('the 24-hour scan reports only the newest meeting link, without touching the page', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
-    discord: { channelPath: new URL(CH).pathname, messages },
-  });
-  const h = watchHarness();
-  let navigations = 0;
-  page.on("framenavigated", (f) => {
-    if (f === page.mainFrame()) navigations++;
-  });
-  const stop = await startWatcher(
-    page,
-    { kind: "chat", app: "discord", chat: CH },
-    h.onLink,
-  );
-  await h.polls(2);
-  await stop();
-  expect(h.meeting).toEqual([{ meetingUrl: Z2 }]);
-  expect(h.forms).toEqual([]);
-  expect(navigations).toBe(1);
-  expect(await page.evaluate(() => (window as any).__touched ?? false)).toBe(
-    false,
-  );
-});
+    discord: { channelPath: new URL(CH).pathname, messages }
+  })
+  const h = watchHarness()
+  let navigations = 0
+  page.on('framenavigated', (f) => {
+    if (f === page.mainFrame()) navigations++
+  })
+  const stop = await startWatcher(page, { kind: 'chat', app: 'discord', chat: CH }, h.onLink)
+  await h.polls(2)
+  await stop()
+  expect(h.meeting).toEqual([{ meetingUrl: Z2 }])
+  expect(h.forms).toEqual([])
+  expect(navigations).toBe(1)
+  expect(await page.evaluate(() => (window as any).__touched ?? false)).toBe(false)
+})
 
-test("a newer link replaces it and a pasted link overrides both", async ({
-  context,
-  page,
-}) => {
+test('a newer link replaces it and a pasted link overrides both', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
-    discord: { channelPath: new URL(CH).pathname, messages },
-  });
-  const h = watchHarness();
-  await startWatcher(
-    page,
-    { kind: "chat", app: "discord", chat: CH },
-    h.onLink,
-  );
+    discord: { channelPath: new URL(CH).pathname, messages }
+  })
+  const h = watchHarness()
+  await startWatcher(page, { kind: 'chat', app: 'discord', chat: CH }, h.onLink)
   await page.evaluate(
     (z) =>
       (window as any).__addMessage({
-        id: "e",
-        sender: "Rep",
+        id: 'e',
+        sender: 'Rep',
         datetime: new Date().toISOString(),
-        text: "Corrected",
-        href: z,
+        text: 'Corrected',
+        href: z
       }),
-    Z3,
-  );
-  await h.polls(1);
-  h.set({ pastedLink: () => P });
-  await h.polls(1);
+    Z3
+  )
+  await h.polls(1)
+  h.set({ pastedLink: () => P })
+  await h.polls(1)
   await page.evaluate(
     (z) =>
       (window as any).__addMessage({
-        id: "f",
-        sender: "Rep",
+        id: 'f',
+        sender: 'Rep',
         datetime: new Date().toISOString(),
-        text: "Another",
-        href: z,
+        text: 'Another',
+        href: z
       }),
-    Z4,
-  );
-  await h.polls(1);
-  expect(h.meeting).toEqual([
-    { meetingUrl: Z2 },
-    { meetingUrl: Z3 },
-    { meetingUrl: P },
-  ]);
-});
+    Z4
+  )
+  await h.polls(1)
+  expect(h.meeting).toEqual([{ meetingUrl: Z2 }, { meetingUrl: Z3 }, { meetingUrl: P }])
+})
 
-test("during the meeting form links are reported with their sender, follow-ups included", async ({
-  context,
-  page,
-}) => {
+test('during the meeting form links are reported with their sender, follow-ups included', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
-    discord: { channelPath: new URL(CH).pathname, messages },
-  });
-  const h = watchHarness();
-  await startWatcher(
-    page,
-    { kind: "chat", app: "discord", chat: CH },
-    h.onLink,
-  );
+    discord: { channelPath: new URL(CH).pathname, messages }
+  })
+  const h = watchHarness()
+  await startWatcher(page, { kind: 'chat', app: 'discord', chat: CH }, h.onLink)
   h.set({
-    phase: () => "during",
-    formsSince: () => new Date(Date.now() - 600_000),
-  });
-  const now = new Date().toISOString();
+    phase: () => 'during',
+    formsSince: () => new Date(Date.now() - 600_000)
+  })
+  const now = new Date().toISOString()
   await page.evaluate(
     ([f, z, g, t]) => {
-      (window as any).__addMessage({
-        id: "g",
-        sender: "Lecturer",
+      ;(window as any).__addMessage({
+        id: 'g',
+        sender: 'Lecturer',
         datetime: t,
-        text: "Attendance",
-        href: f,
-      });
-      (window as any).__addMessage({
-        id: "h",
-        sender: "Lecturer",
+        text: 'Attendance',
+        href: f
+      })
+      ;(window as any).__addMessage({
+        id: 'h',
+        sender: 'Lecturer',
         datetime: t,
-        text: "Wrong room",
-        href: z,
-      });
-      (window as any).__addMessage({
-        id: "i",
-        sender: "Lecturer",
+        text: 'Wrong room',
+        href: z
+      })
+      ;(window as any).__addMessage({
+        id: 'i',
+        sender: 'Lecturer',
         datetime: t,
-        text: "Second form",
-        href: g,
-      });
+        text: 'Second form',
+        href: g
+      })
     },
-    [F2, Z5, F3, now],
-  );
-  await h.polls(1);
-  expect(h.forms.map((c) => [c.url, c.source, c.sender, c.senderRole])).toEqual(
-    [
-      [F2, "watched_chat", "Lecturer", "unknown"],
-      [F3, "watched_chat", "Lecturer", "unknown"],
-    ],
-  );
-  expect(h.meeting).toEqual([{ meetingUrl: Z2 }]);
-});
+    [F2, Z5, F3, now]
+  )
+  await h.polls(1)
+  expect(h.forms.map((c) => [c.url, c.source, c.sender, c.senderRole])).toEqual([
+    [F2, 'watched_chat', 'Lecturer', 'unknown'],
+    [F3, 'watched_chat', 'Lecturer', 'unknown']
+  ])
+  expect(h.meeting).toEqual([{ meetingUrl: Z2 }])
+})
 
-test("polls wait 25 to 45 s before the meeting and 12 to 25 s during it", async ({
-  context,
-  page,
-}) => {
+test('polls wait 25 to 45 s before the meeting and 12 to 25 s during it', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
-    discord: { channelPath: new URL(CH).pathname, messages },
-  });
-  const h = watchHarness();
-  await startWatcher(
-    page,
-    { kind: "chat", app: "discord", chat: CH },
-    h.onLink,
-  );
-  await h.polls(3);
-  h.set({ phase: () => "during" });
-  await h.polls(3);
-  for (const d of h.delays)
-    expect(d.ms).toBeGreaterThanOrEqual(d.phase === "before" ? 25_000 : 12_000);
-  for (const d of h.delays)
-    expect(d.ms).toBeLessThanOrEqual(d.phase === "before" ? 45_000 : 25_000);
-  expect(new Set(h.delays.map((d) => d.phase))).toEqual(
-    new Set(["before", "during"]),
-  );
-});
+    discord: { channelPath: new URL(CH).pathname, messages }
+  })
+  const h = watchHarness()
+  await startWatcher(page, { kind: 'chat', app: 'discord', chat: CH }, h.onLink)
+  await h.polls(3)
+  h.set({ phase: () => 'during' })
+  await h.polls(3)
+  for (const d of h.delays) expect(d.ms).toBeGreaterThanOrEqual(d.phase === 'before' ? 25_000 : 12_000)
+  for (const d of h.delays) expect(d.ms).toBeLessThanOrEqual(d.phase === 'before' ? 45_000 : 25_000)
+  expect(new Set(h.delays.map((d) => d.phase))).toEqual(new Set(['before', 'during']))
+})
 
-test("a signed-out profile and an unreachable channel reject the start", async ({
-  context,
-  page,
-}) => {
+test('a signed-out profile and an unreachable channel reject the start', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
     discord: {
       channelPath: new URL(CH).pathname,
       messages,
-      loginRequired: true,
-    },
-  });
-  const e = await startWatcher(
-    page,
-    { kind: "chat", app: "discord", chat: CH },
-    () => {},
-  ).catch((x) => x);
-  expect(e).toBeInstanceOf(WatcherSigninError);
-  expect(e.host).toBe("discord.com");
-  const other =
-    "https://discord.com/channels/123456789012345678/999999999999999999";
-  const e2 = await startWatcher(
-    await context.newPage(),
-    { kind: "chat", app: "discord", chat: other },
-    () => {},
-  ).catch((x) => x);
-  expect([e2 instanceof WatcherChatError, e2.reason]).toEqual([
-    true,
-    "not_found",
-  ]);
-});
+      loginRequired: true
+    }
+  })
+  const e = await startWatcher(page, { kind: 'chat', app: 'discord', chat: CH }, () => {}).catch((x) => x)
+  expect(e).toBeInstanceOf(WatcherSigninError)
+  expect(e.host).toBe('discord.com')
+  const other = 'https://discord.com/channels/123456789012345678/999999999999999999'
+  const e2 = await startWatcher(await context.newPage(), { kind: 'chat', app: 'discord', chat: other }, () => {}).catch(
+    (x) => x
+  )
+  expect([e2 instanceof WatcherChatError, e2.reason]).toEqual([true, 'not_found'])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -879,55 +774,55 @@ Fixture `web.html` reads `window.__fixture = { mode: 'chats' | 'qr', chats: { na
 // packages/worker/src/watchers/whatsapp-time.test.ts
 test.each([
   [
-    "[14:05, 21/10/2026] Dr Lecturer: ",
-    "dmy",
+    '[14:05, 21/10/2026] Dr Lecturer: ',
+    'dmy',
     {
-      sentAt: "2026-10-21T06:05:00.000Z",
-      sender: "Dr Lecturer",
-      shown: "14:05, 21/10/2026",
-    },
+      sentAt: '2026-10-21T06:05:00.000Z',
+      sender: 'Dr Lecturer',
+      shown: '14:05, 21/10/2026'
+    }
   ],
   [
-    "[2:05 pm, 21/10/2026] Dr Lecturer: ",
-    "dmy",
+    '[2:05 pm, 21/10/2026] Dr Lecturer: ',
+    'dmy',
     {
-      sentAt: "2026-10-21T06:05:00.000Z",
-      sender: "Dr Lecturer",
-      shown: "2:05 pm, 21/10/2026",
-    },
+      sentAt: '2026-10-21T06:05:00.000Z',
+      sender: 'Dr Lecturer',
+      shown: '2:05 pm, 21/10/2026'
+    }
   ],
   [
-    "[2:05 PM, 10/21/2026] +60 12-345 6789: ",
-    "mdy",
+    '[2:05 PM, 10/21/2026] +60 12-345 6789: ',
+    'mdy',
     {
-      sentAt: "2026-10-21T06:05:00.000Z",
-      sender: "+60 12-345 6789",
-      shown: "2:05 PM, 10/21/2026",
-    },
+      sentAt: '2026-10-21T06:05:00.000Z',
+      sender: '+60 12-345 6789',
+      shown: '2:05 PM, 10/21/2026'
+    }
   ],
   [
-    "[12:30 am, 01/02/2026] Rep: A: ",
-    "dmy",
+    '[12:30 am, 01/02/2026] Rep: A: ',
+    'dmy',
     {
-      sentAt: "2026-01-31T16:30:00.000Z",
-      sender: "Rep: A",
-      shown: "12:30 am, 01/02/2026",
-    },
+      sentAt: '2026-01-31T16:30:00.000Z',
+      sender: 'Rep: A',
+      shown: '12:30 am, 01/02/2026'
+    }
   ],
   [
-    "[12:00 pm, 01/02/2026] Rep: ",
-    "dmy",
+    '[12:00 pm, 01/02/2026] Rep: ',
+    'dmy',
     {
-      sentAt: "2026-02-01T04:00:00.000Z",
-      sender: "Rep",
-      shown: "12:00 pm, 01/02/2026",
-    },
+      sentAt: '2026-02-01T04:00:00.000Z',
+      sender: 'Rep',
+      shown: '12:00 pm, 01/02/2026'
+    }
   ],
-  ["[14:05, 32/10/2026] Rep: ", "dmy", null],
-  ["hello", "dmy", null],
-] as const)("parseWhatsAppPrePlain(%s, %s)", (attr, order, want) =>
-  expect(parseWhatsAppPrePlain(attr, order, 480)).toEqual(want),
-);
+  ['[14:05, 32/10/2026] Rep: ', 'dmy', null],
+  ['hello', 'dmy', null]
+] as const)('parseWhatsAppPrePlain(%s, %s)', (attr, order, want) =>
+  expect(parseWhatsAppPrePlain(attr, order, 480)).toEqual(want)
+)
 ```
 
 ```ts
@@ -935,153 +830,99 @@ test.each([
 // test.use({ timezoneId: 'Asia/Kuala_Lumpur', locale: 'en-GB' }) except the last describe, which uses en-US.
 // history is the Discord spec's message list (old, a, filler, b, c, d) with `at` for `datetime`; chat(name, msgs = [])
 // builds one fixture chat; Z2 and F2 are as in the Discord spec.
-test("opens the chat with exactly that name and leaves the search empty", async ({
-  context,
-  page,
-}) => {
+test('opens the chat with exactly that name and leaves the search empty', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
     whatsapp: {
-      mode: "chats",
-      chats: [
-        chat("Class 7A (old)"),
-        chat("class 7a"),
-        chat("Class 7A", history),
-      ],
-    },
-  });
-  const h = watchHarness();
-  await startWatcher(
-    page,
-    { kind: "chat", app: "whatsapp", chat: "Class 7A" },
-    h.onLink,
-  );
-  expect(await page.textContent(whatsappSelectors().headerTitle)).toBe(
-    "Class 7A",
-  );
-  expect((await page.textContent(whatsappSelectors().searchBox))?.trim()).toBe(
-    "",
-  );
-  expect(h.meeting).toEqual([{ meetingUrl: Z2 }]);
-  expect(await page.evaluate(() => (window as any).__touched ?? false)).toBe(
-    false,
-  );
-});
+      mode: 'chats',
+      chats: [chat('Class 7A (old)'), chat('class 7a'), chat('Class 7A', history)]
+    }
+  })
+  const h = watchHarness()
+  await startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: 'Class 7A' }, h.onLink)
+  expect(await page.textContent(whatsappSelectors().headerTitle)).toBe('Class 7A')
+  expect((await page.textContent(whatsappSelectors().searchBox))?.trim()).toBe('')
+  expect(h.meeting).toEqual([{ meetingUrl: Z2 }])
+  expect(await page.evaluate(() => (window as any).__touched ?? false)).toBe(false)
+})
 
-test("a shared name is ambiguous, a missing one not found, a composed form matches", async ({
-  context,
-  page,
-}) => {
+test('a shared name is ambiguous, a missing one not found, a composed form matches', async ({ context, page }) => {
   // Review Focus
   await serveWatcherFixtures(context, {
     whatsapp: {
-      mode: "chats",
-      chats: [chat("Study group"), chat("Study group"), chat("Café")],
-    },
-  });
+      mode: 'chats',
+      chats: [chat('Study group'), chat('Study group'), chat('Café')]
+    }
+  })
   const reason = (name: string) =>
-    startWatcher(
-      page,
-      { kind: "chat", app: "whatsapp", chat: name },
-      () => {},
-    ).then(
-      () => "ok",
-      (e) => e.reason,
-    );
-  expect(await reason("Study group")).toBe("ambiguous");
-  expect(await reason("Nope")).toBe("not_found");
-  expect(await reason("Café ")).toBe("ok");
-});
+    startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: name }, () => {}).then(
+      () => 'ok',
+      (e) => e.reason
+    )
+  expect(await reason('Study group')).toBe('ambiguous')
+  expect(await reason('Nope')).toBe('not_found')
+  expect(await reason('Café ')).toBe('ok')
+})
 
-test("the link-device code means signed out", async ({ context, page }) => {
-  await serveWatcherFixtures(context, { whatsapp: { mode: "qr", chats: [] } });
-  const e = await startWatcher(
-    page,
-    { kind: "chat", app: "whatsapp", chat: "Class 7A" },
-    () => {},
-  ).catch((x) => x);
-  expect([e instanceof WatcherSigninError, e.host]).toEqual([
-    true,
-    "web.whatsapp.com",
-  ]);
-});
+test('the link-device code means signed out', async ({ context, page }) => {
+  await serveWatcherFixtures(context, { whatsapp: { mode: 'qr', chats: [] } })
+  const e = await startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: 'Class 7A' }, () => {}).catch((x) => x)
+  expect([e instanceof WatcherSigninError, e.host]).toEqual([true, 'web.whatsapp.com'])
+})
 
-test("form links during the meeting carry the WhatsApp sender", async ({
-  context,
-  page,
-}) => {
+test('form links during the meeting carry the WhatsApp sender', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
-    whatsapp: { mode: "chats", chats: [chat("Class 7A", history)] },
-  });
-  const h = watchHarness();
-  await startWatcher(
-    page,
-    { kind: "chat", app: "whatsapp", chat: "Class 7A" },
-    h.onLink,
-  );
+    whatsapp: { mode: 'chats', chats: [chat('Class 7A', history)] }
+  })
+  const h = watchHarness()
+  await startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: 'Class 7A' }, h.onLink)
   h.set({
-    phase: () => "during",
-    formsSince: () => new Date(Date.now() - 600_000),
-  });
+    phase: () => 'during',
+    formsSince: () => new Date(Date.now() - 600_000)
+  })
   await page.evaluate(
     (f) =>
-      (window as any).__addMessage("Class 7A", {
-        id: "w1",
-        sender: "Dr Lecturer",
+      (window as any).__addMessage('Class 7A', {
+        id: 'w1',
+        sender: 'Dr Lecturer',
         at: new Date().toISOString(),
-        text: `Attendance ${f}`,
+        text: `Attendance ${f}`
       }),
-    F2,
-  );
-  await h.polls(1);
-  expect(h.forms.map((c) => [c.url, c.sender])).toEqual([[F2, "Dr Lecturer"]]);
-});
+    F2
+  )
+  await h.polls(1)
+  expect(h.forms.map((c) => [c.url, c.sender])).toEqual([[F2, 'Dr Lecturer']])
+})
 
-test("a chat the member switched away from is reopened, at most 3 times", async ({
-  context,
-  page,
-}) => {
+test('a chat the member switched away from is reopened, at most 3 times', async ({ context, page }) => {
   await serveWatcherFixtures(context, {
     whatsapp: {
-      mode: "chats",
-      chats: [chat("Class 7A", history), chat("Other")],
-    },
-  });
-  const h = watchHarness();
-  await startWatcher(
-    page,
-    { kind: "chat", app: "whatsapp", chat: "Class 7A" },
-    h.onLink,
-  );
-  await page.evaluate(() => (window as any).__switchChat("Other"));
-  await h.polls(1);
-  expect(await page.textContent(whatsappSelectors().headerTitle)).toBe(
-    "Class 7A",
-  );
+      mode: 'chats',
+      chats: [chat('Class 7A', history), chat('Other')]
+    }
+  })
+  const h = watchHarness()
+  await startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: 'Class 7A' }, h.onLink)
+  await page.evaluate(() => (window as any).__switchChat('Other'))
+  await h.polls(1)
+  expect(await page.textContent(whatsappSelectors().headerTitle)).toBe('Class 7A')
   for (let i = 0; i < 3; i++) {
-    await page.evaluate(() => (window as any).__switchChat("Other"));
-    await h.polls(1);
+    await page.evaluate(() => (window as any).__switchChat('Other'))
+    await h.polls(1)
   }
-  expect(h.statuses).toEqual([{ kind: "chat_lost" }]);
-});
+  expect(h.statuses).toEqual([{ kind: 'chat_lost' }])
+})
 
-test.describe("US date order", () => {
-  test.use({ locale: "en-US" });
-  test("the 24-hour scan still finds the newest link", async ({
-    context,
-    page,
-  }) => {
+test.describe('US date order', () => {
+  test.use({ locale: 'en-US' })
+  test('the 24-hour scan still finds the newest link', async ({ context, page }) => {
     await serveWatcherFixtures(context, {
-      whatsapp: { mode: "chats", chats: [chat("Class 7A", history)] },
-    });
-    const h = watchHarness();
-    await startWatcher(
-      page,
-      { kind: "chat", app: "whatsapp", chat: "Class 7A" },
-      h.onLink,
-    );
-    expect(h.meeting).toEqual([{ meetingUrl: Z2 }]);
-  });
-});
+      whatsapp: { mode: 'chats', chats: [chat('Class 7A', history)] }
+    })
+    const h = watchHarness()
+    await startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: 'Class 7A' }, h.onLink)
+    expect(h.meeting).toEqual([{ meetingUrl: Z2 }])
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1120,44 +961,39 @@ git commit -m "feat(worker): add WhatsApp watcher"
 
 ```ts
 // packages/worker/src/watchers/link-wait.ts
-export const JOIN_FROM_MS = 10 * 60_000; // join from T-10
-export const GIVE_UP_AFTER_MS = 30 * 60_000; // stop looking at T+30
+export const JOIN_FROM_MS = 10 * 60_000 // join from T-10
+export const GIVE_UP_AFTER_MS = 30 * 60_000 // stop looking at T+30
 export type LinkWaitDecision =
-  | { kind: "join"; url: string }
-  | { kind: "ping_no_link" }
-  | { kind: "wait" }
-  | { kind: "give_up" };
+  { kind: 'join'; url: string } | { kind: 'ping_no_link' } | { kind: 'wait' } | { kind: 'give_up' }
 export function decideLinkWait(s: {
-  now: Date;
-  start: Date;
-  link: string | null;
-  noLinkPinged: boolean;
-}): LinkWaitDecision;
+  now: Date
+  start: Date
+  link: string | null
+  noLinkPinged: boolean
+}): LinkWaitDecision
 export type LinkChoice = {
-  url: string;
-  source: "fixed" | "watched" | "pasted";
-};
-export interface LinkWaitDeps {
-  start: Date;
-  now(): Date;
-  sleep(ms: number): Promise<void>;
-  fixed: string | null;
-  watched(): string | null;
-  pasted(): string | null;
-  pingNoLink(): Promise<void>;
+  url: string
+  source: 'fixed' | 'watched' | 'pasted'
 }
-export function waitForMeetingLink(d: LinkWaitDeps): Promise<LinkChoice | null>; // decides once a second
+export interface LinkWaitDeps {
+  start: Date
+  now(): Date
+  sleep(ms: number): Promise<void>
+  fixed: string | null
+  watched(): string | null
+  pasted(): string | null
+  pingNoLink(): Promise<void>
+}
+export function waitForMeetingLink(d: LinkWaitDeps): Promise<LinkChoice | null> // decides once a second
 
 // packages/worker/src/watchers/index.ts
-export function watcherFor(
-  app: ChatApp,
-): typeof import("./discord").startWatcher | null; // teams: null until plan 04
+export function watcherFor(app: ChatApp): typeof import('./discord').startWatcher | null // teams: null until plan 04
 
 // packages/core/src/control.ts
 export type StateEventData = {
-  state: OccurrenceState;
-  link?: { source: "fixed" | "watched" | "pasted"; host: string };
-}; // other plans' optional fields stay
+  state: OccurrenceState
+  link?: { source: 'fixed' | 'watched' | 'pasted'; host: string }
+} // other plans' optional fields stay
 ```
 
 `decideLinkWait`, in this order: a link and `now >= start - JOIN_FROM_MS` joins; `now >= start + GIVE_UP_AFTER_MS` gives up; `now >= start` and not yet pinged pings; otherwise wait. `waitForMeetingLink` uses `chooseMeetingLink(d.watched() ?? d.fixed, d.pasted())` and reports the source that supplied the chosen URL.
@@ -1194,129 +1030,122 @@ signed_out  <App> signed the bot out while it was watching. Sign in again; until
 
 ```ts
 // packages/worker/src/watchers/link-wait.test.ts
-const T = new Date("2026-10-21T06:00:00Z"),
+const T = new Date('2026-10-21T06:00:00Z'),
   at = (min: number) => new Date(T.getTime() + min * 60_000),
-  L = "https://example.zoom.us/j/00000000001";
+  L = 'https://example.zoom.us/j/00000000001'
 test.each([
-  [-60, L, false, { kind: "wait" }],
-  [-10, L, false, { kind: "join", url: L }],
-  [-1, null, false, { kind: "wait" }],
-  [0, null, false, { kind: "ping_no_link" }],
-  [5, null, true, { kind: "wait" }],
-  [29.99, null, true, { kind: "wait" }],
-  [30, null, true, { kind: "give_up" }],
-  [30, L, true, { kind: "join", url: L }],
-] as const)(
-  "at T + %p min, link %p, pinged %p",
-  (min, link, noLinkPinged, want) =>
-    expect(
-      decideLinkWait({ now: at(min), start: T, link, noLinkPinged }),
-    ).toEqual(want),
-);
+  [-60, L, false, { kind: 'wait' }],
+  [-10, L, false, { kind: 'join', url: L }],
+  [-1, null, false, { kind: 'wait' }],
+  [0, null, false, { kind: 'ping_no_link' }],
+  [5, null, true, { kind: 'wait' }],
+  [29.99, null, true, { kind: 'wait' }],
+  [30, null, true, { kind: 'give_up' }],
+  [30, L, true, { kind: 'join', url: L }]
+] as const)('at T + %p min, link %p, pinged %p', (min, link, noLinkPinged, want) =>
+  expect(decideLinkWait({ now: at(min), start: T, link, noLinkPinged })).toEqual(want)
+)
 
 // fakeClock(startMin) gives now() and a sleep(ms) that advances it; deps(over) builds LinkWaitDeps on it with start T,
 // no links, and a pingNoLink that records the clock in `pinged`.
-test("a watched link from T-30 is joined at T-10", async () => {
-  const d = deps({ clock: fakeClock(-60), watched: () => L });
-  expect(await waitForMeetingLink(d)).toEqual({ url: L, source: "watched" });
-  expect(d.clock.now()).toEqual(at(-10));
-});
+test('a watched link from T-30 is joined at T-10', async () => {
+  const d = deps({ clock: fakeClock(-60), watched: () => L })
+  expect(await waitForMeetingLink(d)).toEqual({ url: L, source: 'watched' })
+  expect(d.clock.now()).toEqual(at(-10))
+})
 
-test("a paste beats watched and fixed links", async () => {
-  const P = "https://example.zoom.us/j/00000000002";
-  expect(
-    await waitForMeetingLink(
-      deps({ clock: fakeClock(-12), watched: () => L, pasted: () => P }),
-    ),
-  ).toEqual({ url: P, source: "pasted" });
-  expect(
-    await waitForMeetingLink(
-      deps({ clock: fakeClock(-12), fixed: L, pasted: () => P }),
-    ),
-  ).toEqual({ url: P, source: "pasted" });
-});
+test('a paste beats watched and fixed links', async () => {
+  const P = 'https://example.zoom.us/j/00000000002'
+  expect(await waitForMeetingLink(deps({ clock: fakeClock(-12), watched: () => L, pasted: () => P }))).toEqual({
+    url: P,
+    source: 'pasted'
+  })
+  expect(await waitForMeetingLink(deps({ clock: fakeClock(-12), fixed: L, pasted: () => P }))).toEqual({
+    url: P,
+    source: 'pasted'
+  })
+})
 
-test("no link: one ping at T, then null at T+30", async () => {
-  const d = deps({ clock: fakeClock(-60) });
-  expect(await waitForMeetingLink(d)).toBeNull();
-  expect(d.pinged).toEqual([at(0)]);
-  expect(d.clock.now()).toEqual(at(30));
-});
+test('no link: one ping at T, then null at T+30', async () => {
+  const d = deps({ clock: fakeClock(-60) })
+  expect(await waitForMeetingLink(d)).toBeNull()
+  expect(d.pinged).toEqual([at(0)])
+  expect(d.clock.now()).toEqual(at(30))
+})
 
-test("a link pasted at T+12 is joined at once", async () => {
-  const d = deps({ clock: fakeClock(-1) });
-  d.pasted = () => (d.clock.now() >= at(12) ? L : null);
-  expect(await waitForMeetingLink(d)).toEqual({ url: L, source: "pasted" });
-  expect([d.clock.now(), d.pinged.length]).toEqual([at(12), 1]);
-});
+test('a link pasted at T+12 is joined at once', async () => {
+  const d = deps({ clock: fakeClock(-1) })
+  d.pasted = () => (d.clock.now() >= at(12) ? L : null)
+  expect(await waitForMeetingLink(d)).toEqual({ url: L, source: 'pasted' })
+  expect([d.clock.now(), d.pinged.length]).toEqual([at(12), 1])
+})
 ```
 
 ```ts
 // packages/worker/src/watchers/index.test.ts
-test("each chat app has its watcher; Teams arrives with plan 04", () => {
-  expect(watcherFor("discord")).toBe(discord.startWatcher);
-  expect(watcherFor("whatsapp")).toBe(whatsapp.startWatcher);
-  expect(watcherFor("teams")).toBeNull();
-});
+test('each chat app has its watcher; Teams arrives with plan 04', () => {
+  expect(watcherFor('discord')).toBe(discord.startWatcher)
+  expect(watcherFor('whatsapp')).toBe(whatsapp.startWatcher)
+  expect(watcherFor('teams')).toBeNull()
+})
 ```
 
 ```ts
 // packages/notify/src/messages.test.ts (added)
-test("no-link and watcher copy", () => {
-  const meetingUrl = "https://tm.example/meetings/o1";
+test('no-link and watcher copy', () => {
+  const meetingUrl = 'https://tm.example/meetings/o1'
   expect(
     pings.noLink({
-      entry: "Data Mining",
-      start: "Wed 21 Oct, 14:00",
-      until: "Wed 21 Oct, 14:30",
-      meetingUrl,
-    }),
+      entry: 'Data Mining',
+      start: 'Wed 21 Oct, 14:00',
+      until: 'Wed 21 Oct, 14:30',
+      meetingUrl
+    })
   ).toEqual({
-    title: "No meeting link: Data Mining",
+    title: 'No meeting link: Data Mining',
     message:
-      "Data Mining starts at Wed 21 Oct, 14:00 and no meeting link has arrived. Paste it on the meeting page; the bot keeps looking until Wed 21 Oct, 14:30.",
-    priority: "high",
-    actions: [{ label: "Open meeting page", url: meetingUrl }],
-  });
+      'Data Mining starts at Wed 21 Oct, 14:00 and no meeting link has arrived. Paste it on the meeting page; the bot keeps looking until Wed 21 Oct, 14:30.',
+    priority: 'high',
+    actions: [{ label: 'Open meeting page', url: meetingUrl }]
+  })
   expect(
     pings.noLinkStopped({
-      entry: "Data Mining",
-      until: "Wed 21 Oct, 14:30",
-      meetingUrl: null,
-    }),
+      entry: 'Data Mining',
+      until: 'Wed 21 Oct, 14:30',
+      meetingUrl: null
+    })
   ).toEqual({
-    title: "Not attended: Data Mining",
-    message:
-      "No meeting link arrived by Wed 21 Oct, 14:30, so the bot stopped without joining Data Mining.",
-    priority: "default",
-  });
+    title: 'Not attended: Data Mining',
+    message: 'No meeting link arrived by Wed 21 Oct, 14:30, so the bot stopped without joining Data Mining.',
+    priority: 'default'
+  })
   const p = pings.watcherProblem({
-    entry: "Data Mining",
-    app: "whatsapp",
-    problem: "signed_out",
+    entry: 'Data Mining',
+    app: 'whatsapp',
+    problem: 'signed_out',
     meetingUrl,
-    signInUrl: "https://tm.example/accounts/i1/signin",
-  });
+    signInUrl: 'https://tm.example/accounts/i1/signin'
+  })
   expect([p.title, p.priority, p.actions?.map((a) => a.label)]).toEqual([
-    "Not watching WhatsApp: Data Mining",
-    "high",
-    ["Open meeting page", "Sign in again"],
-  ]);
+    'Not watching WhatsApp: Data Mining',
+    'high',
+    ['Open meeting page', 'Sign in again']
+  ])
   expect(p.message).toBe(
-    "WhatsApp signed the bot out while it was watching. Sign in again; until then, new links in the chat aren't seen.",
-  );
+    "WhatsApp signed the bot out while it was watching. Sign in again; until then, new links in the chat aren't seen."
+  )
   expect(
     pings.watchingOff({
-      entry: "Data Mining",
-      app: "whatsapp",
-      gate: "none",
+      entry: 'Data Mining',
+      app: 'whatsapp',
+      gate: 'none',
       meetingUrl,
-      accountsUrl: "https://tm.example/accounts",
-    }).message,
+      accountsUrl: 'https://tm.example/accounts'
+    }).message
   ).toBe(
-    "WhatsApp watching is switched off, so the bot won't watch it for Data Mining. Paste the meeting link on the meeting page.",
-  );
-});
+    "WhatsApp watching is switched off, so the bot won't watch it for Data Mining. Paste the meeting link on the meeting page."
+  )
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1352,21 +1181,15 @@ git commit -m "feat(worker): wait for links and ping no-link"
 - Produces (adds to contracts), `packages/web/lib/link-notices.ts`:
 
 ```ts
-export const BAN_RISK_NOTICE: string;
-export const TRUSTED_SENDERS_CHAT_HINT: string;
-export const CHAT_FIELD_COPY: Record<
-  "whatsapp" | "discord",
-  { label: string; placeholder: string; hint: string }
->;
-export function showsBanRiskNotice(link: LinkSource): boolean; // chat sources on WhatsApp or Discord
-export function watchingNotAllowedMessage(
-  app: ChatApp,
-  gate: WatchGate,
-): string;
+export const BAN_RISK_NOTICE: string
+export const TRUSTED_SENDERS_CHAT_HINT: string
+export const CHAT_FIELD_COPY: Record<'whatsapp' | 'discord', { label: string; placeholder: string; hint: string }>
+export function showsBanRiskNotice(link: LinkSource): boolean // chat sources on WhatsApp or Discord
+export function watchingNotAllowedMessage(app: ChatApp, gate: WatchGate): string
 export function chatAppOptions(
   runLocation: RunLocation,
-  gate: WatchGate,
-): { app: "whatsapp" | "discord"; enabled: boolean; note: string | null }[];
+  gate: WatchGate
+): { app: 'whatsapp' | 'discord'; enabled: boolean; note: string | null }[]
 export class WatchingNotAllowedError extends Error {} // message from watchingNotAllowedMessage
 ```
 
@@ -1398,124 +1221,115 @@ Schema and save rules:
 
 ```ts
 // packages/web/lib/link-notices.test.ts
-test("the ban-risk notice shows for WhatsApp and Discord only", () => {
-  expect(
-    showsBanRiskNotice({ kind: "chat", app: "whatsapp", chat: "Class group" }),
-  ).toBe(true);
+test('the ban-risk notice shows for WhatsApp and Discord only', () => {
+  expect(showsBanRiskNotice({ kind: 'chat', app: 'whatsapp', chat: 'Class group' })).toBe(true)
   expect(
     showsBanRiskNotice({
-      kind: "chat",
-      app: "discord",
-      chat: "https://discord.com/channels/@me/234567890123456789",
-    }),
-  ).toBe(true);
+      kind: 'chat',
+      app: 'discord',
+      chat: 'https://discord.com/channels/@me/234567890123456789'
+    })
+  ).toBe(true)
   expect(
     showsBanRiskNotice({
-      kind: "chat",
-      app: "teams",
-      chat: "https://teams.microsoft.com/l/chat/x",
-    }),
-  ).toBe(false);
-  expect(showsBanRiskNotice({ kind: "paste" })).toBe(false);
-  expect(BAN_RISK_NOTICE).toStartWith(
-    "WhatsApp and Discord don't allow automated use of personal accounts.",
-  );
-});
+      kind: 'chat',
+      app: 'teams',
+      chat: 'https://teams.microsoft.com/l/chat/x'
+    })
+  ).toBe(false)
+  expect(showsBanRiskNotice({ kind: 'paste' })).toBe(false)
+  expect(BAN_RISK_NOTICE).toStartWith("WhatsApp and Discord don't allow automated use of personal accounts.")
+})
 
-test("app options follow the gate and the run location", () => {
-  expect(
-    chatAppOptions("server", { whatsapp: "home_only", discord: "allowed" }),
-  ).toEqual([
+test('app options follow the gate and the run location', () => {
+  expect(chatAppOptions('server', { whatsapp: 'home_only', discord: 'allowed' })).toEqual([
     {
-      app: "whatsapp",
+      app: 'whatsapp',
       enabled: false,
-      note: "WhatsApp is watched only for identities that run at home or on your PC. Change where this identity runs, or choose another link source.",
+      note: 'WhatsApp is watched only for identities that run at home or on your PC. Change where this identity runs, or choose another link source.'
     },
-    { app: "discord", enabled: true, note: null },
-  ]);
-  expect(
-    chatAppOptions("local", { whatsapp: "home_only", discord: "allowed" })[0]
-      .enabled,
-  ).toBe(true);
-  expect(
-    chatAppOptions("local", { whatsapp: "none", discord: "allowed" })[0].note,
-  ).toBe("WhatsApp watching is switched off. Choose another link source.");
-});
+    { app: 'discord', enabled: true, note: null }
+  ])
+  expect(chatAppOptions('local', { whatsapp: 'home_only', discord: 'allowed' })[0].enabled).toBe(true)
+  expect(chatAppOptions('local', { whatsapp: 'none', discord: 'allowed' })[0].note).toBe(
+    'WhatsApp watching is switched off. Choose another link source.'
+  )
+})
 ```
 
 ```tsx
 // packages/web/app/timetable/ban-risk-notice.test.tsx
-test("renders the notice as a note", () => {
-  const html = renderToStaticMarkup(<BanRiskNotice />);
-  expect(html).toContain('role="note"');
-  expect(html).toContain("never sends, reacts or replies");
-});
+test('renders the notice as a note', () => {
+  const html = renderToStaticMarkup(<BanRiskNotice />)
+  expect(html).toContain('role="note"')
+  expect(html).toContain('never sends, reacts or replies')
+})
 ```
 
 ```ts
 // packages/web/lib/timetable.test.ts (replaces "a chat link source is refused until link watchers exist")
-test("chat sources are normalised; Teams waits for plan 04", () => {
+test('chat sources are normalised; Teams waits for plan 04', () => {
   const d = EntryInputSchema.parse({
     ...base,
     identityId: ID,
     link: {
-      kind: "chat",
-      app: "discord",
-      chat: "https://ptb.discord.com/channels/123456789012345678/234567890123456789/345678901234567890",
-    },
-  });
+      kind: 'chat',
+      app: 'discord',
+      chat: 'https://ptb.discord.com/channels/123456789012345678/234567890123456789/345678901234567890'
+    }
+  })
   expect(d.link).toEqual({
-    kind: "chat",
-    app: "discord",
-    chat: "https://discord.com/channels/123456789012345678/234567890123456789",
-  });
+    kind: 'chat',
+    app: 'discord',
+    chat: 'https://discord.com/channels/123456789012345678/234567890123456789'
+  })
   expect(
     EntryInputSchema.parse({
       ...base,
       identityId: ID,
-      link: { kind: "chat", app: "whatsapp", chat: " Café group " },
-    }).link,
-  ).toEqual({ kind: "chat", app: "whatsapp", chat: "Café group" });
+      link: { kind: 'chat', app: 'whatsapp', chat: ' Café group ' }
+    }).link
+  ).toEqual({ kind: 'chat', app: 'whatsapp', chat: 'Café group' })
   expect(
     EntryInputSchema.safeParse({
       ...base,
       identityId: ID,
-      link: { kind: "chat", app: "whatsapp", chat: "two\nlines" },
-    }).error?.issues[0].message,
-  ).toBe("Type the chat's name exactly as WhatsApp shows it.");
+      link: { kind: 'chat', app: 'whatsapp', chat: 'two\nlines' }
+    }).error?.issues[0].message
+  ).toBe("Type the chat's name exactly as WhatsApp shows it.")
   expect(
     EntryInputSchema.safeParse({
       ...base,
       identityId: ID,
       link: {
-        kind: "chat",
-        app: "teams",
-        chat: "https://teams.microsoft.com/l/chat/x",
-      },
-    }).error?.issues[0].message,
-  ).toBe("Watching a Teams chat arrives with Teams support.");
-});
+        kind: 'chat',
+        app: 'teams',
+        chat: 'https://teams.microsoft.com/l/chat/x'
+      }
+    }).error?.issues[0].message
+  ).toBe('Watching a Teams chat arrives with Teams support.')
+})
 
-test("saving a WhatsApp chat on a server identity follows the gate", async () => {
-  const { scope, identityId, deps } = await bareWithDeps(); // the identity runs on the server
+test('saving a WhatsApp chat on a server identity follows the gate', async () => {
+  const { scope, identityId, deps } = await bareWithDeps() // the identity runs on the server
   const entry = {
     ...base,
     identityId,
-    link: { kind: "chat", app: "whatsapp", chat: "Class group" },
-  };
+    link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' }
+  }
   await expect(
     saveEntry(scope, entry, {
       ...deps,
-      gate: { whatsapp: "home_only", discord: "allowed" },
-    }),
-  ).rejects.toThrow(WatchingNotAllowedError);
+      gate: { whatsapp: 'home_only', discord: 'allowed' }
+    })
+  ).rejects.toThrow(WatchingNotAllowedError)
   await expect(
     saveEntry(scope, entry, {
       ...deps,
-      gate: { whatsapp: "allowed", discord: "allowed" },
-    }),
-  ).resolves.toMatchObject({ clashes: [] });
-});
+      gate: { whatsapp: 'allowed', discord: 'allowed' }
+    })
+  ).resolves.toMatchObject({ clashes: [] })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1570,68 +1384,59 @@ discord, home_only   Don't sign in to Discord here: this identity runs on the se
 
 ```ts
 // packages/web/lib/link-notices.test.ts (added)
-test("sign-in notes follow the gate", () => {
-  const home = { whatsapp: "home_only", discord: "allowed" } as const;
-  expect(signinNotes("server", home).whatsapp).toStartWith(
-    "Don't link WhatsApp here",
-  );
-  expect(signinNotes("local", home).whatsapp).toStartWith(
-    "WhatsApp Web: on your phone",
-  );
-  expect(
-    signinNotes("server", { whatsapp: "none", discord: "home_only" }),
-  ).toEqual({
-    whatsapp:
-      "WhatsApp watching is switched off, so there's no need to link it.",
+test('sign-in notes follow the gate', () => {
+  const home = { whatsapp: 'home_only', discord: 'allowed' } as const
+  expect(signinNotes('server', home).whatsapp).toStartWith("Don't link WhatsApp here")
+  expect(signinNotes('local', home).whatsapp).toStartWith('WhatsApp Web: on your phone')
+  expect(signinNotes('server', { whatsapp: 'none', discord: 'home_only' })).toEqual({
+    whatsapp: "WhatsApp watching is switched off, so there's no need to link it.",
     discord:
-      "Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC.",
-  });
-});
+      "Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC."
+  })
+})
 ```
 
 ```ts
 // packages/web/lib/identities.test.ts (added). withChatEntry(opts) seeds a member whose identity has run_location
 // opts.runLocation (written directly, past the 1C schema) and one unpaused entry with opts.link.
-test("moving an identity to the server is refused while it has WhatsApp-watched entries", async () => {
+test('moving an identity to the server is refused while it has WhatsApp-watched entries', async () => {
   const { scope, identityId } = await withChatEntry({
-    runLocation: "local",
-    link: { kind: "chat", app: "whatsapp", chat: "Class group" },
-  });
+    runLocation: 'local',
+    link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' }
+  })
   const input = {
-    name: "University",
-    runLocation: "server",
-    zoomGuestName: "A Member",
-  };
+    name: 'University',
+    runLocation: 'server',
+    zoomGuestName: 'A Member'
+  }
   await expect(
     updateIdentity(scope, identityId, input, {
-      whatsapp: "home_only",
-      discord: "allowed",
-    }),
+      whatsapp: 'home_only',
+      discord: 'allowed'
+    })
   ).rejects.toThrow(
-    "This identity has entries that watch WhatsApp, which is watched only at home or on your PC. Change those entries first.",
-  );
+    'This identity has entries that watch WhatsApp, which is watched only at home or on your PC. Change those entries first.'
+  )
   await expect(
     updateIdentity(scope, identityId, input, {
-      whatsapp: "allowed",
-      discord: "allowed",
-    }),
-  ).resolves.toBeUndefined();
-});
+      whatsapp: 'allowed',
+      discord: 'allowed'
+    })
+  ).resolves.toBeUndefined()
+})
 ```
 
 ```ts
 // packages/scheduler/src/launch.test.ts (added)
-test("a WhatsApp chat the gate refuses launches as a pasted-link entry, with a ping", async () => {
+test('a WhatsApp chat the gate refuses launches as a pasted-link entry, with a ping', async () => {
   const f = await launchFixture({
-    link: { kind: "chat", app: "whatsapp", chat: "Class group" },
-    watchGate: { whatsapp: "home_only", discord: "allowed" },
-  });
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe("launched");
-  expect((await f.job0()).entry.link).toEqual({ kind: "paste" });
-  expect(f.notifier.sent.map((s) => s.ping.title)).toEqual([
-    "Not watching WhatsApp: Data Mining",
-  ]);
-});
+    link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' },
+    watchGate: { whatsapp: 'home_only', discord: 'allowed' }
+  })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+  expect((await f.job0()).entry.link).toEqual({ kind: 'paste' })
+  expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Not watching WhatsApp: Data Mining'])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**

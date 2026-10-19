@@ -105,79 +105,70 @@ Secret columns (`members.ntfy_token_enc`, `ai_keys.dashscope_key_enc`, `ai_keys.
 ```ts
 // packages/web/db/schema.test.ts
 const TABLES = [
-  "ai_keys",
-  "artefacts",
-  "connections",
-  "details",
-  "device_tokens",
-  "events",
-  "forms",
-  "identities",
-  "members",
-  "mention_names",
-  "occurrences",
-  "profiles",
-  "signin_sessions",
-  "timetable_entries",
-];
+  'ai_keys',
+  'artefacts',
+  'connections',
+  'details',
+  'device_tokens',
+  'events',
+  'forms',
+  'identities',
+  'members',
+  'mention_names',
+  'occurrences',
+  'profiles',
+  'signin_sessions',
+  'timetable_entries'
+]
 
-test("migrations create every table", async () => {
-  const db = await createTestDb();
+test('migrations create every table', async () => {
+  const db = await createTestDb()
+  const { rows } = await db.execute(sql`select table_name from information_schema.tables where table_schema = 'public'`)
+  expect(rows.map((r) => r.table_name).sort()).toEqual(TABLES)
+})
+
+test('every table but members has a non-null member_id', async () => {
+  const db = await createTestDb()
   const { rows } = await db.execute(
-    sql`select table_name from information_schema.tables where table_schema = 'public'`,
-  );
-  expect(rows.map((r) => r.table_name).sort()).toEqual(TABLES);
-});
+    sql`select table_name from information_schema.columns where column_name = 'member_id' and is_nullable = 'NO'`
+  )
+  expect(rows.map((r) => r.table_name).sort()).toEqual(TABLES.filter((t) => t !== 'members'))
+})
 
-test("every table but members has a non-null member_id", async () => {
-  const db = await createTestDb();
-  const { rows } = await db.execute(
-    sql`select table_name from information_schema.columns where column_name = 'member_id' and is_nullable = 'NO'`,
-  );
-  expect(rows.map((r) => r.table_name).sort()).toEqual(
-    TABLES.filter((t) => t !== "members"),
-  );
-});
+test('an occurrence is unique per entry and start', async () => {
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  const [o] = await db.select().from(occurrences).where(eq(occurrences.id, a.ids.occurrences))
+  await expect(db.insert(occurrences).values({ ...o, id: undefined })).rejects.toThrow()
+})
 
-test("an occurrence is unique per entry and start", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  const [o] = await db
-    .select()
-    .from(occurrences)
-    .where(eq(occurrences.id, a.ids.occurrences));
-  await expect(
-    db.insert(occurrences).values({ ...o, id: undefined }),
-  ).rejects.toThrow();
-});
-
-test("a repeated event is stored once", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
+test('a repeated event is stored once', async () => {
+  const db = await createTestDb()
+  const a = await seedMember(db)
   const e = {
     occurrenceId: a.ids.occurrences,
     memberId: a.memberId,
     attempt: 1,
-    at: new Date("2026-10-21T06:00:00Z"),
-    type: "joined",
+    at: new Date('2026-10-21T06:00:00Z'),
+    type: 'joined',
     data: {},
-    dataHash: "h",
-  };
-  await db.insert(events).values(e).onConflictDoNothing();
-  await db.insert(events).values(e).onConflictDoNothing();
-  expect(await db.$count(events, eq(events.dataHash, "h"))).toBe(1);
-});
+    dataHash: 'h'
+  }
+  await db.insert(events).values(e).onConflictDoNothing()
+  await db.insert(events).values(e).onConflictDoNothing()
+  expect(await db.$count(events, eq(events.dataHash, 'h'))).toBe(1)
+})
 
-test("an unknown occurrence state is rejected", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
+test('an unknown occurrence state is rejected', async () => {
+  const db = await createTestDb()
+  const a = await seedMember(db)
   await expect(
     db
       .update(occurrences)
-      .set({ state: "bogus" as never })
-      .where(eq(occurrences.id, a.ids.occurrences)),
-  ).rejects.toThrow();
-});
+      .set({ state: 'bogus' as never })
+      .where(eq(occurrences.id, a.ids.occurrences))
+  ).rejects.toThrow()
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -223,89 +214,70 @@ git commit -m "feat(db): add schema and migrations"
 
 ```ts
 // packages/core/src/secrets.test.ts
-const master = Buffer.alloc(32);
-const id = "00000000-0000-0000-0000-000000000001";
+const master = Buffer.alloc(32)
+const id = '00000000-0000-0000-0000-000000000001'
 
-test("keys are HKDF-SHA256 of the master key", () => {
-  expect(profileKey(master, id).toString("hex")).toBe(
-    "e2ca8b1047006e313ae1b906af0d4ee3bfc7aadd6de5804f6c613baa3051f7c7",
-  );
-  expect(memberKey(master, id).toString("hex")).toBe(
-    "a346d0e1646a9feab8a63dbc7a2592db49d0c456080a22a7bae8ae5cb3b903ad",
-  );
-});
+test('keys are HKDF-SHA256 of the master key', () => {
+  expect(profileKey(master, id).toString('hex')).toBe(
+    'e2ca8b1047006e313ae1b906af0d4ee3bfc7aadd6de5804f6c613baa3051f7c7'
+  )
+  expect(memberKey(master, id).toString('hex')).toBe('a346d0e1646a9feab8a63dbc7a2592db49d0c456080a22a7bae8ae5cb3b903ad')
+})
 
-test("sealed secrets round-trip and never repeat", () => {
-  const k = memberKey(master, id);
-  const aad = `ai_keys.dashscope_key:${id}`;
-  const a = sealSecret(k, "sk-test", aad);
-  expect(a).toMatch(/^v1\.[\w-]{16}\.[\w-]+\.[\w-]{22}$/);
-  expect(a).not.toContain("sk-test");
-  expect(sealSecret(k, "sk-test", aad)).not.toBe(a);
-  expect(openSecret(k, a, aad)).toBe("sk-test");
-});
+test('sealed secrets round-trip and never repeat', () => {
+  const k = memberKey(master, id)
+  const aad = `ai_keys.dashscope_key:${id}`
+  const a = sealSecret(k, 'sk-test', aad)
+  expect(a).toMatch(/^v1\.[\w-]{16}\.[\w-]+\.[\w-]{22}$/)
+  expect(a).not.toContain('sk-test')
+  expect(sealSecret(k, 'sk-test', aad)).not.toBe(a)
+  expect(openSecret(k, a, aad)).toBe('sk-test')
+})
 
-test("a wrong key, a wrong AAD or a changed byte throws SecretError", () => {
-  const k = memberKey(master, id);
-  const a = sealSecret(k, "sk-test", "x");
-  expect(() => openSecret(k, a, "y")).toThrow(SecretError);
-  expect(() => openSecret(profileKey(master, id), a, "x")).toThrow(SecretError);
-  expect(() =>
-    openSecret(k, a.slice(0, -2) + (a.endsWith("A") ? "BB" : "AA"), "x"),
-  ).toThrow(SecretError);
-});
+test('a wrong key, a wrong AAD or a changed byte throws SecretError', () => {
+  const k = memberKey(master, id)
+  const a = sealSecret(k, 'sk-test', 'x')
+  expect(() => openSecret(k, a, 'y')).toThrow(SecretError)
+  expect(() => openSecret(profileKey(master, id), a, 'x')).toThrow(SecretError)
+  expect(() => openSecret(k, a.slice(0, -2) + (a.endsWith('A') ? 'BB' : 'AA'), 'x')).toThrow(SecretError)
+})
 ```
 
 ```ts
 // packages/web/db/secrets.test.ts
-test("a master key that is not 32 bytes is refused without echoing it", async () => {
-  const f = join(tmpdir(), "short.key");
-  await Bun.write(f, "c2hvcnQ=");
-  expect(() => loadMasterKey(f)).toThrow(
-    "TM_MASTER_KEY_FILE must hold 32 bytes, base64",
-  );
+test('a master key that is not 32 bytes is refused without echoing it', async () => {
+  const f = join(tmpdir(), 'short.key')
+  await Bun.write(f, 'c2hvcnQ=')
+  expect(() => loadMasterKey(f)).toThrow('TM_MASTER_KEY_FILE must hold 32 bytes, base64')
   try {
-    loadMasterKey(f);
+    loadMasterKey(f)
   } catch (e) {
-    expect(String(e)).not.toContain("c2hvcnQ");
+    expect(String(e)).not.toContain('c2hvcnQ')
   }
-});
+})
 
-test("a sealed column only opens for its member and column", () => {
-  const s = sealColumn(
-    Buffer.alloc(32),
-    "m1",
-    "ai_keys.dashscope_key",
-    "sk-test",
-  );
-  expect(openColumn(Buffer.alloc(32), "m1", "ai_keys.dashscope_key", s)).toBe(
-    "sk-test",
-  );
-  expect(() =>
-    openColumn(Buffer.alloc(32), "m2", "ai_keys.dashscope_key", s),
-  ).toThrow();
-  expect(() =>
-    openColumn(Buffer.alloc(32), "m1", "members.ntfy_token", s),
-  ).toThrow();
-});
+test('a sealed column only opens for its member and column', () => {
+  const s = sealColumn(Buffer.alloc(32), 'm1', 'ai_keys.dashscope_key', 'sk-test')
+  expect(openColumn(Buffer.alloc(32), 'm1', 'ai_keys.dashscope_key', s)).toBe('sk-test')
+  expect(() => openColumn(Buffer.alloc(32), 'm2', 'ai_keys.dashscope_key', s)).toThrow()
+  expect(() => openColumn(Buffer.alloc(32), 'm1', 'members.ntfy_token', s)).toThrow()
+})
 ```
 
 ```ts
 // packages/worker/src/profile/key.test.ts
-test("loadProfileKey prefers TM_PROFILE_KEY_FILE over deriving from the master key", async () => {
-  const key = Buffer.alloc(32, 7);
-  const f = join(tmpdir(), "profile.key");
-  await Bun.write(f, key.toString("base64"));
-  process.env.TM_PROFILE_KEY_FILE = f;
-  expect(loadProfileKey("i1").equals(key)).toBe(true);
-  delete process.env.TM_PROFILE_KEY_FILE;
-  const m = join(tmpdir(), "master.key");
-  await Bun.write(m, Buffer.alloc(32).toString("base64"));
-  process.env.TM_MASTER_KEY_FILE = m;
-  expect(loadProfileKey("i1").equals(profileKey(Buffer.alloc(32), "i1"))).toBe(
-    true,
-  );
-});
+test('loadProfileKey prefers TM_PROFILE_KEY_FILE over deriving from the master key', async () => {
+  const key = Buffer.alloc(32, 7)
+  const f = join(tmpdir(), 'profile.key')
+  await Bun.write(f, key.toString('base64'))
+  process.env.TM_PROFILE_KEY_FILE = f
+  expect(loadProfileKey('i1').equals(key)).toBe(true)
+  delete process.env.TM_PROFILE_KEY_FILE
+  const m = join(tmpdir(), 'master.key')
+  await Bun.write(m, Buffer.alloc(32).toString('base64'))
+  process.env.TM_MASTER_KEY_FILE = m
+  expect(loadProfileKey('i1').equals(profileKey(Buffer.alloc(32), 'i1'))).toBe(true)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -347,31 +319,31 @@ git commit -m "feat(core): seal secrets with HKDF keys"
 
 ```ts
 export type OccurrenceTrigger =
-  | "launch"
-  | "skip_capacity"
-  | "skip_identity_clash"
-  | "skip_pc_offline"
-  | "worker_up"
-  | "signin_needed"
-  | "signed_in"
-  | "accounts_ok"
-  | "link_found"
-  | "link_timeout"
-  | "lobby"
-  | "knock_again"
-  | "admitted"
-  | "denied"
-  | "meeting_over"
-  | "left"
-  | "uploaded"
-  | "wait_for_pc"
-  | "transcript_ready"
-  | "summary_done"
-  | "crash"
+  | 'launch'
+  | 'skip_capacity'
+  | 'skip_identity_clash'
+  | 'skip_pc_offline'
+  | 'worker_up'
+  | 'signin_needed'
+  | 'signed_in'
+  | 'accounts_ok'
+  | 'link_found'
+  | 'link_timeout'
+  | 'lobby'
+  | 'knock_again'
+  | 'admitted'
+  | 'denied'
+  | 'meeting_over'
+  | 'left'
+  | 'uploaded'
+  | 'wait_for_pc'
+  | 'transcript_ready'
+  | 'summary_done'
+  | 'crash'
   | `resume:${WorkerState}`
-  | "member_left"
-  | "fail"
-  | "delete";
+  | 'member_left'
+  | 'fail'
+  | 'delete'
 ```
 
 Transitions (the design's diagram, plus `joining -> in_meeting` for meetings without a lobby, and `restarting -> crash` so a restart that never heartbeats counts again):
@@ -402,144 +374,108 @@ all outside ACTIVE_STATES, except deleted   delete -> deleted
 
 ```ts
 // packages/core/src/occurrence-machine.test.ts
-test("the main line runs from scheduled to completed", () => {
+test('the main line runs from scheduled to completed', () => {
   const path: [OccurrenceTrigger, OccurrenceState][] = [
-    ["launch", "starting"],
-    ["worker_up", "verifying_accounts"],
-    ["accounts_ok", "watching_for_link"],
-    ["link_found", "joining"],
-    ["lobby", "in_lobby"],
-    ["admitted", "in_meeting"],
-    ["meeting_over", "leaving"],
-    ["left", "uploading"],
-    ["uploaded", "transcribing"],
-    ["transcript_ready", "post_processing"],
-    ["summary_done", "completed"],
-  ];
-  let s: OccurrenceState = "scheduled";
-  for (const [t, want] of path)
-    expect((s = nextOccurrenceState(s, t))).toBe(want);
-});
+    ['launch', 'starting'],
+    ['worker_up', 'verifying_accounts'],
+    ['accounts_ok', 'watching_for_link'],
+    ['link_found', 'joining'],
+    ['lobby', 'in_lobby'],
+    ['admitted', 'in_meeting'],
+    ['meeting_over', 'leaving'],
+    ['left', 'uploading'],
+    ['uploaded', 'transcribing'],
+    ['transcript_ready', 'post_processing'],
+    ['summary_done', 'completed']
+  ]
+  let s: OccurrenceState = 'scheduled'
+  for (const [t, want] of path) expect((s = nextOccurrenceState(s, t))).toBe(want)
+})
 
-test("side exits", () => {
-  expect(nextOccurrenceState("verifying_accounts", "signin_needed")).toBe(
-    "waiting_for_signin",
-  );
-  expect(nextOccurrenceState("waiting_for_signin", "signed_in")).toBe(
-    "verifying_accounts",
-  );
-  expect(nextOccurrenceState("watching_for_link", "link_timeout")).toBe(
-    "no_link",
-  );
-  expect(nextOccurrenceState("in_lobby", "knock_again")).toBe("in_lobby");
-  expect(nextOccurrenceState("in_lobby", "denied")).toBe("denied");
-  expect(nextOccurrenceState("in_meeting", "crash")).toBe("restarting");
-  expect(nextOccurrenceState("restarting", "resume:in_meeting")).toBe(
-    "in_meeting",
-  );
-  expect(nextOccurrenceState("restarting", "crash")).toBe("restarting");
-  expect(nextOccurrenceState("joining", "member_left")).toBe("left_by_member");
-  expect(nextOccurrenceState("starting", "skip_capacity")).toBe(
-    "skipped_capacity",
-  );
-  expect(nextOccurrenceState("transcribing", "wait_for_pc")).toBe(
-    "waiting_for_pc",
-  );
-  expect(nextOccurrenceState("post_processing", "fail")).toBe("failed");
-  expect(nextOccurrenceState("completed", "delete")).toBe("deleted");
-});
+test('side exits', () => {
+  expect(nextOccurrenceState('verifying_accounts', 'signin_needed')).toBe('waiting_for_signin')
+  expect(nextOccurrenceState('waiting_for_signin', 'signed_in')).toBe('verifying_accounts')
+  expect(nextOccurrenceState('watching_for_link', 'link_timeout')).toBe('no_link')
+  expect(nextOccurrenceState('in_lobby', 'knock_again')).toBe('in_lobby')
+  expect(nextOccurrenceState('in_lobby', 'denied')).toBe('denied')
+  expect(nextOccurrenceState('in_meeting', 'crash')).toBe('restarting')
+  expect(nextOccurrenceState('restarting', 'resume:in_meeting')).toBe('in_meeting')
+  expect(nextOccurrenceState('restarting', 'crash')).toBe('restarting')
+  expect(nextOccurrenceState('joining', 'member_left')).toBe('left_by_member')
+  expect(nextOccurrenceState('starting', 'skip_capacity')).toBe('skipped_capacity')
+  expect(nextOccurrenceState('transcribing', 'wait_for_pc')).toBe('waiting_for_pc')
+  expect(nextOccurrenceState('post_processing', 'fail')).toBe('failed')
+  expect(nextOccurrenceState('completed', 'delete')).toBe('deleted')
+})
 
-test("illegal moves throw", () => {
-  expect(() => nextOccurrenceState("scheduled", "admitted")).toThrow(
-    IllegalTransition,
-  );
-  expect(() => nextOccurrenceState("in_meeting", "delete")).toThrow(
-    IllegalTransition,
-  );
-  expect(() => nextOccurrenceState("deleted", "fail")).toThrow(
-    IllegalTransition,
-  );
-  expect(() => nextOccurrenceState("completed", "crash")).toThrow(
-    IllegalTransition,
-  );
-});
+test('illegal moves throw', () => {
+  expect(() => nextOccurrenceState('scheduled', 'admitted')).toThrow(IllegalTransition)
+  expect(() => nextOccurrenceState('in_meeting', 'delete')).toThrow(IllegalTransition)
+  expect(() => nextOccurrenceState('deleted', 'fail')).toThrow(IllegalTransition)
+  expect(() => nextOccurrenceState('completed', 'crash')).toThrow(IllegalTransition)
+})
 
-test("triggerFor finds the trigger between two states", () => {
-  expect(triggerFor("verifying_accounts", "watching_for_link")).toBe(
-    "accounts_ok",
-  );
-  expect(triggerFor("restarting", "starting")).toBe("resume:starting");
-  expect(triggerFor("uploading", "transcribing")).toBe("uploaded");
-  expect(triggerFor("in_meeting", "completed")).toBeNull();
-});
+test('triggerFor finds the trigger between two states', () => {
+  expect(triggerFor('verifying_accounts', 'watching_for_link')).toBe('accounts_ok')
+  expect(triggerFor('restarting', 'starting')).toBe('resume:starting')
+  expect(triggerFor('uploading', 'transcribing')).toBe('uploaded')
+  expect(triggerFor('in_meeting', 'completed')).toBeNull()
+})
 ```
 
 ```ts
 // packages/core/src/passcode.test.ts
-test("passcodes are stripped from meeting links", () => {
-  expect(
-    stripPasscode("https://example.zoom.us/j/00000000000?pwd=PASSCODE"),
-  ).toBe("https://example.zoom.us/j/00000000000");
-  expect(
-    stripPasscode("https://teams.microsoft.com/meet/00000000?p=PASSCODE"),
-  ).toBe("https://teams.microsoft.com/meet/00000000");
-  expect(stripPasscode("https://example.com/x?p=1")).toBe(
-    "https://example.com/x?p=1",
-  );
-  expect(stripPasscode("not a url")).toBe("");
-});
+test('passcodes are stripped from meeting links', () => {
+  expect(stripPasscode('https://example.zoom.us/j/00000000000?pwd=PASSCODE')).toBe(
+    'https://example.zoom.us/j/00000000000'
+  )
+  expect(stripPasscode('https://teams.microsoft.com/meet/00000000?p=PASSCODE')).toBe(
+    'https://teams.microsoft.com/meet/00000000'
+  )
+  expect(stripPasscode('https://example.com/x?p=1')).toBe('https://example.com/x?p=1')
+  expect(stripPasscode('not a url')).toBe('')
+})
 ```
 
 ```ts
 // packages/web/db/transitions.test.ts
-test("a transition writes the state and a state event", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  expect(await applyTrigger(db, a.ids.occurrences, "launch")).toEqual({
-    from: "scheduled",
-    to: "starting",
-  });
-  const [ev] = await db
-    .select()
-    .from(events)
-    .where(eq(events.occurrenceId, a.ids.occurrences));
+test('a transition writes the state and a state event', async () => {
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  expect(await applyTrigger(db, a.ids.occurrences, 'launch')).toEqual({
+    from: 'scheduled',
+    to: 'starting'
+  })
+  const [ev] = await db.select().from(events).where(eq(events.occurrenceId, a.ids.occurrences))
   expect(ev.data).toEqual({
-    from: "scheduled",
-    to: "starting",
-    trigger: "launch",
-  });
-});
+    from: 'scheduled',
+    to: 'starting',
+    trigger: 'launch'
+  })
+})
 
-test("leaving the active states strips passcodes", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
+test('leaving the active states strips passcodes', async () => {
+  const db = await createTestDb()
+  const a = await seedMember(db)
   await db
     .update(occurrences)
     .set({
-      state: "uploading",
-      linkUsed: "https://example.zoom.us/j/00000000000?pwd=PASSCODE",
+      state: 'uploading',
+      linkUsed: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
     })
-    .where(eq(occurrences.id, a.ids.occurrences));
-  await applyTrigger(db, a.ids.occurrences, "uploaded");
-  const [o] = await db
-    .select()
-    .from(occurrences)
-    .where(eq(occurrences.id, a.ids.occurrences));
-  expect(o.linkUsed).toBe("https://example.zoom.us/j/00000000000");
-});
+    .where(eq(occurrences.id, a.ids.occurrences))
+  await applyTrigger(db, a.ids.occurrences, 'uploaded')
+  const [o] = await db.select().from(occurrences).where(eq(occurrences.id, a.ids.occurrences))
+  expect(o.linkUsed).toBe('https://example.zoom.us/j/00000000000')
+})
 
-test("an illegal trigger changes nothing", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  await expect(applyTrigger(db, a.ids.occurrences, "admitted")).rejects.toThrow(
-    IllegalTransition,
-  );
-  const [o] = await db
-    .select()
-    .from(occurrences)
-    .where(eq(occurrences.id, a.ids.occurrences));
-  expect(o.state).toBe("scheduled");
-});
+test('an illegal trigger changes nothing', async () => {
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  await expect(applyTrigger(db, a.ids.occurrences, 'admitted')).rejects.toThrow(IllegalTransition)
+  const [o] = await db.select().from(occurrences).where(eq(occurrences.id, a.ids.occurrences))
+  expect(o.state).toBe('scheduled')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -579,29 +515,15 @@ git commit -m "feat(core): add occurrence state machine"
 
 ```ts
 export interface MemberScope {
-  readonly memberId: string;
-  me(): Promise<MemberRow>;
-  updateMe(
-    set: Partial<
-      Pick<MemberRow, "displayName" | "timeZone" | "ntfyTopic" | "ntfyTokenEnc">
-    >,
-  ): Promise<void>;
-  select<T extends MemberOwnedTable>(
-    table: T,
-    where?: SQL,
-  ): Promise<T["$inferSelect"][]>;
-  insert<T extends MemberOwnedTable>(
-    table: T,
-    values: Omit<T["$inferInsert"], "memberId">,
-  ): Promise<T["$inferSelect"]>;
-  update<T extends MemberOwnedTable>(
-    table: T,
-    set: Partial<T["$inferInsert"]>,
-    where: SQL,
-  ): Promise<number>;
-  remove<T extends MemberOwnedTable>(table: T, where: SQL): Promise<number>;
-  transaction<R>(fn: (s: MemberScope) => Promise<R>): Promise<R>;
-  artefactFile(occurrenceId: string, relPath: string): Promise<string | null>;
+  readonly memberId: string
+  me(): Promise<MemberRow>
+  updateMe(set: Partial<Pick<MemberRow, 'displayName' | 'timeZone' | 'ntfyTopic' | 'ntfyTokenEnc'>>): Promise<void>
+  select<T extends MemberOwnedTable>(table: T, where?: SQL): Promise<T['$inferSelect'][]>
+  insert<T extends MemberOwnedTable>(table: T, values: Omit<T['$inferInsert'], 'memberId'>): Promise<T['$inferSelect']>
+  update<T extends MemberOwnedTable>(table: T, set: Partial<T['$inferInsert']>, where: SQL): Promise<number>
+  remove<T extends MemberOwnedTable>(table: T, where: SQL): Promise<number>
+  transaction<R>(fn: (s: MemberScope) => Promise<R>): Promise<R>
+  artefactFile(occurrenceId: string, relPath: string): Promise<string | null>
 }
 ```
 
@@ -613,91 +535,63 @@ Every method adds `member_id = memberId` to its `where`, forces `memberId` on in
 // packages/web/lib/scope.test.ts
 for (const [name, table] of Object.entries(MEMBER_OWNED)) {
   test(`${name}: one member can't read or delete another member's rows`, async () => {
-    const db = await createTestDb();
-    const a = await seedMember(db);
-    const b = await seedMember(db);
-    const sb = createScope(db, b.memberId);
-    expect(
-      (await sb.select(table)).every((r) => r.memberId === b.memberId),
-    ).toBe(true);
-    expect(await sb.remove(table, eq(pkOf(table), a.ids[name]))).toBe(0);
-    expect(await db.$count(table, eq(pkOf(table), a.ids[name]))).toBe(1);
-  });
+    const db = await createTestDb()
+    const a = await seedMember(db)
+    const b = await seedMember(db)
+    const sb = createScope(db, b.memberId)
+    expect((await sb.select(table)).every((r) => r.memberId === b.memberId)).toBe(true)
+    expect(await sb.remove(table, eq(pkOf(table), a.ids[name]))).toBe(0)
+    expect(await db.$count(table, eq(pkOf(table), a.ids[name]))).toBe(1)
+  })
 }
 
 test("an update can't touch or move another member's row", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  const b = await seedMember(db);
-  const sb = createScope(db, b.memberId);
-  expect(
-    await sb.update(
-      identities,
-      { name: "Taken" },
-      eq(identities.id, a.identityId),
-    ),
-  ).toBe(0);
-  await sb.update(
-    identities,
-    { memberId: a.memberId, name: "Mine" } as never,
-    eq(identities.id, b.identityId),
-  );
-  const [row] = await db
-    .select()
-    .from(identities)
-    .where(eq(identities.id, b.identityId));
-  expect(row).toMatchObject({ memberId: b.memberId, name: "Mine" });
-});
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  const b = await seedMember(db)
+  const sb = createScope(db, b.memberId)
+  expect(await sb.update(identities, { name: 'Taken' }, eq(identities.id, a.identityId))).toBe(0)
+  await sb.update(identities, { memberId: a.memberId, name: 'Mine' } as never, eq(identities.id, b.identityId))
+  const [row] = await db.select().from(identities).where(eq(identities.id, b.identityId))
+  expect(row).toMatchObject({ memberId: b.memberId, name: 'Mine' })
+})
 
 test("an insert is always stored under the scope's member", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  const b = await seedMember(db);
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  const b = await seedMember(db)
   const row = await createScope(db, b.memberId).insert(mentionNames, {
-    name: "Short Name",
-    memberId: a.memberId,
-  } as never);
-  expect(row.memberId).toBe(b.memberId);
-});
+    name: 'Short Name',
+    memberId: a.memberId
+  } as never)
+  expect(row.memberId).toBe(b.memberId)
+})
 
 test("artefact files resolve only for the owner's registered paths", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  const b = await seedMember(db);
-  const [art] = await db
-    .select()
-    .from(artefacts)
-    .where(eq(artefacts.id, a.ids.artefacts));
-  expect(
-    await createScope(db, a.memberId).artefactFile(art.occurrenceId, art.path),
-  ).toEndWith(`/occurrences/${art.occurrenceId}/${art.path}`);
-  expect(
-    await createScope(db, b.memberId).artefactFile(art.occurrenceId, art.path),
-  ).toBeNull();
-  expect(
-    await createScope(db, a.memberId).artefactFile(
-      art.occurrenceId,
-      "../../etc/passwd",
-    ),
-  ).toBeNull();
-});
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  const b = await seedMember(db)
+  const [art] = await db.select().from(artefacts).where(eq(artefacts.id, a.ids.artefacts))
+  expect(await createScope(db, a.memberId).artefactFile(art.occurrenceId, art.path)).toEndWith(
+    `/occurrences/${art.occurrenceId}/${art.path}`
+  )
+  expect(await createScope(db, b.memberId).artefactFile(art.occurrenceId, art.path)).toBeNull()
+  expect(await createScope(db, a.memberId).artefactFile(art.occurrenceId, '../../etc/passwd')).toBeNull()
+})
 ```
 
 ```ts
 // packages/web/lib/no-direct-db.test.ts
-test("only scope.ts, auth.ts and control.ts open the database in packages/web", async () => {
-  const files = await Array.fromAsync(
-    new Bun.Glob("{app,lib}/**/*.{ts,tsx}").scan({ cwd: "packages/web" }),
-  );
-  const offenders: string[] = [];
+test('only scope.ts, auth.ts and control.ts open the database in packages/web', async () => {
+  const files = await Array.fromAsync(new Bun.Glob('{app,lib}/**/*.{ts,tsx}').scan({ cwd: 'packages/web' }))
+  const offenders: string[] = []
   for (const f of files) {
-    if (/^lib\/(scope|auth|control)\.ts$|\.test\.tsx?$/.test(f)) continue;
-    const text = await Bun.file(`packages/web/${f}`).text();
-    if (/\bgetDb\s*\(|from ['"][./]*db(\/index)?['"]/.test(text))
-      offenders.push(f);
+    if (/^lib\/(scope|auth|control)\.ts$|\.test\.tsx?$/.test(f)) continue
+    const text = await Bun.file(`packages/web/${f}`).text()
+    if (/\bgetDb\s*\(|from ['"][./]*db(\/index)?['"]/.test(text)) offenders.push(f)
   }
-  expect(offenders).toEqual([]);
-});
+  expect(offenders).toEqual([])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -745,92 +639,76 @@ git commit -m "feat(web): add member scope"
 
 ```ts
 // packages/web/lib/authorise.test.ts
-const gh = (
-  m: "active" | "pending" | "none",
-  user = { id: 42, login: "Octo-Member" },
-): GitHubApi => ({ user: async () => user, orgMembership: async () => m });
-const deps = (
-  db: Db,
-  m: "active" | "pending" | "none",
-  user?: { id: number; login: string },
-) => ({ github: gh(m, user), auth: authScope(db), org: "tolonglabs" });
+const gh = (m: 'active' | 'pending' | 'none', user = { id: 42, login: 'Octo-Member' }): GitHubApi => ({
+  user: async () => user,
+  orgMembership: async () => m
+})
+const deps = (db: Db, m: 'active' | 'pending' | 'none', user?: { id: number; login: string }) => ({
+  github: gh(m, user),
+  auth: authScope(db),
+  org: 'tolonglabs'
+})
 
-test("an active organisation member added by an admin is allowed and linked", async () => {
-  const db = await createTestDb();
+test('an active organisation member added by an admin is allowed and linked', async () => {
+  const db = await createTestDb()
   const { memberId } = await seedMember(db, {
-    githubLogin: "octo-member",
-    full: false,
-  });
-  const authUserId = await seedAuthUser(db, { githubToken: "gho_test" });
-  await authoriseSession(deps(db, "active"), authUserId);
-  const [m] = await db.select().from(members).where(eq(members.id, memberId));
-  expect(m).toMatchObject({ githubId: 42, authUserId });
-});
+    githubLogin: 'octo-member',
+    full: false
+  })
+  const authUserId = await seedAuthUser(db, { githubToken: 'gho_test' })
+  await authoriseSession(deps(db, 'active'), authUserId)
+  const [m] = await db.select().from(members).where(eq(members.id, memberId))
+  expect(m).toMatchObject({ githubId: 42, authUserId })
+})
 
-test("a pending membership is refused", async () => {
-  const db = await createTestDb();
-  await seedMember(db, { githubLogin: "octo-member", full: false });
-  const authUserId = await seedAuthUser(db, { githubToken: "gho_test" });
-  await expect(
-    authoriseSession(deps(db, "pending"), authUserId),
-  ).rejects.toThrow("Not an active TolongLabs member");
-});
+test('a pending membership is refused', async () => {
+  const db = await createTestDb()
+  await seedMember(db, { githubLogin: 'octo-member', full: false })
+  const authUserId = await seedAuthUser(db, { githubToken: 'gho_test' })
+  await expect(authoriseSession(deps(db, 'pending'), authUserId)).rejects.toThrow('Not an active TolongLabs member')
+})
 
-test("an organisation member nobody added is refused", async () => {
-  const db = await createTestDb();
-  const authUserId = await seedAuthUser(db, { githubToken: "gho_test" });
-  await expect(
-    authoriseSession(deps(db, "active"), authUserId),
-  ).rejects.toThrow("Not an active TolongLabs member");
-});
+test('an organisation member nobody added is refused', async () => {
+  const db = await createTestDb()
+  const authUserId = await seedAuthUser(db, { githubToken: 'gho_test' })
+  await expect(authoriseSession(deps(db, 'active'), authUserId)).rejects.toThrow('Not an active TolongLabs member')
+})
 
-test("a renamed GitHub login still matches by id", async () => {
-  const db = await createTestDb();
+test('a renamed GitHub login still matches by id', async () => {
+  const db = await createTestDb()
   const { memberId } = await seedMember(db, {
-    githubLogin: "old-name",
-    full: false,
-  });
-  await db
-    .update(members)
-    .set({ githubId: 42 })
-    .where(eq(members.id, memberId));
-  const authUserId = await seedAuthUser(db, { githubToken: "gho_test" });
-  await expect(
-    authoriseSession(
-      deps(db, "active", { id: 42, login: "new-name" }),
-      authUserId,
-    ),
-  ).resolves.toBeUndefined();
-});
+    githubLogin: 'old-name',
+    full: false
+  })
+  await db.update(members).set({ githubId: 42 }).where(eq(members.id, memberId))
+  const authUserId = await seedAuthUser(db, { githubToken: 'gho_test' })
+  await expect(authoriseSession(deps(db, 'active', { id: 42, login: 'new-name' }), authUserId)).resolves.toBeUndefined()
+})
 ```
 
 ```ts
 // packages/scheduler/src/org-check.test.ts
-test("the daily check ends the sessions of members who left or revoked the app", async () => {
-  const db = await createTestDb();
-  const left = await seedLinkedMember(db, "gho_left"); // member + auth user + link + one auth_session
-  const revoked = await seedLinkedMember(db, "gho_revoked");
-  const stays = await seedLinkedMember(db, "gho_stays");
+test('the daily check ends the sessions of members who left or revoked the app', async () => {
+  const db = await createTestDb()
+  const left = await seedLinkedMember(db, 'gho_left') // member + auth user + link + one auth_session
+  const revoked = await seedLinkedMember(db, 'gho_revoked')
+  const stays = await seedLinkedMember(db, 'gho_stays')
   const github: GitHubApi = {
     user: async (t) => {
-      if (t === "gho_revoked") throw new GitHubTokenError();
-      return { id: 1, login: "x" };
+      if (t === 'gho_revoked') throw new GitHubTokenError()
+      return { id: 1, login: 'x' }
     },
-    orgMembership: async (t) => (t === "gho_left" ? "none" : "active"),
-  };
+    orgMembership: async (t) => (t === 'gho_left' ? 'none' : 'active')
+  }
   const { ended } = await checkMemberships({
     github,
     auth: authScope(db),
-    org: "tolonglabs",
-  });
-  expect(ended.sort()).toEqual([left.memberId, revoked.memberId].sort());
-  expect(
-    await db.$count(authSession, eq(authSession.userId, stays.authUserId)),
-  ).toBe(1);
-  expect(
-    await db.$count(authSession, eq(authSession.userId, left.authUserId)),
-  ).toBe(0);
-});
+    org: 'tolonglabs'
+  })
+  expect(ended.sort()).toEqual([left.memberId, revoked.memberId].sort())
+  expect(await db.$count(authSession, eq(authSession.userId, stays.authUserId))).toBe(1)
+  expect(await db.$count(authSession, eq(authSession.userId, left.authUserId))).toBe(0)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -878,164 +756,142 @@ git commit -m "feat(web): add GitHub sign-in with org check"
 
 ```ts
 // packages/core/src/schedule.test.ts
-const now = new Date("2026-10-20T00:00:00Z");
+const now = new Date('2026-10-20T00:00:00Z')
 
-test("a weekly entry expands 14 days ahead in the member time zone", () => {
+test('a weekly entry expands 14 days ahead in the member time zone', () => {
   const slots = expandEntry(
     {
-      repeat: { kind: "weekly", days: [1, 3], from: "2026-10-01" },
-      startTime: "14:00",
-      endTime: "16:00",
+      repeat: { kind: 'weekly', days: [1, 3], from: '2026-10-01' },
+      startTime: '14:00',
+      endTime: '16:00'
     },
-    "Asia/Kuala_Lumpur",
-    now,
-  );
+    'Asia/Kuala_Lumpur',
+    now
+  )
   expect(slots.map((s) => s.start.toISOString())).toEqual([
-    "2026-10-21T06:00:00.000Z",
-    "2026-10-26T06:00:00.000Z",
-    "2026-10-28T06:00:00.000Z",
-    "2026-11-02T06:00:00.000Z",
-  ]);
-  expect(slots[0].end.toISOString()).toBe("2026-10-21T08:00:00.000Z");
-});
+    '2026-10-21T06:00:00.000Z',
+    '2026-10-26T06:00:00.000Z',
+    '2026-10-28T06:00:00.000Z',
+    '2026-11-02T06:00:00.000Z'
+  ])
+  expect(slots[0].end.toISOString()).toBe('2026-10-21T08:00:00.000Z')
+})
 
-test("expansion keeps local time across a daylight-saving change", () => {
+test('expansion keeps local time across a daylight-saving change', () => {
   const slots = expandEntry(
     {
-      repeat: { kind: "weekly", days: [1], from: "2026-10-19" },
-      startTime: "10:00",
-      endTime: "11:00",
+      repeat: { kind: 'weekly', days: [1], from: '2026-10-19' },
+      startTime: '10:00',
+      endTime: '11:00'
     },
-    "Europe/London",
-    new Date("2026-10-18T00:00:00Z"),
-  );
-  expect(slots.map((s) => s.start.toISOString())).toEqual([
-    "2026-10-19T09:00:00.000Z",
-    "2026-10-26T10:00:00.000Z",
-  ]);
-});
+    'Europe/London',
+    new Date('2026-10-18T00:00:00Z')
+  )
+  expect(slots.map((s) => s.start.toISOString())).toEqual(['2026-10-19T09:00:00.000Z', '2026-10-26T10:00:00.000Z'])
+})
 
-test("an end before the start is on the next day", () => {
+test('an end before the start is on the next day', () => {
   const [s] = expandEntry(
     {
-      repeat: { kind: "once", date: "2026-10-23" },
-      startTime: "23:00",
-      endTime: "01:00",
+      repeat: { kind: 'once', date: '2026-10-23' },
+      startTime: '23:00',
+      endTime: '01:00'
     },
-    "Asia/Kuala_Lumpur",
-    now,
-  );
-  expect([s.start.toISOString(), s.end.toISOString()]).toEqual([
-    "2026-10-23T15:00:00.000Z",
-    "2026-10-23T17:00:00.000Z",
-  ]);
-});
+    'Asia/Kuala_Lumpur',
+    now
+  )
+  expect([s.start.toISOString(), s.end.toISOString()]).toEqual(['2026-10-23T15:00:00.000Z', '2026-10-23T17:00:00.000Z'])
+})
 
-test("past and out-of-horizon slots are left out", () => {
+test('past and out-of-horizon slots are left out', () => {
   const once = (date: string) =>
-    expandEntry(
-      { repeat: { kind: "once", date }, startTime: "10:00", endTime: "11:00" },
-      "Asia/Kuala_Lumpur",
-      now,
-    );
-  expect(once("2026-10-19")).toEqual([]);
-  expect(once("2026-11-03")).toEqual([]);
-});
+    expandEntry({ repeat: { kind: 'once', date }, startTime: '10:00', endTime: '11:00' }, 'Asia/Kuala_Lumpur', now)
+  expect(once('2026-10-19')).toEqual([])
+  expect(once('2026-11-03')).toEqual([])
+})
 
-test("the earlier start wins a clash, ties go to the older entry, touching slots do not clash", () => {
-  const t = (h: number) => new Date(Date.UTC(2026, 9, 21, h));
+test('the earlier start wins a clash, ties go to the older entry, touching slots do not clash', () => {
+  const t = (h: number) => new Date(Date.UTC(2026, 9, 21, h))
   expect(
     findClashes([
-      { id: "b", start: t(7), end: t(9), rank: 1 },
-      { id: "a", start: t(6), end: t(8), rank: 2 },
-    ]),
-  ).toEqual([{ winner: "a", loser: "b" }]);
+      { id: 'b', start: t(7), end: t(9), rank: 1 },
+      { id: 'a', start: t(6), end: t(8), rank: 2 }
+    ])
+  ).toEqual([{ winner: 'a', loser: 'b' }])
   expect(
     findClashes([
-      { id: "x", start: t(6), end: t(8), rank: 2 },
-      { id: "y", start: t(6), end: t(8), rank: 1 },
-    ]),
-  ).toEqual([{ winner: "y", loser: "x" }]);
+      { id: 'x', start: t(6), end: t(8), rank: 2 },
+      { id: 'y', start: t(6), end: t(8), rank: 1 }
+    ])
+  ).toEqual([{ winner: 'y', loser: 'x' }])
   expect(
     findClashes([
-      { id: "p", start: t(6), end: t(8), rank: 1 },
-      { id: "q", start: t(8), end: t(10), rank: 2 },
-    ]),
-  ).toEqual([]);
-});
+      { id: 'p', start: t(6), end: t(8), rank: 1 },
+      { id: 'q', start: t(8), end: t(10), rank: 2 }
+    ])
+  ).toEqual([])
+})
 
-test("times are shown in the member time zone", () => {
-  expect(
-    formatWhen(new Date("2026-10-21T06:00:00Z"), "Asia/Kuala_Lumpur"),
-  ).toBe("Wed 21 Oct, 14:00");
-  expect(formatDay(new Date("2026-11-20T08:00:00Z"), "Asia/Kuala_Lumpur")).toBe(
-    "Fri 20 Nov",
-  );
-});
+test('times are shown in the member time zone', () => {
+  expect(formatWhen(new Date('2026-10-21T06:00:00Z'), 'Asia/Kuala_Lumpur')).toBe('Wed 21 Oct, 14:00')
+  expect(formatDay(new Date('2026-11-20T08:00:00Z'), 'Asia/Kuala_Lumpur')).toBe('Fri 20 Nov')
+})
 ```
 
 ```ts
 // packages/web/db/occurrences.test.ts
-const now = new Date("2026-10-20T00:00:00Z");
+const now = new Date('2026-10-20T00:00:00Z')
 const WEDNESDAY_14 = {
-  repeat: { kind: "weekly", days: [3], from: "2026-10-01" },
-  startTime: "14:00",
-  endTime: "16:00",
-} as const;
+  repeat: { kind: 'weekly', days: [3], from: '2026-10-01' },
+  startTime: '14:00',
+  endTime: '16:00'
+} as const
 
-test("sync creates occurrences once and queues launches at T-60", async () => {
-  const { db, memberId, q } = await withEntry(WEDNESDAY_14); // seedMember(full: false) plus one entry and a FakeQueue
-  expect(await syncOccurrences(db, q, now)).toEqual({ created: 2, removed: 0 });
-  expect(await syncOccurrences(db, q, now)).toEqual({ created: 0, removed: 0 });
+test('sync creates occurrences once and queues launches at T-60', async () => {
+  const { db, memberId, q } = await withEntry(WEDNESDAY_14) // seedMember(full: false) plus one entry and a FakeQueue
+  expect(await syncOccurrences(db, q, now)).toEqual({ created: 2, removed: 0 })
+  expect(await syncOccurrences(db, q, now)).toEqual({ created: 0, removed: 0 })
   expect(q.sent[0]).toEqual({
-    name: "launch",
+    name: 'launch',
     data: {
       occurrenceId: expect.any(String),
-      scheduledStart: "2026-10-21T06:00:00.000Z",
+      scheduledStart: '2026-10-21T06:00:00.000Z'
     },
     opts: {
-      startAfter: new Date("2026-10-21T05:00:00.000Z"),
-      singletonKey: expect.stringMatching(
-        /^launch:.+:2026-10-21T06:00:00\.000Z$/,
-      ),
-    },
-  });
+      startAfter: new Date('2026-10-21T05:00:00.000Z'),
+      singletonKey: expect.stringMatching(/^launch:.+:2026-10-21T06:00:00\.000Z$/)
+    }
+  })
   const [o] = await db
     .select()
     .from(occurrences)
     .where(eq(occurrences.memberId, memberId))
-    .orderBy(occurrences.scheduledStart);
-  expect(o.deleteAfter.toISOString()).toBe("2026-11-20T08:00:00.000Z");
-});
+    .orderBy(occurrences.scheduledStart)
+  expect(o.deleteAfter.toISOString()).toBe('2026-11-20T08:00:00.000Z')
+})
 
-test("pausing an entry removes its future scheduled occurrences", async () => {
-  const { db, entryId, q } = await withEntry(WEDNESDAY_14);
-  await syncOccurrences(db, q, now);
+test('pausing an entry removes its future scheduled occurrences', async () => {
+  const { db, entryId, q } = await withEntry(WEDNESDAY_14)
+  await syncOccurrences(db, q, now)
+  await db.update(timetableEntries).set({ paused: true }).where(eq(timetableEntries.id, entryId))
+  expect(await syncOccurrences(db, q, now)).toEqual({ created: 0, removed: 2 })
+})
+
+test('moving an entry to 15:00 replaces its scheduled occurrences', async () => {
+  const { db, entryId, q } = await withEntry(WEDNESDAY_14)
+  await syncOccurrences(db, q, now)
   await db
     .update(timetableEntries)
-    .set({ paused: true })
-    .where(eq(timetableEntries.id, entryId));
-  expect(await syncOccurrences(db, q, now)).toEqual({ created: 0, removed: 2 });
-});
+    .set({ startTime: '15:00', endTime: '17:00' })
+    .where(eq(timetableEntries.id, entryId))
+  expect(await syncOccurrences(db, q, now)).toEqual({ created: 2, removed: 2 })
+})
 
-test("moving an entry to 15:00 replaces its scheduled occurrences", async () => {
-  const { db, entryId, q } = await withEntry(WEDNESDAY_14);
-  await syncOccurrences(db, q, now);
-  await db
-    .update(timetableEntries)
-    .set({ startTime: "15:00", endTime: "17:00" })
-    .where(eq(timetableEntries.id, entryId));
-  expect(await syncOccurrences(db, q, now)).toEqual({ created: 2, removed: 2 });
-});
-
-test("a member without a working AI key gets no occurrences", async () => {
-  const { db, memberId, q } = await withEntry(WEDNESDAY_14);
-  await db
-    .update(aiKeys)
-    .set({ testOk: false })
-    .where(eq(aiKeys.memberId, memberId));
-  expect(await syncOccurrences(db, q, now)).toEqual({ created: 0, removed: 0 });
-});
+test('a member without a working AI key gets no occurrences', async () => {
+  const { db, memberId, q } = await withEntry(WEDNESDAY_14)
+  await db.update(aiKeys).set({ testOk: false }).where(eq(aiKeys.memberId, memberId))
+  expect(await syncOccurrences(db, q, now)).toEqual({ created: 0, removed: 0 })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1101,97 +957,76 @@ Ping copy (`<when>` is `formatWhen` and `<deleteOn>` is `formatDay`, in the memb
 
 ```ts
 // packages/notify/src/messages.test.ts
-test("capacity clash copy", () => {
+test('capacity clash copy', () => {
   expect(
     pings.capacityClash({
-      entry: "Data Mining",
-      when: "Wed 21 Oct, 14:00",
-      identity: "University",
-      accountsUrl: "https://tm.example/accounts",
-    }),
+      entry: 'Data Mining',
+      when: 'Wed 21 Oct, 14:00',
+      identity: 'University',
+      accountsUrl: 'https://tm.example/accounts'
+    })
   ).toEqual({
-    title: "Skipped: Data Mining (server full)",
-    priority: "high",
+    title: 'Skipped: Data Mining (server full)',
+    priority: 'high',
     message:
       "Two meetings are already running on the server, so the bot won't attend Data Mining at Wed 21 Oct, 14:00. To run it, switch the University identity to your PC.",
-    actions: [{ label: "Open accounts", url: "https://tm.example/accounts" }],
-  });
-});
+    actions: [{ label: 'Open accounts', url: 'https://tm.example/accounts' }]
+  })
+})
 
-test.each(COPY_CASES)("%s matches the copy table", (_name, ping, expected) =>
-  expect(ping).toEqual(expected),
-); // one case per row of the table
+test.each(COPY_CASES)('%s matches the copy table', (_name, ping, expected) => expect(ping).toEqual(expected)) // one case per row of the table
 ```
 
 ```ts
 // packages/web/lib/ntfy-admin.test.ts
-test("ensureNtfy creates a user, grants one topic and stores a sealed token, once", async () => {
-  const db = await createTestDb();
-  const { memberId } = await seedMember(db, { full: false });
-  const fetchFn = fakeFetch({ "/v1/account/token": { token: "tk_test" } }); // records "METHOD path AuthScheme" and JSON bodies
-  const admin = ntfyAdmin("https://ntfy.tm.example", "tk_admin", fetchFn);
-  const scope = createScope(db, memberId);
-  const { topic } = await ensureNtfy(scope, admin, Buffer.alloc(32));
-  expect(topic).toMatch(/^tm-[a-z2-7]{24}$/);
+test('ensureNtfy creates a user, grants one topic and stores a sealed token, once', async () => {
+  const db = await createTestDb()
+  const { memberId } = await seedMember(db, { full: false })
+  const fetchFn = fakeFetch({ '/v1/account/token': { token: 'tk_test' } }) // records "METHOD path AuthScheme" and JSON bodies
+  const admin = ntfyAdmin('https://ntfy.tm.example', 'tk_admin', fetchFn)
+  const scope = createScope(db, memberId)
+  const { topic } = await ensureNtfy(scope, admin, Buffer.alloc(32))
+  expect(topic).toMatch(/^tm-[a-z2-7]{24}$/)
   expect(fetchFn.calls).toEqual([
-    "POST /v1/users Bearer",
-    "PUT /v1/users/access Bearer",
-    "POST /v1/account/token Basic",
-  ]);
+    'POST /v1/users Bearer',
+    'PUT /v1/users/access Bearer',
+    'POST /v1/account/token Basic'
+  ])
   expect(fetchFn.bodies[1]).toEqual({
     username: `tm-${memberId}`,
     topic,
-    permission: "read-write",
-  });
-  expect(fetchFn.bodies[2]).toEqual({ label: "TolongMeeting", expires: 0 });
-  const me = await scope.me();
-  expect(
-    openColumn(
-      Buffer.alloc(32),
-      memberId,
-      "members.ntfy_token",
-      me.ntfyTokenEnc!,
-    ),
-  ).toBe("tk_test");
-  await ensureNtfy(scope, admin, Buffer.alloc(32));
-  expect(fetchFn.calls).toHaveLength(3);
-});
+    permission: 'read-write'
+  })
+  expect(fetchFn.bodies[2]).toEqual({ label: 'TolongMeeting', expires: 0 })
+  const me = await scope.me()
+  expect(openColumn(Buffer.alloc(32), memberId, 'members.ntfy_token', me.ntfyTokenEnc!)).toBe('tk_test')
+  await ensureNtfy(scope, admin, Buffer.alloc(32))
+  expect(fetchFn.calls).toHaveLength(3)
+})
 ```
 
 ```ts
 // packages/web/db/notifier.test.ts
-test("notify sends with the member topic and token", async () => {
-  const { db, memberId } = await withNtfy("tk_test"); // seedMember plus a topic and a sealed token
-  const sent: NtfyConfig[] = [];
-  await memberNotifier(
-    db,
-    Buffer.alloc(32),
-    "https://ntfy.tm.example",
-    async (cfg) => {
-      sent.push(cfg);
-    },
-  ).notify(memberId, pings.notificationsTest());
+test('notify sends with the member topic and token', async () => {
+  const { db, memberId } = await withNtfy('tk_test') // seedMember plus a topic and a sealed token
+  const sent: NtfyConfig[] = []
+  await memberNotifier(db, Buffer.alloc(32), 'https://ntfy.tm.example', async (cfg) => {
+    sent.push(cfg)
+  }).notify(memberId, pings.notificationsTest())
   expect(sent[0]).toEqual({
-    url: "https://ntfy.tm.example",
+    url: 'https://ntfy.tm.example',
     topic: expect.stringMatching(/^tm-/),
-    token: "tk_test",
-  });
-});
+    token: 'tk_test'
+  })
+})
 
 test("a failing ntfy doesn't throw and doesn't log the token", async () => {
-  const { db, memberId } = await withNtfy("tk_test");
-  const n = memberNotifier(
-    db,
-    Buffer.alloc(32),
-    "https://ntfy.tm.example",
-    async () => {
-      throw new Error("500 tk_test");
-    },
-  );
-  await expectNotLogged("tk_test", () =>
-    n.notify(memberId, pings.notificationsTest()),
-  );
-});
+  const { db, memberId } = await withNtfy('tk_test')
+  const n = memberNotifier(db, Buffer.alloc(32), 'https://ntfy.tm.example', async () => {
+    throw new Error('500 tk_test')
+  })
+  await expectNotLogged('tk_test', () => n.notify(memberId, pings.notificationsTest()))
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1255,88 +1090,75 @@ The page never shows a saved key back; it shows "Saved" with the last test time 
 
 ```ts
 // packages/web/db/job-config.test.ts
-test("AI config uses the Singapore endpoints", () => {
-  expect(aiConfigFor({ dashscopeKey: "sk-test", workspaceId: null })).toEqual({
-    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    apiKey: "sk-test",
-    asrUrl: "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
-    models: DEFAULT_MODELS,
-  });
-  expect(
-    aiConfigFor({ dashscopeKey: "sk-test", workspaceId: "ws-abc123" }),
-  ).toMatchObject({
-    baseUrl:
-      "https://ws-abc123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
-    asrUrl:
-      "wss://ws-abc123.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime",
-  });
-});
+test('AI config uses the Singapore endpoints', () => {
+  expect(aiConfigFor({ dashscopeKey: 'sk-test', workspaceId: null })).toEqual({
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    apiKey: 'sk-test',
+    asrUrl: 'wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime',
+    models: DEFAULT_MODELS
+  })
+  expect(aiConfigFor({ dashscopeKey: 'sk-test', workspaceId: 'ws-abc123' })).toMatchObject({
+    baseUrl: 'https://ws-abc123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+    asrUrl: 'wss://ws-abc123.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime'
+  })
+})
 ```
 
 ```ts
 // packages/web/lib/ai-keys.test.ts
 const ok: KeyTester = {
   dashscope: async () => ({ ok: true }),
-  modelscope: async () => ({ ok: true }),
-};
+  modelscope: async () => ({ ok: true })
+}
 
-test("a Workspace ID must be a plain identifier", () => {
+test('a Workspace ID must be a plain identifier', () => {
   expect(
     AiKeysInputSchema.safeParse({
-      dashscopeKey: "sk-test-1234",
-      workspaceId: "evil.example/x",
-    }).success,
-  ).toBe(false);
-});
+      dashscopeKey: 'sk-test-1234',
+      workspaceId: 'evil.example/x'
+    }).success
+  ).toBe(false)
+})
 
-test("saving seals the key and records a passing test", async () => {
-  const { db, memberId } = await seedBare(); // seedMember(full: false) without an ai_keys row
-  const scope = createScope(db, memberId);
+test('saving seals the key and records a passing test', async () => {
+  const { db, memberId } = await seedBare() // seedMember(full: false) without an ai_keys row
+  const scope = createScope(db, memberId)
   expect(
-    await saveAiKeys(
-      scope,
-      { dashscopeKey: "sk-test-1234" },
-      { master: Buffer.alloc(32), tester: ok, now },
-    ),
-  ).toEqual({ ok: true });
-  const [row] = await scope.select(aiKeys);
-  expect(row.dashscopeKeyEnc).toMatch(/^v1\./);
-  expect(row.dashscopeKeyEnc).not.toContain("sk-test-1234");
-  expect(await hasWorkingKey(scope)).toBe(true);
-});
+    await saveAiKeys(scope, { dashscopeKey: 'sk-test-1234' }, { master: Buffer.alloc(32), tester: ok, now })
+  ).toEqual({ ok: true })
+  const [row] = await scope.select(aiKeys)
+  expect(row.dashscopeKeyEnc).toMatch(/^v1\./)
+  expect(row.dashscopeKeyEnc).not.toContain('sk-test-1234')
+  expect(await hasWorkingKey(scope)).toBe(true)
+})
 
-test("a rejected key is recorded with the region hint", async () => {
-  const { db, memberId } = await seedBare();
-  const scope = createScope(db, memberId);
+test('a rejected key is recorded with the region hint', async () => {
+  const { db, memberId } = await seedBare()
+  const scope = createScope(db, memberId)
   const tester = keyTester(async () => {
-    throw keyError(401);
-  }); // keyError(n): an AiKeyError with status n
-  const r = await saveAiKeys(
-    scope,
-    { dashscopeKey: "sk-test-1234" },
-    { master: Buffer.alloc(32), tester, now },
-  );
+    throw keyError(401)
+  }) // keyError(n): an AiKeyError with status n
+  const r = await saveAiKeys(scope, { dashscopeKey: 'sk-test-1234' }, { master: Buffer.alloc(32), tester, now })
   expect(r).toEqual({
     ok: false,
-    error:
-      "DashScope rejected the key. Check it is a Singapore (international) region key.",
-  });
-  expect(await hasWorkingKey(scope)).toBe(false);
-});
+    error: 'DashScope rejected the key. Check it is a Singapore (international) region key.'
+  })
+  expect(await hasWorkingKey(scope)).toBe(false)
+})
 
-test("the key is never logged", async () => {
-  const { db, memberId } = await seedBare();
+test('the key is never logged', async () => {
+  const { db, memberId } = await seedBare()
   const tester = keyTester(async () => {
-    throw new Error("boom sk-secret-123456");
-  });
-  await expectNotLogged("sk-secret-123456", () =>
+    throw new Error('boom sk-secret-123456')
+  })
+  await expectNotLogged('sk-secret-123456', () =>
     saveAiKeys(
       createScope(db, memberId),
-      { dashscopeKey: "sk-secret-123456" },
-      { master: Buffer.alloc(32), tester, now },
-    ),
-  );
-});
+      { dashscopeKey: 'sk-secret-123456' },
+      { master: Buffer.alloc(32), tester, now }
+    )
+  )
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1379,116 +1201,101 @@ The Accounts page lists the member's identities, each with its settings form (ru
 
 ```ts
 // packages/web/lib/identities.test.ts
-test("creating an identity creates its profile", async () => {
-  const { scope } = await bare(); // createScope over seedMember(full: false)
+test('creating an identity creates its profile', async () => {
+  const { scope } = await bare() // createScope over seedMember(full: false)
   const id = await createIdentity(scope, {
-    name: "Work",
-    runLocation: "server",
-    zoomGuestName: "A Member",
-  });
-  expect(
-    await scope.select(profiles, eq(profiles.identityId, id.id)),
-  ).toHaveLength(1);
-});
+    name: 'Work',
+    runLocation: 'server',
+    zoomGuestName: 'A Member'
+  })
+  expect(await scope.select(profiles, eq(profiles.identityId, id.id))).toHaveLength(1)
+})
 
-test("only the server run location is accepted for now", () => {
+test('only the server run location is accepted for now', () => {
   expect(
     IdentityInputSchema.safeParse({
-      name: "Home",
-      runLocation: "local",
-      zoomGuestName: "A",
-    }).error?.issues[0].message,
-  ).toBe('Only "Server" is available until run locations are added.');
-});
+      name: 'Home',
+      runLocation: 'local',
+      zoomGuestName: 'A'
+    }).error?.issues[0].message
+  ).toBe('Only "Server" is available until run locations are added.')
+})
 
 test("an identity in use can't be deleted", async () => {
-  const { scope, identityId } = await bare();
-  await scope.update(
-    profiles,
-    { heldBy: "occ:x" },
-    eq(profiles.identityId, identityId),
-  );
-  await expect(deleteIdentity(scope, identityId)).rejects.toThrow(
-    "This identity is in use by a meeting or a sign-in.",
-  );
-});
+  const { scope, identityId } = await bare()
+  await scope.update(profiles, { heldBy: 'occ:x' }, eq(profiles.identityId, identityId))
+  await expect(deleteIdentity(scope, identityId)).rejects.toThrow('This identity is in use by a meeting or a sign-in.')
+})
 
-test("account status lists every account in order", async () => {
-  const { scope, identityId } = await bare();
+test('account status lists every account in order', async () => {
+  const { scope, identityId } = await bare()
   await scope.update(
     profiles,
     {
       accountStatus: {
-        zoom: { verifiedAt: "2026-10-21T05:01:00Z", signedIn: true },
-      },
+        zoom: { verifiedAt: '2026-10-21T05:01:00Z', signedIn: true }
+      }
     },
-    eq(profiles.identityId, identityId),
-  );
-  const s = await accountStatus(scope, identityId);
-  expect(s.map((x) => x.label)).toEqual([
-    "Zoom",
-    "Microsoft",
-    "Google",
-    "WhatsApp Web",
-    "Discord",
-    "Teams",
-  ]);
+    eq(profiles.identityId, identityId)
+  )
+  const s = await accountStatus(scope, identityId)
+  expect(s.map((x) => x.label)).toEqual(['Zoom', 'Microsoft', 'Google', 'WhatsApp Web', 'Discord', 'Teams'])
   expect(s[0]).toEqual({
-    kind: "zoom",
-    label: "Zoom",
-    verifiedAt: "2026-10-21T05:01:00Z",
-    signedIn: true,
-  });
-  expect(s[1].verifiedAt).toBeNull();
-});
+    kind: 'zoom',
+    label: 'Zoom',
+    verifiedAt: '2026-10-21T05:01:00Z',
+    signedIn: true
+  })
+  expect(s[1].verifiedAt).toBeNull()
+})
 ```
 
 ```ts
 // packages/web/lib/details.test.ts
-test("details and mention names round-trip with label variants", async () => {
-  const { scope } = await bare();
+test('details and mention names round-trip with label variants', async () => {
+  const { scope } = await bare()
   await saveDetails(scope, {
     details: [
       {
-        key: "student_id",
-        value: "S0000000",
-        labels: ["Matric No.", "No. Matrik"],
-      },
+        key: 'student_id',
+        value: 'S0000000',
+        labels: ['Matric No.', 'No. Matrik']
+      }
     ],
-    mentionNames: ["Short Name", "S0000000"],
-  });
+    mentionNames: ['Short Name', 'S0000000']
+  })
   expect(await loadDetails(scope)).toEqual({
     details: [
       {
-        key: "student_id",
-        value: "S0000000",
-        labels: ["Matric No.", "No. Matrik"],
-      },
+        key: 'student_id',
+        value: 'S0000000',
+        labels: ['Matric No.', 'No. Matrik']
+      }
     ],
-    mentionNames: ["Short Name", "S0000000"],
-  });
-});
+    mentionNames: ['Short Name', 'S0000000']
+  })
+})
 
-test("duplicate labels and a malformed university email are refused", () => {
+test('duplicate labels and a malformed university email are refused', () => {
   expect(
     DetailsInputSchema.safeParse({
       details: [
         {
-          key: "student_id",
-          value: "S1",
-          labels: ["Matric No.", "matric no."],
-        },
+          key: 'student_id',
+          value: 'S1',
+          labels: ['Matric No.', 'matric no.']
+        }
       ],
-      mentionNames: [],
-    }).success,
-  ).toBe(false);
+      mentionNames: []
+    }).success
+  ).toBe(false)
   expect(
     DetailsInputSchema.safeParse({
-      details: [{ key: "university_email", value: "not-an-email", labels: [] }],
-      mentionNames: [],
-    }).success,
-  ).toBe(false);
-});
+      details: [{ key: 'university_email', value: 'not-an-email', labels: [] }],
+      mentionNames: []
+    }).success
+  ).toBe(false)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1551,97 +1358,74 @@ For `type: 'work'` the schema empties `trustedSenders`, `formDetails` and `atten
 ```ts
 // packages/web/lib/timetable.test.ts
 const base = {
-  name: "Data Mining",
-  type: "lecture",
-  repeat: { kind: "weekly", days: [3], from: "2026-10-01" },
-  start: "14:00",
-  end: "16:00",
+  name: 'Data Mining',
+  type: 'lecture',
+  repeat: { kind: 'weekly', days: [3], from: '2026-10-01' },
+  start: '14:00',
+  end: '16:00',
   link: {
-    kind: "fixed",
-    url: "https://example.zoom.us/j/00000000000?pwd=PASSCODE",
+    kind: 'fixed',
+    url: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
   },
-  trustedSenders: ["Lecturer Name"],
+  trustedSenders: ['Lecturer Name'],
   formDetails: {
-    course_code: "ABC1234",
-    section: "1",
-    lecturer: "Lecturer Name",
+    course_code: 'ABC1234',
+    section: '1',
+    lecturer: 'Lecturer Name'
   },
-  attendanceKeywords: ["kehadiran"],
-};
+  attendanceKeywords: ['kehadiran']
+}
 
-test("lectures default to live and work meetings to native, without lecture-only fields", () => {
-  expect(
-    EntryInputSchema.parse({ ...base, identityId: ID }).transcription,
-  ).toBe("live");
-  expect(
-    EntryInputSchema.parse({ ...base, identityId: ID, type: "work" }),
-  ).toMatchObject({
-    transcription: "native",
+test('lectures default to live and work meetings to native, without lecture-only fields', () => {
+  expect(EntryInputSchema.parse({ ...base, identityId: ID }).transcription).toBe('live')
+  expect(EntryInputSchema.parse({ ...base, identityId: ID, type: 'work' })).toMatchObject({
+    transcription: 'native',
     trustedSenders: [],
     formDetails: {},
-    attendanceKeywords: [],
-  });
-});
+    attendanceKeywords: []
+  })
+})
 
-test("a chat link source is refused until link watchers exist", () => {
+test('a chat link source is refused until link watchers exist', () => {
   const r = EntryInputSchema.safeParse({
     ...base,
     identityId: ID,
-    link: { kind: "chat", app: "whatsapp", chat: "Class group" },
-  });
-  expect(r.error?.issues[0].message).toBe(
-    "Watching a chat arrives with link watchers.",
-  );
-  expect(
-    ChatLinkSchema.safeParse({ kind: "chat", app: "discord", chat: "general" })
-      .success,
-  ).toBe(false);
+    link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' }
+  })
+  expect(r.error?.issues[0].message).toBe('Watching a chat arrives with link watchers.')
+  expect(ChatLinkSchema.safeParse({ kind: 'chat', app: 'discord', chat: 'general' }).success).toBe(false)
   expect(
     ChatLinkSchema.safeParse({
-      kind: "chat",
-      app: "whatsapp",
-      chat: "Class group",
-    }).success,
-  ).toBe(true);
-});
+      kind: 'chat',
+      app: 'whatsapp',
+      chat: 'Class group'
+    }).success
+  ).toBe(true)
+})
 
-test("saving needs a working AI key", async () => {
-  const { scope, identityId, deps } = await withoutKey();
-  await expect(saveEntry(scope, { ...base, identityId }, deps)).rejects.toThrow(
-    NoWorkingKeyError,
-  );
-});
+test('saving needs a working AI key', async () => {
+  const { scope, identityId, deps } = await withoutKey()
+  await expect(saveEntry(scope, { ...base, identityId }, deps)).rejects.toThrow(NoWorkingKeyError)
+})
 
-test("a clashing entry is saved, pinged once and reported", async () => {
-  const { scope, identityId, deps } = await bareWithDeps(); // working key, FakeQueue, FakeNotifier, now 2026-10-20T00:00Z
-  await saveEntry(scope, { ...base, identityId }, deps);
-  const r = await saveEntry(
-    scope,
-    { ...base, name: "Statistics", identityId, start: "15:00", end: "17:00" },
-    deps,
-  );
+test('a clashing entry is saved, pinged once and reported', async () => {
+  const { scope, identityId, deps } = await bareWithDeps() // working key, FakeQueue, FakeNotifier, now 2026-10-20T00:00Z
+  await saveEntry(scope, { ...base, identityId }, deps)
+  const r = await saveEntry(scope, { ...base, name: 'Statistics', identityId, start: '15:00', end: '17:00' }, deps)
   expect(r.clashes[0]).toEqual({
-    loser: "Statistics",
-    winner: "Data Mining",
-    when: "Wed 21 Oct, 15:00",
-  });
-  expect(deps.notifier.sent.map((s) => s.ping.title)).toEqual([
-    "Timetable clash on University",
-  ]);
-});
+    loser: 'Statistics',
+    winner: 'Data Mining',
+    when: 'Wed 21 Oct, 15:00'
+  })
+  expect(deps.notifier.sent.map((s) => s.ping.title)).toEqual(['Timetable clash on University'])
+})
 
 test("an entry with a meeting in progress can't be deleted", async () => {
-  const { scope, identityId, deps } = await bareWithDeps();
-  const { entryId } = await saveEntry(scope, { ...base, identityId }, deps);
-  await scope.update(
-    occurrences,
-    { state: "in_meeting" },
-    eq(occurrences.entryId, entryId),
-  );
-  await expect(deleteEntry(scope, entryId, deps)).rejects.toThrow(
-    "This entry has a meeting in progress.",
-  );
-});
+  const { scope, identityId, deps } = await bareWithDeps()
+  const { entryId } = await saveEntry(scope, { ...base, identityId }, deps)
+  await scope.update(occurrences, { state: 'in_meeting' }, eq(occurrences.entryId, entryId))
+  await expect(deleteEntry(scope, entryId, deps)).rejects.toThrow('This entry has a meeting in progress.')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1689,74 +1473,54 @@ git commit -m "feat(web): add timetable page"
 
 ```ts
 // packages/web/lib/home.test.ts
-test("home groups upcoming, running, recent and expiring meetings", async () => {
-  const { scope, ids } = await homeFixture(); // occurrences: scheduled 2026-10-21T06:00Z, in_meeting, completed with a summary file whose third line is "Do next: Submit lab 3 (due Fri 23 Oct, 23:59)", completed with delete_after 2026-10-22T00:00Z; a profile with zoom signedIn false; no ntfy topic
-  const h = await homeData(scope, new Date("2026-10-20T00:00:00Z"));
-  expect(h.upcoming.map((o) => o.when)).toEqual(["Wed 21 Oct, 14:00"]);
-  expect(h.inProgress.map((o) => o.state)).toEqual(["in_meeting"]);
-  expect(h.recent[0].doNext).toBe(
-    "Do next: Submit lab 3 (due Fri 23 Oct, 23:59)",
-  );
-  expect(h.deletingSoon.map((o) => o.id)).toEqual([ids.expiring]);
+test('home groups upcoming, running, recent and expiring meetings', async () => {
+  const { scope, ids } = await homeFixture() // occurrences: scheduled 2026-10-21T06:00Z, in_meeting, completed with a summary file whose third line is "Do next: Submit lab 3 (due Fri 23 Oct, 23:59)", completed with delete_after 2026-10-22T00:00Z; a profile with zoom signedIn false; no ntfy topic
+  const h = await homeData(scope, new Date('2026-10-20T00:00:00Z'))
+  expect(h.upcoming.map((o) => o.when)).toEqual(['Wed 21 Oct, 14:00'])
+  expect(h.inProgress.map((o) => o.state)).toEqual(['in_meeting'])
+  expect(h.recent[0].doNext).toBe('Do next: Submit lab 3 (due Fri 23 Oct, 23:59)')
+  expect(h.deletingSoon.map((o) => o.id)).toEqual([ids.expiring])
   expect(h.warnings).toEqual(
     expect.arrayContaining([
-      { kind: "ntfy_not_set_up" },
-      { kind: "account_signed_out", identity: "University", account: "zoom" },
-    ]),
-  );
-});
+      { kind: 'ntfy_not_set_up' },
+      { kind: 'account_signed_out', identity: 'University', account: 'zoom' }
+    ])
+  )
+})
 ```
 
 ```ts
 // packages/web/lib/admin.test.ts
 test("admins list members without the members' data", async () => {
-  const db = await createTestDb();
-  await seedMember(db);
-  const [m] = await adminScope(db).listMembers();
-  expect(Object.keys(m).sort()).toEqual([
-    "createdAt",
-    "displayName",
-    "githubLogin",
-    "id",
-    "role",
-    "timeZone",
-  ]);
-});
+  const db = await createTestDb()
+  await seedMember(db)
+  const [m] = await adminScope(db).listMembers()
+  expect(Object.keys(m).sort()).toEqual(['createdAt', 'displayName', 'githubLogin', 'id', 'role', 'timeZone'])
+})
 
 test("a member with a meeting in progress can't be removed", async () => {
-  const db = await createTestDb();
-  const a = await seedMember(db);
-  await db
-    .update(occurrences)
-    .set({ state: "in_meeting" })
-    .where(eq(occurrences.id, a.ids.occurrences));
-  await expect(
-    adminScope(db).removeMember(a.memberId, fakeNtfyAdmin()),
-  ).rejects.toThrow(MemberBusyError);
-});
+  const db = await createTestDb()
+  const a = await seedMember(db)
+  await db.update(occurrences).set({ state: 'in_meeting' }).where(eq(occurrences.id, a.ids.occurrences))
+  await expect(adminScope(db).removeMember(a.memberId, fakeNtfyAdmin())).rejects.toThrow(MemberBusyError)
+})
 
-test("removing a member deletes their rows and their ntfy user", async () => {
-  const db = await createTestDb();
-  await seedMember(db, { role: "admin" });
-  const a = await seedMember(db);
-  const ntfy = fakeNtfyAdmin();
-  await adminScope(db).removeMember(a.memberId, ntfy);
-  expect(ntfy.deleted).toEqual([`tm-${a.memberId}`]);
-  expect(
-    await db.$count(occurrences, eq(occurrences.memberId, a.memberId)),
-  ).toBe(0);
-});
+test('removing a member deletes their rows and their ntfy user', async () => {
+  const db = await createTestDb()
+  await seedMember(db, { role: 'admin' })
+  const a = await seedMember(db)
+  const ntfy = fakeNtfyAdmin()
+  await adminScope(db).removeMember(a.memberId, ntfy)
+  expect(ntfy.deleted).toEqual([`tm-${a.memberId}`])
+  expect(await db.$count(occurrences, eq(occurrences.memberId, a.memberId))).toBe(0)
+})
 
 test("the last admin can't be removed or demoted", async () => {
-  const db = await createTestDb();
-  const admin = await seedMember(db, { role: "admin" });
-  await expect(
-    adminScope(db).removeMember(admin.memberId, fakeNtfyAdmin()),
-  ).rejects.toThrow(LastAdminError);
-  await expect(
-    adminScope(db).setRole(admin.memberId, "member"),
-  ).rejects.toThrow(LastAdminError);
-});
+  const db = await createTestDb()
+  const admin = await seedMember(db, { role: 'admin' })
+  await expect(adminScope(db).removeMember(admin.memberId, fakeNtfyAdmin())).rejects.toThrow(LastAdminError)
+  await expect(adminScope(db).setRole(admin.memberId, 'member')).rejects.toThrow(LastAdminError)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1800,84 +1564,67 @@ Action rules: `makeBotLeave` appends `leave_now` to `pending_commands` only whil
 
 ```ts
 // packages/web/lib/meeting.test.ts
-test("transcript timestamps become seconds; notes keep no time", () => {
+test('transcript timestamps become seconds; notes keep no time', () => {
   expect(
     parseTranscript(
-      "[00:01:05] Good evening, everyone.\n\n_Recording gap: 00:20:00 to 00:21:30_\n[01:02:03] Next slide.",
-    ),
+      '[00:01:05] Good evening, everyone.\n\n_Recording gap: 00:20:00 to 00:21:30_\n[01:02:03] Next slide.'
+    )
   ).toEqual([
-    { seconds: 65, text: "Good evening, everyone." },
-    { seconds: null, text: "_Recording gap: 00:20:00 to 00:21:30_" },
-    { seconds: 3723, text: "Next slide." },
-  ]);
-});
+    { seconds: 65, text: 'Good evening, everyone.' },
+    { seconds: null, text: '_Recording gap: 00:20:00 to 00:21:30_' },
+    { seconds: 3723, text: 'Next slide.' }
+  ])
+})
 
 test("another member's meeting is not found", async () => {
-  const { db, a, b } = await twoMembers();
-  expect(
-    await meetingData(createScope(db, b.memberId), a.ids.occurrences),
-  ).toBeNull();
-});
+  const { db, a, b } = await twoMembers()
+  expect(await meetingData(createScope(db, b.memberId), a.ids.occurrences)).toBeNull()
+})
 
-test("the attendance record shows each form with its own screenshots", async () => {
-  const { scope, occurrenceId } = await meetingFixture(); // forms f1 (submitted) and f2 (untrusted); artefacts forms/f1/filled.png and forms/f1/confirmation.png
-  const v = await meetingData(scope, occurrenceId);
+test('the attendance record shows each form with its own screenshots', async () => {
+  const { scope, occurrenceId } = await meetingFixture() // forms f1 (submitted) and f2 (untrusted); artefacts forms/f1/filled.png and forms/f1/confirmation.png
+  const v = await meetingData(scope, occurrenceId)
   expect(v!.forms.map((f) => [f.state, f.screenshotUrls.length])).toEqual([
-    ["submitted", 2],
-    ["untrusted", 0],
-  ]);
-});
+    ['submitted', 2],
+    ['untrusted', 0]
+  ])
+})
 
-test("actions follow the occurrence state", async () => {
-  const { scope, occurrenceId, queue } = await meetingFixture();
-  await scope.update(
-    occurrences,
-    { state: "in_meeting" },
-    eq(occurrences.id, occurrenceId),
-  );
-  await makeBotLeave(scope, occurrenceId);
-  await expect(
-    pasteLink(scope, occurrenceId, "https://example.zoom.us/j/00000000000"),
-  ).rejects.toThrow();
+test('actions follow the occurrence state', async () => {
+  const { scope, occurrenceId, queue } = await meetingFixture()
+  await scope.update(occurrences, { state: 'in_meeting' }, eq(occurrences.id, occurrenceId))
+  await makeBotLeave(scope, occurrenceId)
+  await expect(pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/00000000000')).rejects.toThrow()
   await expect(requestDeleteNow(scope, occurrenceId, queue)).rejects.toThrow(
-    "Make the bot leave before deleting this meeting.",
-  );
-  const [o] = await scope.select(occurrences, eq(occurrences.id, occurrenceId));
-  expect(o.pendingCommands).toEqual(["leave_now"]);
-  await scope.update(
-    occurrences,
-    { state: "completed" },
-    eq(occurrences.id, occurrenceId),
-  );
-  await requestDeleteNow(scope, occurrenceId, queue);
-  expect(queue.sent).toEqual([
-    { name: "delete-occurrence", data: { occurrenceId }, opts: undefined },
-  ]);
-});
+    'Make the bot leave before deleting this meeting.'
+  )
+  const [o] = await scope.select(occurrences, eq(occurrences.id, occurrenceId))
+  expect(o.pendingCommands).toEqual(['leave_now'])
+  await scope.update(occurrences, { state: 'completed' }, eq(occurrences.id, occurrenceId))
+  await requestDeleteNow(scope, occurrenceId, queue)
+  expect(queue.sent).toEqual([{ name: 'delete-occurrence', data: { occurrenceId }, opts: undefined }])
+})
 ```
 
 ```ts
 // packages/web/lib/files.test.ts
-test("a range request returns 206 with the slice", async () => {
-  const p = join(tmpdir(), "v.mp4");
-  await Bun.write(p, new Uint8Array(1000));
-  const r = await serveFile(p, "bytes=0-99");
-  expect(r.status).toBe(206);
-  expect(r.headers.get("content-range")).toBe("bytes 0-99/1000");
-  expect(r.headers.get("cache-control")).toBe("private, no-store");
-  expect((await r.arrayBuffer()).byteLength).toBe(100);
-});
+test('a range request returns 206 with the slice', async () => {
+  const p = join(tmpdir(), 'v.mp4')
+  await Bun.write(p, new Uint8Array(1000))
+  const r = await serveFile(p, 'bytes=0-99')
+  expect(r.status).toBe(206)
+  expect(r.headers.get('content-range')).toBe('bytes 0-99/1000')
+  expect(r.headers.get('cache-control')).toBe('private, no-store')
+  expect((await r.arrayBuffer()).byteLength).toBe(100)
+})
 
-test("no range returns the whole file; a bad range returns 416", async () => {
-  const p = join(tmpdir(), "v.mp4");
-  await Bun.write(p, new Uint8Array(1000));
-  expect((await serveFile(p, null)).status).toBe(200);
-  const bad = await serveFile(p, "bytes=2000-");
-  expect([bad.status, bad.headers.get("content-range")]).toEqual([
-    416,
-    "bytes */1000",
-  ]);
-});
+test('no range returns the whole file; a bad range returns 416', async () => {
+  const p = join(tmpdir(), 'v.mp4')
+  await Bun.write(p, new Uint8Array(1000))
+  expect((await serveFile(p, null)).status).toBe(200)
+  const bad = await serveFile(p, 'bytes=2000-')
+  expect([bad.status, bad.headers.get('content-range')]).toEqual([416, 'bytes */1000'])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1941,10 +1688,7 @@ The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs 
     "ShmSize": 2147483648,
     "NetworkMode": "tm-workers",
     "Dns": ["1.1.1.1", "8.8.8.8"],
-    "ExtraHosts": [
-      "<host of publicUrl>:172.30.0.2",
-      "<host of ntfyUrl>:172.30.0.2"
-    ],
+    "ExtraHosts": ["<host of publicUrl>:172.30.0.2", "<host of ntfyUrl>:172.30.0.2"],
     "Sysctls": { "net.ipv6.conf.all.disable_ipv6": "1" },
     "Memory": 5368709120,
     "NanoCpus": 3500000000,
@@ -1962,105 +1706,93 @@ Gate rules: paths may carry a `/v1.NN` prefix. Allowed: `GET /_ping`; `POST /con
 ```ts
 // packages/scheduler/src/docker-gate/validate.test.ts
 const cfg = {
-  dataRoot: "/srv/tolongmeeting/data",
-  profileRoot: "/srv/tolongmeeting/profiles",
-};
+  dataRoot: '/srv/tolongmeeting/data',
+  profileRoot: '/srv/tolongmeeting/profiles'
+}
 const env = {
   ...cfg,
-  publicUrl: "https://tm.example",
-  ntfyUrl: "https://ntfy.tm.example",
-};
-const occ = "11111111-1111-4111-8111-111111111111";
-const idn = "22222222-2222-4222-8222-222222222222";
+  publicUrl: 'https://tm.example',
+  ntfyUrl: 'https://ntfy.tm.example'
+}
+const occ = '11111111-1111-4111-8111-111111111111'
+const idn = '22222222-2222-4222-8222-222222222222'
 const spec = {
-  kind: "worker",
+  kind: 'worker',
   occurrenceId: occ,
   attempt: 1,
   identityId: idn,
-  env,
-} as const;
+  env
+} as const
 const create = (body: unknown) =>
   validateRequest(
     {
-      method: "POST",
+      method: 'POST',
       path: `/v1.47/containers/create?name=${containerName(spec)}`,
-      body,
+      body
     },
-    cfg,
-  );
+    cfg
+  )
 
-test("the fixed worker and sign-in specs pass", () => {
-  expect(create(containerSpec(spec))).toEqual({ ok: true, kind: "create" });
-  const s = { kind: "signin", sessionId: occ, identityId: idn, env } as const;
+test('the fixed worker and sign-in specs pass', () => {
+  expect(create(containerSpec(spec))).toEqual({ ok: true, kind: 'create' })
+  const s = { kind: 'signin', sessionId: occ, identityId: idn, env } as const
   expect(
     validateRequest(
       {
-        method: "POST",
+        method: 'POST',
         path: `/containers/create?name=${containerName(s)}`,
-        body: containerSpec(s),
+        body: containerSpec(s)
       },
-      cfg,
-    ),
-  ).toEqual({ ok: true, kind: "create" });
-});
+      cfg
+    )
+  ).toEqual({ ok: true, kind: 'create' })
+})
 
 test.each([
-  ["privileged", (b: any) => (b.HostConfig.Privileged = true)],
-  ["another image", (b: any) => (b.Image = "alpine")],
-  ["an extra bind", (b: any) => b.HostConfig.Binds.push("/:/host")],
-  [
-    "a bind outside the roots",
-    (b: any) => (b.HostConfig.Binds[0] = "/etc:/etc"),
-  ],
-  ["added capabilities", (b: any) => (b.HostConfig.CapAdd = ["SYS_ADMIN"])],
-  ["the host network", (b: any) => (b.HostConfig.NetworkMode = "host")],
-  [
-    "a device",
-    (b: any) => (b.HostConfig.Devices = [{ PathOnHost: "/dev/kvm" }]),
-  ],
-  [
-    "a secret in the environment",
-    (b: any) => b.Env.push("TM_MASTER_KEY_FILE=/run/secrets/tm_master_key"),
-  ],
-  ["a smaller shm", (b: any) => (b.HostConfig.ShmSize = 67108864)],
-])("a create with %s is refused", (_n, mutate) => {
-  const b = structuredClone(containerSpec(spec));
-  mutate(b);
-  expect(create(b).ok).toBe(false);
-});
+  ['privileged', (b: any) => (b.HostConfig.Privileged = true)],
+  ['another image', (b: any) => (b.Image = 'alpine')],
+  ['an extra bind', (b: any) => b.HostConfig.Binds.push('/:/host')],
+  ['a bind outside the roots', (b: any) => (b.HostConfig.Binds[0] = '/etc:/etc')],
+  ['added capabilities', (b: any) => (b.HostConfig.CapAdd = ['SYS_ADMIN'])],
+  ['the host network', (b: any) => (b.HostConfig.NetworkMode = 'host')],
+  ['a device', (b: any) => (b.HostConfig.Devices = [{ PathOnHost: '/dev/kvm' }])],
+  ['a secret in the environment', (b: any) => b.Env.push('TM_MASTER_KEY_FILE=/run/secrets/tm_master_key')],
+  ['a smaller shm', (b: any) => (b.HostConfig.ShmSize = 67108864)]
+])('a create with %s is refused', (_n, mutate) => {
+  const b = structuredClone(containerSpec(spec))
+  mutate(b)
+  expect(create(b).ok).toBe(false)
+})
 
 test.each([
-  ["POST", `/containers/${occ}/exec`],
-  ["GET", `/containers/${occ}/archive`],
-  ["PUT", `/containers/${occ}/archive`],
-  ["DELETE", `/containers/${occ}`],
-  ["POST", "/images/create"],
-  ["POST", "/build"],
-  ["GET", "/containers/json"],
-])("%s %s is refused", (method, path) => {
+  ['POST', `/containers/${occ}/exec`],
+  ['GET', `/containers/${occ}/archive`],
+  ['PUT', `/containers/${occ}/archive`],
+  ['DELETE', `/containers/${occ}`],
+  ['POST', '/images/create'],
+  ['POST', '/build'],
+  ['GET', '/containers/json']
+])('%s %s is refused', (method, path) => {
   expect(validateRequest({ method, path, body: null }, cfg)).toEqual({
     ok: false,
-    reason: "endpoint not allowed",
-  });
-});
+    reason: 'endpoint not allowed'
+  })
+})
 ```
 
 ```ts
 // packages/scheduler/src/container-spec.test.ts
-test("the worker spec keeps host paths, the shm size and no secrets in its environment", () => {
-  const b = containerSpec(spec);
+test('the worker spec keeps host paths, the shm size and no secrets in its environment', () => {
+  const b = containerSpec(spec)
   expect(b.HostConfig.Binds).toEqual([
     `/srv/tolongmeeting/data/occurrences/${occ}:/srv/tolongmeeting/data/occurrences/${occ}`,
-    `/srv/tolongmeeting/profiles/${idn}:/srv/tolongmeeting/profiles/${idn}`,
-  ]);
-  expect(b.HostConfig.ShmSize).toBe(2147483648);
-  expect(b.HostConfig.ExtraHosts).toEqual([
-    "tm.example:172.30.0.2",
-    "ntfy.tm.example:172.30.0.2",
-  ]);
-  expect(b.Env.some((e) => /KEY=|TOKEN=|SECRET=/.test(e))).toBe(false);
-  expect(containerName(spec)).toBe(`tm-worker-${occ}-a1`);
-});
+    `/srv/tolongmeeting/profiles/${idn}:/srv/tolongmeeting/profiles/${idn}`
+  ])
+  expect(b.HostConfig.ShmSize).toBe(2147483648)
+  expect(b.HostConfig.ExtraHosts).toEqual(['tm.example:172.30.0.2', 'ntfy.tm.example:172.30.0.2'])
+  expect(b.Env.some((e) => /KEY=|TOKEN=|SECRET=/.test(e))).toBe(false)
+  expect(containerName(spec)).toBe(`tm-worker-${occ}-a1`)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2118,136 +1850,124 @@ git commit -m "feat(scheduler): add docker socket gate"
 
 ```ts
 // packages/scheduler/src/launch.test.ts
-test("a due occurrence launches with a private job file and a hashed token", async () => {
-  const f = await launchFixture(); // one scheduled occurrence at 2026-10-21T06:00Z, FakeDocker, FakeQueue, FakeNotifier, temp roots
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe("launched");
-  const o = await f.occurrence();
+test('a due occurrence launches with a private job file and a hashed token', async () => {
+  const f = await launchFixture() // one scheduled occurrence at 2026-10-21T06:00Z, FakeDocker, FakeQueue, FakeNotifier, temp roots
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+  const o = await f.occurrence()
   expect(o).toMatchObject({
-    state: "starting",
+    state: 'starting',
     attempt: 1,
-    containerName: `tm-worker-${f.id}-a1`,
-  });
+    containerName: `tm-worker-${f.id}-a1`
+  })
   expect(
     validateRequest(
       {
-        method: "POST",
+        method: 'POST',
         path: `/containers/create?name=${o.containerName}`,
-        body: f.docker.created[0].body,
+        body: f.docker.created[0].body
       },
-      f.cfg,
-    ).ok,
-  ).toBe(true);
-  const jobPath = `${f.env.profileRoot}/${f.identityId}/job/${o.containerName}.json`;
-  expect((await stat(jobPath)).mode & 0o777).toBe(0o600);
-  const job = JobConfigSchema.parse(await Bun.file(jobPath).json());
-  expect(job.control!.url).toBe("https://tm.example/api/control");
-  expect(sha256hex(job.control!.token)).toBe(o.controlTokenHash);
-  expect(await f.heldBy()).toBe(`occ:${f.id}`);
-});
+      f.cfg
+    ).ok
+  ).toBe(true)
+  const jobPath = `${f.env.profileRoot}/${f.identityId}/job/${o.containerName}.json`
+  expect((await stat(jobPath)).mode & 0o777).toBe(0o600)
+  const job = JobConfigSchema.parse(await Bun.file(jobPath).json())
+  expect(job.control!.url).toBe('https://tm.example/api/control')
+  expect(sha256hex(job.control!.token)).toBe(o.controlTokenHash)
+  expect(await f.heldBy()).toBe(`occ:${f.id}`)
+})
 
-test("a stale launch job does nothing", async () => {
-  const f = await launchFixture();
-  expect(
-    await launchOccurrence(
-      f.deps,
-      { ...f.job, scheduledStart: "2026-10-21T07:00:00.000Z" },
-      f.tMinus60,
-    ),
-  ).toBe("stale");
-  expect(f.docker.created).toEqual([]);
-});
+test('a stale launch job does nothing', async () => {
+  const f = await launchFixture()
+  expect(await launchOccurrence(f.deps, { ...f.job, scheduledStart: '2026-10-21T07:00:00.000Z' }, f.tMinus60)).toBe(
+    'stale'
+  )
+  expect(f.docker.created).toEqual([])
+})
 
-test("the later of two clashing occurrences is skipped with a ping", async () => {
+test('the later of two clashing occurrences is skipped with a ping', async () => {
   const f = await launchFixture({
-    clashWith: { start: "2026-10-21T05:30:00Z", end: "2026-10-21T07:00:00Z" },
-  });
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe(
-    "skipped_identity_clash",
-  );
-  expect(f.notifier.sent[0].ping.title).toBe("Skipped: Data Mining");
-});
+    clashWith: { start: '2026-10-21T05:30:00Z', end: '2026-10-21T07:00:00Z' }
+  })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('skipped_identity_clash')
+  expect(f.notifier.sent[0].ping.title).toBe('Skipped: Data Mining')
+})
 
-test("a third server worker is skipped with a capacity ping", async () => {
-  const f = await launchFixture({ activeElsewhere: 2 });
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe(
-    "skipped_capacity",
-  );
-  expect(f.notifier.sent[0].ping.title).toBe(
-    "Skipped: Data Mining (server full)",
-  );
-});
+test('a third server worker is skipped with a capacity ping', async () => {
+  const f = await launchFixture({ activeElsewhere: 2 })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('skipped_capacity')
+  expect(f.notifier.sent[0].ping.title).toBe('Skipped: Data Mining (server full)')
+})
 
-test("back-to-back occurrences on one identity wait for the earlier worker", async () => {
+test('back-to-back occurrences on one identity wait for the earlier worker', async () => {
   // Review Focus
   const f = await launchFixture({
-    earlierHolding: { end: "2026-10-21T06:00:00Z", state: "in_meeting" },
-  });
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe("deferred");
+    earlierHolding: { end: '2026-10-21T06:00:00Z', state: 'in_meeting' }
+  })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('deferred')
   expect(f.queue.sent.at(-1)).toMatchObject({
-    name: "launch",
+    name: 'launch',
     data: f.job,
-    opts: { startAfter: new Date(f.tMinus60.getTime() + 15_000) },
-  });
-  expect((await f.earlier()).pendingCommands).toEqual([]);
-  expect(
-    await launchOccurrence(f.deps, f.job, new Date("2026-10-21T06:00:00Z")),
-  ).toBe("deferred");
-  expect((await f.earlier()).pendingCommands).toEqual(["stop"]);
-});
+    opts: { startAfter: new Date(f.tMinus60.getTime() + 15_000) }
+  })
+  expect((await f.earlier()).pendingCommands).toEqual([])
+  expect(await launchOccurrence(f.deps, f.job, new Date('2026-10-21T06:00:00Z'))).toBe('deferred')
+  expect((await f.earlier()).pendingCommands).toEqual(['stop'])
+})
 
-test("an identity held by a sign-in is asked to finish first", async () => {
-  const f = await launchFixture({ signinHolding: true });
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe("deferred");
-  expect((await f.signinSession()).doneRequested).toBe(true);
-});
+test('an identity held by a sign-in is asked to finish first', async () => {
+  const f = await launchFixture({ signinHolding: true })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('deferred')
+  expect((await f.signinSession()).doneRequested).toBe(true)
+})
 
-test("a pasted link becomes the job link", async () => {
+test('a pasted link becomes the job link', async () => {
   const f = await launchFixture({
-    link: { kind: "paste" },
-    pasted: "https://example.zoom.us/j/00000000000?pwd=PASSCODE",
-  });
-  await launchOccurrence(f.deps, f.job, f.tMinus60);
+    link: { kind: 'paste' },
+    pasted: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
+  })
+  await launchOccurrence(f.deps, f.job, f.tMinus60)
   expect((await f.job0()).entry.link).toEqual({
-    kind: "fixed",
-    url: "https://example.zoom.us/j/00000000000?pwd=PASSCODE",
-  });
-});
+    kind: 'fixed',
+    url: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
+  })
+})
 
 test("a container that can't be created fails the occurrence and pings", async () => {
-  const f = await launchFixture({ dockerFails: true });
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe("failed");
+  const f = await launchFixture({ dockerFails: true })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
   expect(await f.occurrence()).toMatchObject({
-    state: "failed",
-    stateReason: "launch_failed",
-  });
-  expect(await f.heldBy()).toBeNull();
-  expect(f.notifier.sent[0].ping.message).toContain("it couldn't start");
-});
+    state: 'failed',
+    stateReason: 'launch_failed'
+  })
+  expect(await f.heldBy()).toBeNull()
+  expect(f.notifier.sent[0].ping.message).toContain("it couldn't start")
+})
 ```
 
 ```ts
 // packages/scheduler/src/locks.test.ts
-test("a profile has one holder at a time", async () => {
-  const { db, identityId } = await bareDb();
-  expect(await acquireProfile(db, identityId, "occ:a")).toBe(true);
-  expect(await acquireProfile(db, identityId, "signin:b")).toBe(false);
-  await releaseProfile(db, identityId, "signin:b");
-  expect(await acquireProfile(db, identityId, "signin:b")).toBe(false);
-  await releaseProfile(db, identityId, "occ:a");
-  expect(await acquireProfile(db, identityId, "signin:b")).toBe(true);
-});
+test('a profile has one holder at a time', async () => {
+  const { db, identityId } = await bareDb()
+  expect(await acquireProfile(db, identityId, 'occ:a')).toBe(true)
+  expect(await acquireProfile(db, identityId, 'signin:b')).toBe(false)
+  await releaseProfile(db, identityId, 'signin:b')
+  expect(await acquireProfile(db, identityId, 'signin:b')).toBe(false)
+  await releaseProfile(db, identityId, 'occ:a')
+  expect(await acquireProfile(db, identityId, 'signin:b')).toBe(true)
+})
 ```
 
 ```ts
 // packages/web/db/job-config.test.ts (added)
-test("the entry snapshot carries local start and end times with the offset", async () => {
-  const { db, occurrenceId } = await scheduledOccurrence(); // Wednesday 14:00 to 16:00, Asia/Kuala_Lumpur
+test('the entry snapshot carries local start and end times with the offset', async () => {
+  const { db, occurrenceId } = await scheduledOccurrence() // Wednesday 14:00 to 16:00, Asia/Kuala_Lumpur
   expect(await buildEntrySnapshot(db, occurrenceId)).toMatchObject({
-    start: "2026-10-21T14:00:00+08:00",
-    end: "2026-10-21T16:00:00+08:00",
-    timeZone: "Asia/Kuala_Lumpur",
-  });
-});
+    start: '2026-10-21T14:00:00+08:00',
+    end: '2026-10-21T16:00:00+08:00',
+    timeZone: 'Asia/Kuala_Lumpur'
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2308,253 +2028,242 @@ git commit -m "feat(scheduler): launch workers at T-60"
 
 ```ts
 // packages/web/lib/control.test.ts
-const ev = (
-  type: EventType,
-  data: object,
-  at = "2026-10-21T05:00:05.000Z",
-): MeetingEvent => ({
+const ev = (type: EventType, data: object, at = '2026-10-21T05:00:05.000Z'): MeetingEvent => ({
   occurrenceId: ID,
   attempt: 1,
   at,
   type,
-  data: data as Record<string, unknown>,
-});
+  data: data as Record<string, unknown>
+})
 
-test("a heartbeat stores events once, drains commands and returns the pasted link", async () => {
+test('a heartbeat stores events once, drains commands and returns the pasted link', async () => {
   // Review Focus
   const f = await controlFixture({
-    state: "starting",
-    token: "1.abc",
-    pendingCommands: ["leave_now"],
-    pastedLink: "https://example.zoom.us/j/00000000000",
-  });
+    state: 'starting',
+    token: '1.abc',
+    pendingCommands: ['leave_now'],
+    pastedLink: 'https://example.zoom.us/j/00000000000'
+  })
   const hb = {
     occurrenceId: f.id,
     attempt: 1,
-    state: "verifying_accounts",
+    state: 'verifying_accounts',
     recording: false,
     participants: null,
-    events: [ev("state", { state: "verifying_accounts" })],
-  };
-  expect(await handleHeartbeat(f.deps, "Bearer 1.abc", hb)).toEqual({
+    events: [ev('state', { state: 'verifying_accounts' })]
+  }
+  expect(await handleHeartbeat(f.deps, 'Bearer 1.abc', hb)).toEqual({
     status: 200,
     body: {
       ackedEvents: 1,
-      commands: ["leave_now"],
-      link: "https://example.zoom.us/j/00000000000",
-    },
-  });
-  expect(await handleHeartbeat(f.deps, "Bearer 1.abc", hb)).toEqual({
+      commands: ['leave_now'],
+      link: 'https://example.zoom.us/j/00000000000'
+    }
+  })
+  expect(await handleHeartbeat(f.deps, 'Bearer 1.abc', hb)).toEqual({
     status: 200,
     body: {
       ackedEvents: 1,
       commands: [],
-      link: "https://example.zoom.us/j/00000000000",
-    },
-  });
-  expect(await f.eventCount()).toBe(1);
-  expect((await f.occurrence()).state).toBe("verifying_accounts");
-});
+      link: 'https://example.zoom.us/j/00000000000'
+    }
+  })
+  expect(await f.eventCount()).toBe(1)
+  expect((await f.occurrence()).state).toBe('verifying_accounts')
+})
 
-test("state events are applied in order", async () => {
+test('state events are applied in order', async () => {
   const f = await controlFixture({
-    state: "verifying_accounts",
-    token: "1.abc",
-  });
+    state: 'verifying_accounts',
+    token: '1.abc'
+  })
   const events = [
-    ev("state", { state: "watching_for_link" }, "2026-10-21T05:00:01.000Z"),
-    ev("state", { state: "joining" }, "2026-10-21T05:00:02.000Z"),
-  ];
-  await handleHeartbeat(f.deps, "Bearer 1.abc", {
+    ev('state', { state: 'watching_for_link' }, '2026-10-21T05:00:01.000Z'),
+    ev('state', { state: 'joining' }, '2026-10-21T05:00:02.000Z')
+  ]
+  await handleHeartbeat(f.deps, 'Bearer 1.abc', {
     occurrenceId: f.id,
     attempt: 1,
-    state: "joining",
+    state: 'joining',
     recording: false,
     participants: null,
-    events,
-  });
-  expect((await f.occurrence()).state).toBe("joining");
-});
+    events
+  })
+  expect((await f.occurrence()).state).toBe('joining')
+})
 
-test("an illegal reported state is logged, not applied", async () => {
+test('an illegal reported state is logged, not applied', async () => {
   const f = await controlFixture({
-    state: "verifying_accounts",
-    token: "1.abc",
-  });
-  await handleHeartbeat(f.deps, "Bearer 1.abc", {
+    state: 'verifying_accounts',
+    token: '1.abc'
+  })
+  await handleHeartbeat(f.deps, 'Bearer 1.abc', {
     occurrenceId: f.id,
     attempt: 1,
-    state: "completed",
+    state: 'completed',
     recording: false,
     participants: null,
-    events: [],
-  });
-  expect((await f.occurrence()).state).toBe("verifying_accounts");
+    events: []
+  })
+  expect((await f.occurrence()).state).toBe('verifying_accounts')
   expect(await f.lastEvent()).toMatchObject({
-    type: "error",
+    type: 'error',
     data: {
-      reason: "illegal_transition",
-      from: "verifying_accounts",
-      to: "completed",
-    },
-  });
-});
+      reason: 'illegal_transition',
+      from: 'verifying_accounts',
+      to: 'completed'
+    }
+  })
+})
 
-test("a superseded attempt is told to stop and a wrong token is refused", async () => {
+test('a superseded attempt is told to stop and a wrong token is refused', async () => {
   const f = await controlFixture({
-    state: "in_meeting",
+    state: 'in_meeting',
     attempt: 2,
-    token: "2.new",
-  });
+    token: '2.new'
+  })
   const hb = {
     occurrenceId: f.id,
     attempt: 1,
-    state: "in_meeting",
+    state: 'in_meeting',
     recording: true,
     participants: 30,
-    events: [],
-  };
-  expect(await handleHeartbeat(f.deps, "Bearer 1.old", hb)).toEqual({
+    events: []
+  }
+  expect(await handleHeartbeat(f.deps, 'Bearer 1.old', hb)).toEqual({
     status: 410,
-    body: { ackedEvents: 0, commands: ["stop"], link: null },
-  });
-  expect(
-    (await handleHeartbeat(f.deps, "Bearer 2.wrong", { ...hb, attempt: 2 }))
-      .status,
-  ).toBe(401);
-});
+    body: { ackedEvents: 0, commands: ['stop'], link: null }
+  })
+  expect((await handleHeartbeat(f.deps, 'Bearer 2.wrong', { ...hb, attempt: 2 })).status).toBe(401)
+})
 
-test("reaching transcribing queues the pipeline", async () => {
-  const f = await controlFixture({ state: "uploading", token: "1.abc" });
-  await handleHeartbeat(f.deps, "Bearer 1.abc", {
+test('reaching transcribing queues the pipeline', async () => {
+  const f = await controlFixture({ state: 'uploading', token: '1.abc' })
+  await handleHeartbeat(f.deps, 'Bearer 1.abc', {
     occurrenceId: f.id,
     attempt: 1,
-    state: "transcribing",
+    state: 'transcribing',
     recording: false,
     participants: null,
-    events: [],
-  });
-  expect(f.queue.sent).toEqual([
-    { name: "pipeline", data: { occurrenceId: f.id }, opts: undefined },
-  ]);
-});
+    events: []
+  })
+  expect(f.queue.sent).toEqual([{ name: 'pipeline', data: { occurrenceId: f.id }, opts: undefined }])
+})
 
-test("account checks and form events are recorded", async () => {
-  const f = await controlFixture({ state: "in_meeting", token: "1.abc" });
+test('account checks and form events are recorded', async () => {
+  const f = await controlFixture({ state: 'in_meeting', token: '1.abc' })
   const events = [
-    ev("state", { account: "zoom", signedIn: false }),
+    ev('state', { account: 'zoom', signedIn: false }),
     ev(
-      "form",
+      'form',
       {
-        formId: "f1",
-        url: "https://forms.gle/x",
-        finalUrl: "https://docs.google.com/forms/d/e/x/viewform",
-        provider: "google",
-        source: "qr",
-        state: "submitted",
-        fieldsFilled: ["full_name"],
-        seenAt: "2026-10-21T06:30:00Z",
+        formId: 'f1',
+        url: 'https://forms.gle/x',
+        finalUrl: 'https://docs.google.com/forms/d/e/x/viewform',
+        provider: 'google',
+        source: 'qr',
+        state: 'submitted',
+        fieldsFilled: ['full_name'],
+        seenAt: '2026-10-21T06:30:00Z'
       },
-      "2026-10-21T06:31:00.000Z",
-    ),
-  ];
-  await handleHeartbeat(f.deps, "Bearer 1.abc", {
+      '2026-10-21T06:31:00.000Z'
+    )
+  ]
+  await handleHeartbeat(f.deps, 'Bearer 1.abc', {
     occurrenceId: f.id,
     attempt: 1,
-    state: "in_meeting",
+    state: 'in_meeting',
     recording: true,
     participants: 30,
-    events,
-  });
+    events
+  })
   expect((await f.profile()).accountStatus.zoom).toEqual({
-    verifiedAt: "2026-10-21T05:00:05.000Z",
-    signedIn: false,
-  });
-  expect(await f.form("f1")).toMatchObject({
-    state: "submitted",
-    source: "qr",
-    fieldsFilled: ["full_name"],
-  });
-});
+    verifiedAt: '2026-10-21T05:00:05.000Z',
+    signedIn: false
+  })
+  expect(await f.form('f1')).toMatchObject({
+    state: 'submitted',
+    source: 'qr',
+    fieldsFilled: ['full_name']
+  })
+})
 ```
 
 ```ts
 // packages/scheduler/src/monitor.test.ts
-const now = new Date("2026-10-21T06:30:00Z");
+const now = new Date('2026-10-21T06:30:00Z')
 
-test("30 seconds without a heartbeat restarts the worker as attempt 2 with a ping", async () => {
+test('30 seconds without a heartbeat restarts the worker as attempt 2 with a ping', async () => {
   const f = await monitorFixture({
-    state: "in_meeting",
+    state: 'in_meeting',
     lastHeartbeat: new Date(now.getTime() - 31_000),
     attempt: 1,
-    restarts: 0,
-  });
-  expect((await monitorTick(f.deps, now)).restarted).toEqual([f.id]);
+    restarts: 0
+  })
+  expect((await monitorTick(f.deps, now)).restarted).toEqual([f.id])
   expect(await f.occurrence()).toMatchObject({
-    state: "restarting",
+    state: 'restarting',
     attempt: 2,
-    restarts: 1,
-  });
-  expect(f.docker.stopped).toEqual([`tm-worker-${f.id}-a1`]);
-  expect(f.docker.created.at(-1)!.name).toBe(`tm-worker-${f.id}-a2`);
+    restarts: 1
+  })
+  expect(f.docker.stopped).toEqual([`tm-worker-${f.id}-a1`])
+  expect(f.docker.created.at(-1)!.name).toBe(`tm-worker-${f.id}-a2`)
   expect(f.notifier.sent[0].ping).toMatchObject({
-    title: "Restarting: Data Mining",
-    message: expect.stringContaining("restart 1 of 3"),
-  });
-});
+    title: 'Restarting: Data Mining',
+    message: expect.stringContaining('restart 1 of 3')
+  })
+})
 
-test("29 seconds is not a crash", async () => {
+test('29 seconds is not a crash', async () => {
   const f = await monitorFixture({
-    state: "in_meeting",
-    lastHeartbeat: new Date(now.getTime() - 29_000),
-  });
-  expect((await monitorTick(f.deps, now)).restarted).toEqual([]);
-});
+    state: 'in_meeting',
+    lastHeartbeat: new Date(now.getTime() - 29_000)
+  })
+  expect((await monitorTick(f.deps, now)).restarted).toEqual([])
+})
 
-test("a crash after 3 restarts fails the occurrence", async () => {
+test('a crash after 3 restarts fails the occurrence', async () => {
   const f = await monitorFixture({
-    state: "in_meeting",
+    state: 'in_meeting',
     lastHeartbeat: new Date(now.getTime() - 31_000),
     attempt: 4,
-    restarts: 3,
-  });
-  expect((await monitorTick(f.deps, now)).failed).toEqual([f.id]);
+    restarts: 3
+  })
+  expect((await monitorTick(f.deps, now)).failed).toEqual([f.id])
   expect(await f.occurrence()).toMatchObject({
-    state: "failed",
-    stateReason: "worker_unresponsive",
-  });
-  expect(await f.heldBy()).toBeNull();
-});
+    state: 'failed',
+    stateReason: 'worker_unresponsive'
+  })
+  expect(await f.heldBy()).toBeNull()
+})
 
-test("a worker past its hard stop is told to stop, then stopped", async () => {
+test('a worker past its hard stop is told to stop, then stopped', async () => {
   // Review Focus
   const f = await monitorFixture({
-    state: "in_meeting",
-    end: new Date("2026-10-21T08:00:00Z"),
-    freshHeartbeats: true,
-  });
-  await monitorTick(f.deps, new Date("2026-10-21T08:36:00Z"));
-  expect((await f.occurrence()).pendingCommands).toEqual(["stop"]);
-  await monitorTick(f.deps, new Date("2026-10-21T08:46:00Z"));
+    state: 'in_meeting',
+    end: new Date('2026-10-21T08:00:00Z'),
+    freshHeartbeats: true
+  })
+  await monitorTick(f.deps, new Date('2026-10-21T08:36:00Z'))
+  expect((await f.occurrence()).pendingCommands).toEqual(['stop'])
+  await monitorTick(f.deps, new Date('2026-10-21T08:46:00Z'))
   expect(await f.occurrence()).toMatchObject({
-    state: "failed",
-    stateReason: "overran_hard_stop",
-  });
-  expect(f.docker.stopped).toContain(`tm-worker-${f.id}-a1`);
-});
+    state: 'failed',
+    stateReason: 'overran_hard_stop'
+  })
+  expect(f.docker.stopped).toContain(`tm-worker-${f.id}-a1`)
+})
 
-test("a finished container releases the identity and records the newest checkpoint", async () => {
+test('a finished container releases the identity and records the newest checkpoint', async () => {
   const f = await monitorFixture({
-    state: "transcribing",
+    state: 'transcribing',
     containerGone: true,
-    checkpoints: ["20261021T060000Z.tar.enc", "20261021T060500Z.tar.enc"],
-  });
-  expect((await monitorTick(f.deps, now)).released).toEqual([f.id]);
-  expect(await f.heldBy()).toBeNull();
-  expect((await f.profile()).latestCheckpoint).toEndWith(
-    "/checkpoints/20261021T060500Z.tar.enc",
-  );
-});
+    checkpoints: ['20261021T060000Z.tar.enc', '20261021T060500Z.tar.enc']
+  })
+  expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+  expect(await f.heldBy()).toBeNull()
+  expect((await f.profile()).latestCheckpoint).toEndWith('/checkpoints/20261021T060500Z.tar.enc')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2609,145 +2318,133 @@ git commit -m "feat: add heartbeat endpoint and monitor"
 
 ```ts
 // packages/worker/src/control/heartbeat.test.ts
-test("heartbeats carry the bearer token and pass replies on", async () => {
-  const seen: Request[] = [];
+test('heartbeats carry the bearer token and pass replies on', async () => {
+  const seen: Request[] = []
   const server = Bun.serve({
     port: 0,
     fetch: async (req) => {
-      seen.push(req);
+      seen.push(req)
       return Response.json({
         ackedEvents: 1,
-        commands: ["leave_now"],
-        link: null,
-      });
-    },
-  });
-  const replies: HeartbeatReply[] = [];
+        commands: ['leave_now'],
+        link: null
+      })
+    }
+  })
+  const replies: HeartbeatReply[] = []
   const stop = startHeartbeat(
     cfgWith({
       url: `http://localhost:${server.port}/api/control`,
-      token: "1.abc",
+      token: '1.abc'
     }),
     () => status([ev1]),
     (r) => replies.push(r),
-    { intervalMs: 50 },
-  );
-  await Bun.sleep(130);
-  stop();
-  server.stop();
-  expect(seen.length).toBeGreaterThanOrEqual(2);
-  expect(new URL(seen[0].url).pathname).toBe("/api/control/heartbeat");
-  expect(seen[0].headers.get("authorization")).toBe("Bearer 1.abc");
+    { intervalMs: 50 }
+  )
+  await Bun.sleep(130)
+  stop()
+  server.stop()
+  expect(seen.length).toBeGreaterThanOrEqual(2)
+  expect(new URL(seen[0].url).pathname).toBe('/api/control/heartbeat')
+  expect(seen[0].headers.get('authorization')).toBe('Bearer 1.abc')
   expect(replies[0]).toEqual({
     ackedEvents: 1,
-    commands: ["leave_now"],
-    link: null,
-  });
-});
+    commands: ['leave_now'],
+    link: null
+  })
+})
 
-test("410 becomes a stop command; no control channel means no requests", async () => {
+test('410 becomes a stop command; no control channel means no requests', async () => {
   const server = Bun.serve({
     port: 0,
-    fetch: () => new Response(null, { status: 410 }),
-  });
-  const replies: HeartbeatReply[] = [];
+    fetch: () => new Response(null, { status: 410 })
+  })
+  const replies: HeartbeatReply[] = []
   const stop = startHeartbeat(
     cfgWith({
       url: `http://localhost:${server.port}/api/control`,
-      token: "1.abc",
+      token: '1.abc'
     }),
     () => status([]),
     (r) => replies.push(r),
-    { intervalMs: 50 },
-  );
-  await Bun.sleep(80);
-  stop();
-  server.stop();
+    { intervalMs: 50 }
+  )
+  await Bun.sleep(80)
+  stop()
+  server.stop()
   expect(replies[0]).toEqual({
     ackedEvents: 0,
-    commands: ["stop"],
-    link: null,
-  });
-  const fetchFn = mock(fetch);
+    commands: ['stop'],
+    link: null
+  })
+  const fetchFn = mock(fetch)
   startHeartbeat(
     cfgWith(null),
     () => status([]),
     () => {},
-    { intervalMs: 10, fetchFn },
-  )();
-  expect(fetchFn).not.toHaveBeenCalled();
-});
+    { intervalMs: 10, fetchFn }
+  )()
+  expect(fetchFn).not.toHaveBeenCalled()
+})
 
-test("the outbox acknowledges from the front", () => {
-  const o = new EventOutbox();
-  [e1, e2, e3].forEach((e) => o.push(e));
-  expect(o.pending(2)).toEqual([e1, e2]);
-  o.ack(2);
-  expect(o.pending()).toEqual([e3]);
-});
+test('the outbox acknowledges from the front', () => {
+  const o = new EventOutbox()
+  ;[e1, e2, e3].forEach((e) => o.push(e))
+  expect(o.pending(2)).toEqual([e1, e2])
+  o.ack(2)
+  expect(o.pending()).toEqual([e3])
+})
 ```
 
 ```ts
 // packages/worker/src/control/commands.test.ts
-test("commands run in order and leave runs once per batch", async () => {
-  const calls: string[] = [];
+test('commands run in order and leave runs once per batch', async () => {
+  const calls: string[] = []
   const h = {
-    leave: async () => void calls.push("leave"),
-    stop: async () => void calls.push("stop"),
-    pause: async () => void calls.push("pause"),
-    resume: async () => void calls.push("resume"),
-  };
-  await dispatchCommands(
-    ["pause_for_signin", "leave_now", "take_over", "resume_after_signin"],
-    h,
-  );
-  expect(calls).toEqual(["pause", "leave", "resume"]);
-});
+    leave: async () => void calls.push('leave'),
+    stop: async () => void calls.push('stop'),
+    pause: async () => void calls.push('pause'),
+    resume: async () => void calls.push('resume')
+  }
+  await dispatchCommands(['pause_for_signin', 'leave_now', 'take_over', 'resume_after_signin'], h)
+  expect(calls).toEqual(['pause', 'leave', 'resume'])
+})
 ```
 
 ```ts
 // packages/worker/src/profile/profile.test.ts (added)
-test("a checkpoint restores into an empty directory", async () => {
+test('a checkpoint restores into an empty directory', async () => {
   const { dir, out, key } = await profileWith({
-    "Default/Cookies": "c",
-    "Default/Cache/x": "big",
-    "Local State": "{}",
-  });
-  await checkpointProfile(dir, out, key);
-  const target = await mkdtemp(join(tmpdir(), "restore-"));
-  await restoreCheckpoint(out, target, key);
-  expect(await listFiles(target)).toEqual(["Default/Cookies", "Local State"]);
-  await expect(
-    restoreCheckpoint(out, target, Buffer.alloc(32, 9)),
-  ).rejects.toThrow();
-});
+    'Default/Cookies': 'c',
+    'Default/Cache/x': 'big',
+    'Local State': '{}'
+  })
+  await checkpointProfile(dir, out, key)
+  const target = await mkdtemp(join(tmpdir(), 'restore-'))
+  await restoreCheckpoint(out, target, key)
+  expect(await listFiles(target)).toEqual(['Default/Cookies', 'Local State'])
+  await expect(restoreCheckpoint(out, target, Buffer.alloc(32, 9))).rejects.toThrow()
+})
 
-test("the latest checkpoint is the newest timestamp", async () => {
-  const d = await dirWith([
-    "20261021T060000Z.tar.enc",
-    "20261021T060500Z.tar.enc",
-    "notes.txt",
-  ]);
-  expect(await latestCheckpoint(d)).toBe(join(d, "20261021T060500Z.tar.enc"));
-});
+test('the latest checkpoint is the newest timestamp', async () => {
+  const d = await dirWith(['20261021T060000Z.tar.enc', '20261021T060500Z.tar.enc', 'notes.txt'])
+  expect(await latestCheckpoint(d)).toBe(join(d, '20261021T060500Z.tar.enc'))
+})
 ```
 
 ```ts
 // packages/worker/src/forms/handled.test.ts
-test("forms recorded by earlier attempts are handled", async () => {
+test('forms recorded by earlier attempts are handled', async () => {
   const dir = await dataDirWith({
-    "forms/f1/record.json": {
-      finalUrl: "https://docs.google.com/forms/d/e/a/viewform",
+    'forms/f1/record.json': {
+      finalUrl: 'https://docs.google.com/forms/d/e/a/viewform'
     },
-    "forms/f2/record.json": { url: "https://forms.office.com/r/b" },
-  });
+    'forms/f2/record.json': { url: 'https://forms.office.com/r/b' }
+  })
   expect(await loadHandledForms(dir)).toEqual(
-    new Set([
-      "https://docs.google.com/forms/d/e/a/viewform",
-      "https://forms.office.com/r/b",
-    ]),
-  );
-});
+    new Set(['https://docs.google.com/forms/d/e/a/viewform', 'https://forms.office.com/r/b'])
+  )
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2804,84 +2501,84 @@ if [ "$1" = "--signin" ]; then exec node /app/dist/signin.js "$2"; fi
 
 ```ts
 // packages/worker/src/control/vnc.test.ts
-test("the VNC view is clipped to the desk and bound to localhost", () => {
-  expect(vncArgs(":99", { x: 1920, y: 0, width: 1920, height: 1080 })).toEqual({
+test('the VNC view is clipped to the desk and bound to localhost', () => {
+  expect(vncArgs(':99', { x: 1920, y: 0, width: 1920, height: 1080 })).toEqual({
     x11vnc: [
-      "-display",
-      ":99",
-      "-clip",
-      "1920x1080+1920+0",
-      "-rfbport",
-      "5900",
-      "-localhost",
-      "-nopw",
-      "-forever",
-      "-shared",
-      "-noxdamage",
-      "-quiet",
+      '-display',
+      ':99',
+      '-clip',
+      '1920x1080+1920+0',
+      '-rfbport',
+      '5900',
+      '-localhost',
+      '-nopw',
+      '-forever',
+      '-shared',
+      '-noxdamage',
+      '-quiet'
     ],
-    websockify: ["0.0.0.0:6080", "localhost:5900"],
-  });
-});
+    websockify: ['0.0.0.0:6080', 'localhost:5900']
+  })
+})
 ```
 
 ```ts
 // packages/worker/src/control/desk-pause.test.ts
-test("the desk pauses for sign-in and resumes after 15 minutes idle", async () => {
-  const f = deskFixture(); // fake deps and clock; f.idle sets what idleMs() returns; f.tick() runs the 10-second check
-  await f.pause.pause();
-  expect(f.events).toEqual([{ signin: "paused" }]);
-  expect(f.openedTabs).toEqual(SIGNIN_START_URLS);
-  f.idle = 899_999;
-  await f.tick();
-  expect(f.pause.paused).toBe(true);
-  f.idle = 900_000;
-  await f.tick();
-  expect(f.pause.paused).toBe(false);
-  expect(f.events.at(-1)).toEqual({ signin: "resumed", reason: "idle" });
-  expect([f.vncStopped, f.tabsClosed, f.checkpoints]).toEqual([1, 1, 1]);
-});
+test('the desk pauses for sign-in and resumes after 15 minutes idle', async () => {
+  const f = deskFixture() // fake deps and clock; f.idle sets what idleMs() returns; f.tick() runs the 10-second check
+  await f.pause.pause()
+  expect(f.events).toEqual([{ signin: 'paused' }])
+  expect(f.openedTabs).toEqual(SIGNIN_START_URLS)
+  f.idle = 899_999
+  await f.tick()
+  expect(f.pause.paused).toBe(true)
+  f.idle = 900_000
+  await f.tick()
+  expect(f.pause.paused).toBe(false)
+  expect(f.events.at(-1)).toEqual({ signin: 'resumed', reason: 'idle' })
+  expect([f.vncStopped, f.tabsClosed, f.checkpoints]).toEqual([1, 1, 1])
+})
 
-test("a resume command releases the waiting desk actions", async () => {
-  const f = deskFixture();
-  await f.pause.pause();
-  const waiting = f.pause.whenOpen();
-  const next = f.pause.nextResume();
-  await f.pause.resume("command");
-  await waiting;
-  expect(await next).toBe("command");
-});
+test('a resume command releases the waiting desk actions', async () => {
+  const f = deskFixture()
+  await f.pause.pause()
+  const waiting = f.pause.whenOpen()
+  const next = f.pause.nextResume()
+  await f.pause.resume('command')
+  await waiting
+  expect(await next).toBe('command')
+})
 ```
 
 ```ts
 // packages/worker/src/signin/run-signin.test.ts
-test("Done stops the sign-in container after a checkpoint", async () => {
+test('Done stops the sign-in container after a checkpoint', async () => {
   const f = signinFixture({
-    replies: [{ commands: [] }, { commands: ["stop"] }],
-  });
-  await runSignin(f.job, f.deps);
+    replies: [{ commands: [] }, { commands: ['stop'] }]
+  })
+  await runSignin(f.job, f.deps)
   expect(f.order).toEqual([
-    "openDesk",
-    "openTabs",
-    "startVnc",
-    "post",
-    "post",
-    "close",
-    "checkpoint",
-    "post:ended:done",
-  ]);
-});
+    'openDesk',
+    'openTabs',
+    'startVnc',
+    'post',
+    'post',
+    'close',
+    'checkpoint',
+    'post:ended:done'
+  ])
+})
 
-test("15 idle minutes end the session", async () => {
-  const f = signinFixture({ replies: [{ commands: [] }], idle: 900_000 });
-  await runSignin(f.job, f.deps);
+test('15 idle minutes end the session', async () => {
+  const f = signinFixture({ replies: [{ commands: [] }], idle: 900_000 })
+  await runSignin(f.job, f.deps)
   expect(f.posts.at(-1)).toEqual({
     sessionId: f.job.sessionId,
     idleMs: 900_000,
     ended: true,
-    reason: "idle",
-  });
-});
+    reason: 'idle'
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2933,142 +2630,129 @@ Flow:
 
 ```ts
 // packages/web/lib/signin.test.ts
-test("with no worker running, sign-in asks the scheduler for a container", async () => {
-  const f = await signinFixture();
-  const r = await startSignin(f.scope, f.identityId, { queue: f.queue });
-  expect(r.mode).toBe("container");
-  expect(f.queue.sent).toEqual([
-    { name: "signin-start", data: { sessionId: r.sessionId }, opts: undefined },
-  ]);
-  expect(
-    (await startSignin(f.scope, f.identityId, { queue: f.queue })).sessionId,
-  ).toBe(r.sessionId);
-});
+test('with no worker running, sign-in asks the scheduler for a container', async () => {
+  const f = await signinFixture()
+  const r = await startSignin(f.scope, f.identityId, { queue: f.queue })
+  expect(r.mode).toBe('container')
+  expect(f.queue.sent).toEqual([{ name: 'signin-start', data: { sessionId: r.sessionId }, opts: undefined }])
+  expect((await startSignin(f.scope, f.identityId, { queue: f.queue })).sessionId).toBe(r.sessionId)
+})
 
-test("with a worker running, sign-in pauses it and attaches to its desk", async () => {
+test('with a worker running, sign-in pauses it and attaches to its desk', async () => {
   const f = await signinFixture({
-    workerHolding: { state: "in_meeting", attempt: 2 },
-  });
-  const r = await startSignin(f.scope, f.identityId, { queue: f.queue });
-  expect(r.mode).toBe("worker");
-  expect((await f.occurrence()).pendingCommands).toEqual(["pause_for_signin"]);
+    workerHolding: { state: 'in_meeting', attempt: 2 }
+  })
+  const r = await startSignin(f.scope, f.identityId, { queue: f.queue })
+  expect(r.mode).toBe('worker')
+  expect((await f.occurrence()).pendingCommands).toEqual(['pause_for_signin'])
   expect(await f.session(r.sessionId)).toMatchObject({
-    state: "starting",
-    upstream: `tm-worker-${f.occurrenceId}-a2:6080`,
-  });
-  await f.heartbeatWithEvent({ signin: "paused" });
-  expect(await signinStatus(f.scope, r.sessionId)).toBe("ready");
-  await finishSignin(f.scope, r.sessionId);
-  expect((await f.occurrence()).pendingCommands).toEqual([
-    "resume_after_signin",
-  ]);
-  await f.heartbeatWithEvent({ signin: "resumed", reason: "command" });
-  expect(await signinStatus(f.scope, r.sessionId)).toBe("ended");
-});
+    state: 'starting',
+    upstream: `tm-worker-${f.occurrenceId}-a2:6080`
+  })
+  await f.heartbeatWithEvent({ signin: 'paused' })
+  expect(await signinStatus(f.scope, r.sessionId)).toBe('ready')
+  await finishSignin(f.scope, r.sessionId)
+  expect((await f.occurrence()).pendingCommands).toEqual(['resume_after_signin'])
+  await f.heartbeatWithEvent({ signin: 'resumed', reason: 'command' })
+  expect(await signinStatus(f.scope, r.sessionId)).toBe('ended')
+})
 
-test("forward auth lets only the owner reach a ready session", async () => {
-  const f = await signinFixture({ readySession: true });
+test('forward auth lets only the owner reach a ready session', async () => {
+  const f = await signinFixture({ readySession: true })
   const h = new Headers({
-    "x-forwarded-uri": `/vnc/${f.sessionId}/websockify`,
-  });
+    'x-forwarded-uri': `/vnc/${f.sessionId}/websockify`
+  })
   const as = (userId: string | null) => ({
     db: f.db,
-    getSession: async () => (userId ? { userId } : null),
-  });
+    getSession: async () => (userId ? { userId } : null)
+  })
   expect(await authoriseVnc(as(f.ownerAuthUserId), h)).toEqual({
     status: 200,
-    upstream: `tm-signin-${f.sessionId}:6080`,
-  });
-  expect(await authoriseVnc(as(f.otherAuthUserId), h)).toEqual({ status: 403 });
-  expect(await authoriseVnc(as(null), h)).toEqual({ status: 401 });
-  expect(
-    await authoriseVnc(
-      as(f.ownerAuthUserId),
-      new Headers({ "x-forwarded-uri": "/vnc/../admin" }),
-    ),
-  ).toEqual({ status: 403 });
-});
+    upstream: `tm-signin-${f.sessionId}:6080`
+  })
+  expect(await authoriseVnc(as(f.otherAuthUserId), h)).toEqual({ status: 403 })
+  expect(await authoriseVnc(as(null), h)).toEqual({ status: 401 })
+  expect(await authoriseVnc(as(f.ownerAuthUserId), new Headers({ 'x-forwarded-uri': '/vnc/../admin' }))).toEqual({
+    status: 403
+  })
+})
 
-test("the sign-in heartbeat returns stop after Done and ends on the last beat", async () => {
-  const f = await signinFixture({ readySession: true, token: "s.abc" });
-  await finishSignin(f.scope, f.sessionId);
+test('the sign-in heartbeat returns stop after Done and ends on the last beat', async () => {
+  const f = await signinFixture({ readySession: true, token: 's.abc' })
+  await finishSignin(f.scope, f.sessionId)
   expect(
-    await handleSigninHeartbeat({ db: f.db, now: f.now }, "Bearer s.abc", {
+    await handleSigninHeartbeat({ db: f.db, now: f.now }, 'Bearer s.abc', {
       sessionId: f.sessionId,
       idleMs: 1000,
-      ended: false,
-    }),
-  ).toEqual({ status: 200, body: { commands: ["stop"] } });
-  await handleSigninHeartbeat({ db: f.db, now: f.now }, "Bearer s.abc", {
+      ended: false
+    })
+  ).toEqual({ status: 200, body: { commands: ['stop'] } })
+  await handleSigninHeartbeat({ db: f.db, now: f.now }, 'Bearer s.abc', {
     sessionId: f.sessionId,
     idleMs: 1000,
     ended: true,
-    reason: "done",
-  });
+    reason: 'done'
+  })
   expect(await f.session(f.sessionId)).toMatchObject({
-    state: "ended",
-    endReason: "done",
-  });
+    state: 'ended',
+    endReason: 'done'
+  })
   expect(
     (
-      await handleSigninHeartbeat({ db: f.db, now: f.now }, "Bearer s.wrong", {
+      await handleSigninHeartbeat({ db: f.db, now: f.now }, 'Bearer s.wrong', {
         sessionId: f.sessionId,
         idleMs: 0,
-        ended: false,
+        ended: false
       })
-    ).status,
-  ).toBe(401);
-});
+    ).status
+  ).toBe(401)
+})
 ```
 
 ```ts
 // packages/scheduler/src/signin.test.ts
-test("a sign-in container gets the identity profile and nothing else", async () => {
-  const f = await signinLaunchFixture();
-  expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe(
-    "started",
-  );
-  const c = f.docker.created[0];
-  expect(c.name).toBe(`tm-signin-${f.sessionId}`);
-  expect(c.body.HostConfig.Binds).toEqual([
-    `${f.env.profileRoot}/${f.identityId}:${f.env.profileRoot}/${f.identityId}`,
-  ]);
+test('a sign-in container gets the identity profile and nothing else', async () => {
+  const f = await signinLaunchFixture()
+  expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('started')
+  const c = f.docker.created[0]
+  expect(c.name).toBe(`tm-signin-${f.sessionId}`)
+  expect(c.body.HostConfig.Binds).toEqual([`${f.env.profileRoot}/${f.identityId}:${f.env.profileRoot}/${f.identityId}`])
   expect(
     validateRequest(
       {
-        method: "POST",
+        method: 'POST',
         path: `/containers/create?name=${c.name}`,
-        body: c.body,
+        body: c.body
       },
-      f.cfg,
-    ).ok,
-  ).toBe(true);
-  expect(await f.heldBy()).toBe(`signin:${f.sessionId}`);
-});
+      f.cfg
+    ).ok
+  ).toBe(true)
+  expect(await f.heldBy()).toBe(`signin:${f.sessionId}`)
+})
 
-test("a worker that took the identity meanwhile gets the session instead", async () => {
-  const f = await signinLaunchFixture({ workerHolding: true });
-  expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe("worker");
-  expect(f.docker.created).toEqual([]);
-});
+test('a worker that took the identity meanwhile gets the session instead', async () => {
+  const f = await signinLaunchFixture({ workerHolding: true })
+  expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('worker')
+  expect(f.docker.created).toEqual([])
+})
 ```
 
 ```ts
 // packages/scheduler/src/monitor.test.ts (added)
-test("a sign-in session silent for 30 seconds is ended and its container stopped", async () => {
+test('a sign-in session silent for 30 seconds is ended and its container stopped', async () => {
   const f = await monitorFixture({
     signinSession: {
-      mode: "container",
-      lastHeartbeat: new Date(now.getTime() - 31_000),
-    },
-  });
-  await monitorTick(f.deps, now);
+      mode: 'container',
+      lastHeartbeat: new Date(now.getTime() - 31_000)
+    }
+  })
+  await monitorTick(f.deps, now)
   expect(await f.signinSession()).toMatchObject({
-    state: "ended",
-    endReason: "lost",
-  });
-  expect(f.docker.stopped).toEqual([`tm-signin-${f.sessionId}`]);
-});
+    state: 'ended',
+    endReason: 'lost'
+  })
+  expect(f.docker.stopped).toEqual([`tm-signin-${f.sessionId}`])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -3127,77 +2811,73 @@ The monitor (Task 15) calls `registerArtefacts` when it clears the container of 
 
 ```ts
 // packages/pipeline/src/consumer.test.ts
-test("live mode runs the pipeline, remuxes the recording and completes", async () => {
+test('live mode runs the pipeline, remuxes the recording and completes', async () => {
   const f = await pipelineFixture({
-    state: "transcribing",
-    transcription: "live",
-  });
-  expect(await handlePipelineJob(f.deps, f.id)).toBe("completed");
-  expect(f.runCfg!.dataDir).toBe(`${f.env.dataRoot}/occurrences/${f.id}`);
-  expect(f.runCfg!.control).toBeNull();
-  expect(f.remuxed).toEqual([f.runCfg!.dataDir]);
-  expect((await f.occurrence()).state).toBe("completed");
-});
+    state: 'transcribing',
+    transcription: 'live'
+  })
+  expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+  expect(f.runCfg!.dataDir).toBe(`${f.env.dataRoot}/occurrences/${f.id}`)
+  expect(f.runCfg!.control).toBeNull()
+  expect(f.remuxed).toEqual([f.runCfg!.dataDir])
+  expect((await f.occurrence()).state).toBe('completed')
+})
 
-test("native mode waits for the PC with one ping", async () => {
+test('native mode waits for the PC with one ping', async () => {
   const f = await pipelineFixture({
-    state: "transcribing",
-    transcription: "native",
-  });
-  expect(await handlePipelineJob(f.deps, f.id)).toBe("waiting_for_pc");
-  expect(await handlePipelineJob(f.deps, f.id)).toBe("stale");
-  expect(f.notifier.sent.map((s) => s.ping.title)).toEqual([
-    "Waiting for your PC: Data Mining",
-  ]);
-});
+    state: 'transcribing',
+    transcription: 'native'
+  })
+  expect(await handlePipelineJob(f.deps, f.id)).toBe('waiting_for_pc')
+  expect(await handlePipelineJob(f.deps, f.id)).toBe('stale')
+  expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Waiting for your PC: Data Mining'])
+})
 
-test("a rejected key keeps everything and a re-run completes", async () => {
+test('a rejected key keeps everything and a re-run completes', async () => {
   const f = await pipelineFixture({
-    state: "transcribing",
-    transcription: "live",
-    runFails: [keyError(401)],
-  });
-  expect(await handlePipelineJob(f.deps, f.id)).toBe("key_error");
+    state: 'transcribing',
+    transcription: 'live',
+    runFails: [keyError(401)]
+  })
+  expect(await handlePipelineJob(f.deps, f.id)).toBe('key_error')
   expect(await f.occurrence()).toMatchObject({
-    state: "post_processing",
-    stateReason: "ai_key_error",
-  });
-  expect(f.notifier.sent[0].ping.title).toBe(
-    "Summary needs your key: Data Mining",
-  );
-  expect(await handlePipelineJob(f.deps, f.id)).toBe("completed");
-  expect((await f.occurrence()).stateReason).toBeNull();
-});
+    state: 'post_processing',
+    stateReason: 'ai_key_error'
+  })
+  expect(f.notifier.sent[0].ping.title).toBe('Summary needs your key: Data Mining')
+  expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+  expect((await f.occurrence()).stateReason).toBeNull()
+})
 
-test("other failures fail the occurrence with a ping", async () => {
+test('other failures fail the occurrence with a ping', async () => {
   const f = await pipelineFixture({
-    state: "transcribing",
-    transcription: "live",
-    runFails: [new Error("disk full")],
-  });
-  expect(await handlePipelineJob(f.deps, f.id)).toBe("failed");
-  expect(f.notifier.sent[0].ping.title).toBe("Summary failed: Data Mining");
-});
+    state: 'transcribing',
+    transcription: 'live',
+    runFails: [new Error('disk full')]
+  })
+  expect(await handlePipelineJob(f.deps, f.id)).toBe('failed')
+  expect(f.notifier.sent[0].ping.title).toBe('Summary failed: Data Mining')
+})
 ```
 
 ```ts
 // packages/web/db/artefacts.test.ts
-test("the data directory is classified once", async () => {
+test('the data directory is classified once', async () => {
   const f = await artefactFixture([
-    "recording/meeting.mp4",
-    "out/2026-10-21 1400 Data Mining.md",
-    "out/transcript.md",
-    "out/slides.md",
-    "out/chat.md",
-    "slides/slides.json",
-    "slides/01.webp",
-    "forms/f1/filled.png",
-    "forms/f1/confirmation.png",
-    "frames/0001_140000.png",
-    "chat.jsonl",
-  ]);
-  expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(9);
-  expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(9);
+    'recording/meeting.mp4',
+    'out/2026-10-21 1400 Data Mining.md',
+    'out/transcript.md',
+    'out/slides.md',
+    'out/chat.md',
+    'slides/slides.json',
+    'slides/01.webp',
+    'forms/f1/filled.png',
+    'forms/f1/confirmation.png',
+    'frames/0001_140000.png',
+    'chat.jsonl'
+  ])
+  expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(9)
+  expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(9)
   expect(await f.kinds()).toEqual({
     chat: 1,
     form_screenshot: 2,
@@ -3206,25 +2886,25 @@ test("the data directory is classified once", async () => {
     slides: 1,
     slides_json: 1,
     summary: 1,
-    transcript: 1,
-  });
-});
+    transcript: 1
+  })
+})
 ```
 
 ```ts
 // packages/pipeline/src/remux.test.ts
-test("the recording is copied into a fast-start MP4", () => {
-  expect(remuxArgs("/d")).toEqual([
-    "-y",
-    "-i",
-    "/d/recording/meeting.mkv",
-    "-c",
-    "copy",
-    "-movflags",
-    "+faststart",
-    "/d/recording/meeting.mp4",
-  ]);
-});
+test('the recording is copied into a fast-start MP4', () => {
+  expect(remuxArgs('/d')).toEqual([
+    '-y',
+    '-i',
+    '/d/recording/meeting.mkv',
+    '-c',
+    'copy',
+    '-movflags',
+    '+faststart',
+    '/d/recording/meeting.mp4'
+  ])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -3274,111 +2954,98 @@ git commit -m "feat(pipeline): consume pipeline jobs"
 
 ```ts
 // packages/scheduler/src/retention.test.ts
-const now = new Date("2026-11-17T08:00:00Z");
+const now = new Date('2026-11-17T08:00:00Z')
 
-test("a meeting 3 days from deletion gets one warning ping", async () => {
+test('a meeting 3 days from deletion gets one warning ping', async () => {
   const f = await retentionFixture({
-    state: "completed",
-    deleteAfter: new Date("2026-11-20T08:00:00Z"),
-  });
-  expect((await retentionTick(f.deps, now)).warned).toBe(1);
-  expect((await retentionTick(f.deps, now)).warned).toBe(0);
+    state: 'completed',
+    deleteAfter: new Date('2026-11-20T08:00:00Z')
+  })
+  expect((await retentionTick(f.deps, now)).warned).toBe(1)
+  expect((await retentionTick(f.deps, now)).warned).toBe(0)
   expect(f.notifier.sent[0].ping).toMatchObject({
-    title: "Deleting in 3 days: Data Mining",
-    priority: "default",
+    title: 'Deleting in 3 days: Data Mining',
+    priority: 'default',
     message:
-      "Data Mining (Wed 21 Oct, 14:00) will be deleted from the server on Fri 20 Nov. Export anything you want to keep before then.",
-  });
-});
+      'Data Mining (Wed 21 Oct, 14:00) will be deleted from the server on Fri 20 Nov. Export anything you want to keep before then.'
+  })
+})
 
-test("a meeting past its deletion time is gone from disk and database", async () => {
+test('a meeting past its deletion time is gone from disk and database', async () => {
   const f = await retentionFixture({
-    state: "completed",
+    state: 'completed',
     deleteAfter: new Date(now.getTime() - 1000),
-    files: ["recording/meeting.mp4", "forms/f1/filled.png"],
-    withRows: true,
-  });
-  expect((await retentionTick(f.deps, now)).deleted).toBe(1);
-  expect(await exists(f.dir)).toBe(false);
-  expect([await f.count(forms), await f.count(artefacts)]).toEqual([0, 0]);
-  expect((await f.events()).map((e) => e.data.to)).toEqual(["deleted"]);
+    files: ['recording/meeting.mp4', 'forms/f1/filled.png'],
+    withRows: true
+  })
+  expect((await retentionTick(f.deps, now)).deleted).toBe(1)
+  expect(await exists(f.dir)).toBe(false)
+  expect([await f.count(forms), await f.count(artefacts)]).toEqual([0, 0])
+  expect((await f.events()).map((e) => e.data.to)).toEqual(['deleted'])
   expect(await f.occurrence()).toMatchObject({
-    state: "deleted",
+    state: 'deleted',
     linkUsed: null,
-    entrySnapshot: null,
-  });
-});
+    entrySnapshot: null
+  })
+})
 
-test("a meeting in progress is never deleted", async () => {
+test('a meeting in progress is never deleted', async () => {
   const f = await retentionFixture({
-    state: "in_meeting",
-    deleteAfter: new Date(now.getTime() - 1000),
-  });
-  expect((await retentionTick(f.deps, now)).deleted).toBe(0);
-});
+    state: 'in_meeting',
+    deleteAfter: new Date(now.getTime() - 1000)
+  })
+  expect((await retentionTick(f.deps, now)).deleted).toBe(0)
+})
 
-test("orphaned directories go and only 3 checkpoints stay", async () => {
+test('orphaned directories go and only 3 checkpoints stay', async () => {
   const f = await retentionFixture({
     orphanOccurrenceDir: true,
     orphanProfileDir: true,
-    checkpoints: [
-      "20261101T000000Z",
-      "20261102T000000Z",
-      "20261103T000000Z",
-      "20261104T000000Z",
-    ].map((t) => `${t}.tar.enc`),
-  });
+    checkpoints: ['20261101T000000Z', '20261102T000000Z', '20261103T000000Z', '20261104T000000Z'].map(
+      (t) => `${t}.tar.enc`
+    )
+  })
   expect(await retentionTick(f.deps, now)).toMatchObject({
     orphansRemoved: 2,
-    checkpointsPruned: 1,
-  });
+    checkpointsPruned: 1
+  })
   expect(await f.checkpointNames()).toEqual([
-    "20261102T000000Z.tar.enc",
-    "20261103T000000Z.tar.enc",
-    "20261104T000000Z.tar.enc",
-  ]);
-});
+    '20261102T000000Z.tar.enc',
+    '20261103T000000Z.tar.enc',
+    '20261104T000000Z.tar.enc'
+  ])
+})
 ```
 
 ```ts
 // packages/scheduler/src/backup.test.ts
-test("backups dump the database, copy checkpoints and expire copies older than 7 days", () => {
+test('backups dump the database, copy checkpoints and expire copies older than 7 days', () => {
   expect(
     backupCommands({
-      date: "2026-10-21",
-      databaseUrl: "postgres://tm@postgres/tm",
-      remote: "tm-backup:",
-      workDir: "/tmp/tm-backup",
+      date: '2026-10-21',
+      databaseUrl: 'postgres://tm@postgres/tm',
+      remote: 'tm-backup:',
+      workDir: '/tmp/tm-backup',
       checkpoints: [
         {
-          identityId: "i1",
-          path: "/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc",
-        },
-      ],
-    }),
+          identityId: 'i1',
+          path: '/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc'
+        }
+      ]
+    })
   ).toEqual([
+    ['pg_dump', '--format=custom', '--dbname=postgres://tm@postgres/tm', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
+    ['rclone', 'copyto', '/tmp/tm-backup/2026-10-21/db.dump', 'tm-backup:2026-10-21/db.dump'],
     [
-      "pg_dump",
-      "--format=custom",
-      "--dbname=postgres://tm@postgres/tm",
-      "--file=/tmp/tm-backup/2026-10-21/db.dump",
+      'rclone',
+      'copyto',
+      '/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc',
+      'tm-backup:2026-10-21/profiles/i1.tar.enc'
     ],
-    [
-      "rclone",
-      "copyto",
-      "/tmp/tm-backup/2026-10-21/db.dump",
-      "tm-backup:2026-10-21/db.dump",
-    ],
-    [
-      "rclone",
-      "copyto",
-      "/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc",
-      "tm-backup:2026-10-21/profiles/i1.tar.enc",
-    ],
-    ["rclone", "delete", "--min-age", "7d", "tm-backup:"],
-    ["rclone", "rmdirs", "--leave-root", "tm-backup:"],
-  ]);
-});
+    ['rclone', 'delete', '--min-age', '7d', 'tm-backup:'],
+    ['rclone', 'rmdirs', '--leave-root', 'tm-backup:']
+  ])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -3424,16 +3091,16 @@ name: tolongmeeting
 services:
   caddy:
     image: caddy:2
-    ports: ["80:80", "443:443", "443:443/udp"]
+    ports: ['80:80', '443:443', '443:443/udp']
     environment: [TM_PUBLIC_URL, NTFY_URL]
-    volumes: ["./caddy/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data"]
+    volumes: ['./caddy/Caddyfile:/etc/caddy/Caddyfile:ro', 'caddy-data:/data']
     networks: { app: {}, tm-workers: { ipv4_address: 172.30.0.2 } }
   web:
     build: { context: .., dockerfile: docker/app/Dockerfile, target: web }
     env_file: ../.env
     environment: { TM_MASTER_KEY_FILE: /run/secrets/tm_master_key }
     secrets: [tm_master_key]
-    volumes: ["${TM_DATA_ROOT}:${TM_DATA_ROOT}:ro"]
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}:ro']
     networks: [app]
   scheduler:
     build: { context: .., dockerfile: docker/app/Dockerfile, target: scheduler }
@@ -3441,53 +3108,44 @@ services:
     environment:
       {
         TM_MASTER_KEY_FILE: /run/secrets/tm_master_key,
-        DOCKER_PROXY_URL: "http://docker-proxy:2375",
-        RCLONE_CONFIG: /run/secrets/rclone_conf,
+        DOCKER_PROXY_URL: 'http://docker-proxy:2375',
+        RCLONE_CONFIG: /run/secrets/rclone_conf
       }
     secrets: [tm_master_key, rclone_conf]
-    volumes:
-      [
-        "${TM_DATA_ROOT}:${TM_DATA_ROOT}",
-        "${TM_PROFILE_ROOT}:${TM_PROFILE_ROOT}",
-      ]
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}', '${TM_PROFILE_ROOT}:${TM_PROFILE_ROOT}']
     networks: [app, gate]
     depends_on: [postgres, docker-proxy]
   pipeline:
     image: tolongmeeting/worker:current
-    entrypoint: ["bun", "run", "packages/pipeline/src/consumer-main.ts"]
+    entrypoint: ['bun', 'run', 'packages/pipeline/src/consumer-main.ts']
     env_file: ../.env
     environment: { TM_MASTER_KEY_FILE: /run/secrets/tm_master_key }
     secrets: [tm_master_key]
-    volumes: ["${TM_DATA_ROOT}:${TM_DATA_ROOT}"]
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}']
     networks: [app]
     depends_on: [scheduler]
   postgres:
     image: postgres:17
-    environment:
-      {
-        POSTGRES_USER: tm,
-        POSTGRES_DB: tm,
-        POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}",
-      }
-    volumes: ["pg-data:/var/lib/postgresql/data"]
+    environment: { POSTGRES_USER: tm, POSTGRES_DB: tm, POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}' }
+    volumes: ['pg-data:/var/lib/postgresql/data']
     networks: [app]
   ntfy:
     image: binwiederhier/ntfy:v2.14.0
     command: serve
     environment:
       {
-        NTFY_BASE_URL: "${NTFY_URL}",
+        NTFY_BASE_URL: '${NTFY_URL}',
         NTFY_AUTH_FILE: /var/lib/ntfy/user.db,
         NTFY_AUTH_DEFAULT_ACCESS: deny-all,
-        NTFY_BEHIND_PROXY: "true",
-        NTFY_CACHE_FILE: /var/lib/ntfy/cache.db,
+        NTFY_BEHIND_PROXY: 'true',
+        NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
       }
-    volumes: ["ntfy-data:/var/lib/ntfy"]
+    volumes: ['ntfy-data:/var/lib/ntfy']
     networks: [app]
   docker-proxy:
     build: { context: .., dockerfile: docker/app/Dockerfile, target: gate }
     environment: [TM_DATA_ROOT, TM_PROFILE_ROOT]
-    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    volumes: ['/var/run/docker.sock:/var/run/docker.sock']
     networks: [gate]
   worker:
     profiles: [build]
@@ -3498,11 +3156,7 @@ networks:
   gate: { internal: true }
   tm-workers:
     name: tm-workers
-    driver_opts:
-      {
-        com.docker.network.bridge.name: tm-workers0,
-        com.docker.network.bridge.enable_icc: "false",
-      }
+    driver_opts: { com.docker.network.bridge.name: tm-workers0, com.docker.network.bridge.enable_icc: 'false' }
     ipam: { config: [{ subnet: 172.30.0.0/24 }] }
 secrets:
   tm_master_key: { file: /srv/tolongmeeting/secrets/master.key }
@@ -3596,61 +3250,59 @@ TM_BACKUP_REMOTE=
 
 ```ts
 // packages/scheduler/src/jobs.test.ts
-test("the scheduler registers its queues, schedules and workers", async () => {
-  const boss = new FakeBoss();
-  await registerJobs(boss, noopHandlers());
+test('the scheduler registers its queues, schedules and workers', async () => {
+  const boss = new FakeBoss()
+  await registerJobs(boss, noopHandlers())
   expect(boss.queues.sort()).toEqual([
-    "backup",
-    "delete-occurrence",
-    "expand",
-    "launch",
-    "org-check",
-    "pipeline",
-    "retention",
-    "signin-start",
-  ]);
+    'backup',
+    'delete-occurrence',
+    'expand',
+    'launch',
+    'org-check',
+    'pipeline',
+    'retention',
+    'signin-start'
+  ])
   expect(boss.schedules).toEqual([
-    { name: "expand", cron: "0 * * * *", tz: "UTC" },
-    { name: "retention", cron: "7 * * * *", tz: "UTC" },
-    { name: "org-check", cron: "30 18 * * *", tz: "UTC" },
-    { name: "backup", cron: "0 19 * * *", tz: "UTC" },
-  ]);
+    { name: 'expand', cron: '0 * * * *', tz: 'UTC' },
+    { name: 'retention', cron: '7 * * * *', tz: 'UTC' },
+    { name: 'org-check', cron: '30 18 * * *', tz: 'UTC' },
+    { name: 'backup', cron: '0 19 * * *', tz: 'UTC' }
+  ])
   expect(boss.workers.sort()).toEqual([
-    "backup",
-    "delete-occurrence",
-    "expand",
-    "launch",
-    "org-check",
-    "retention",
-    "signin-start",
-  ]);
-});
+    'backup',
+    'delete-occurrence',
+    'expand',
+    'launch',
+    'org-check',
+    'retention',
+    'signin-start'
+  ])
+})
 ```
 
 ```ts
 // packages/web/test/env-example.test.ts
-test(".env.example names every variable and holds no values", async () => {
-  const lines = (await Bun.file(".env.example").text())
-    .split("\n")
-    .filter((l) => l && !l.startsWith("#"));
-  expect(lines.map((l) => l.split("=")[0]).sort()).toEqual([
-    "DATABASE_URL",
-    "DOCKER_PROXY_URL",
-    "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET",
-    "GITHUB_ORG",
-    "NTFY_ADMIN_TOKEN",
-    "NTFY_URL",
-    "POSTGRES_PASSWORD",
-    "TM_BACKUP_REMOTE",
-    "TM_DATA_ROOT",
-    "TM_MASTER_KEY_FILE",
-    "TM_PROFILE_ROOT",
-    "TM_PUBLIC_URL",
-    "TM_SELECTORS_DIR",
-  ]);
-  expect(lines.every((l) => l.endsWith("="))).toBe(true);
-});
+test('.env.example names every variable and holds no values', async () => {
+  const lines = (await Bun.file('.env.example').text()).split('\n').filter((l) => l && !l.startsWith('#'))
+  expect(lines.map((l) => l.split('=')[0]).sort()).toEqual([
+    'DATABASE_URL',
+    'DOCKER_PROXY_URL',
+    'GITHUB_CLIENT_ID',
+    'GITHUB_CLIENT_SECRET',
+    'GITHUB_ORG',
+    'NTFY_ADMIN_TOKEN',
+    'NTFY_URL',
+    'POSTGRES_PASSWORD',
+    'TM_BACKUP_REMOTE',
+    'TM_DATA_ROOT',
+    'TM_MASTER_KEY_FILE',
+    'TM_PROFILE_ROOT',
+    'TM_PUBLIC_URL',
+    'TM_SELECTORS_DIR'
+  ])
+  expect(lines.every((l) => l.endsWith('='))).toBe(true)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**

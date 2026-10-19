@@ -84,55 +84,47 @@ Contents:
 
 ```ts
 // scripts/repo.test.ts
-import { test, expect } from "bun:test";
-const read = (p: string) => Bun.file(p).text();
+import { test, expect } from 'bun:test'
+const read = (p: string) => Bun.file(p).text()
 
-test("env example lists every architecture variable with no value", async () => {
-  const lines = (await read(".env.example"))
+test('env example lists every architecture variable with no value', async () => {
+  const lines = (await read('.env.example'))
     .trim()
-    .split("\n")
-    .filter((l) => !l.startsWith("#"));
+    .split('\n')
+    .filter((l) => !l.startsWith('#'))
   expect(lines).toEqual([
-    "TM_DATA_ROOT=",
-    "TM_PROFILE_ROOT=",
-    "TM_MASTER_KEY_FILE=",
-    "TM_SELECTORS_DIR=",
-    "TM_PUBLIC_URL=",
-    "DATABASE_URL=",
-    "GITHUB_CLIENT_ID=",
-    "GITHUB_CLIENT_SECRET=",
-    "GITHUB_ORG=",
-    "DOCKER_PROXY_URL=",
-    "NTFY_URL=",
-    "NTFY_ADMIN_TOKEN=",
-  ]);
-});
-
-test("workspaces, scripts and package names", async () => {
-  const root = JSON.parse(await read("package.json"));
-  expect(root.workspaces).toEqual(["packages/*"]);
-  for (const s of [
-    "test",
-    "typecheck",
-    "format",
-    "build:worker",
-    "image:worker",
-    "tm-worker",
-    "tm-pipeline",
+    'TM_DATA_ROOT=',
+    'TM_PROFILE_ROOT=',
+    'TM_MASTER_KEY_FILE=',
+    'TM_SELECTORS_DIR=',
+    'TM_PUBLIC_URL=',
+    'DATABASE_URL=',
+    'GITHUB_CLIENT_ID=',
+    'GITHUB_CLIENT_SECRET=',
+    'GITHUB_ORG=',
+    'DOCKER_PROXY_URL=',
+    'NTFY_URL=',
+    'NTFY_ADMIN_TOKEN='
   ])
-    expect(root.scripts[s]).toBeString();
-  for (const p of ["core", "ai", "notify", "worker", "pipeline"]) {
-    const pkg = JSON.parse(await read(`packages/${p}/package.json`));
-    expect(pkg.name).toBe(`@tm/${p}`);
-    expect(pkg.scripts.typecheck).toBe("tsc --noEmit -p tsconfig.json");
-  }
-});
+})
 
-test("commitlint caps the header at 50 characters", async () => {
-  const cfg = (await import("../commitlint.config.js")).default;
-  expect(cfg.extends).toEqual(["@commitlint/config-conventional"]);
-  expect(cfg.rules["header-max-length"]).toEqual([2, "always", 50]);
-});
+test('workspaces, scripts and package names', async () => {
+  const root = JSON.parse(await read('package.json'))
+  expect(root.workspaces).toEqual(['packages/*'])
+  for (const s of ['test', 'typecheck', 'format', 'build:worker', 'image:worker', 'tm-worker', 'tm-pipeline'])
+    expect(root.scripts[s]).toBeString()
+  for (const p of ['core', 'ai', 'notify', 'worker', 'pipeline']) {
+    const pkg = JSON.parse(await read(`packages/${p}/package.json`))
+    expect(pkg.name).toBe(`@tm/${p}`)
+    expect(pkg.scripts.typecheck).toBe('tsc --noEmit -p tsconfig.json')
+  }
+})
+
+test('commitlint caps the header at 50 characters', async () => {
+  const cfg = (await import('../commitlint.config.js')).default
+  expect(cfg.extends).toEqual(['@commitlint/config-conventional'])
+  expect(cfg.rules['header-max-length']).toEqual([2, 'always', 50])
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -186,79 +178,68 @@ git commit -m "chore: scaffold bun workspaces and tooling"
 
 ```ts
 // packages/core/src/form-machine.test.ts
-import { test, expect } from "bun:test";
-import { nextFormState, IllegalTransition } from "./form-machine";
+import { test, expect } from 'bun:test'
+import { nextFormState, IllegalTransition } from './form-machine'
 
-test("1A path to a manual-submission ping", () => {
-  expect(nextFormState("detected", "resolve")).toBe("resolving");
-  expect(nextFormState("resolving", "resolved")).toBe("checking_trust");
-  expect(nextFormState("checking_trust", "manual_only")).toBe("needs_member");
-  expect(nextFormState("checking_trust", "untrusted")).toBe("untrusted");
-  for (const s of ["detected", "resolving", "checking_trust"] as const)
-    expect(nextFormState(s, "fail")).toBe("failed");
-});
+test('1A path to a manual-submission ping', () => {
+  expect(nextFormState('detected', 'resolve')).toBe('resolving')
+  expect(nextFormState('resolving', 'resolved')).toBe('checking_trust')
+  expect(nextFormState('checking_trust', 'manual_only')).toBe('needs_member')
+  expect(nextFormState('checking_trust', 'untrusted')).toBe('untrusted')
+  for (const s of ['detected', 'resolving', 'checking_trust'] as const) expect(nextFormState(s, 'fail')).toBe('failed')
+})
 
-test("terminal states accept no trigger", () => {
-  for (const s of ["untrusted", "needs_member", "failed"] as const)
-    expect(() => nextFormState(s, "fail")).toThrow(IllegalTransition);
-  expect(() => nextFormState("detected", "resolved")).toThrow(
-    "detected --resolved-->",
-  );
-});
+test('terminal states accept no trigger', () => {
+  for (const s of ['untrusted', 'needs_member', 'failed'] as const)
+    expect(() => nextFormState(s, 'fail')).toThrow(IllegalTransition)
+  expect(() => nextFormState('detected', 'resolved')).toThrow('detected --resolved-->')
+})
 ```
 
 ```ts
 // packages/core/src/job.test.ts (fixture: a complete valid job object `validJob` built in the test file)
-test("valid job parses; bad values are reported by path only", () => {
-  expect(parseJob(validJob).entry.timeZone).toBe("Asia/Kuala_Lumpur");
+test('valid job parses; bad values are reported by path only', () => {
+  expect(parseJob(validJob).entry.timeZone).toBe('Asia/Kuala_Lumpur')
   const bad = {
     ...validJob,
-    ai: { ...validJob.ai, apiKey: "" },
-    entry: { ...validJob.entry, timeZone: "Mars/Base" },
-  };
-  expect(() => parseJob(bad)).toThrow(
-    /ai\.apiKey.*entry\.timeZone|entry\.timeZone.*ai\.apiKey/s,
-  );
+    ai: { ...validJob.ai, apiKey: '' },
+    entry: { ...validJob.entry, timeZone: 'Mars/Base' }
+  }
+  expect(() => parseJob(bad)).toThrow(/ai\.apiKey.*entry\.timeZone|entry\.timeZone.*ai\.apiKey/s)
   try {
     parseJob({
       ...validJob,
-      ai: { ...validJob.ai, baseUrl: "sk-secret-value" },
-    });
+      ai: { ...validJob.ai, baseUrl: 'sk-secret-value' }
+    })
   } catch (e) {
-    expect(String(e)).not.toContain("sk-secret-value");
+    expect(String(e)).not.toContain('sk-secret-value')
   }
-});
-test("end after start, safe occurrence id, absolute dirs, wss asr url", () => {
+})
+test('end after start, safe occurrence id, absolute dirs, wss asr url', () => {
   expect(() =>
     parseJob({
       ...validJob,
-      entry: { ...validJob.entry, end: validJob.entry.start },
-    }),
-  ).toThrow("entry.end");
-  expect(() => parseJob({ ...validJob, occurrenceId: "../x" })).toThrow(
-    "occurrenceId",
-  );
-  expect(() => parseJob({ ...validJob, dataDir: "rel/dir" })).toThrow(
-    "dataDir",
-  );
-  expect(() =>
-    parseJob({ ...validJob, ai: { ...validJob.ai, asrUrl: "https://x" } }),
-  ).toThrow("ai.asrUrl");
-});
+      entry: { ...validJob.entry, end: validJob.entry.start }
+    })
+  ).toThrow('entry.end')
+  expect(() => parseJob({ ...validJob, occurrenceId: '../x' })).toThrow('occurrenceId')
+  expect(() => parseJob({ ...validJob, dataDir: 'rel/dir' })).toThrow('dataDir')
+  expect(() => parseJob({ ...validJob, ai: { ...validJob.ai, asrUrl: 'https://x' } })).toThrow('ai.asrUrl')
+})
 ```
 
 ```ts
 // packages/core/src/time.test.ts
-test("offsets and local parts", () => {
-  expect(formatOffset(3_723_400)).toBe("01:02:03");
-  expect(localParts("2026-10-21T12:00:00Z", "Asia/Kuala_Lumpur")).toEqual({
-    date: "2026-10-21",
-    hhmm: "2000",
-    hhmmss: "200000",
-    weekday: "Wed",
-    dayMonthYear: "21 Oct 2026",
-  });
-});
+test('offsets and local parts', () => {
+  expect(formatOffset(3_723_400)).toBe('01:02:03')
+  expect(localParts('2026-10-21T12:00:00Z', 'Asia/Kuala_Lumpur')).toEqual({
+    date: '2026-10-21',
+    hhmm: '2000',
+    hhmmss: '200000',
+    weekday: 'Wed',
+    dayMonthYear: '21 Oct 2026'
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -271,20 +252,17 @@ Expected: FAIL with "Cannot find module './form-machine'".
 `types.ts` copies architecture "Core types" verbatim and adds `replyTo: string | null` to `ChatMessage`. `job.ts`: `JobConfigSchema` per the architecture's `JobConfig` with these rules: `occurrenceId` matches `^[A-Za-z0-9_-]{1,64}$`; `attempt` integer at least 1; `start` and `end` are `z.string().datetime({ offset: true })` with `end > start`; `timeZone` accepted only if `new Intl.DateTimeFormat('en', { timeZone })` doesn't throw; `link` is a discriminated union on `kind`; `ai.baseUrl` is a URL, `ai.apiKey` non-empty, `ai.asrUrl` starts with `wss://`; `ntfy.url` is a URL, `topic` and `token` non-empty; `dataDir` and `profileDir` absolute; `identity.zoomGuestName` non-empty; `identity.formProviders` an array of `'google' | 'microsoft'`; `control` nullable. `form-machine.ts`:
 
 ```ts
-export type FormTrigger =
-  "resolve" | "resolved" | "untrusted" | "manual_only" | "fail";
+export type FormTrigger = 'resolve' | 'resolved' | 'untrusted' | 'manual_only' | 'fail'
 // 1A table. Plan 01b adds 'trusted' (checking_trust -> opening) and the later triggers; it does not change these rows.
-const table: Partial<
-  Record<FormState, Partial<Record<FormTrigger, FormState>>>
-> = {
-  detected: { resolve: "resolving", fail: "failed" },
-  resolving: { resolved: "checking_trust", fail: "failed" },
+const table: Partial<Record<FormState, Partial<Record<FormTrigger, FormState>>>> = {
+  detected: { resolve: 'resolving', fail: 'failed' },
+  resolving: { resolved: 'checking_trust', fail: 'failed' },
   checking_trust: {
-    untrusted: "untrusted",
-    manual_only: "needs_member",
-    fail: "failed",
-  },
-};
+    untrusted: 'untrusted',
+    manual_only: 'needs_member',
+    fail: 'failed'
+  }
+}
 ```
 
 `time.ts` uses `Intl.DateTimeFormat` with the given `timeZone` (never the process zone).
@@ -319,88 +297,79 @@ git commit -m "feat(core): add types, job schema, form machine"
 
 ```ts
 // packages/notify/src/ntfy.test.ts: a Bun.serve fake records each request
-test("JSON publish with bearer token, priority and view actions", async () => {
+test('JSON publish with bearer token, priority and view actions', async () => {
   await sendPing(cfg, {
-    title: "Joined: Data Mining",
-    message: "m",
-    priority: "high",
-    actions: [{ label: "Open form", url: "https://forms.gle/<form-id>" }],
-  });
-  const r = fake.requests[0];
-  expect(r.method).toBe("POST");
-  expect(r.path).toBe("/");
-  expect(r.headers.authorization).toBe("Bearer tk_test");
+    title: 'Joined: Data Mining',
+    message: 'm',
+    priority: 'high',
+    actions: [{ label: 'Open form', url: 'https://forms.gle/<form-id>' }]
+  })
+  const r = fake.requests[0]
+  expect(r.method).toBe('POST')
+  expect(r.path).toBe('/')
+  expect(r.headers.authorization).toBe('Bearer tk_test')
   expect(r.json).toEqual({
-    topic: "member-topic",
-    title: "Joined: Data Mining",
-    message: "m",
+    topic: 'member-topic',
+    title: 'Joined: Data Mining',
+    message: 'm',
     priority: 4,
     actions: [
       {
-        action: "view",
-        label: "Open form",
-        url: "https://forms.gle/<form-id>",
-        clear: false,
-      },
-    ],
-  });
-});
-test("attachment is a PUT to the topic with RFC 2047 headers for non-ASCII", async () => {
+        action: 'view',
+        label: 'Open form',
+        url: 'https://forms.gle/<form-id>',
+        clear: false
+      }
+    ]
+  })
+})
+test('attachment is a PUT to the topic with RFC 2047 headers for non-ASCII', async () => {
   await sendPing(cfg, {
-    title: "Ringkasan: Kuliah 5 — Pengenalan",
-    message: "x",
-    priority: "default",
-    attachPath: tmpFile,
-  });
-  const r = fake.requests[0];
-  expect(r.method).toBe("PUT");
-  expect(r.path).toBe("/member-topic");
-  expect(r.headers.title).toStartWith("=?UTF-8?B?");
-  expect(r.headers.priority).toBe("3");
-  expect(r.headers.filename).toBe(basename(tmpFile));
-});
-test("5xx retried twice then PingError; 4xx not retried", async () => {
-  fake.failWith(503);
-  await expect(sendPing(cfg, ping)).rejects.toBeInstanceOf(PingError);
-  expect(fake.requests.length).toBe(3);
-  fake.reset();
-  fake.failWith(403);
-  await expect(sendPing(cfg, ping)).rejects.toThrow("403");
-  expect(fake.requests.length).toBe(1);
-});
+    title: 'Ringkasan: Kuliah 5 — Pengenalan',
+    message: 'x',
+    priority: 'default',
+    attachPath: tmpFile
+  })
+  const r = fake.requests[0]
+  expect(r.method).toBe('PUT')
+  expect(r.path).toBe('/member-topic')
+  expect(r.headers.title).toStartWith('=?UTF-8?B?')
+  expect(r.headers.priority).toBe('3')
+  expect(r.headers.filename).toBe(basename(tmpFile))
+})
+test('5xx retried twice then PingError; 4xx not retried', async () => {
+  fake.failWith(503)
+  await expect(sendPing(cfg, ping)).rejects.toBeInstanceOf(PingError)
+  expect(fake.requests.length).toBe(3)
+  fake.reset()
+  fake.failWith(403)
+  await expect(sendPing(cfg, ping)).rejects.toThrow('403')
+  expect(fake.requests.length).toBe(1)
+})
 ```
 
 ```ts
 // packages/notify/src/messages.test.ts
-test("ping copy", () => {
-  expect(joinedPing("Data Mining", 41)).toEqual({
-    title: "Joined: Data Mining",
-    message: "In the meeting with 41 participants. Recording.",
-    priority: "default",
-  });
-  const p = formToSubmitPing(
-    "Data Mining",
-    resolvedQr,
-    "qr_on_screen",
-    "20:41",
-  );
-  expect(p.priority).toBe("high");
-  expect(p.actions).toEqual([{ label: "Open form", url: resolvedQr.finalUrl }]);
+test('ping copy', () => {
+  expect(joinedPing('Data Mining', 41)).toEqual({
+    title: 'Joined: Data Mining',
+    message: 'In the meeting with 41 participants. Recording.',
+    priority: 'default'
+  })
+  const p = formToSubmitPing('Data Mining', resolvedQr, 'qr_on_screen', '20:41')
+  expect(p.priority).toBe('high')
+  expect(p.actions).toEqual([{ label: 'Open form', url: resolvedQr.finalUrl }])
   expect(p.message).toBe(
-    "A form from a QR code on the shared screen was seen at 20:41. The bot doesn't submit forms yet: open it and submit it yourself.",
-  );
-  expect(
-    formNotSubmittedPing("Data Mining", resolvedChat, "20:42").message,
-  ).toBe(
-    "Student A posted a form in the chat at 20:42. They aren't the host, a co-host or a trusted sender, so it wasn't treated as an attendance form.",
-  );
-  expect(alertPing("Data Mining", "black_frames").title).toBe(
-    "Alert: Data Mining",
-  );
-  expect(
-    summaryReadyPing("Data Mining", "x".repeat(5000)).message.length,
-  ).toBeLessThanOrEqual(3900 + "\n(truncated)".length);
-});
+    "A form from a QR code on the shared screen was seen at 20:41. The bot doesn't submit forms yet: open it and submit it yourself."
+  )
+  expect(formNotSubmittedPing('Data Mining', resolvedChat, '20:42').message).toBe(
+    "Student A posted a form in the chat at 20:42. They aren't the host, a co-host or a trusted sender, so it wasn't treated as an attendance form."
+  )
+  expect(alertPing('Data Mining', 'black_frames').title).toBe('Alert: Data Mining')
+  expect(summaryReadyPing('Data Mining', 'x'.repeat(5000)).message.length).toBeLessThanOrEqual(
+    3900 + '\n(truncated)'.length
+  )
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -471,54 +440,43 @@ git commit -m "feat(notify): add ntfy client and ping copy"
 
 ````ts
 // packages/ai/src/chat.test.ts: a Bun.serve fake at cfg.baseUrl answers /chat/completions
-test("sends thinking off, bearer key and returns text", async () => {
-  fake.reply({ choices: [{ message: { content: "hello" } }] });
-  expect(
-    await chatText(
-      cfg,
-      "qwen3.7-plus",
-      [{ role: "user", content: "hi" }],
-      5000,
-    ),
-  ).toBe("hello");
+test('sends thinking off, bearer key and returns text', async () => {
+  fake.reply({ choices: [{ message: { content: 'hello' } }] })
+  expect(await chatText(cfg, 'qwen3.7-plus', [{ role: 'user', content: 'hi' }], 5000)).toBe('hello')
   expect(fake.last.body).toMatchObject({
-    model: "qwen3.7-plus",
+    model: 'qwen3.7-plus',
     enable_thinking: false,
-    stream: false,
-  });
-  expect(fake.last.headers.authorization).toBe("Bearer sk-test");
-});
-test("chatJson strips fences, validates, retries once on bad JSON", async () => {
+    stream: false
+  })
+  expect(fake.last.headers.authorization).toBe('Bearer sk-test')
+})
+test('chatJson strips fences, validates, retries once on bad JSON', async () => {
   fake.replies([
-    { choices: [{ message: { content: "not json" } }] },
-    { choices: [{ message: { content: '```json\n{"a":1}\n```' } }] },
-  ]);
-  expect(
-    await chatJson(cfg, "m", msgs, z.object({ a: z.number() }), 5000),
-  ).toEqual({ a: 1 });
-  expect(fake.last.body.response_format).toEqual({ type: "json_object" });
-});
-test("401, 402 and 429 raise AiKeyError; timeouts raise AiTimeoutError", async () => {
+    { choices: [{ message: { content: 'not json' } }] },
+    { choices: [{ message: { content: '```json\n{"a":1}\n```' } }] }
+  ])
+  expect(await chatJson(cfg, 'm', msgs, z.object({ a: z.number() }), 5000)).toEqual({ a: 1 })
+  expect(fake.last.body.response_format).toEqual({ type: 'json_object' })
+})
+test('401, 402 and 429 raise AiKeyError; timeouts raise AiTimeoutError', async () => {
   for (const s of [401, 402, 429]) {
-    fake.status(s);
-    await expect(chatText(cfg, "m", msgs, 5000)).rejects.toMatchObject({
-      name: "AiKeyError",
-      status: s,
-    });
+    fake.status(s)
+    await expect(chatText(cfg, 'm', msgs, 5000)).rejects.toMatchObject({
+      name: 'AiKeyError',
+      status: s
+    })
   }
-  fake.delay(200);
-  await expect(chatText(cfg, "m", msgs, 50)).rejects.toBeInstanceOf(
-    AiTimeoutError,
-  );
-  fake.status(500);
-  const e = await chatText(cfg, "m", msgs, 5000).catch((x) => x);
-  expect(e).toBeInstanceOf(AiError);
-  expect(String(e)).not.toContain("sk-test");
-});
-test("thinking: true is passed through", async () => {
-  await chatText(cfg, "m", msgs, 5000, { thinking: true });
-  expect(fake.last.body.enable_thinking).toBe(true);
-});
+  fake.delay(200)
+  await expect(chatText(cfg, 'm', msgs, 50)).rejects.toBeInstanceOf(AiTimeoutError)
+  fake.status(500)
+  const e = await chatText(cfg, 'm', msgs, 5000).catch((x) => x)
+  expect(e).toBeInstanceOf(AiError)
+  expect(String(e)).not.toContain('sk-test')
+})
+test('thinking: true is passed through', async () => {
+  await chatText(cfg, 'm', msgs, 5000, { thinking: true })
+  expect(fake.last.body.enable_thinking).toBe(true)
+})
 ````
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -560,106 +518,104 @@ git commit -m "feat(ai): add chat client with key errors"
 
 ```ts
 // packages/ai/src/asr.test.ts: a `ws` WebSocketServer fake at cfg.asrUrl scripts server events per connection
-const sec = (s: number) => Buffer.alloc(32_000 * s); // 16 kHz mono s16le = 32 bytes per ms
+const sec = (s: number) => Buffer.alloc(32_000 * s) // 16 kHz mono s16le = 32 bytes per ms
 
-test("handshake, session.update and append in 100 ms chunks", async () => {
-  const s = openAsrStream(cfg);
-  s.send(sec(1));
-  await fake.waitForAppends(10);
-  expect(fake.conn(0).headers.authorization).toBe("Bearer sk-test");
-  expect(fake.conn(0).url).toBe("/realtime?model=qwen3-asr-flash-realtime");
+test('handshake, session.update and append in 100 ms chunks', async () => {
+  const s = openAsrStream(cfg)
+  s.send(sec(1))
+  await fake.waitForAppends(10)
+  expect(fake.conn(0).headers.authorization).toBe('Bearer sk-test')
+  expect(fake.conn(0).url).toBe('/realtime?model=qwen3-asr-flash-realtime')
   expect(fake.conn(0).events[0]).toMatchObject({
-    type: "session.update",
+    type: 'session.update',
     session: {
-      input_audio_format: "pcm",
+      input_audio_format: 'pcm',
       sample_rate: 16000,
-      turn_detection: { type: "server_vad" },
-    },
-  });
-  expect(Buffer.from(fake.conn(0).appends[0], "base64").length).toBe(3200);
-});
-test("results are stamped with stream offsets, falling back to bytes sent", async () => {
-  const got: AsrResult[] = [];
-  const s = openAsrStream(cfg);
-  s.onResult((r) => got.push(r));
-  s.send(sec(3));
+      turn_detection: { type: 'server_vad' }
+    }
+  })
+  expect(Buffer.from(fake.conn(0).appends[0], 'base64').length).toBe(3200)
+})
+test('results are stamped with stream offsets, falling back to bytes sent', async () => {
+  const got: AsrResult[] = []
+  const s = openAsrStream(cfg)
+  s.onResult((r) => got.push(r))
+  s.send(sec(3))
   fake.emit(0, {
-    type: "input_audio_buffer.speech_started",
-    audio_start_ms: 500,
-  });
+    type: 'input_audio_buffer.speech_started',
+    audio_start_ms: 500
+  })
   fake.emit(0, {
-    type: "input_audio_buffer.speech_stopped",
-    audio_end_ms: 2500,
-  });
+    type: 'input_audio_buffer.speech_stopped',
+    audio_end_ms: 2500
+  })
   fake.emit(0, {
-    type: "conversation.item.input_audio_transcription.completed",
-    transcript: "selamat petang semua",
-  });
-  fake.emit(0, { type: "input_audio_buffer.speech_started" });
-  fake.emit(0, { type: "input_audio_buffer.speech_stopped" });
+    type: 'conversation.item.input_audio_transcription.completed',
+    transcript: 'selamat petang semua'
+  })
+  fake.emit(0, { type: 'input_audio_buffer.speech_started' })
+  fake.emit(0, { type: 'input_audio_buffer.speech_stopped' })
   fake.emit(0, {
-    type: "conversation.item.input_audio_transcription.completed",
-    transcript: "okay",
-  });
-  await until(() => got.length === 2);
+    type: 'conversation.item.input_audio_transcription.completed',
+    transcript: 'okay'
+  })
+  await until(() => got.length === 2)
   expect(got[0]).toEqual({
     startMs: 500,
     endMs: 2500,
-    text: "selamat petang semua",
-  });
-  expect(got[1]!.endMs).toBe(3000);
-});
-test("rotation at a pause replays 5 s and removes duplicate text", async () => {
-  let t = 0;
-  const got: AsrResult[] = [];
+    text: 'selamat petang semua'
+  })
+  expect(got[1]!.endMs).toBe(3000)
+})
+test('rotation at a pause replays 5 s and removes duplicate text', async () => {
+  let t = 0
+  const got: AsrResult[] = []
   const s = openAsrStream(cfg, {
     now: () => t,
     rotateAfterMs: 1000,
-    forceRotateMs: 2000,
-  });
-  s.onResult((r) => got.push(r));
-  s.send(sec(8));
-  t = 1500;
+    forceRotateMs: 2000
+  })
+  s.onResult((r) => got.push(r))
+  s.send(sec(8))
+  t = 1500
   fake.emit(0, {
-    type: "input_audio_buffer.speech_stopped",
-    audio_end_ms: 7900,
-  });
-  await fake.waitForConnections(2);
-  expect(fake.conn(1).appendedBytes()).toBeGreaterThanOrEqual(160_000);
+    type: 'input_audio_buffer.speech_stopped',
+    audio_end_ms: 7900
+  })
+  await fake.waitForConnections(2)
+  expect(fake.conn(1).appendedBytes()).toBeGreaterThanOrEqual(160_000)
   fake.emit(0, {
-    type: "conversation.item.input_audio_transcription.completed",
-    transcript: "the deadline is Friday",
-  });
+    type: 'conversation.item.input_audio_transcription.completed',
+    transcript: 'the deadline is Friday'
+  })
   fake.emit(1, {
-    type: "input_audio_buffer.speech_started",
-    audio_start_ms: 0,
-  });
+    type: 'input_audio_buffer.speech_started',
+    audio_start_ms: 0
+  })
   fake.emit(1, {
-    type: "input_audio_buffer.speech_stopped",
-    audio_end_ms: 4000,
-  });
+    type: 'input_audio_buffer.speech_stopped',
+    audio_end_ms: 4000
+  })
   fake.emit(1, {
-    type: "conversation.item.input_audio_transcription.completed",
-    transcript: "deadline is Friday at noon",
-  });
-  await until(() => got.length === 2);
-  expect(got[1]!.text).toBe("at noon");
-});
-test("dropOverlap", () => {
-  expect(
-    dropOverlap("the deadline is Friday", "Deadline is Friday, at noon"),
-  ).toBe("at noon");
-  expect(dropOverlap("hello", "world")).toBe("world");
-  expect(dropOverlap("see you", "see you")).toBe("");
-});
-test("rejected key raises AiKeyError through onError", async () => {
-  fake.rejectHandshake(401);
-  const errs: Error[] = [];
-  const s = openAsrStream(cfg);
-  s.onError((e) => errs.push(e));
-  await until(() => errs.length === 1);
-  expect(errs[0]).toMatchObject({ name: "AiKeyError", status: 401 });
-});
+    type: 'conversation.item.input_audio_transcription.completed',
+    transcript: 'deadline is Friday at noon'
+  })
+  await until(() => got.length === 2)
+  expect(got[1]!.text).toBe('at noon')
+})
+test('dropOverlap', () => {
+  expect(dropOverlap('the deadline is Friday', 'Deadline is Friday, at noon')).toBe('at noon')
+  expect(dropOverlap('hello', 'world')).toBe('world')
+  expect(dropOverlap('see you', 'see you')).toBe('')
+})
+test('rejected key raises AiKeyError through onError', async () => {
+  fake.rejectHandshake(401)
+  const errs: Error[] = []
+  const s = openAsrStream(cfg)
+  s.onError((e) => errs.push(e))
+  await until(() => errs.length === 1)
+  expect(errs[0]).toMatchObject({ name: 'AiKeyError', status: 401 })
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -765,14 +721,7 @@ ENTRYPOINT ["/app/docker/worker/entrypoint.sh"]
 
 ```json
 {
-  "URLBlocklist": [
-    "file://*",
-    "chrome://*",
-    "javascript:*",
-    "zoommtg:*",
-    "zoomus:*",
-    "msteams:*"
-  ],
+  "URLBlocklist": ["file://*", "chrome://*", "javascript:*", "zoommtg:*", "zoomus:*", "msteams:*"],
   "DeveloperToolsAvailability": 2,
   "DownloadRestrictions": 3,
   "AudioCaptureAllowed": false,
@@ -829,67 +778,63 @@ git commit -m "feat(worker): add pinned worker image"
 
 ```ts
 // packages/worker/src/chrome/launch.test.ts
-test("chrome flags from the design", () => {
-  const a = chromeArgs(fakeScreen);
+test('chrome flags from the design', () => {
+  const a = chromeArgs(fakeScreen)
   for (const f of [
-    "--app=about:blank",
-    "--window-position=0,0",
-    "--window-size=1920,1080",
-    "--disable-blink-features=AutomationControlled",
-    "--autoplay-policy=no-user-gesture-required",
-    "--password-store=basic",
-    "--use-gl=angle",
-    "--use-angle=swiftshader",
-    "--enable-unsafe-swiftshader",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-renderer-backgrounding",
-    "--disable-background-timer-throttling",
-    "--deny-permission-prompts",
-    "--no-first-run",
-    "--no-default-browser-check",
+    '--app=about:blank',
+    '--window-position=0,0',
+    '--window-size=1920,1080',
+    '--disable-blink-features=AutomationControlled',
+    '--autoplay-policy=no-user-gesture-required',
+    '--password-store=basic',
+    '--use-gl=angle',
+    '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-background-timer-throttling',
+    '--deny-permission-prompts',
+    '--no-first-run',
+    '--no-default-browser-check'
   ])
-    expect(a).toContain(f);
-  expect(a).not.toContain("--enable-automation");
-});
+    expect(a).toContain(f)
+  expect(a).not.toContain('--enable-automation')
+})
 ```
 
 ```ts
 // packages/worker/test/image/launch.spec.ts (runs in the image)
-test("stage and desk split, no automation flag, devices denied, desk muted", async () => {
-  const screen = await startScreen();
-  const { context, stage, desk } = await launchBrowser(profileDir, screen);
-  expect(
-    await stage.evaluate(() => [innerWidth, innerHeight, navigator.webdriver]),
-  ).toEqual([1920, 1080, false]);
+test('stage and desk split, no automation flag, devices denied, desk muted', async () => {
+  const screen = await startScreen()
+  const { context, stage, desk } = await launchBrowser(profileDir, screen)
+  expect(await stage.evaluate(() => [innerWidth, innerHeight, navigator.webdriver])).toEqual([1920, 1080, false])
   expect(await windowBounds(context, stage)).toEqual({
     left: 0,
     top: 0,
     width: 1920,
-    height: 1080,
-  });
+    height: 1080
+  })
   expect(await windowBounds(context, desk)).toEqual({
     left: 1920,
     top: 0,
     width: 1920,
-    height: 1080,
-  });
-  expect(await browserCmdline()).not.toContain("--enable-automation");
+    height: 1080
+  })
+  expect(await browserCmdline()).not.toContain('--enable-automation')
   expect(
     await stage.evaluate(() =>
       navigator.mediaDevices.getUserMedia({ audio: true }).then(
-        () => "ok",
-        (e) => e.name,
-      ),
-    ),
-  ).toBe("NotAllowedError");
-  await playTone(desk);
-  expect(await sinkLevelDb(3000)).toBeLessThan(-60);
-  await playTone(stage);
-  expect(await sinkLevelDb(3000)).toBeGreaterThan(-30);
-  expect(
-    await stage.goto("file:///etc/hostname").catch((e) => String(e)),
-  ).toContain("ERR_BLOCKED_BY_ADMINISTRATOR");
-});
+        () => 'ok',
+        (e) => e.name
+      )
+    )
+  ).toBe('NotAllowedError')
+  await playTone(desk)
+  expect(await sinkLevelDb(3000)).toBeLessThan(-60)
+  await playTone(stage)
+  expect(await sinkLevelDb(3000)).toBeGreaterThan(-30)
+  expect(await stage.goto('file:///etc/hostname').catch((e) => String(e))).toContain('ERR_BLOCKED_BY_ADMINISTRATOR')
+})
 ```
 
 `windowBounds` uses a CDP session's `Browser.getWindowForTarget`; `browserCmdline` reads `/proc/<pid>/cmdline` of the Chrome process without `--type=`; `playTone` starts a 440 Hz `OscillatorNode`; `sinkLevelDb` records `tm_sink.monitor` with `parec` for the given time and returns RMS dBFS.
@@ -932,66 +877,56 @@ git commit -m "feat(worker): add screen split and chrome launch"
 
 ```ts
 // packages/worker/src/profile/profile.test.ts
-test("prepare removes Chrome singleton files and keeps the rest", async () => {
-  await symlink("tm-host-123", join(dir, "SingletonLock"));
-  await writeFile(join(dir, "SingletonSocket"), "");
-  await writeFile(join(dir, "SingletonCookie"), "");
-  await writeFile(join(dir, "Local State"), "{}");
-  await prepareProfile(dir, "id-1", okHost);
-  expect(await readdir(dir)).toEqual(["Local State"]);
-});
-test("prepare refuses a host that does not match the identity", async () => {
-  await expect(
-    prepareProfile(dir, "id-1", { hostname: "other", machineIdPath: midFile }),
-  ).rejects.toBeInstanceOf(ProfileHostMismatch);
-});
-test("checkpoint strips caches and restores with the right key only", async () => {
+test('prepare removes Chrome singleton files and keeps the rest', async () => {
+  await symlink('tm-host-123', join(dir, 'SingletonLock'))
+  await writeFile(join(dir, 'SingletonSocket'), '')
+  await writeFile(join(dir, 'SingletonCookie'), '')
+  await writeFile(join(dir, 'Local State'), '{}')
+  await prepareProfile(dir, 'id-1', okHost)
+  expect(await readdir(dir)).toEqual(['Local State'])
+})
+test('prepare refuses a host that does not match the identity', async () => {
+  await expect(prepareProfile(dir, 'id-1', { hostname: 'other', machineIdPath: midFile })).rejects.toBeInstanceOf(
+    ProfileHostMismatch
+  )
+})
+test('checkpoint strips caches and restores with the right key only', async () => {
   for (const p of [
-    "Default/Cache/a",
-    "Default/Code Cache/b",
-    "Default/GPUCache/c",
-    "Default/Service Worker/CacheStorage/d",
-    "Crashpad/e",
-    "Default/Cookies",
-    "Default/IndexedDB/x",
+    'Default/Cache/a',
+    'Default/Code Cache/b',
+    'Default/GPUCache/c',
+    'Default/Service Worker/CacheStorage/d',
+    'Crashpad/e',
+    'Default/Cookies',
+    'Default/IndexedDB/x'
   ])
-    await put(join(dir, p), "v");
-  const file = await checkpointProfile(dir, out, key);
-  expect(basename(file)).toMatch(/^\d{8}T\d{6}Z\.tar\.enc$/);
-  await restoreProfile(file, restored, key);
-  expect(await tree(restored)).toEqual([
-    "Default/Cookies",
-    "Default/IndexedDB/x",
-  ]);
-  await expect(
-    restoreProfile(file, other, randomBytes(32)),
-  ).rejects.toBeInstanceOf(CheckpointAuthError);
-  await flipByte(file, 40);
-  await expect(restoreProfile(file, other2, key)).rejects.toBeInstanceOf(
-    CheckpointAuthError,
-  );
-});
-test("only the newest 3 checkpoints are kept and no .tmp file is left", async () => {
-  for (let i = 0; i < 5; i++)
-    await checkpointProfile(dir, out, key, clockAt(i));
-  const files = await readdir(out);
-  expect(files.filter((f) => f.endsWith(".tar.enc")).length).toBe(3);
-  expect(files.some((f) => f.endsWith(".tmp"))).toBe(false);
-});
+    await put(join(dir, p), 'v')
+  const file = await checkpointProfile(dir, out, key)
+  expect(basename(file)).toMatch(/^\d{8}T\d{6}Z\.tar\.enc$/)
+  await restoreProfile(file, restored, key)
+  expect(await tree(restored)).toEqual(['Default/Cookies', 'Default/IndexedDB/x'])
+  await expect(restoreProfile(file, other, randomBytes(32))).rejects.toBeInstanceOf(CheckpointAuthError)
+  await flipByte(file, 40)
+  await expect(restoreProfile(file, other2, key)).rejects.toBeInstanceOf(CheckpointAuthError)
+})
+test('only the newest 3 checkpoints are kept and no .tmp file is left', async () => {
+  for (let i = 0; i < 5; i++) await checkpointProfile(dir, out, key, clockAt(i))
+  const files = await readdir(out)
+  expect(files.filter((f) => f.endsWith('.tar.enc')).length).toBe(3)
+  expect(files.some((f) => f.endsWith('.tmp'))).toBe(false)
+})
 ```
 
 ```ts
 // packages/worker/src/profile/keys.test.ts
-test("derived keys are 32 bytes, stable and per identity", () => {
-  const m = Buffer.alloc(32, 7);
-  expect(deriveProfileKey(m, "a").length).toBe(32);
-  expect(deriveProfileKey(m, "a").equals(deriveProfileKey(m, "a"))).toBe(true);
-  expect(deriveProfileKey(m, "a").equals(deriveProfileKey(m, "b"))).toBe(false);
-  expect(machineIdFor("a")).toMatch(/^[0-9a-f]{32}$/);
-  expect(hostnameFor("university-identity-123456")).toBe(
-    "tm-university-identity-1",
-  );
-});
+test('derived keys are 32 bytes, stable and per identity', () => {
+  const m = Buffer.alloc(32, 7)
+  expect(deriveProfileKey(m, 'a').length).toBe(32)
+  expect(deriveProfileKey(m, 'a').equals(deriveProfileKey(m, 'a'))).toBe(true)
+  expect(deriveProfileKey(m, 'a').equals(deriveProfileKey(m, 'b'))).toBe(false)
+  expect(machineIdFor('a')).toMatch(/^[0-9a-f]{32}$/)
+  expect(hostnameFor('university-identity-123456')).toBe('tm-university-identity-1')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1032,106 +967,104 @@ git commit -m "feat(worker): add encrypted profile checkpoints"
 
 ```ts
 // packages/worker/src/recorder/recorder.test.ts
-test("ffmpeg arguments record the stage and the sink into Matroska segments", () => {
-  expect(recorderArgs(fakeScreen, "/d/recording", 2, 0)).toEqual([
-    "-hide_banner",
-    "-loglevel",
-    "warning",
-    "-nostdin",
-    "-thread_queue_size",
-    "1024",
-    "-f",
-    "x11grab",
-    "-framerate",
-    "15",
-    "-video_size",
-    "1920x1080",
-    "-draw_mouse",
-    "0",
-    "-use_wallclock_as_timestamps",
-    "1",
-    "-i",
-    ":99.0+0,0",
-    "-thread_queue_size",
-    "1024",
-    "-f",
-    "pulse",
-    "-use_wallclock_as_timestamps",
-    "1",
-    "-i",
-    "tm_sink.monitor",
-    "-map",
-    "0:v",
-    "-map",
-    "1:a",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-pix_fmt",
-    "yuv420p",
-    "-g",
-    "30",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "128k",
-    "-af",
-    "aresample=async=1",
-    "-f",
-    "segment",
-    "-segment_time",
-    "300",
-    "-segment_format",
-    "matroska",
-    "-reset_timestamps",
-    "1",
-    "-segment_start_number",
-    "0",
-    "/d/recording/attempt_2_seg_%03d.mkv",
-  ]);
-});
+test('ffmpeg arguments record the stage and the sink into Matroska segments', () => {
+  expect(recorderArgs(fakeScreen, '/d/recording', 2, 0)).toEqual([
+    '-hide_banner',
+    '-loglevel',
+    'warning',
+    '-nostdin',
+    '-thread_queue_size',
+    '1024',
+    '-f',
+    'x11grab',
+    '-framerate',
+    '15',
+    '-video_size',
+    '1920x1080',
+    '-draw_mouse',
+    '0',
+    '-use_wallclock_as_timestamps',
+    '1',
+    '-i',
+    ':99.0+0,0',
+    '-thread_queue_size',
+    '1024',
+    '-f',
+    'pulse',
+    '-use_wallclock_as_timestamps',
+    '1',
+    '-i',
+    'tm_sink.monitor',
+    '-map',
+    '0:v',
+    '-map',
+    '1:a',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'veryfast',
+    '-pix_fmt',
+    'yuv420p',
+    '-g',
+    '30',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '128k',
+    '-af',
+    'aresample=async=1',
+    '-f',
+    'segment',
+    '-segment_time',
+    '300',
+    '-segment_format',
+    'matroska',
+    '-reset_timestamps',
+    '1',
+    '-segment_start_number',
+    '0',
+    '/d/recording/attempt_2_seg_%03d.mkv'
+  ])
+})
 ```
 
 ```ts
 // packages/worker/src/recorder/join.test.ts (skipped when ffmpeg is not on PATH)
-test("segments of two attempts join, a truncated segment included", async () => {
-  await lavfiSegment(dir, "attempt_1_seg_000.mkv", 2);
-  await lavfiSegment(dir, "attempt_1_seg_001.mkv", 2);
-  await lavfiSegment(dir, "attempt_2_seg_000.mkv", 2);
-  await truncateTail(join(dir, "attempt_1_seg_001.mkv"), 0.2);
-  const out = await joinRecording(dir);
-  expect(basename(out)).toBe("meeting.mkv");
-  expect(await durationSeconds(out)).toBeGreaterThan(5);
-});
+test('segments of two attempts join, a truncated segment included', async () => {
+  await lavfiSegment(dir, 'attempt_1_seg_000.mkv', 2)
+  await lavfiSegment(dir, 'attempt_1_seg_001.mkv', 2)
+  await lavfiSegment(dir, 'attempt_2_seg_000.mkv', 2)
+  await truncateTail(join(dir, 'attempt_1_seg_001.mkv'), 0.2)
+  const out = await joinRecording(dir)
+  expect(basename(out)).toBe('meeting.mkv')
+  expect(await durationSeconds(out)).toBeGreaterThan(5)
+})
 ```
 
 ```ts
 // packages/worker/src/recorder/recorder.int.test.ts (image only; Review Focus: ffmpeg dies mid-meeting)
-test("records 1920x1080 at 15 fps with AAC, survives an ffmpeg kill, logs the gap", async () => {
-  const gaps: { from: Date; to: Date }[] = [];
-  const r = await startRecorder(screen, dir, 1, { segmentSeconds: 5 });
-  r.onGap((g) => gaps.push(g));
-  await sleep(6000);
-  await killFfmpeg("SIGKILL");
-  await sleep(8000);
-  await r.stop();
-  const segs = (await readdir(dir)).filter((f) => f.endsWith(".mkv")).sort();
-  expect(segs[0]).toBe("attempt_1_seg_000.mkv");
-  expect(new Set(segs).size).toBe(segs.length);
+test('records 1920x1080 at 15 fps with AAC, survives an ffmpeg kill, logs the gap', async () => {
+  const gaps: { from: Date; to: Date }[] = []
+  const r = await startRecorder(screen, dir, 1, { segmentSeconds: 5 })
+  r.onGap((g) => gaps.push(g))
+  await sleep(6000)
+  await killFfmpeg('SIGKILL')
+  await sleep(8000)
+  await r.stop()
+  const segs = (await readdir(dir)).filter((f) => f.endsWith('.mkv')).sort()
+  expect(segs[0]).toBe('attempt_1_seg_000.mkv')
+  expect(new Set(segs).size).toBe(segs.length)
   expect(await probe(join(dir, segs[0]!))).toMatchObject({
-    video: "h264",
+    video: 'h264',
     width: 1920,
     height: 1080,
     fps: 15,
-    audio: "aac",
-  });
-  expect(gaps.length).toBe(1);
-  expect(+gaps[0]!.to - +gaps[0]!.from).toBeLessThan(3000);
-  expect(
-    JSON.parse(await readFile(join(dir, "attempts.json"), "utf8"))[0].stoppedAt,
-  ).toBeString();
-});
+    audio: 'aac'
+  })
+  expect(gaps.length).toBe(1)
+  expect(+gaps[0]!.to - +gaps[0]!.from).toBeLessThan(3000)
+  expect(JSON.parse(await readFile(join(dir, 'attempts.json'), 'utf8'))[0].stoppedAt).toBeString()
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1173,109 +1106,109 @@ git commit -m "feat(worker): add segment recorder and joiner"
 ```ts
 // packages/worker/src/frames/keyframes.test.ts (grey(v) is a flat 128x72 image; slide(n) a patterned one)
 test("the session's keyframe rule: settled, changed, not a dHash repeat", async () => {
-  const k = new KeyframeSelector();
-  const h = (n: number) => async () => BigInt(n) << 200n;
-  expect(await k.consider(slide(1), h(1))).toBe(false); // nothing to compare with yet
-  expect(await k.consider(slide(1), h(1))).toBe(true); // settled and new
-  expect(await k.consider(slide(1), h(1))).toBe(false); // unchanged
-  expect(await k.consider(slide(2), h(2))).toBe(false); // changing, not settled
-  expect(await k.consider(slide(2), h(2))).toBe(true);
-  expect(await k.consider(slide(1), h(1))).toBe(false); // back to slide 1: not settled yet
-  expect(await k.consider(slide(1), h(1))).toBe(false); // settled but a dHash repeat of a kept frame
-});
+  const k = new KeyframeSelector()
+  const h = (n: number) => async () => BigInt(n) << 200n
+  expect(await k.consider(slide(1), h(1))).toBe(false) // nothing to compare with yet
+  expect(await k.consider(slide(1), h(1))).toBe(true) // settled and new
+  expect(await k.consider(slide(1), h(1))).toBe(false) // unchanged
+  expect(await k.consider(slide(2), h(2))).toBe(false) // changing, not settled
+  expect(await k.consider(slide(2), h(2))).toBe(true)
+  expect(await k.consider(slide(1), h(1))).toBe(false) // back to slide 1: not settled yet
+  expect(await k.consider(slide(1), h(1))).toBe(false) // settled but a dHash repeat of a kept frame
+})
 ```
 
 ```ts
 // packages/worker/src/health/health.test.ts
-test("black frames alert once after 10 s and re-arm", () => {
-  const got: string[] = [];
-  const m = new HealthMonitor((k) => got.push(k));
+test('black frames alert once after 10 s and re-arm', () => {
+  const got: string[] = []
+  const m = new HealthMonitor((k) => got.push(k))
   for (let t = 0; t <= 10_000; t += 2000)
     m.sample({
       atMs: t,
       meanLuma: 3,
       diffPrev: 0,
       levelDb: -20,
-      participants: 5,
-    });
-  expect(got).toEqual(["black_frames"]);
+      participants: 5
+    })
+  expect(got).toEqual(['black_frames'])
   m.sample({
     atMs: 12_000,
     meanLuma: 90,
     diffPrev: 1,
     levelDb: -20,
-    participants: 5,
-  });
+    participants: 5
+  })
   for (let t = 14_000; t <= 24_000; t += 2000)
     m.sample({
       atMs: t,
       meanLuma: 3,
       diffPrev: 0,
       levelDb: -20,
-      participants: 5,
-    });
-  expect(got).toEqual(["black_frames", "black_frames"]);
-});
-test("frozen frame plus silence for 5 minutes with participants; a frozen slide alone is normal", () => {
-  const got: string[] = [];
-  const m = new HealthMonitor((k) => got.push(k));
+      participants: 5
+    })
+  expect(got).toEqual(['black_frames', 'black_frames'])
+})
+test('frozen frame plus silence for 5 minutes with participants; a frozen slide alone is normal', () => {
+  const got: string[] = []
+  const m = new HealthMonitor((k) => got.push(k))
   for (let t = 0; t <= 300_000; t += 2000)
     m.sample({
       atMs: t,
       meanLuma: 90,
       diffPrev: 0.1,
       levelDb: -25,
-      participants: 5,
-    });
-  expect(got).toEqual([]);
+      participants: 5
+    })
+  expect(got).toEqual([])
   for (let t = 302_000; t <= 602_000; t += 2000)
     m.sample({
       atMs: t,
       meanLuma: 90,
       diffPrev: 0.1,
       levelDb: -70,
-      participants: 1,
-    });
-  expect(got).toEqual([]);
+      participants: 1
+    })
+  expect(got).toEqual([])
   for (let t = 604_000; t <= 904_000; t += 2000)
     m.sample({
       atMs: t,
       meanLuma: 90,
       diffPrev: 0.1,
       levelDb: -70,
-      participants: 3,
-    });
-  expect(got).toEqual(["frozen_silent"]);
-});
+      participants: 3
+    })
+  expect(got).toEqual(['frozen_silent'])
+})
 ```
 
 ```ts
 // packages/core/src/image.test.ts
-test("image maths", () => {
-  expect(meanLuma(flat(128, 72, 40))).toBe(40);
-  expect(meanDiff(flat(128, 72, 10), flat(128, 72, 17))).toBe(7);
-  expect(dHash256(flat(17, 16, 5))).toBe(0n);
-  expect(hamming(0b1011n, 0b0001n)).toBe(2);
-});
+test('image maths', () => {
+  expect(meanLuma(flat(128, 72, 40))).toBe(40)
+  expect(meanDiff(flat(128, 72, 10), flat(128, 72, 17))).toBe(7)
+  expect(dHash256(flat(17, 16, 5))).toBe(0n)
+  expect(hamming(0b1011n, 0b0001n)).toBe(2)
+})
 ```
 
 ```ts
 // packages/worker/src/frames/frames.int.test.ts (image only): stage page red, desk page blue
-test("frames every 2 s show the stage only; the audio source reports level", async () => {
-  const frames: Frame[] = [];
+test('frames every 2 s show the stage only; the audio source reports level', async () => {
+  const frames: Frame[] = []
   const s = startFrameLoop(screen, async (f) => {
-    frames.push(f);
-  });
-  await sleep(7000);
-  await s.stop();
-  expect(frames.length).toBeGreaterThanOrEqual(3);
-  expect(await pixel(frames[0]!.png, 960, 540)).toEqual([255, 0, 0]);
-  const a = await startAudioSource();
-  await playTone(stage);
-  await sleep(2000);
-  expect(a.levelDb(1000)).toBeGreaterThan(-30);
-  await a.stop();
-});
+    frames.push(f)
+  })
+  await sleep(7000)
+  await s.stop()
+  expect(frames.length).toBeGreaterThanOrEqual(3)
+  expect(await pixel(frames[0]!.png, 960, 540)).toEqual([255, 0, 0])
+  const a = await startAudioSource()
+  await playTone(stage)
+  await sleep(2000)
+  expect(a.levelDb(1000)).toBeGreaterThan(-30)
+  await a.stop()
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1316,37 +1249,32 @@ git commit -m "feat(worker): add frames, keyframes and health"
 
 ```ts
 // packages/worker/src/qr/qr.test.ts
-const region = { x: 0, y: 60, width: 1410, height: 840 };
-test("decodes a large code from the full frame and a small one through the region", async () => {
+const region = { x: 0, y: 60, width: 1410, height: 840 }
+test('decodes a large code from the full frame and a small one through the region', async () => {
+  expect(await decodeQr(await qrFrame('https://forms.gle/<form-id>', 300, { x: 800, y: 300 }), null)).toEqual([
+    'https://forms.gle/<form-id>'
+  ])
   expect(
     await decodeQr(
-      await qrFrame("https://forms.gle/<form-id>", 300, { x: 800, y: 300 }),
-      null,
-    ),
-  ).toEqual(["https://forms.gle/<form-id>"]);
-  expect(
-    await decodeQr(
-      await qrFrame("https://forms.office.com/r/<form-id>", 76, {
+      await qrFrame('https://forms.office.com/r/<form-id>', 76, {
         x: 1300,
-        y: 780,
+        y: 780
       }),
-      region,
-    ),
-  ).toEqual(["https://forms.office.com/r/<form-id>"]);
-  expect(await decodeQr(await qrFrame("", 0, { x: 0, y: 0 }), region)).toEqual(
-    [],
-  );
-});
-test("a code counts after two consecutive frames, once", () => {
-  const c = new QrConfirmer();
-  expect(c.push(["a"])).toEqual([]);
-  expect(c.push(["a"])).toEqual(["a"]);
-  expect(c.push(["a"])).toEqual([]);
-  expect(c.push(["b"])).toEqual([]);
-  expect(c.push([])).toEqual([]);
-  expect(c.push(["b"])).toEqual([]);
-  expect(c.push(["b"])).toEqual(["b"]);
-});
+      region
+    )
+  ).toEqual(['https://forms.office.com/r/<form-id>'])
+  expect(await decodeQr(await qrFrame('', 0, { x: 0, y: 0 }), region)).toEqual([])
+})
+test('a code counts after two consecutive frames, once', () => {
+  const c = new QrConfirmer()
+  expect(c.push(['a'])).toEqual([])
+  expect(c.push(['a'])).toEqual(['a'])
+  expect(c.push(['a'])).toEqual([])
+  expect(c.push(['b'])).toEqual([])
+  expect(c.push([])).toEqual([])
+  expect(c.push(['b'])).toEqual([])
+  expect(c.push(['b'])).toEqual(['b'])
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1387,126 +1315,105 @@ git commit -m "feat(worker): add qr decoding and confirmation"
 
 ```ts
 // packages/worker/src/forms/links.test.ts (fakeFetch maps URLs to responses and records each call)
-test("extract and unwrap", () => {
+test('extract and unwrap', () => {
+  expect(extractLinks('Attendance: https://forms.gle/abc. Also (https://example.com/x)')).toEqual([
+    'https://forms.gle/abc',
+    'https://example.com/x'
+  ])
   expect(
-    extractLinks(
-      "Attendance: https://forms.gle/abc. Also (https://example.com/x)",
-    ),
-  ).toEqual(["https://forms.gle/abc", "https://example.com/x"]);
-  expect(
-    unwrapLink(
-      "https://apc01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fforms.office.com%2Fr%2FAbC123&data=x",
-    ),
-  ).toBe("https://forms.office.com/r/AbC123");
-  expect(
-    unwrapLink("https://www.google.com/url?q=https://forms.gle/abc&sa=D"),
-  ).toBe("https://forms.gle/abc");
-});
-test("follows a shortener without cookies and stops on the provider domain", async () => {
+    unwrapLink('https://apc01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fforms.office.com%2Fr%2FAbC123&data=x')
+  ).toBe('https://forms.office.com/r/AbC123')
+  expect(unwrapLink('https://www.google.com/url?q=https://forms.gle/abc&sa=D')).toBe('https://forms.gle/abc')
+})
+test('follows a shortener without cookies and stops on the provider domain', async () => {
   const f = fakeFetch({
-    "https://bit.ly/x": [301, "https://forms.gle/abc"],
-    "https://forms.gle/abc": [
-      302,
-      "https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=send_form",
-    ],
-  });
-  const r = await resolveFormLink(cand("https://bit.ly/x"), { fetch: f });
+    'https://bit.ly/x': [301, 'https://forms.gle/abc'],
+    'https://forms.gle/abc': [302, 'https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=send_form']
+  })
+  const r = await resolveFormLink(cand('https://bit.ly/x'), { fetch: f })
   expect(r).toMatchObject({
-    finalUrl: "https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=send_form",
-    provider: "google",
-  });
+    finalUrl: 'https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=send_form',
+    provider: 'google'
+  })
   expect(f.calls.map((c) => c.init)).toEqual([
     {
-      method: "GET",
-      redirect: "manual",
-      credentials: "omit",
-      signal: expect.anything(),
+      method: 'GET',
+      redirect: 'manual',
+      credentials: 'omit',
+      signal: expect.anything()
     },
-    expect.objectContaining({ redirect: "manual" }),
-  ]);
-  expect(f.calls.length).toBe(2);
-});
-test("non-forms are null; slow, broken and looping links raise LinkResolveError", async () => {
+    expect.objectContaining({ redirect: 'manual' })
+  ])
+  expect(f.calls.length).toBe(2)
+})
+test('non-forms are null; slow, broken and looping links raise LinkResolveError', async () => {
   expect(
-    await resolveFormLink(cand("https://example.com/a"), {
-      fetch: fakeFetch({ "https://example.com/a": [200] }),
-    }),
-  ).toBeNull();
+    await resolveFormLink(cand('https://example.com/a'), {
+      fetch: fakeFetch({ 'https://example.com/a': [200] })
+    })
+  ).toBeNull()
   await expect(
-    resolveFormLink(cand("https://slow.example/a"), {
+    resolveFormLink(cand('https://slow.example/a'), {
       fetch: hangingFetch,
-      timeoutMs: 50,
-    }),
-  ).rejects.toMatchObject({ reason: "timeout" });
-  await expect(
-    resolveFormLink(cand("https://loop.example/0"), { fetch: chainOf(6) }),
-  ).rejects.toMatchObject({ reason: "too_many_redirects" });
-});
-test("Review Focus: one form in three shapes has one key", async () => {
-  const long =
-    "https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=pp_url&entry.123=x";
-  const wrapped =
-    "https://apc01.safelinks.protection.outlook.com/?url=" +
-    encodeURIComponent(long);
-  const short = (await resolveFormLink(cand("https://forms.gle/abc"), {
+      timeoutMs: 50
+    })
+  ).rejects.toMatchObject({ reason: 'timeout' })
+  await expect(resolveFormLink(cand('https://loop.example/0'), { fetch: chainOf(6) })).rejects.toMatchObject({
+    reason: 'too_many_redirects'
+  })
+})
+test('Review Focus: one form in three shapes has one key', async () => {
+  const long = 'https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=pp_url&entry.123=x'
+  const wrapped = 'https://apc01.safelinks.protection.outlook.com/?url=' + encodeURIComponent(long)
+  const short = (await resolveFormLink(cand('https://forms.gle/abc'), {
     fetch: fakeFetch({
-      "https://forms.gle/abc": [
-        302,
-        "https://docs.google.com/forms/d/e/1FAIpQ/viewform",
-      ],
-    }),
-  }))!.finalUrl;
-  const keys = new Set(
-    [long, unwrapLink(wrapped), short].map(normaliseFormUrl),
-  );
-  expect([...keys]).toEqual(["https://docs.google.com/forms/d/e/1FAIpQ"]);
-  expect(
-    normaliseFormUrl(
-      "https://forms.office.com/Pages/ResponsePage.aspx?id=AbC&origin=lprLink",
-    ),
-  ).toBe("https://forms.office.com/id/AbC");
-  expect(formProviderOf("https://forms.microsoft.com/r/AbC")).toBe("microsoft");
-  expect(formProviderOf("https://docs.google.com/document/d/x")).toBeNull();
-});
+      'https://forms.gle/abc': [302, 'https://docs.google.com/forms/d/e/1FAIpQ/viewform']
+    })
+  }))!.finalUrl
+  const keys = new Set([long, unwrapLink(wrapped), short].map(normaliseFormUrl))
+  expect([...keys]).toEqual(['https://docs.google.com/forms/d/e/1FAIpQ'])
+  expect(normaliseFormUrl('https://forms.office.com/Pages/ResponsePage.aspx?id=AbC&origin=lprLink')).toBe(
+    'https://forms.office.com/id/AbC'
+  )
+  expect(formProviderOf('https://forms.microsoft.com/r/AbC')).toBe('microsoft')
+  expect(formProviderOf('https://docs.google.com/document/d/x')).toBeNull()
+})
 ```
 
 ```ts
 // packages/worker/src/forms/trust.test.ts
-test("pre-open trust rules", () => {
-  const t = (
-    source: FormSource,
-    sender: string | null,
-    senderRole: SenderRole | null,
-  ) => checkTrust({ source, sender, senderRole }, ["Dr Lecturer"]);
-  expect(t("qr", null, null)).toEqual({
+test('pre-open trust rules', () => {
+  const t = (source: FormSource, sender: string | null, senderRole: SenderRole | null) =>
+    checkTrust({ source, sender, senderRole }, ['Dr Lecturer'])
+  expect(t('qr', null, null)).toEqual({
     trusted: true,
-    reason: "qr_on_screen",
-  });
-  expect(t("meeting_chat", "Anyone", "host")).toEqual({
+    reason: 'qr_on_screen'
+  })
+  expect(t('meeting_chat', 'Anyone', 'host')).toEqual({
     trusted: true,
-    reason: "host",
-  });
-  expect(t("meeting_chat", "Anyone", "co_host")).toEqual({
+    reason: 'host'
+  })
+  expect(t('meeting_chat', 'Anyone', 'co_host')).toEqual({
     trusted: true,
-    reason: "co_host",
-  });
-  expect(t("meeting_chat", " dr  lecturer (Guest) ", "participant")).toEqual({
+    reason: 'co_host'
+  })
+  expect(t('meeting_chat', ' dr  lecturer (Guest) ', 'participant')).toEqual({
     trusted: true,
-    reason: "trusted_sender",
-  });
-  expect(t("meeting_chat", "Dr Lecturer2", "participant")).toEqual({
+    reason: 'trusted_sender'
+  })
+  expect(t('meeting_chat', 'Dr Lecturer2', 'participant')).toEqual({
     trusted: false,
-    reason: null,
-  });
-  expect(t("meeting_chat", null, "unknown")).toEqual({
+    reason: null
+  })
+  expect(t('meeting_chat', null, 'unknown')).toEqual({
     trusted: false,
-    reason: null,
-  });
-  expect(t("watched_chat", "Someone", "host")).toEqual({
+    reason: null
+  })
+  expect(t('watched_chat', 'Someone', 'host')).toEqual({
     trusted: false,
-    reason: null,
-  });
-});
+    reason: null
+  })
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1555,112 +1462,86 @@ git commit -m "feat(worker): add form link resolution and trust"
 
 ```ts
 // packages/worker/src/adapters/zoom/link.test.ts (Review Focus: Zoom link variants)
-test("every Zoom link becomes the web-client join URL or null", () => {
-  const n = zoomAdapter.normaliseLink;
-  expect(n("https://us06web.zoom.us/j/00000000000?pwd=PWD")).toBe(
-    "https://us06web.zoom.us/wc/join/00000000000?pwd=PWD",
-  );
-  expect(n("https://zoom.us/j/00000000000")).toBe(
-    "https://zoom.us/wc/join/00000000000",
-  );
-  expect(n("https://example-uni.zoom.us/j/00000000000?pwd=PWD#success")).toBe(
-    "https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD",
-  );
-  expect(n("https://app.zoom.us/wc/00000000000/join?pwd=PWD")).toBe(
-    "https://app.zoom.us/wc/00000000000/join?pwd=PWD",
-  );
-  expect(n("https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD")).toBe(
-    "https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD",
-  );
+test('every Zoom link becomes the web-client join URL or null', () => {
+  const n = zoomAdapter.normaliseLink
+  expect(n('https://us06web.zoom.us/j/00000000000?pwd=PWD')).toBe('https://us06web.zoom.us/wc/join/00000000000?pwd=PWD')
+  expect(n('https://zoom.us/j/00000000000')).toBe('https://zoom.us/wc/join/00000000000')
+  expect(n('https://example-uni.zoom.us/j/00000000000?pwd=PWD#success')).toBe(
+    'https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD'
+  )
+  expect(n('https://app.zoom.us/wc/00000000000/join?pwd=PWD')).toBe('https://app.zoom.us/wc/00000000000/join?pwd=PWD')
+  expect(n('https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD')).toBe(
+    'https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD'
+  )
   expect(
-    n(
-      "https://apc01.safelinks.protection.outlook.com/?url=" +
-        encodeURIComponent("https://zoom.us/j/00000000000"),
-    ),
-  ).toBe("https://zoom.us/wc/join/00000000000");
-  expect(n("https://example-uni.zoom.us/my/lecturer")).toBeNull();
-  expect(n("https://zoom.us.example.com/j/00000000000")).toBeNull();
-  expect(n("https://teams.microsoft.com/l/meetup-join/x")).toBeNull();
-  expect(adapterFor("https://zoom.us/j/00000000000")).toBe(zoomAdapter);
-});
+    n('https://apc01.safelinks.protection.outlook.com/?url=' + encodeURIComponent('https://zoom.us/j/00000000000'))
+  ).toBe('https://zoom.us/wc/join/00000000000')
+  expect(n('https://example-uni.zoom.us/my/lecturer')).toBeNull()
+  expect(n('https://zoom.us.example.com/j/00000000000')).toBeNull()
+  expect(n('https://teams.microsoft.com/l/meetup-join/x')).toBeNull()
+  expect(adapterFor('https://zoom.us/j/00000000000')).toBe(zoomAdapter)
+})
 ```
 
 ```ts
 // packages/worker/test/zoom-join.spec.ts
-for (const root of ["top", "iframe"])
+for (const root of ['top', 'iframe'])
   test(`guest join through two device prompts (${root})`, async ({ page }) => {
-    await page.goto(`/zoom-prejoin.html?then=meeting-${root}`);
-    expect(await zoomAdapter.join(page, { guestName: "Member Guest" })).toEqual(
-      { kind: "in_meeting" },
-    );
-    expect(
-      await page.evaluate(() => [
-        window.__fixture.clicks,
-        window.__fixture.typedName,
-      ]),
-    ).toEqual([["continue", "continue", "join"], "Member Guest"]);
-    await zoomAdapter.assertDevicesOff(page);
-  });
-test("signed-in join keeps the prefilled name", async ({ page }) => {
-  await page.goto("/zoom-prejoin.html?then=meeting-top&signedin=1");
-  expect(await zoomAdapter.join(page, { guestName: "Member Guest" })).toEqual({
-    kind: "in_meeting",
-  });
-  expect(await page.evaluate(() => window.__fixture.typedName)).toBe("");
-});
-test("lobby, sign-in, busy account and missing name are distinct results", async ({
-  page,
-}) => {
-  await page.goto("/zoom-prejoin.html?then=lobby");
-  expect(await zoomAdapter.join(page, { guestName: "G" })).toEqual({
-    kind: "lobby",
-  });
-  await page.goto("/zoom-signin.html");
-  expect(await zoomAdapter.join(page, { guestName: "G" })).toEqual({
-    kind: "signin_required",
-    host: "localhost",
-  });
-  await page.goto("/zoom-busy.html");
-  expect(await zoomAdapter.join(page, { guestName: "G" })).toEqual({
-    kind: "account_busy",
-  });
-  await page.goto("/zoom-prejoin.html?then=meeting-top");
+    await page.goto(`/zoom-prejoin.html?then=meeting-${root}`)
+    expect(await zoomAdapter.join(page, { guestName: 'Member Guest' })).toEqual({ kind: 'in_meeting' })
+    expect(await page.evaluate(() => [window.__fixture.clicks, window.__fixture.typedName])).toEqual([
+      ['continue', 'continue', 'join'],
+      'Member Guest'
+    ])
+    await zoomAdapter.assertDevicesOff(page)
+  })
+test('signed-in join keeps the prefilled name', async ({ page }) => {
+  await page.goto('/zoom-prejoin.html?then=meeting-top&signedin=1')
+  expect(await zoomAdapter.join(page, { guestName: 'Member Guest' })).toEqual({
+    kind: 'in_meeting'
+  })
+  expect(await page.evaluate(() => window.__fixture.typedName)).toBe('')
+})
+test('lobby, sign-in, busy account and missing name are distinct results', async ({ page }) => {
+  await page.goto('/zoom-prejoin.html?then=lobby')
+  expect(await zoomAdapter.join(page, { guestName: 'G' })).toEqual({
+    kind: 'lobby'
+  })
+  await page.goto('/zoom-signin.html')
+  expect(await zoomAdapter.join(page, { guestName: 'G' })).toEqual({
+    kind: 'signin_required',
+    host: 'localhost'
+  })
+  await page.goto('/zoom-busy.html')
+  expect(await zoomAdapter.join(page, { guestName: 'G' })).toEqual({
+    kind: 'account_busy'
+  })
+  await page.goto('/zoom-prejoin.html?then=meeting-top')
   expect(await zoomAdapter.join(page, { guestName: null })).toEqual({
-    kind: "failed",
-    reason: "name_required",
-  });
-});
-test("admission outcomes", async ({ page }) => {
-  await page.goto("/zoom-lobby.html?admit=2000");
-  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(10_000))).toBe(
-    "admitted",
-  );
-  await page.goto("/zoom-lobby.html?deny=1000");
-  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(10_000))).toBe(
-    "lobby_denied",
-  );
-  await page.goto("/zoom-lobby.html?end=1000");
-  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(10_000))).toBe(
-    "lobby_denied",
-  );
-  await page.goto("/zoom-lobby.html");
-  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(3_000))).toBe(
-    "lobby_expired",
-  );
-});
-test("devices on fail loudly; leave confirms", async ({ page }) => {
-  await page.goto("/zoom-devices-on.html");
+    kind: 'failed',
+    reason: 'name_required'
+  })
+})
+test('admission outcomes', async ({ page }) => {
+  await page.goto('/zoom-lobby.html?admit=2000')
+  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(10_000))).toBe('admitted')
+  await page.goto('/zoom-lobby.html?deny=1000')
+  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(10_000))).toBe('lobby_denied')
+  await page.goto('/zoom-lobby.html?end=1000')
+  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(10_000))).toBe('lobby_denied')
+  await page.goto('/zoom-lobby.html')
+  expect(await zoomAdapter.waitUntilAdmitted(page, inMs(3_000))).toBe('lobby_expired')
+})
+test('devices on fail loudly; leave confirms', async ({ page }) => {
+  await page.goto('/zoom-devices-on.html')
   await expect(zoomAdapter.assertDevicesOff(page)).rejects.toMatchObject({
-    name: "DevicesOnError",
-    labels: ["mute my microphone", "stop my video"],
-  });
-  await page.goto("/zoom-meeting-top.html");
-  await zoomAdapter.leave(page);
-  expect(await page.evaluate(() => window.__fixture.clicks)).toEqual([
-    "leave",
-    "leave meeting",
-  ]);
-});
+    name: 'DevicesOnError',
+    labels: ['mute my microphone', 'stop my video']
+  })
+  await page.goto('/zoom-meeting-top.html')
+  await zoomAdapter.leave(page)
+  expect(await page.evaluate(() => window.__fixture.clicks)).toEqual(['leave', 'leave meeting'])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1742,84 +1623,70 @@ git commit -m "feat(worker): add zoom join and admission"
 
 ```ts
 // packages/worker/test/zoom-meeting.spec.ts, each test run for root 'top' and 'iframe'
-test("chat: structured messages, roles, grouping, replies, cursor", async ({
-  page,
-}) => {
+test('chat: structured messages, roles, grouping, replies, cursor', async ({ page }) => {
   const { messages, cursor } = await zoomAdapter.readChat(page, {
-    seenKeys: [],
-  });
+    seenKeys: []
+  })
   expect(messages[0]).toMatchObject({
-    sender: "Dr Lecturer",
-    senderRole: "host",
-    time: "8:41 PM",
-    text: "Attendance: https://forms.gle/abc",
-    links: ["https://forms.gle/abc"],
-    replyTo: null,
-  });
-  expect(messages[1]).toMatchObject({ sender: "Dr Lecturer", time: "8:41 PM" });
-  expect(messages[2]!.key).toBe("id:msg-student-a");
-  expect(messages[2]!.senderRole).toBe("participant");
-  expect(messages[3]!.replyTo).toBe(messages[0]!.key);
-  expect((await zoomAdapter.readChat(page, cursor)).messages).toEqual([]);
+    sender: 'Dr Lecturer',
+    senderRole: 'host',
+    time: '8:41 PM',
+    text: 'Attendance: https://forms.gle/abc',
+    links: ['https://forms.gle/abc'],
+    replyTo: null
+  })
+  expect(messages[1]).toMatchObject({ sender: 'Dr Lecturer', time: '8:41 PM' })
+  expect(messages[2]!.key).toBe('id:msg-student-a')
+  expect(messages[2]!.senderRole).toBe('participant')
+  expect(messages[3]!.replyTo).toBe(messages[0]!.key)
+  expect((await zoomAdapter.readChat(page, cursor)).messages).toEqual([])
   await page.evaluate(() => {
-    window.__fixture.scrollTop(0);
+    window.__fixture.scrollTop(0)
     window.__fixture.addMessage({
-      sender: "Student B",
-      time: "8:50 PM",
-      text: "late one",
-    });
-  });
+      sender: 'Student B',
+      time: '8:50 PM',
+      text: 'late one'
+    })
+  })
   await expect
-    .poll(async () =>
-      (await zoomAdapter.readChat(page, cursor)).messages.map((m) => m.text),
-    )
-    .toEqual(["late one"]);
-});
-test("sweep recovers every item of a virtualised list", async ({ page }) => {
+    .poll(async () => (await zoomAdapter.readChat(page, cursor)).messages.map((m) => m.text))
+    .toEqual(['late one'])
+})
+test('sweep recovers every item of a virtualised list', async ({ page }) => {
   // ?seed=60
-  expect(
-    new Set((await zoomAdapter.sweepChat(page)).map((m) => m.key)).size,
-  ).toBe(60);
-});
-test("signals and notices", async ({ page }) => {
-  expect(await zoomAdapter.participantCount(page)).toBe(12);
+  expect(new Set((await zoomAdapter.sweepChat(page)).map((m) => m.key)).size).toBe(60)
+})
+test('signals and notices', async ({ page }) => {
+  expect(await zoomAdapter.participantCount(page)).toBe(12)
   expect(await zoomAdapter.sharedScreenRegion(page)).toEqual({
     x: 0,
     y: 60,
     width: 1410,
-    height: 840,
-  });
-  expect(await zoomAdapter.meetingState(page)).toBe("in_meeting");
-  await page.evaluate(() => window.__fixture.showNotice());
-  expect(await zoomAdapter.dismissNotices(page)).toEqual(["Got it", "OK"]);
-  await page.evaluate(() => window.__fixture.breakout());
-  expect(await zoomAdapter.meetingState(page)).toBe("breakout_prompt");
-  expect(await zoomAdapter.dismissNotices(page)).toEqual([]);
-  await page.evaluate(() => window.__fixture.stopShare());
-  expect(await zoomAdapter.sharedScreenRegion(page)).toBeNull();
-  await page.evaluate(() => window.__fixture.endMeeting());
-  expect(await zoomAdapter.meetingState(page)).toBe("ended");
-  expect(await page.evaluate(() => window.__fixture.forbiddenClicks)).toEqual(
-    [],
-  );
-});
-test("layout opens chat; audio joins by computer once", async ({ page }) => {
+    height: 840
+  })
+  expect(await zoomAdapter.meetingState(page)).toBe('in_meeting')
+  await page.evaluate(() => window.__fixture.showNotice())
+  expect(await zoomAdapter.dismissNotices(page)).toEqual(['Got it', 'OK'])
+  await page.evaluate(() => window.__fixture.breakout())
+  expect(await zoomAdapter.meetingState(page)).toBe('breakout_prompt')
+  expect(await zoomAdapter.dismissNotices(page)).toEqual([])
+  await page.evaluate(() => window.__fixture.stopShare())
+  expect(await zoomAdapter.sharedScreenRegion(page)).toBeNull()
+  await page.evaluate(() => window.__fixture.endMeeting())
+  expect(await zoomAdapter.meetingState(page)).toBe('ended')
+  expect(await page.evaluate(() => window.__fixture.forbiddenClicks)).toEqual([])
+})
+test('layout opens chat; audio joins by computer once', async ({ page }) => {
   // ?chat=closed
-  await zoomAdapter.ensureLayout(page);
-  await expect(page.locator(".chat-container__chat-list")).toBeVisible();
-  await zoomAdapter.connectOutputAudio(page);
-  await zoomAdapter.connectOutputAudio(page);
-  expect(
-    await page.evaluate(
-      () =>
-        window.__fixture.clicks.filter((c) => c === "join audio by computer")
-          .length,
-    ),
-  ).toBe(1);
-  expect(await page.evaluate(() => window.__fixture.forbiddenClicks)).toEqual(
-    [],
-  );
-});
+  await zoomAdapter.ensureLayout(page)
+  await expect(page.locator('.chat-container__chat-list')).toBeVisible()
+  await zoomAdapter.connectOutputAudio(page)
+  await zoomAdapter.connectOutputAudio(page)
+  expect(await page.evaluate(() => window.__fixture.clicks.filter((c) => c === 'join audio by computer').length)).toBe(
+    1
+  )
+  expect(await page.evaluate(() => window.__fixture.forbiddenClicks)).toEqual([])
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1859,62 +1726,56 @@ git commit -m "feat(worker): add zoom chat and meeting signals"
 
 ```ts
 // packages/worker/test/chat-capture.spec.ts
-test("messages reach chat.jsonl before onMessage, in order", async ({
-  page,
-}) => {
-  await page.goto("/zoom-meeting-top.html");
-  const seen: string[] = [];
+test('messages reach chat.jsonl before onMessage, in order', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  const seen: string[] = []
   const c = await startChatCapture(
     page,
     zoomAdapter,
     file,
     async (m) => {
-      seen.push(m.key);
-      expect(await lines(file)).toContainEqual(
-        expect.objectContaining({ key: m.key }),
-      );
+      seen.push(m.key)
+      expect(await lines(file)).toContainEqual(expect.objectContaining({ key: m.key }))
     },
-    { pollMs: 200 },
-  );
-  await expect.poll(() => seen.length).toBe(4);
-  await c.stop();
-  expect((await lines(file)).map((m) => m.key)).toEqual(seen);
-});
-test("a failed write does not advance the cursor", async ({ page }) => {
-  await page.goto("/zoom-meeting-top.html");
-  let fail = true;
+    { pollMs: 200 }
+  )
+  await expect.poll(() => seen.length).toBe(4)
+  await c.stop()
+  expect((await lines(file)).map((m) => m.key)).toEqual(seen)
+})
+test('a failed write does not advance the cursor', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  let fail = true
   const append = async (f: string, d: string) => {
     if (fail) {
-      fail = false;
-      throw new Error("EIO");
+      fail = false
+      throw new Error('EIO')
     }
-    await appendFile(f, d);
-  };
+    await appendFile(f, d)
+  }
   const c = await startChatCapture(page, zoomAdapter, file, async () => {}, {
     pollMs: 200,
-    append,
-  });
-  await expect.poll(async () => (await lines(file)).length).toBe(4);
-  await c.stop();
-});
-test("a restart does not duplicate lines; sweeps recover a virtualised list", async ({
-  page,
-}) => {
-  await page.goto("/zoom-meeting-top.html?seed=60");
+    append
+  })
+  await expect.poll(async () => (await lines(file)).length).toBe(4)
+  await c.stop()
+})
+test('a restart does not duplicate lines; sweeps recover a virtualised list', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html?seed=60')
   const a = await startChatCapture(page, zoomAdapter, file, async () => {}, {
     pollMs: 200,
-    sweepMs: 500,
-  });
-  await expect.poll(async () => (await lines(file)).length).toBe(60);
-  await a.stop();
-  await page.reload();
+    sweepMs: 500
+  })
+  await expect.poll(async () => (await lines(file)).length).toBe(60)
+  await a.stop()
+  await page.reload()
   const b = await startChatCapture(page, zoomAdapter, file, async () => {}, {
-    pollMs: 200,
-  });
-  await b.sweepNow();
-  await b.stop();
-  expect((await lines(file)).length).toBe(60);
-});
+    pollMs: 200
+  })
+  await b.sweepNow()
+  await b.stop()
+  expect((await lines(file)).length).toBe(60)
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1955,102 +1816,94 @@ git commit -m "feat(worker): add durable chat capture"
 
 ```ts
 // packages/worker/src/forms/pinger.test.ts (resolveMap is a fake resolver that waits 50 ms; sent collects pings; ev collects events)
-test("trusted QR form: manual-submission ping within 30 s and a record", async () => {
-  const p = createFormPinger({ cfg, send, emit, resolve: resolveMap });
+test('trusted QR form: manual-submission ping within 30 s and a record', async () => {
+  const p = createFormPinger({ cfg, send, emit, resolve: resolveMap })
   await p.offer({
-    url: "https://forms.gle/abc",
-    source: "qr",
+    url: 'https://forms.gle/abc',
+    source: 'qr',
     sender: null,
     senderRole: null,
-    seenAt: t0,
-  });
-  await p.idle();
-  expect(sent.map((s) => s.title)).toEqual(["Form to submit: Data Mining"]);
-  const rec: FormPingRecord = await readRecord(cfg.dataDir);
+    seenAt: t0
+  })
+  await p.idle()
+  expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
+  const rec: FormPingRecord = await readRecord(cfg.dataDir)
   expect(rec).toMatchObject({
-    state: "needs_member",
-    trustReason: "qr_on_screen",
-    provider: "google",
-  });
-  expect(Date.parse(rec.pingedAt!) - Date.parse(rec.seenAt)).toBeLessThan(
-    30_000,
-  );
-  expect(ev.filter((e) => e.type === "form").map((e) => e.data.state)).toEqual([
-    "resolving",
-    "checking_trust",
-    "needs_member",
-  ]);
-  expect(JSON.stringify(ev)).not.toContain("?");
-});
+    state: 'needs_member',
+    trustReason: 'qr_on_screen',
+    provider: 'google'
+  })
+  expect(Date.parse(rec.pingedAt!) - Date.parse(rec.seenAt)).toBeLessThan(30_000)
+  expect(ev.filter((e) => e.type === 'form').map((e) => e.data.state)).toEqual([
+    'resolving',
+    'checking_trust',
+    'needs_member'
+  ])
+  expect(JSON.stringify(ev)).not.toContain('?')
+})
 test('untrusted sender: "seen, not submitted"; one ping per form across shapes', async () => {
-  const p = createFormPinger({ cfg, send, emit, resolve: resolveMap });
+  const p = createFormPinger({ cfg, send, emit, resolve: resolveMap })
   for (const url of [
-    "https://forms.gle/abc",
-    "https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=pp_url&entry.1=x",
-    safeLinked("https://docs.google.com/forms/d/e/1FAIpQ/viewform"),
+    'https://forms.gle/abc',
+    'https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=pp_url&entry.1=x',
+    safeLinked('https://docs.google.com/forms/d/e/1FAIpQ/viewform')
   ])
     await p.offer({
       url,
-      source: "meeting_chat",
-      sender: "Student A",
-      senderRole: "participant",
-      seenAt: t0,
-    });
-  await p.idle();
-  expect(sent.map((s) => s.title)).toEqual([
-    "Form seen, not submitted: Data Mining",
-  ]);
-});
-test("non-forms are ignored; unresolvable links ping only from trusted sources", async () => {
+      source: 'meeting_chat',
+      sender: 'Student A',
+      senderRole: 'participant',
+      seenAt: t0
+    })
+  await p.idle()
+  expect(sent.map((s) => s.title)).toEqual(['Form seen, not submitted: Data Mining'])
+})
+test('non-forms are ignored; unresolvable links ping only from trusted sources', async () => {
   const p = createFormPinger({
     cfg,
     send,
     emit,
     resolve: async (c) => {
-      if (c.url.includes("slow")) throw new LinkResolveError("timeout");
-      return null;
-    },
-  });
+      if (c.url.includes('slow')) throw new LinkResolveError('timeout')
+      return null
+    }
+  })
   await p.offer({
-    url: "https://example.com/notes",
-    source: "meeting_chat",
-    sender: "Dr Lecturer",
-    senderRole: "host",
-    seenAt: t0,
-  });
+    url: 'https://example.com/notes',
+    source: 'meeting_chat',
+    sender: 'Dr Lecturer',
+    senderRole: 'host',
+    seenAt: t0
+  })
   await p.offer({
-    url: "https://slow.example/a",
-    source: "meeting_chat",
-    sender: "Student A",
-    senderRole: "participant",
-    seenAt: t0,
-  });
+    url: 'https://slow.example/a',
+    source: 'meeting_chat',
+    sender: 'Student A',
+    senderRole: 'participant',
+    seenAt: t0
+  })
   await p.offer({
-    url: "https://slow.example/b",
-    source: "meeting_chat",
-    sender: "Dr Lecturer",
-    senderRole: "host",
-    seenAt: t0,
-  });
-  await p.idle();
-  expect(sent.map((s) => s.title)).toEqual([
-    "Link seen, not checked: Data Mining",
-  ]);
-  expect(ev.find((e) => e.data.outcome === "ignored")!.data.host).toBe(
-    "example.com",
-  );
-});
+    url: 'https://slow.example/b',
+    source: 'meeting_chat',
+    sender: 'Dr Lecturer',
+    senderRole: 'host',
+    seenAt: t0
+  })
+  await p.idle()
+  expect(sent.map((s) => s.title)).toEqual(['Link seen, not checked: Data Mining'])
+  expect(ev.find((e) => e.data.outcome === 'ignored')!.data.host).toBe('example.com')
+})
 ```
 
 ```ts
 // packages/worker/test/provider-check.spec.ts
-test("reports signed-out providers", async ({ page }) => {
+test('reports signed-out providers', async ({ page }) => {
   expect(
-    await checkFormProviders(page, ["google", "microsoft"], {
-      urls: { google: "/forms-home.html", microsoft: "/forms-signin.html" },
-    }),
-  ).toEqual(["microsoft"]);
-});
+    await checkFormProviders(page, ['google', 'microsoft'], {
+      urls: { google: '/forms-home.html', microsoft: '/forms-signin.html' }
+    })
+  ).toEqual(['microsoft'])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2091,37 +1944,35 @@ git commit -m "feat(worker): ping form links to the member"
 
 ```ts
 // packages/worker/src/asr/live.test.ts (fakeAudio emits chunks on demand; fakeOpen returns a scriptable AsrStream)
-test("results become recording-relative lines", async () => {
+test('results become recording-relative lines', async () => {
   const live = await startLiveAsr(fakeAudio, ai, out, {
     baseMs: 4000,
-    open: fakeOpen,
-  });
-  fakeAudio.emit(Buffer.alloc(3200));
-  expect(fakeOpen.stream.sent.length).toBe(1);
+    open: fakeOpen
+  })
+  fakeAudio.emit(Buffer.alloc(3200))
+  expect(fakeOpen.stream.sent.length).toBe(1)
   fakeOpen.stream.result({
     startMs: 500,
     endMs: 2500,
-    text: "selamat petang semua",
-  });
-  await live.stop();
-  expect(await lines(out)).toEqual([
-    { startMs: 4500, endMs: 6500, text: "selamat petang semua" },
-  ]);
-  expect(fakeOpen.stream.closed).toBe(true);
-});
-test("a rejected key is reported once and stops sending audio", async () => {
-  const errs: Error[] = [];
+    text: 'selamat petang semua'
+  })
+  await live.stop()
+  expect(await lines(out)).toEqual([{ startMs: 4500, endMs: 6500, text: 'selamat petang semua' }])
+  expect(fakeOpen.stream.closed).toBe(true)
+})
+test('a rejected key is reported once and stops sending audio', async () => {
+  const errs: Error[] = []
   await startLiveAsr(fakeAudio, ai, out, {
     open: fakeOpen,
-    onError: (e) => errs.push(e),
-  });
-  fakeOpen.stream.fail(new AiKeyError(402));
-  fakeOpen.stream.fail(new AiKeyError(402));
-  fakeAudio.emit(Buffer.alloc(3200));
-  expect(errs.length).toBe(1);
-  expect(errs[0]).toBeInstanceOf(AiKeyError);
-  expect(fakeOpen.stream.sent.length).toBe(0);
-});
+    onError: (e) => errs.push(e)
+  })
+  fakeOpen.stream.fail(new AiKeyError(402))
+  fakeOpen.stream.fail(new AiKeyError(402))
+  fakeAudio.emit(Buffer.alloc(3200))
+  expect(errs.length).toBe(1)
+  expect(errs[0]).toBeInstanceOf(AiKeyError)
+  expect(fakeOpen.stream.sent.length).toBe(0)
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2162,188 +2013,169 @@ git commit -m "feat(worker): write live transcript lines"
 
 ```ts
 // packages/worker/src/run.test.ts (fakeDeps(): a scripted adapter, a fake clock and recorders of calls and pings)
-test("happy path: order of steps and outcome", async () => {
-  const d = fakeDeps({ states: ["in_meeting", "in_meeting", "ended"] });
-  const o = await runOccurrence(lectureCfg, d);
-  expect(o).toMatchObject({ result: "completed", endedBy: "page" });
+test('happy path: order of steps and outcome', async () => {
+  const d = fakeDeps({ states: ['in_meeting', 'in_meeting', 'ended'] })
+  const o = await runOccurrence(lectureCfg, d)
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'page' })
   expect(d.calls).toEqual([
-    "prepareProfile",
-    "startScreen",
-    "launchBrowser",
-    "startCheckpoints",
-    "checkFormProviders",
-    "startAudioSource",
-    "startRecorder",
-    "goto",
-    "join",
-    "assertDevicesOff",
-    "connectOutputAudio",
-    "ensureLayout",
-    "dismissNotices",
-    "participantCount",
-    "startChatCapture",
-    "startFrameLoop",
-    "startLiveAsr",
-    "chat.stop",
-    "frames.stop",
-    "asr.stop",
-    "pinger.idle",
-    "recorder.stop",
-    "joinRecording",
-    "audio.stop",
-    "context.close",
-    "checkpoints.stop",
-    "checkpointProfile",
-    "screen.stop",
-  ]);
-  expect(d.pings.map((p) => p.title)).toEqual(["Joined: Data Mining"]);
-});
-test("hard stop at end + 30 minutes sweeps chat before leaving", async () => {
-  const d = fakeDeps({ states: "always_in_meeting" });
-  const o = await runOccurrence(lectureCfg, d);
-  expect(o.endedBy).toBe("hard_stop");
-  expect(+d.leftAt!).toBe(+new Date(lectureCfg.entry.end) + 30 * 60_000);
-  expect(d.calls.indexOf("sweepNow")).toBe(d.calls.indexOf("leave") - 1);
-});
-test("busy Zoom account falls back to a guest stage", async () => {
+    'prepareProfile',
+    'startScreen',
+    'launchBrowser',
+    'startCheckpoints',
+    'checkFormProviders',
+    'startAudioSource',
+    'startRecorder',
+    'goto',
+    'join',
+    'assertDevicesOff',
+    'connectOutputAudio',
+    'ensureLayout',
+    'dismissNotices',
+    'participantCount',
+    'startChatCapture',
+    'startFrameLoop',
+    'startLiveAsr',
+    'chat.stop',
+    'frames.stop',
+    'asr.stop',
+    'pinger.idle',
+    'recorder.stop',
+    'joinRecording',
+    'audio.stop',
+    'context.close',
+    'checkpoints.stop',
+    'checkpointProfile',
+    'screen.stop'
+  ])
+  expect(d.pings.map((p) => p.title)).toEqual(['Joined: Data Mining'])
+})
+test('hard stop at end + 30 minutes sweeps chat before leaving', async () => {
+  const d = fakeDeps({ states: 'always_in_meeting' })
+  const o = await runOccurrence(lectureCfg, d)
+  expect(o.endedBy).toBe('hard_stop')
+  expect(+d.leftAt!).toBe(+new Date(lectureCfg.entry.end) + 30 * 60_000)
+  expect(d.calls.indexOf('sweepNow')).toBe(d.calls.indexOf('leave') - 1)
+})
+test('busy Zoom account falls back to a guest stage', async () => {
   const d = fakeDeps({
-    joins: [{ kind: "account_busy" }, { kind: "in_meeting" }],
-    states: ["ended"],
-  });
-  await runOccurrence(lectureCfg, d);
-  expect(d.calls).toContain("launchGuestStage");
+    joins: [{ kind: 'account_busy' }, { kind: 'in_meeting' }],
+    states: ['ended']
+  })
+  await runOccurrence(lectureCfg, d)
+  expect(d.calls).toContain('launchGuestStage')
   expect(d.joinOpts[1]).toEqual({
-    guestName: lectureCfg.identity.zoomGuestName,
-  });
-});
-test("Review Focus: never admitted, or ended while waiting", async () => {
+    guestName: lectureCfg.identity.zoomGuestName
+  })
+})
+test('Review Focus: never admitted, or ended while waiting', async () => {
   const d = fakeDeps({
-    joins: [{ kind: "lobby" }],
-    admissions: ["lobby_expired", "lobby_expired", "lobby_expired"],
-  });
+    joins: [{ kind: 'lobby' }],
+    admissions: ['lobby_expired', 'lobby_expired', 'lobby_expired']
+  })
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({
-    result: "not_admitted",
-  });
-  expect(d.joinCount).toBe(3);
-  expect(d.pings.map((p) => p.message)).toEqual([
-    "The bot was still waiting to be let in at the hard stop.",
-  ]);
-  expect(d.calls.indexOf("checkpointProfile")).toBeGreaterThan(
-    d.calls.indexOf("context.close"),
-  );
+    result: 'not_admitted'
+  })
+  expect(d.joinCount).toBe(3)
+  expect(d.pings.map((p) => p.message)).toEqual(['The bot was still waiting to be let in at the hard stop.'])
+  expect(d.calls.indexOf('checkpointProfile')).toBeGreaterThan(d.calls.indexOf('context.close'))
   const e = fakeDeps({
-    joins: [{ kind: "lobby" }],
-    admissions: ["lobby_denied"],
-  });
+    joins: [{ kind: 'lobby' }],
+    admissions: ['lobby_denied']
+  })
   expect(await runOccurrence(lectureCfg, e)).toMatchObject({
-    result: "denied",
-  });
-});
-test("devices on: leave at once, ping, fail", async () => {
-  const d = fakeDeps({ devicesOn: true });
+    result: 'denied'
+  })
+})
+test('devices on: leave at once, ping, fail', async () => {
+  const d = fakeDeps({ devicesOn: true })
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({
-    result: "failed",
-    reason: "devices_on",
-  });
-  expect(d.calls.indexOf("leave")).toBe(
-    d.calls.indexOf("assertDevicesOff") + 1,
-  );
-});
-test("one automatic rejoin after a drop, then stop", async () => {
+    result: 'failed',
+    reason: 'devices_on'
+  })
+  expect(d.calls.indexOf('leave')).toBe(d.calls.indexOf('assertDevicesOff') + 1)
+})
+test('one automatic rejoin after a drop, then stop', async () => {
   const d = fakeDeps({
-    states: ["in_meeting", "unknown", "in_meeting", "unknown"],
-    unknownMs: 30_000,
-  });
+    states: ['in_meeting', 'unknown', 'in_meeting', 'unknown'],
+    unknownMs: 30_000
+  })
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({
-    endedBy: "dropped",
-  });
-  expect(d.joinCount).toBe(2);
-  expect(
-    d.pings.filter((p) => p.title.startsWith("Alert")).map((p) => p.message),
-  ).toEqual([
-    "The bot dropped out of the meeting and is rejoining.",
-    "The bot dropped out of the meeting again and stopped.",
-  ]);
-});
-test("work entries skip forms; non-fixed links are refused", async () => {
-  const d = fakeDeps({ states: ["ended"] });
-  await runOccurrence(workCfg, d);
-  expect(d.calls).not.toContain("checkFormProviders");
-  expect(d.formPinger).toBeNull();
+    endedBy: 'dropped'
+  })
+  expect(d.joinCount).toBe(2)
+  expect(d.pings.filter((p) => p.title.startsWith('Alert')).map((p) => p.message)).toEqual([
+    'The bot dropped out of the meeting and is rejoining.',
+    'The bot dropped out of the meeting again and stopped.'
+  ])
+})
+test('work entries skip forms; non-fixed links are refused', async () => {
+  const d = fakeDeps({ states: ['ended'] })
+  await runOccurrence(workCfg, d)
+  expect(d.calls).not.toContain('checkFormProviders')
+  expect(d.formPinger).toBeNull()
   expect(
     await runOccurrence(
       {
         ...lectureCfg,
-        entry: { ...lectureCfg.entry, link: { kind: "paste" } },
+        entry: { ...lectureCfg.entry, link: { kind: 'paste' } }
       },
-      fakeDeps({}),
-    ),
-  ).toMatchObject({ result: "failed", reason: "link_source_unsupported" });
-});
+      fakeDeps({})
+    )
+  ).toMatchObject({ result: 'failed', reason: 'link_source_unsupported' })
+})
 ```
 
 ```ts
 // packages/worker/src/events.test.ts
-test("events are JSON lines with secrets redacted", async () => {
-  const log = createEventLog(file, "occ-1", 1);
-  await log.emit("error", {
-    url: "https://zoom.us/wc/join/00000000000?pwd=PWD",
-    auth: "Bearer abc.def",
-  });
-  const [e] = await lines(file);
+test('events are JSON lines with secrets redacted', async () => {
+  const log = createEventLog(file, 'occ-1', 1)
+  await log.emit('error', {
+    url: 'https://zoom.us/wc/join/00000000000?pwd=PWD',
+    auth: 'Bearer abc.def'
+  })
+  const [e] = await lines(file)
   expect(e).toMatchObject({
-    occurrenceId: "occ-1",
+    occurrenceId: 'occ-1',
     attempt: 1,
-    type: "error",
-    data: { url: "<zoom.us/wc/join/00000000000>", auth: "Bearer REDACTED" },
-  });
-});
+    type: 'error',
+    data: { url: '<zoom.us/wc/join/00000000000>', auth: 'Bearer REDACTED' }
+  })
+})
 ```
 
 ```ts
 // packages/worker/src/frames/handler.test.ts (synthetic PNGs; fake pinger records offers)
-test("QR seen twice is offered once; keyframes saved with clock names", async () => {
-  const h = createFrameHandler({ ...deps, timeZone: "Asia/Kuala_Lumpur" });
-  const f = await qrFrame("https://forms.gle/abc", 300, { x: 800, y: 300 });
-  for (const at of [
-    "2026-10-21T12:00:00Z",
-    "2026-10-21T12:00:02Z",
-    "2026-10-21T12:00:04Z",
-  ])
-    await h({ at: new Date(at), png: f });
+test('QR seen twice is offered once; keyframes saved with clock names', async () => {
+  const h = createFrameHandler({ ...deps, timeZone: 'Asia/Kuala_Lumpur' })
+  const f = await qrFrame('https://forms.gle/abc', 300, { x: 800, y: 300 })
+  for (const at of ['2026-10-21T12:00:00Z', '2026-10-21T12:00:02Z', '2026-10-21T12:00:04Z'])
+    await h({ at: new Date(at), png: f })
   expect(offers).toEqual([
     expect.objectContaining({
-      url: "https://forms.gle/abc",
-      source: "qr",
-      sender: null,
-    }),
-  ]);
-  expect(await readdir(join(dataDir, "frames"))).toEqual(["0001_200002.png"]);
-  expect(events.find((e) => e.type === "keyframe")!.data).toMatchObject({
-    file: "frames/0001_200002.png",
+      url: 'https://forms.gle/abc',
+      source: 'qr',
+      sender: null
+    })
+  ])
+  expect(await readdir(join(dataDir, 'frames'))).toEqual(['0001_200002.png'])
+  expect(events.find((e) => e.type === 'keyframe')!.data).toMatchObject({
+    file: 'frames/0001_200002.png',
     region: null,
-    offsetMs: 2000,
-  });
-});
+    offsetMs: 2000
+  })
+})
 ```
 
 ```ts
 // packages/worker/src/cli.test.ts
-test("usage and invalid jobs never echo secrets", async () => {
-  const a = Bun.spawnSync(["bun", "packages/worker/src/cli.ts"]);
-  expect(a.exitCode).toBe(64);
-  expect(a.stderr.toString()).toContain(
-    "usage: tm-worker [--seed] --job <path>",
-  );
-  const b = Bun.spawnSync([
-    "bun",
-    "packages/worker/src/cli.ts",
-    "--job",
-    badJobWithKey("sk-secret-value"),
-  ]);
-  expect(b.exitCode).toBe(65);
-  expect(b.stderr.toString()).not.toContain("sk-secret-value");
-});
+test('usage and invalid jobs never echo secrets', async () => {
+  const a = Bun.spawnSync(['bun', 'packages/worker/src/cli.ts'])
+  expect(a.exitCode).toBe(64)
+  expect(a.stderr.toString()).toContain('usage: tm-worker [--seed] --job <path>')
+  const b = Bun.spawnSync(['bun', 'packages/worker/src/cli.ts', '--job', badJobWithKey('sk-secret-value')])
+  expect(b.exitCode).toBe(65)
+  expect(b.stderr.toString()).not.toContain('sk-secret-value')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2417,92 +2249,75 @@ git commit -m "feat(worker): add occurrence run and tm-worker cli"
 
 ```ts
 // packages/pipeline/src/transcript.test.ts
-test("hallucinations are dropped", () => {
-  for (const t of [
-    "you",
-    "You.",
-    "Thank you for watching!",
-    "thanks for watching",
-    ".",
-  ])
-    expect(isHallucination(t)).toBe(true);
-  expect(isHallucination("Thank you, everyone")).toBe(false);
-});
-test("paragraphs on pauses of 2 s or 600 characters, silence notes from 2 minutes, recording gaps", () => {
+test('hallucinations are dropped', () => {
+  for (const t of ['you', 'You.', 'Thank you for watching!', 'thanks for watching', '.'])
+    expect(isHallucination(t)).toBe(true)
+  expect(isHallucination('Thank you, everyone')).toBe(false)
+})
+test('paragraphs on pauses of 2 s or 600 characters, silence notes from 2 minutes, recording gaps', () => {
   const b = paragraphs(
     [
-      l(0, 1000, "Selamat petang."),
-      l(1500, 3000, "Today, clustering."),
-      l(5200, 6000, "First,"),
-      l(130_000, 131_000, "Okay."),
+      l(0, 1000, 'Selamat petang.'),
+      l(1500, 3000, 'Today, clustering.'),
+      l(5200, 6000, 'First,'),
+      l(130_000, 131_000, 'Okay.')
     ],
-    [{ atMs: 200_000, ms: 120_000 }],
-  );
+    [{ atMs: 200_000, ms: 120_000 }]
+  )
   expect(b).toEqual([
-    { kind: "para", atMs: 0, text: "Selamat petang. Today, clustering." },
-    { kind: "para", atMs: 5200, text: "First," },
-    { kind: "silence", atMs: 6000, ms: 124_000 },
-    { kind: "para", atMs: 130_000, text: "Okay." },
-    { kind: "gap", atMs: 200_000, ms: 120_000 },
-  ]);
-});
-test("transcript.md format", async () => {
-  const md = await Bun.file(await buildTranscript(cfg, [])).text();
+    { kind: 'para', atMs: 0, text: 'Selamat petang. Today, clustering.' },
+    { kind: 'para', atMs: 5200, text: 'First,' },
+    { kind: 'silence', atMs: 6000, ms: 124_000 },
+    { kind: 'para', atMs: 130_000, text: 'Okay.' },
+    { kind: 'gap', atMs: 200_000, ms: 120_000 }
+  ])
+})
+test('transcript.md format', async () => {
+  const md = await Bun.file(await buildTranscript(cfg, [])).text()
   expect(md).toStartWith(
-    "# Data Mining: transcript\n\nWed 21 Oct 2026, 20:00 to 22:00 (Asia/Kuala_Lumpur). Live transcription; times are from the recording start, and names may be misheard.\n\n## Transcript\n\n**[00:00:00]** Selamat petang.",
-  );
-  expect(md).toContain("_[00:00:06] No speech for 2 minutes._");
-  expect(md).toContain("_[00:03:20] Recording gap of 2 minutes._");
-});
+    '# Data Mining: transcript\n\nWed 21 Oct 2026, 20:00 to 22:00 (Asia/Kuala_Lumpur). Live transcription; times are from the recording start, and names may be misheard.\n\n## Transcript\n\n**[00:00:00]** Selamat petang.'
+  )
+  expect(md).toContain('_[00:00:06] No speech for 2 minutes._')
+  expect(md).toContain('_[00:03:20] Recording gap of 2 minutes._')
+})
 ```
 
 ```ts
 // packages/pipeline/src/names.test.ts
-test("names are corrected from authoritative text and marked as heard", () => {
-  expect(
-    correctNames("thanks Dr Amina, today Kubernetis and Kubernetes", [
-      "Dr Aminah",
-      "Kubernetes",
-    ]),
-  ).toBe(
-    'thanks Dr Aminah _(as heard: "Dr Amina")_, today Kubernetes _(as heard: "Kubernetis")_ and Kubernetes',
-  );
-  expect(correctNames("the data is clean", ["Dataset"])).toBe(
-    "the data is clean",
-  );
-});
+test('names are corrected from authoritative text and marked as heard', () => {
+  expect(correctNames('thanks Dr Amina, today Kubernetis and Kubernetes', ['Dr Aminah', 'Kubernetes'])).toBe(
+    'thanks Dr Aminah _(as heard: "Dr Amina")_, today Kubernetes _(as heard: "Kubernetis")_ and Kubernetes'
+  )
+  expect(correctNames('the data is clean', ['Dataset'])).toBe('the data is clean')
+})
 ```
 
 ```ts
 // packages/pipeline/src/chat.test.ts
-test("de-duplicate, order, replies after parents, invite links removed", () => {
+test('de-duplicate, order, replies after parents, invite links removed', () => {
   const out = orderChat([
-    m("a", "8:41 PM", "Lecturer", "Attendance: https://forms.gle/abc", 1),
-    m("b", "8:42 PM", "Student A", "hi", 2),
-    m("c", "8:43 PM", "Student B", "thanks", 3, "a"),
-    m("a2", "8:41 PM", "Lecturer", "Attendance: https://forms.gle/abc", 4),
-  ]);
-  expect(out.map((x) => x.key)).toEqual(["a", "c", "b"]);
-  expect(
-    stripInviteLinks(
-      "join https://example-uni.zoom.us/j/00000000000?pwd=PWD now",
-    ),
-  ).toBe("join [meeting link removed] now");
-  expect(
-    stripInviteLinks(
-      "https://meet.google.com/abc-defg-hij and https://teams.microsoft.com/l/meetup-join/x",
-    ),
-  ).toBe("[meeting link removed] and [meeting link removed]");
-});
-test("chat.md format", async () => {
-  const md = await Bun.file(await buildChat(cfg)).text();
+    m('a', '8:41 PM', 'Lecturer', 'Attendance: https://forms.gle/abc', 1),
+    m('b', '8:42 PM', 'Student A', 'hi', 2),
+    m('c', '8:43 PM', 'Student B', 'thanks', 3, 'a'),
+    m('a2', '8:41 PM', 'Lecturer', 'Attendance: https://forms.gle/abc', 4)
+  ])
+  expect(out.map((x) => x.key)).toEqual(['a', 'c', 'b'])
+  expect(stripInviteLinks('join https://example-uni.zoom.us/j/00000000000?pwd=PWD now')).toBe(
+    'join [meeting link removed] now'
+  )
+  expect(stripInviteLinks('https://meet.google.com/abc-defg-hij and https://teams.microsoft.com/l/meetup-join/x')).toBe(
+    '[meeting link removed] and [meeting link removed]'
+  )
+})
+test('chat.md format', async () => {
+  const md = await Bun.file(await buildChat(cfg)).text()
   expect(md).toContain(
-    "# Data Mining: chat\n\n3 messages from the meeting chat, in posting order. Meeting links are removed.\n\n## Messages\n\n",
-  );
+    '# Data Mining: chat\n\n3 messages from the meeting chat, in posting order. Meeting links are removed.\n\n## Messages\n\n'
+  )
   expect(md).toContain(
-    "**[8:41 PM] Lecturer (host):** Attendance: https://forms.gle/abc\n\n> **[8:43 PM] Student B:** thanks",
-  );
-});
+    '**[8:41 PM] Lecturer (host):** Attendance: https://forms.gle/abc\n\n> **[8:43 PM] Student B:** thanks'
+  )
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2542,54 +2357,49 @@ git commit -m "feat(pipeline): build transcript and chat files"
 
 ```ts
 // packages/pipeline/src/crop.test.ts
-test("brightness crop finds the shared screen on a dark stage", () => {
-  const img = dark(1920, 1080);
-  paint(img, { x: 100, y: 200, width: 1000, height: 600 }, 200);
-  expect(
-    brightnessCrop(img, { x: 0, y: 0, width: 1421, height: 1080 }),
-  ).toEqual({ x: 100, y: 200, width: 1000, height: 600 });
-  expect(
-    brightnessCrop(dark(1920, 1080), { x: 0, y: 0, width: 1421, height: 1080 }),
-  ).toBeNull();
-});
-test("near-duplicates, build-ups and black frames are dropped", () => {
+test('brightness crop finds the shared screen on a dark stage', () => {
+  const img = dark(1920, 1080)
+  paint(img, { x: 100, y: 200, width: 1000, height: 600 }, 200)
+  expect(brightnessCrop(img, { x: 0, y: 0, width: 1421, height: 1080 })).toEqual({
+    x: 100,
+    y: 200,
+    width: 1000,
+    height: 600
+  })
+  expect(brightnessCrop(dark(1920, 1080), { x: 0, y: 0, width: 1421, height: 1080 })).toBeNull()
+})
+test('near-duplicates, build-ups and black frames are dropped', () => {
   const kept = selectSlides([
-    k("a", 0, 0b0n, 90),
-    k("a2", 10_000, 0b111n, 90),
-    k("black", 15_000, 0xffffn, 3),
-    k("b-part", 20_000, 1n << 100n, 90),
-    k("b", 24_000, (1n << 100n) | 0xfffffn, 90),
-  ]);
-  expect(kept.map((f) => f.file)).toEqual(["a", "b"]);
-});
+    k('a', 0, 0b0n, 90),
+    k('a2', 10_000, 0b111n, 90),
+    k('black', 15_000, 0xffffn, 3),
+    k('b-part', 20_000, 1n << 100n, 90),
+    k('b', 24_000, (1n << 100n) | 0xfffffn, 90)
+  ])
+  expect(kept.map((f) => f.file)).toEqual(['a', 'b'])
+})
 ```
 
 ```ts
 // packages/pipeline/src/slides.test.ts (a data dir with three keyframes, one with a region; a fake AI server answers {title, text})
-test("slides are cropped, saved as WebP, read by the vision model and written to slides.md", async () => {
-  const { slides, mdPath } = await buildSlides(cfg);
+test('slides are cropped, saved as WebP, read by the vision model and written to slides.md', async () => {
+  const { slides, mdPath } = await buildSlides(cfg)
   expect(slides.map((s) => [s.n, s.file])).toEqual([
-    [1, "slides/01.webp"],
-    [2, "slides/02.webp"],
-  ]);
-  expect(
-    await sharp(join(cfg.dataDir, "slides/01.webp")).metadata(),
-  ).toMatchObject({ width: 1410, height: 840 });
+    [1, 'slides/01.webp'],
+    [2, 'slides/02.webp']
+  ])
+  expect(await sharp(join(cfg.dataDir, 'slides/01.webp')).metadata()).toMatchObject({ width: 1410, height: 840 })
   expect(fake.requests[0].body).toMatchObject({
-    model: "qwen3-vl-plus",
-    enable_thinking: false,
-  });
-  expect(
-    fake.requests[0].body.messages[1].content[1].image_url.url,
-  ).toStartWith("data:image/webp;base64,");
-  const md = await Bun.file(mdPath).text();
+    model: 'qwen3-vl-plus',
+    enable_thinking: false
+  })
+  expect(fake.requests[0].body.messages[1].content[1].image_url.url).toStartWith('data:image/webp;base64,')
+  const md = await Bun.file(mdPath).text()
   expect(md).toContain(
-    "# Data Mining: slides\n\n2 slides shown in the meeting, read by a vision model. Covered or unreadable text is marked, never guessed.\n\n## Slide 01: Clustering\n\n![Slide 01: Clustering](../slides/01.webp)\n\n",
-  );
-  expect(
-    JSON.parse(await Bun.file(join(cfg.dataDir, "slides/slides.json")).text()),
-  ).toEqual(slides);
-});
+    '# Data Mining: slides\n\n2 slides shown in the meeting, read by a vision model. Covered or unreadable text is marked, never guessed.\n\n## Slide 01: Clustering\n\n![Slide 01: Clustering](../slides/01.webp)\n\n'
+  )
+  expect(JSON.parse(await Bun.file(join(cfg.dataDir, 'slides/slides.json')).text())).toEqual(slides)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2639,13 +2449,13 @@ git commit -m "feat(pipeline): curate and read slides"
 - Produces (adds to contracts): `InventorySchema`, `type Inventory` and `type InventoryItem = Inventory['items'][number]` (below); `type AttendanceInfo = { kind: 'not_seen' } | { kind: 'needs_you'; url: string }`; `chooseDue(item: InventoryItem): { due: string | null; note: string | null }`; `buildInventory(cfg: JobConfig, src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] }): Promise<Inventory>`; `renderLectureSummary(inv: Inventory, ctx: { cfg: JobConfig; attendance: AttendanceInfo | null; outDir: string }): string` (`attendance` null leaves the line out, for work entries until plan 06); `summaryFileName(cfg: JobConfig): string`; `ATTACH_SUMMARY: boolean` (set from spike 8's recommendation).
 
 ```ts
-const Source = z.enum(["slide", "lecturer_chat", "speech"]);
+const Source = z.enum(['slide', 'lecturer_chat', 'speech'])
 export const InventorySchema = z.object({
   sessionLabel: z.string().nullable(),
   nextAction: z.string().nullable(),
   items: z.array(
     z.object({
-      kind: z.enum(["deadline", "task", "announcement", "link"]),
+      kind: z.enum(['deadline', 'task', 'announcement', 'link']),
       text: z.string(),
       due: z
         .string()
@@ -2657,132 +2467,126 @@ export const InventorySchema = z.object({
         z.object({
           source: Source,
           due: z.string().nullable(),
-          text: z.string(),
-        }),
-      ),
-    }),
+          text: z.string()
+        })
+      )
+    })
   ),
-  covered: z.array(z.string()),
-});
+  covered: z.array(z.string())
+})
 ```
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 // packages/pipeline/src/summary/render.test.ts
-test("the lecture template, exactly", () => {
+test('the lecture template, exactly', () => {
   expect(
     renderLectureSummary(smallInventory, {
       cfg,
-      attendance: { kind: "needs_you", url: "https://forms.gle/abc" },
-      outDir: "/data/out",
-    }),
+      attendance: { kind: 'needs_you', url: 'https://forms.gle/abc' },
+      outDir: '/data/out'
+    })
   ).toBe(
     [
-      "Data Mining, Week 7: Clustering (Wed 21 Oct 2026, 20:00 to 22:00)",
-      "",
-      "Do next: Submit assignment 2 (due Sun 1 Nov 2026, 23:59; heard as Sat 31 Oct 2026)",
-      "",
-      "Attendance: needs you: https://forms.gle/abc",
-      "",
-      "To do",
-      "1. Submit assignment 2 (due Sun 1 Nov 2026, 23:59; heard as Sat 31 Oct 2026)",
-      "2. Read chapter 8",
-      "",
-      "What was covered",
-      "1. k-means",
-      "2. Choosing k",
-      "",
-      "Details: transcript.md, slides.md and chat.md in /data/out",
-      "",
-    ].join("\n"),
-  );
-});
-test("7 deadlines: 5 most urgent under To do, the rest under More deadlines; empty sections left out", () => {
+      'Data Mining, Week 7: Clustering (Wed 21 Oct 2026, 20:00 to 22:00)',
+      '',
+      'Do next: Submit assignment 2 (due Sun 1 Nov 2026, 23:59; heard as Sat 31 Oct 2026)',
+      '',
+      'Attendance: needs you: https://forms.gle/abc',
+      '',
+      'To do',
+      '1. Submit assignment 2 (due Sun 1 Nov 2026, 23:59; heard as Sat 31 Oct 2026)',
+      '2. Read chapter 8',
+      '',
+      'What was covered',
+      '1. k-means',
+      '2. Choosing k',
+      '',
+      'Details: transcript.md, slides.md and chat.md in /data/out',
+      ''
+    ].join('\n')
+  )
+})
+test('7 deadlines: 5 most urgent under To do, the rest under More deadlines; empty sections left out', () => {
   const out = renderLectureSummary(sevenDeadlines, {
     cfg,
-    attendance: { kind: "not_seen" },
-    outDir: "/o",
-  });
-  expect(section(out, "To do")).toHaveLength(5);
-  expect(section(out, "More deadlines")).toHaveLength(2);
-  expect(section(out, "To do")[0]).toContain("(due Thu 22 Oct 2026)");
-  expect(out).not.toContain("Announcements");
-  expect(out.split("\n")[2]).toStartWith("Do next: ");
-});
-test("source priority: slide over lecturer chat over speech", () => {
+    attendance: { kind: 'not_seen' },
+    outDir: '/o'
+  })
+  expect(section(out, 'To do')).toHaveLength(5)
+  expect(section(out, 'More deadlines')).toHaveLength(2)
+  expect(section(out, 'To do')[0]).toContain('(due Thu 22 Oct 2026)')
+  expect(out).not.toContain('Announcements')
+  expect(out.split('\n')[2]).toStartWith('Do next: ')
+})
+test('source priority: slide over lecturer chat over speech', () => {
   expect(
     chooseDue({
       ...item,
-      source: "speech",
-      due: "2026-10-31",
-      conflicts: [{ source: "slide", due: "2026-11-01T23:59", text: "" }],
-    }),
-  ).toEqual({ due: "2026-11-01T23:59", note: "heard as Sat 31 Oct 2026" });
-});
+      source: 'speech',
+      due: '2026-10-31',
+      conflicts: [{ source: 'slide', due: '2026-11-01T23:59', text: '' }]
+    })
+  ).toEqual({ due: '2026-11-01T23:59', note: 'heard as Sat 31 Oct 2026' })
+})
 ```
 
 ```ts
 // packages/pipeline/src/summary/name.test.ts (Review Focus: UTC container, KL entry, unsafe names); run with TZ=UTC
-test("file name in the entry time zone with unsafe characters replaced", () => {
+test('file name in the entry time zone with unsafe characters replaced', () => {
   expect(
     summaryFileName({
       ...cfg,
       entry: {
         ...cfg.entry,
-        start: "2026-10-21T12:00:00Z",
-        timeZone: "Asia/Kuala_Lumpur",
-        name: "Data Mining / Kuliah 5: Pengenalan",
-      },
-    }),
-  ).toBe("2026-10-21 2000 Data Mining - Kuliah 5- Pengenalan.md");
-});
+        start: '2026-10-21T12:00:00Z',
+        timeZone: 'Asia/Kuala_Lumpur',
+        name: 'Data Mining / Kuliah 5: Pengenalan'
+      }
+    })
+  ).toBe('2026-10-21 2000 Data Mining - Kuliah 5- Pengenalan.md')
+})
 ```
 
 ```ts
 // packages/pipeline/src/summary/inventory.test.ts (fake AI server)
-test("one uncapped inventory call with thinking off and sources labelled", async () => {
-  const inv = await buildInventory(cfg, { transcriptMd, slides, chat });
-  const body = fake.requests[0].body;
+test('one uncapped inventory call with thinking off and sources labelled', async () => {
+  const inv = await buildInventory(cfg, { transcriptMd, slides, chat })
+  const body = fake.requests[0].body
   expect(body).toMatchObject({
-    model: "qwen3.7-plus",
+    model: 'qwen3.7-plus',
     enable_thinking: false,
-    response_format: { type: "json_object" },
-  });
-  expect(body.messages[1].content).toContain(
-    "## Slides\n\nSlide 01: Clustering",
-  );
-  expect(body.messages[1].content).toMatch(
-    /## Lecturer chat\n\n\[8:41 PM\] Dr Lecturer: Assignment 2/,
-  );
-  expect(InventorySchema.parse(inv)).toEqual(inv);
-});
+    response_format: { type: 'json_object' }
+  })
+  expect(body.messages[1].content).toContain('## Slides\n\nSlide 01: Clustering')
+  expect(body.messages[1].content).toMatch(/## Lecturer chat\n\n\[8:41 PM\] Dr Lecturer: Assignment 2/)
+  expect(InventorySchema.parse(inv)).toEqual(inv)
+})
 ```
 
 ```ts
 // packages/pipeline/src/pipeline.test.ts (a complete fixture data dir, fake AI and ntfy servers)
-test("runPipeline writes the four files and pings the summary", async () => {
-  const r = await runPipeline(cfg);
+test('runPipeline writes the four files and pings the summary', async () => {
+  const r = await runPipeline(cfg)
   for (const p of [r.transcriptPath, r.slidesPath, r.chatPath, r.summaryPath])
-    expect(await Bun.file(p).exists()).toBe(true);
-  expect(basename(r.summaryPath)).toBe("2026-10-21 2000 Data Mining.md");
+    expect(await Bun.file(p).exists()).toBe(true)
+  expect(basename(r.summaryPath)).toBe('2026-10-21 2000 Data Mining.md')
   expect(ntfy.requests.at(-1)!.json).toMatchObject({
-    title: "Summary ready: Data Mining",
-    priority: 3,
-  });
-  expect(ntfy.requests.at(-1)!.json.message).toStartWith("Data Mining");
-});
-test("a rejected key keeps the inputs, pings and rethrows", async () => {
-  ai.status(401);
+    title: 'Summary ready: Data Mining',
+    priority: 3
+  })
+  expect(ntfy.requests.at(-1)!.json.message).toStartWith('Data Mining')
+})
+test('a rejected key keeps the inputs, pings and rethrows', async () => {
+  ai.status(401)
   await expect(runPipeline(cfg)).rejects.toMatchObject({
-    name: "AiKeyError",
-    status: 401,
-  });
-  expect(ntfy.requests.at(-1)!.json.title).toBe("Summary failed: Data Mining");
-  expect(
-    await Bun.file(join(cfg.dataDir, "transcript/live.jsonl")).exists(),
-  ).toBe(true);
-});
+    name: 'AiKeyError',
+    status: 401
+  })
+  expect(ntfy.requests.at(-1)!.json.title).toBe('Summary failed: Data Mining')
+  expect(await Bun.file(join(cfg.dataDir, 'transcript/live.jsonl')).exists()).toBe(true)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**

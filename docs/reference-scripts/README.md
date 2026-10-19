@@ -239,8 +239,8 @@ Installs `window.sdcRoot()`, which returns the Zoom web client's document: the d
 
 ```javascript
 // in a later snippet on the meeting tab
-const d = sdcRoot();
-d.querySelectorAll("button").length;
+const d = sdcRoot()
+d.querySelectorAll('button').length
 ```
 
 - Session use: in the rehearsals on Zoom's test meeting, reached through the `/j/` launcher page and "Join from browser", the client ran inside `iframe#webclient`. The live meeting was opened at the web-client join URL and ran in the top document, so the iframe-only snippet failed at 19:49:09 and this form replaced it at 19:49:20.
@@ -256,15 +256,9 @@ Adds `<style id="sdc-hide-overlays">` to the top document, which hides the exten
 
 ```javascript
 // if the ids change, list the candidate overlay hosts
-[...document.querySelectorAll("body > *")]
-  .filter(
-    (e) =>
-      e.shadowRoot ||
-      /claude|mcp|agent/i.test(
-        e.tagName + " " + e.id + " " + String(e.className),
-      ),
-  )
-  .map((e) => e.tagName + "#" + e.id);
+;[...document.querySelectorAll('body > *')]
+  .filter((e) => e.shadowRoot || /claude|mcp|agent/i.test(e.tagName + ' ' + e.id + ' ' + String(e.className)))
+  .map((e) => e.tagName + '#' + e.id)
 ```
 
 - Session use: at 19:50:39, after an OBS test screenshot showed both overlays burned into the recording. `zoom-checkin.js` re-added the style at every check-in.
@@ -280,13 +274,13 @@ Captures the in-meeting chat. It installs a parser (`window.__sdcMsgs`) that tur
 
 ```javascript
 // read new messages until pending is 0, saving each page before the next call
-window.__sdcPull(900);
+window.__sdcPull(900)
 // now and then, and always before the meeting ends: render every item, then read
-await window.__sdcSweep();
-window.__sdcPull(900);
+await window.__sdcSweep()
+window.__sdcPull(900)
 // a page was lost: rewind to the first index not saved (46 in the session) and read again
-window.__sdcMsgs.pulled = 46;
-window.__sdcPull(900);
+window.__sdcMsgs.pulled = 46
+window.__sdcPull(900)
 ```
 
 - Session use: the parser went in at 20:05:40, replacing a first observer that stored `innerText` snapshots of the whole list and came out noisy, with avatar initials, counters and no message boundaries. During the Q&A at 21:05 the panel was found scrolled up with new messages not rendering, so the scroll timer, the pull and a sweep were added, and the sweep recovered 10 messages. A last sweep and pull at 21:19 ran before the meeting could end. 104 lines were saved, 99 of them unique.
@@ -312,7 +306,7 @@ A probe that runs every 10 minutes on the meeting tab. It clicks visible buttons
 
 ```javascript
 // after a check-in, while result.pull.pending > 0
-window.__sdcPull(700);
+window.__sdcPull(700)
 ```
 
 - Session use: a recurring scheduled prompt ran it at 20:05 and every 10 minutes after, together with `discord-latest-messages.js` on the Discord tab. At 20:05 it acknowledged the notice that the host had started cloud recording, which the user had agreed to in advance. At 21:25 its page-text hint, with a screenshot, showed that the meeting had ended.
@@ -328,7 +322,7 @@ Returns the value of every text input in the page and in its same-origin iframes
 
 ```javascript
 // result shape: one JSON-quoted string per text input
-['"DISPLAY NAME"'];
+;['"DISPLAY NAME"']
 ```
 
 - Session use: at 19:48:45 on the pre-join screen. A half-scale screenshot had made the typed display name look wrong (a `T` read as `1`), and this read confirmed it before Join was clicked.
@@ -344,7 +338,7 @@ Leaves the meeting: clicks the `Leave` toolbar button, waits up to 3 s for the c
 
 ```javascript
 // change this line in the copy you send, and only after the user approves leaving
-const USER_APPROVED_LEAVE = true;
+const USER_APPROVED_LEAVE = true
 ```
 
 - Session use: at 18:21:42 and 18:26:06, to leave Zoom's test meeting after each rehearsal. The live meeting did not need it, because the host ended it.
@@ -360,7 +354,7 @@ Summarises the last N messages of the Discord channel open in the tab: timestamp
 
 ```javascript
 // the first line of the file; the check-in probe used 1, the link poll 4
-const N = 1;
+const N = 1
 ```
 
 - Session use: polled the event's announcements channel every 5 minutes from 18:34 until it found the meeting link at 19:34:09, then ran with `N = 1` at each meeting check-in to watch for new announcements.

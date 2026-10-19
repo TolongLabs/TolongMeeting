@@ -63,81 +63,128 @@
 // makes top-level const bindings global, so a later snippet reusing a name could replace a
 // helper that the timers still call.
 await (async () => {
-  if (!window.sdcRoot) throw new Error('Run zoom-root.js first');
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const chatList = () => sdcRoot().querySelector('.chat-container__chat-list');
+  if (!window.sdcRoot) throw new Error('Run zoom-root.js first')
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const chatList = () => sdcRoot().querySelector('.chat-container__chat-list')
   // Fix: computed style comes from the element's own window, so this also works in the iframe.
-  const scrollable = e => /(auto|scroll)/.test(e.ownerDocument.defaultView.getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight;
-  const chatScroller = () => { const l = chatList(); return l && [l, ...l.querySelectorAll('*')].find(scrollable); };
-  const pinToBottom = () => { const s = chatScroller(); if (s) s.scrollTop = s.scrollHeight; };
+  const scrollable = (e) =>
+    /(auto|scroll)/.test(e.ownerDocument.defaultView.getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight
+  const chatScroller = () => {
+    const l = chatList()
+    return l && [l, ...l.querySelectorAll('*')].find(scrollable)
+  }
+  const pinToBottom = () => {
+    const s = chatScroller()
+    if (s) s.scrollTop = s.scrollHeight
+  }
 
   if (!chatList()) {
-    const openChat = [...sdcRoot().querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'open the chat panel');
-    if (openChat) { openChat.click(); await sleep(1200); }
+    const openChat = [...sdcRoot().querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === 'open the chat panel'
+    )
+    if (openChat) {
+      openChat.click()
+      await sleep(1200)
+    }
   }
 
-  let installed = false;
+  let installed = false
   if (!window.__sdcMsgs) {
-    window.__sdcMsgs = { list: [], keys: new Set(), pulled: 0 };
+    window.__sdcMsgs = { list: [], keys: new Set(), pulled: 0 }
     const parse = () => {
-      const m = window.__sdcMsgs, l = chatList(); if (!l) return;
-      let lastSender = '', lastTime = '';
+      const m = window.__sdcMsgs,
+        l = chatList()
+      if (!l) return
+      let lastSender = '',
+        lastTime = ''
       for (const it of l.querySelectorAll('.chat-item-container')) {
-        const q = s => { const e = it.querySelector(s); return e ? e.innerText.trim() : ''; };
-        const sender = q('.chat-item__sender') || lastSender, to = q('.chat-item__receiver'), time = q('.new-chat-item__chat-info-time-stamp') || lastTime;
-        const text = q('.new-chat-message__text-box') || q('.new-chat-message__content') || q('.chat-item__chat-msg-container');
-        lastSender = sender; lastTime = time;
+        const q = (s) => {
+          const e = it.querySelector(s)
+          return e ? e.innerText.trim() : ''
+        }
+        const sender = q('.chat-item__sender') || lastSender,
+          to = q('.chat-item__receiver'),
+          time = q('.new-chat-item__chat-info-time-stamp') || lastTime
+        const text =
+          q('.new-chat-message__text-box') || q('.new-chat-message__content') || q('.chat-item__chat-msg-container')
+        lastSender = sender
+        lastTime = time
         // Fix: an id-bearing ancestor counts only if it is inside the list. One outside the list
         // would be shared by every message and collapse them all into one key.
-        const anc = it.closest('[id]');
-        const id = it.id || it.getAttribute('data-id') || (anc && anc !== l && l.contains(anc) ? anc.id : '');
-        const key = id ? 'id:' + id : sender + '|' + time + '|' + text;
-        if (text && !m.keys.has(key)) { m.keys.add(key); m.list.push({ seen: new Date().toLocaleTimeString('en-GB'), time, sender, to, text }); }
+        const anc = it.closest('[id]')
+        const id = it.id || it.getAttribute('data-id') || (anc && anc !== l && l.contains(anc) ? anc.id : '')
+        const key = id ? 'id:' + id : sender + '|' + time + '|' + text
+        if (text && !m.keys.has(key)) {
+          m.keys.add(key)
+          m.list.push({ seen: new Date().toLocaleTimeString('en-GB'), time, sender, to, text })
+        }
       }
-    };
-    window.__sdcMsgsObs = new MutationObserver(parse);
-    window.__sdcMsgsObs.observe(sdcRoot().body, { childList: true, subtree: true, characterData: true });
-    window.__sdcMsgsTimer = setInterval(parse, 3000);
-    parse();
-    installed = true;
+    }
+    window.__sdcMsgsObs = new MutationObserver(parse)
+    window.__sdcMsgsObs.observe(sdcRoot().body, { childList: true, subtree: true, characterData: true })
+    window.__sdcMsgsTimer = setInterval(parse, 3000)
+    parse()
+    installed = true
   }
 
-  if (!window.__sdcScroll) window.__sdcScroll = setInterval(pinToBottom, 1500);
-  pinToBottom();
+  if (!window.__sdcScroll) window.__sdcScroll = setInterval(pinToBottom, 1500)
+  pinToBottom()
 
   // Fix: default page size 900 instead of 1300, so a full page (plus " [CUT]") stays under the
   // tool's 1000-character limit. The session called it with 700 to 1400.
   window.__sdcPull = (max = 900) => {
-    const clean = s => s.replace(/https?:\/\/\S+/g, u => { try { const x = new URL(u); return '<' + x.host + x.pathname.replace(/\/$/, '') + '>'; } catch (e) { return '<link>'; } });
-    const m = window.__sdcMsgs; let out = '', i = m.pulled;
+    const clean = (s) =>
+      s.replace(/https?:\/\/\S+/g, (u) => {
+        try {
+          const x = new URL(u)
+          return '<' + x.host + x.pathname.replace(/\/$/, '') + '>'
+        } catch (e) {
+          return '<link>'
+        }
+      })
+    const m = window.__sdcMsgs
+    let out = '',
+      i = m.pulled
     while (i < m.list.length) {
-      const x = m.list[i];
-      const line = [i, x.seen, x.time, x.sender, x.to || '', clean(x.text).replace(/\n+/g, ' / ')].join('\t') + '\n';
-      if (out && out.length + line.length > max) break;
-      out += line.length > max ? line.slice(0, max) + ' [CUT]\n' : line;
-      i++;
+      const x = m.list[i]
+      const line = [i, x.seen, x.time, x.sender, x.to || '', clean(x.text).replace(/\n+/g, ' / ')].join('\t') + '\n'
+      if (out && out.length + line.length > max) break
+      out += line.length > max ? line.slice(0, max) + ' [CUT]\n' : line
+      i++
     }
-    m.pulled = i;
-    return { pending: m.list.length - i, out };
-  };
+    m.pulled = i
+    return { pending: m.list.length - i, out }
+  }
 
   window.__sdcSweep = async () => {
-    const m = window.__sdcMsgs, sc = chatScroller(), before = m.list.length;
-    if (!sc) return { swept: false, before, after: before };
-    clearInterval(window.__sdcScroll); window.__sdcScroll = null;
+    const m = window.__sdcMsgs,
+      sc = chatScroller(),
+      before = m.list.length
+    if (!sc) return { swept: false, before, after: before }
+    clearInterval(window.__sdcScroll)
+    window.__sdcScroll = null
     try {
-      for (let y = 0; y <= sc.scrollHeight; y += Math.max(200, sc.clientHeight / 2)) { sc.scrollTop = y; await sleep(300); }
-      sc.scrollTop = sc.scrollHeight;
+      for (let y = 0; y <= sc.scrollHeight; y += Math.max(200, sc.clientHeight / 2)) {
+        sc.scrollTop = y
+        await sleep(300)
+      }
+      sc.scrollTop = sc.scrollHeight
     } finally {
       // Fix: the keep-at-bottom timer is restarted even if the loop throws.
-      window.__sdcScroll = setInterval(pinToBottom, 1500);
+      window.__sdcScroll = setInterval(pinToBottom, 1500)
     }
-    return { swept: true, before, after: m.list.length };
-  };
+    return { swept: true, before, after: m.list.length }
+  }
 
   // Fix: the install reports counts and no longer moves the cursor. In the session the install
   // and the early check-ins returned new messages and marked them read at once, which lost lines
   // at 21:05 when the output was cut at 1000 characters.
-  const m = window.__sdcMsgs;
-  return { installed, total: m.list.length, pulled: m.pulled, pending: m.list.length - m.pulled, scrollerFound: !!chatScroller() };
+  const m = window.__sdcMsgs
+  return {
+    installed,
+    total: m.list.length,
+    pulled: m.pulled,
+    pending: m.list.length - m.pulled,
+    scrollerFound: !!chatScroller()
+  }
 })()

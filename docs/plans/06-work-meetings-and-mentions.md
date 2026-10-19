@@ -77,7 +77,7 @@ Assumed from earlier plans (use their real names if they differ, and fix this pl
 
 ```ts
 // packages/core/src/names.ts
-export function normaliseName(s: string): string; // NFKD, strip \p{M}, lower case, [^\p{L}\p{N}]+ -> ' ', trim
+export function normaliseName(s: string): string // NFKD, strip \p{M}, lower case, [^\p{L}\p{N}]+ -> ' ', trim
 
 // packages/pipeline/src/summary/work.ts
 export const WorkInventorySchema = z.object({
@@ -93,27 +93,24 @@ export const WorkInventorySchema = z.object({
         z.object({
           source: Source,
           due: z.string().nullable(),
-          text: z.string(),
-        }),
-      ),
-    }),
+          text: z.string()
+        })
+      )
+    })
   ),
   discussed: z.array(z.string()),
-  openQuestions: z.array(z.string()),
-});
-export type WorkInventory = z.infer<typeof WorkInventorySchema>;
+  openQuestions: z.array(z.string())
+})
+export type WorkInventory = z.infer<typeof WorkInventorySchema>
 export function buildWorkInventory(
   cfg: JobConfig,
-  src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] },
-): Promise<WorkInventory>;
-export function pickDoNext(
-  inv: WorkInventory,
-  memberNames: string[],
-): WorkInventory["actionItems"][number] | null;
+  src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] }
+): Promise<WorkInventory>
+export function pickDoNext(inv: WorkInventory, memberNames: string[]): WorkInventory['actionItems'][number] | null
 export function renderWorkSummary(
   inv: WorkInventory,
-  ctx: { cfg: JobConfig; meetingUrl: string | null; outDir: string },
-): string;
+  ctx: { cfg: JobConfig; meetingUrl: string | null; outDir: string }
+): string
 ```
 
 Rules:
@@ -139,13 +136,11 @@ You extract an inventory from one work meeting. Reply with JSON for the given sc
 
 ```ts
 // packages/core/src/names.test.ts
-test("names compare without case, accents or punctuation", () => {
-  expect(normaliseName("  Nur-AISYAH binti Ahmad ")).toBe(
-    "nur aisyah binti ahmad",
-  );
-  expect(normaliseName("Zoë")).toBe("zoe");
-  expect(normaliseName("O'Neil, J.")).toBe("o neil j");
-});
+test('names compare without case, accents or punctuation', () => {
+  expect(normaliseName('  Nur-AISYAH binti Ahmad ')).toBe('nur aisyah binti ahmad')
+  expect(normaliseName('Zoë')).toBe('zoe')
+  expect(normaliseName("O'Neil, J.")).toBe('o neil j')
+})
 ```
 
 ```ts
@@ -155,108 +150,90 @@ test("names compare without case, accents or punctuation", () => {
 // section(md, title) returns the numbered lines under a heading; emptyWork has four empty lists; item(owner, task, due)
 // builds an action item with source 'speech', ref null and no conflicts.
 const inv: WorkInventory = {
-  decisions: ["Ship the beta on 3 Nov"],
-  actionItems: [
-    item("Ben", "Book the demo room", null),
-    item("Aisyah", "Draft the release notes", "2026-10-28"),
-  ],
-  discussed: ["Beta scope", "Support rota"],
-  openQuestions: ["Who covers on-call in November?"],
-};
+  decisions: ['Ship the beta on 3 Nov'],
+  actionItems: [item('Ben', 'Book the demo room', null), item('Aisyah', 'Draft the release notes', '2026-10-28')],
+  discussed: ['Beta scope', 'Support rota'],
+  openQuestions: ['Who covers on-call in November?']
+}
 
-test("the work template, exactly", () => {
+test('the work template, exactly', () => {
   expect(
     renderWorkSummary(inv, {
       cfg: jobFor({}),
-      meetingUrl: "https://tm.example/meetings/o1",
-      outDir: "/o",
-    }),
+      meetingUrl: 'https://tm.example/meetings/o1',
+      outDir: '/o'
+    })
   ).toBe(
     [
-      "Weekly sync (Wed 21 Oct 2026, 14:00 to 15:00)",
-      "",
-      "Do next: Draft the release notes (due Wed 28 Oct 2026)",
-      "",
-      "Decisions",
-      "1. Ship the beta on 3 Nov",
-      "",
-      "Action items",
-      "1. Aisyah: Draft the release notes (due Wed 28 Oct 2026)",
-      "2. Ben: Book the demo room",
-      "",
-      "What was discussed",
-      "1. Beta scope",
-      "2. Support rota",
-      "",
-      "Open questions",
-      "1. Who covers on-call in November?",
-      "",
-      "Details: https://tm.example/meetings/o1",
-      "",
-    ].join("\n"),
-  );
-});
+      'Weekly sync (Wed 21 Oct 2026, 14:00 to 15:00)',
+      '',
+      'Do next: Draft the release notes (due Wed 28 Oct 2026)',
+      '',
+      'Decisions',
+      '1. Ship the beta on 3 Nov',
+      '',
+      'Action items',
+      '1. Aisyah: Draft the release notes (due Wed 28 Oct 2026)',
+      '2. Ben: Book the demo room',
+      '',
+      'What was discussed',
+      '1. Beta scope',
+      '2. Support rota',
+      '',
+      'Open questions',
+      '1. Who covers on-call in November?',
+      '',
+      'Details: https://tm.example/meetings/o1',
+      ''
+    ].join('\n')
+  )
+})
 
-test("7 action items: the 5 most urgent, the rest under More deadlines; empty sections left out", () => {
-  const seven = [
-    "2026-10-30",
-    null,
-    "2026-10-22",
-    "2026-11-05",
-    "2026-10-23T09:00",
-    "2026-10-26",
-    "2026-11-20",
-  ].map((d, i) => item(null, `Task ${i + 1}`, d));
+test('7 action items: the 5 most urgent, the rest under More deadlines; empty sections left out', () => {
+  const seven = ['2026-10-30', null, '2026-10-22', '2026-11-05', '2026-10-23T09:00', '2026-10-26', '2026-11-20'].map(
+    (d, i) => item(null, `Task ${i + 1}`, d)
+  )
   const out = renderWorkSummary(
     { ...emptyWork, actionItems: seven },
-    { cfg: jobFor({}), meetingUrl: null, outDir: "/o" },
-  );
-  expect(section(out, "Action items")).toEqual([
-    "1. Task 3 (due Thu 22 Oct 2026)",
-    "2. Task 5 (due Fri 23 Oct 2026, 09:00)",
-    "3. Task 6 (due Mon 26 Oct 2026)",
-    "4. Task 1 (due Fri 30 Oct 2026)",
-    "5. Task 4 (due Thu 5 Nov 2026)",
-  ]);
-  expect(section(out, "More deadlines")).toEqual([
-    "1. Task 7 (due Fri 20 Nov 2026)",
-    "2. Task 2",
-  ]);
-  expect(out).not.toContain("Decisions");
-  expect(out).not.toContain("Attendance");
-  expect(out.split("\n").at(-2)).toBe(
-    "Details: transcript.md, slides.md and chat.md in /o",
-  );
-});
+    { cfg: jobFor({}), meetingUrl: null, outDir: '/o' }
+  )
+  expect(section(out, 'Action items')).toEqual([
+    '1. Task 3 (due Thu 22 Oct 2026)',
+    '2. Task 5 (due Fri 23 Oct 2026, 09:00)',
+    '3. Task 6 (due Mon 26 Oct 2026)',
+    '4. Task 1 (due Fri 30 Oct 2026)',
+    '5. Task 4 (due Thu 5 Nov 2026)'
+  ])
+  expect(section(out, 'More deadlines')).toEqual(['1. Task 7 (due Fri 20 Nov 2026)', '2. Task 2'])
+  expect(out).not.toContain('Decisions')
+  expect(out).not.toContain('Attendance')
+  expect(out.split('\n').at(-2)).toBe('Details: transcript.md, slides.md and chat.md in /o')
+})
 
 test("do next is the member's own most urgent item", () => {
-  expect(pickDoNext(inv, ["AISYAH"])?.task).toBe("Draft the release notes");
-  expect(pickDoNext(inv, ["Charlie"])).toBeNull();
+  expect(pickDoNext(inv, ['AISYAH'])?.task).toBe('Draft the release notes')
+  expect(pickDoNext(inv, ['Charlie'])).toBeNull()
   const md = renderWorkSummary(inv, {
-    cfg: jobFor({ mentionNames: [], displayName: "Charlie" }),
+    cfg: jobFor({ mentionNames: [], displayName: 'Charlie' }),
     meetingUrl: null,
-    outDir: "/o",
-  });
-  expect(md.split("\n")[2]).toBe(
-    "Do next: nothing assigned to you in this meeting",
-  );
-});
+    outDir: '/o'
+  })
+  expect(md.split('\n')[2]).toBe('Do next: nothing assigned to you in this meeting')
+})
 ```
 
 ```ts
 // packages/pipeline/src/pipeline.test.ts (added; workCfg is 1A's fixture config with entry type 'work' and name "Weekly sync")
-test("a work entry gets the work inventory and summary, with no attendance line", async () => {
-  const r = await runPipeline(workCfg);
-  const md = await Bun.file(r.summaryPath).text();
-  expect(md.split("\n")[0]).toStartWith("Weekly sync (");
-  expect(md).not.toContain("Attendance:");
-  const body = ai.requests[0].body;
-  expect(body).toMatchObject({ model: "qwen3.7-plus", enable_thinking: false });
-  expect(body.messages[0].content).toStartWith(
-    "You extract an inventory from one work meeting.",
-  );
-  expect(body.messages[1].content).toContain("## Host chat");
-});
+test('a work entry gets the work inventory and summary, with no attendance line', async () => {
+  const r = await runPipeline(workCfg)
+  const md = await Bun.file(r.summaryPath).text()
+  expect(md.split('\n')[0]).toStartWith('Weekly sync (')
+  expect(md).not.toContain('Attendance:')
+  const body = ai.requests[0].body
+  expect(body).toMatchObject({ model: 'qwen3.7-plus', enable_thinking: false })
+  expect(body.messages[0].content).toStartWith('You extract an inventory from one work meeting.')
+  expect(body.messages[1].content).toContain('## Host chat')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -293,15 +270,10 @@ git commit -m "feat(pipeline): add work-meeting summary"
 - Produces (adds to contracts):
 
 ```ts
-export type CompiledName = { name: string; tokens: string[] };
-export function compileNames(names: string[]): CompiledName[]; // normalised, < 2 characters dropped, duplicates removed
-export function findMention(text: string, names: CompiledName[]): string | null; // the longest name whose tokens occur as a contiguous run of whole tokens in normaliseName(text)
-export function transcriptWindow(
-  results: AsrResult[],
-  endMs: number,
-  spanMs = 30_000,
-  maxChars = 1_500,
-): string;
+export type CompiledName = { name: string; tokens: string[] }
+export function compileNames(names: string[]): CompiledName[] // normalised, < 2 characters dropped, duplicates removed
+export function findMention(text: string, names: CompiledName[]): string | null // the longest name whose tokens occur as a contiguous run of whole tokens in normaliseName(text)
+export function transcriptWindow(results: AsrResult[], endMs: number, spanMs = 30_000, maxChars = 1_500): string
 ```
 
 `transcriptWindow` joins, in order and with single spaces, the texts of results with `endMs > endMs - spanMs` and `startMs <= endMs`; text longer than `maxChars` keeps its last `maxChars - 1` characters after a leading `…`.
@@ -310,41 +282,32 @@ export function transcriptWindow(
 
 ```ts
 // packages/worker/src/mentions/match.test.ts
-const names = compileNames(["Nur Aisyah", "Aisyah", "Zoë", "A", "  "]);
+const names = compileNames(['Nur Aisyah', 'Aisyah', 'Zoë', 'A', '  '])
 
-test("names compile once each; one-letter and blank names are dropped", () => {
-  expect(names.map((n) => n.tokens)).toEqual([
-    ["nur", "aisyah"],
-    ["aisyah"],
-    ["zoe"],
-  ]);
-});
+test('names compile once each; one-letter and blank names are dropped', () => {
+  expect(names.map((n) => n.tokens)).toEqual([['nur', 'aisyah'], ['aisyah'], ['zoe']])
+})
 
 test.each([
-  ["Aisyah, can you answer the next one?", "Aisyah"],
-  ["Thank you, Nur-Aisyah.", "Nur Aisyah"],
-  ["AISYAH?", "Aisyah"],
-  ["zoe is next", "Zoë"],
-  ["Aisyahrani will present", null],
-  ["Nurul will present", null],
-])("findMention(%p) is %p", (text, want) =>
-  expect(findMention(text, names)).toBe(want),
-); // Review Focus
+  ['Aisyah, can you answer the next one?', 'Aisyah'],
+  ['Thank you, Nur-Aisyah.', 'Nur Aisyah'],
+  ['AISYAH?', 'Aisyah'],
+  ['zoe is next', 'Zoë'],
+  ['Aisyahrani will present', null],
+  ['Nurul will present', null]
+])('findMention(%p) is %p', (text, want) => expect(findMention(text, names)).toBe(want)) // Review Focus
 
-test("the window holds the last 30 seconds, cut from the front", () => {
+test('the window holds the last 30 seconds, cut from the front', () => {
   const rs = [
-    { startMs: 0, endMs: 10_000, text: "one" },
-    { startMs: 10_000, endMs: 25_000, text: "two" },
-    { startMs: 25_000, endMs: 40_000, text: "three" },
-    { startMs: 40_000, endMs: 52_000, text: "Aisyah?" },
-  ];
-  expect(transcriptWindow(rs, 52_000)).toBe("two three Aisyah?");
-  const long = transcriptWindow(
-    [{ startMs: 0, endMs: 1_000, text: "x".repeat(2_000) }],
-    1_000,
-  );
-  expect([long.length, long[0]]).toEqual([1_500, "…"]);
-});
+    { startMs: 0, endMs: 10_000, text: 'one' },
+    { startMs: 10_000, endMs: 25_000, text: 'two' },
+    { startMs: 25_000, endMs: 40_000, text: 'three' },
+    { startMs: 40_000, endMs: 52_000, text: 'Aisyah?' }
+  ]
+  expect(transcriptWindow(rs, 52_000)).toBe('two three Aisyah?')
+  const long = transcriptWindow([{ startMs: 0, endMs: 1_000, text: 'x'.repeat(2_000) }], 1_000)
+  expect([long.length, long[0]]).toEqual([1_500, '…'])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -417,124 +380,111 @@ Ping copy, added to 01c's `pings` (actions left out when `links` is null, as in 
 const r = (startMs: number, endMs: number, text: string) => ({
   startMs,
   endMs,
-  text,
-});
+  text
+})
 
-test("a mention pings with the last 30 seconds and both buttons", async () => {
-  const d = deps({});
-  const w = startMentionWatch(d)!;
+test('a mention pings with the last 30 seconds and both buttons', async () => {
+  const d = deps({})
+  const w = startMentionWatch(d)!
   for (const x of [
-    r(0, 10_000, "one"),
-    r(10_000, 25_000, "two"),
-    r(25_000, 40_000, "three"),
-    r(40_000, 52_000, "Aisyah?"),
+    r(0, 10_000, 'one'),
+    r(10_000, 25_000, 'two'),
+    r(25_000, 40_000, 'three'),
+    r(40_000, 52_000, 'Aisyah?')
   ])
-    w.onResult(x);
-  await Bun.sleep(0);
-  expect(d.emitted).toEqual([52_000]);
+    w.onResult(x)
+  await Bun.sleep(0)
+  expect(d.emitted).toEqual([52_000])
   expect(d.pings).toEqual([
     {
-      title: "Your name was mentioned: Data Mining",
-      message:
-        "Heard at Wed 21 Oct, 14:00. The last 30 seconds:\ntwo three Aisyah?",
-      priority: "high",
+      title: 'Your name was mentioned: Data Mining',
+      message: 'Heard at Wed 21 Oct, 14:00. The last 30 seconds:\ntwo three Aisyah?',
+      priority: 'high',
       actions: [
-        { label: "Open meeting page", url: "https://tm.example/meetings/o1" },
-        { label: "Take over", url: "https://tm.example/meetings/o1/take-over" },
-      ],
-    },
-  ]);
-});
+        { label: 'Open meeting page', url: 'https://tm.example/meetings/o1' },
+        { label: 'Take over', url: 'https://tm.example/meetings/o1/take-over' }
+      ]
+    }
+  ])
+})
 
-test("a roll call pings once in 2 minutes; a later mention pings again", async () => {
+test('a roll call pings once in 2 minutes; a later mention pings again', async () => {
   // Review Focus
-  const d = deps({});
-  const w = startMentionWatch(d)!;
-  for (const at of [52_000, 58_000, 70_000, 175_000])
-    w.onResult(r(at - 2_000, at, "Aisyah, are you there?"));
-  await Bun.sleep(0);
-  expect(d.emitted).toEqual([52_000, 58_000, 70_000, 175_000]);
-  expect(d.pings).toHaveLength(2);
-});
+  const d = deps({})
+  const w = startMentionWatch(d)!
+  for (const at of [52_000, 58_000, 70_000, 175_000]) w.onResult(r(at - 2_000, at, 'Aisyah, are you there?'))
+  await Bun.sleep(0)
+  expect(d.emitted).toEqual([52_000, 58_000, 70_000, 175_000])
+  expect(d.pings).toHaveLength(2)
+})
 
-test("no names means no watch; no links means no buttons; a failed ping is contained", async () => {
-  expect(startMentionWatch(deps({ names: ["A", ""] }))).toBeNull();
+test('no names means no watch; no links means no buttons; a failed ping is contained', async () => {
+  expect(startMentionWatch(deps({ names: ['A', ''] }))).toBeNull()
   const d = deps({
     links: null,
     ping: async () => {
-      throw new Error("ntfy down");
-    },
-  });
-  expect(() =>
-    startMentionWatch(d)!.onResult(r(0, 1_000, "aisyah")),
-  ).not.toThrow();
-  const e = deps({ links: null });
-  startMentionWatch(e)!.onResult(r(0, 1_000, "aisyah"));
-  await Bun.sleep(0);
-  expect(e.pings[0].actions).toBeUndefined();
-});
+      throw new Error('ntfy down')
+    }
+  })
+  expect(() => startMentionWatch(d)!.onResult(r(0, 1_000, 'aisyah'))).not.toThrow()
+  const e = deps({ links: null })
+  startMentionWatch(e)!.onResult(r(0, 1_000, 'aisyah'))
+  await Bun.sleep(0)
+  expect(e.pings[0].actions).toBeUndefined()
+})
 ```
 
 ```ts
 // packages/worker/src/asr/live.test.ts (added; 1A's fakes)
-test("onResult receives each recording-relative result", async () => {
-  const seen: AsrResult[] = [];
+test('onResult receives each recording-relative result', async () => {
+  const seen: AsrResult[] = []
   await startLiveAsr(fakeAudio, ai, out, {
     baseMs: 4000,
     open: fakeOpen,
-    onResult: (x) => seen.push(x),
-  });
-  fakeAudio.emit(Buffer.alloc(3200));
+    onResult: (x) => seen.push(x)
+  })
+  fakeAudio.emit(Buffer.alloc(3200))
   fakeOpen.stream.result({
     startMs: 500,
     endMs: 2500,
-    text: "selamat petang semua",
-  });
-  expect(seen).toEqual([
-    { startMs: 4500, endMs: 6500, text: "selamat petang semua" },
-  ]);
-});
+    text: 'selamat petang semua'
+  })
+  expect(seen).toEqual([{ startMs: 4500, endMs: 6500, text: 'selamat petang semua' }])
+})
 ```
 
 ```ts
 // packages/worker/src/control/links.test.ts
-test("site links include the leave and take-over pages", () => {
-  process.env.TM_PUBLIC_URL = "https://tm.example";
-  expect(siteLinks(cfgFor({ occurrenceId: "o1", identityId: "i1" }))).toEqual({
-    meetingPage: "https://tm.example/meetings/o1",
-    signIn: "https://tm.example/accounts/i1/signin",
-    leave: "https://tm.example/meetings/o1/leave",
-    takeOver: "https://tm.example/meetings/o1/take-over",
-  });
-  delete process.env.TM_PUBLIC_URL;
-  expect(
-    siteLinks(cfgFor({ occurrenceId: "o1", identityId: "i1" })),
-  ).toBeNull();
-});
+test('site links include the leave and take-over pages', () => {
+  process.env.TM_PUBLIC_URL = 'https://tm.example'
+  expect(siteLinks(cfgFor({ occurrenceId: 'o1', identityId: 'i1' }))).toEqual({
+    meetingPage: 'https://tm.example/meetings/o1',
+    signIn: 'https://tm.example/accounts/i1/signin',
+    leave: 'https://tm.example/meetings/o1/leave',
+    takeOver: 'https://tm.example/meetings/o1/take-over'
+  })
+  delete process.env.TM_PUBLIC_URL
+  expect(siteLinks(cfgFor({ occurrenceId: 'o1', identityId: 'i1' }))).toBeNull()
+})
 ```
 
 ```ts
 // packages/notify/src/messages.test.ts (added)
-test("mention copy", () => {
+test('mention copy', () => {
   const p = pings.nameMentioned({
-    entry: "Data Mining",
-    at: "Wed 21 Oct, 14:32",
-    transcript: "two three Aisyah?",
-    meetingUrl: "https://tm.example/meetings/o1",
-    takeOverUrl: "https://tm.example/meetings/o1/take-over",
-  });
-  expect([
-    p.title,
-    p.priority,
-    p.message,
-    p.actions?.map((a) => a.label),
-  ]).toEqual([
-    "Your name was mentioned: Data Mining",
-    "high",
-    "Heard at Wed 21 Oct, 14:32. The last 30 seconds:\ntwo three Aisyah?",
-    ["Open meeting page", "Take over"],
-  ]);
-});
+    entry: 'Data Mining',
+    at: 'Wed 21 Oct, 14:32',
+    transcript: 'two three Aisyah?',
+    meetingUrl: 'https://tm.example/meetings/o1',
+    takeOverUrl: 'https://tm.example/meetings/o1/take-over'
+  })
+  expect([p.title, p.priority, p.message, p.actions?.map((a) => a.label)]).toEqual([
+    'Your name was mentioned: Data Mining',
+    'high',
+    'Heard at Wed 21 Oct, 14:32. The last 30 seconds:\ntwo three Aisyah?',
+    ['Open meeting page', 'Take over']
+  ])
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -594,77 +544,65 @@ Rules:
 // packages/worker/src/control/leave.test.ts
 // fakeStage() records close() calls; fakeAdapter(states) answers meetingState from the `states` queue (repeating the last)
 // and records leave() calls; `leaveSetsEnded` makes leave() switch the answer to 'ended'.
-test("leaves and confirms without closing the stage", async () => {
+test('leaves and confirms without closing the stage', async () => {
   const stage = fakeStage(),
-    a = fakeAdapter(["in_meeting"], { leaveSetsEnded: true });
-  expect(await leaveMeeting(stage, a, { confirmMs: 200, pollMs: 10 })).toBe(
-    "left",
-  );
-  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 0]);
-});
+    a = fakeAdapter(['in_meeting'], { leaveSetsEnded: true })
+  expect(await leaveMeeting(stage, a, { confirmMs: 200, pollMs: 10 })).toBe('left')
+  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 0])
+})
 
-test("a leave that does not take closes the stage before reporting", async () => {
+test('a leave that does not take closes the stage before reporting', async () => {
   // Review Focus
   const stage = fakeStage(),
-    a = fakeAdapter(["in_meeting"]);
-  const t = performance.now();
-  expect(await leaveMeeting(stage, a, { confirmMs: 200, pollMs: 10 })).toBe(
-    "closed",
-  );
-  expect(stage.closeCalls).toBe(1);
-  expect(performance.now() - t).toBeLessThan(1_000);
-});
+    a = fakeAdapter(['in_meeting'])
+  const t = performance.now()
+  expect(await leaveMeeting(stage, a, { confirmMs: 200, pollMs: 10 })).toBe('closed')
+  expect(stage.closeCalls).toBe(1)
+  expect(performance.now() - t).toBeLessThan(1_000)
+})
 
-test("a leave that throws closes the stage; no meeting yet means nothing to click", async () => {
+test('a leave that throws closes the stage; no meeting yet means nothing to click', async () => {
   const stage = fakeStage(),
-    a = fakeAdapter(["lobby"]);
+    a = fakeAdapter(['lobby'])
   a.leave = async () => {
-    throw new Error("button gone");
-  };
-  expect(await leaveMeeting(stage, a, { confirmMs: 200, pollMs: 10 })).toBe(
-    "closed",
-  );
-  const idle = fakeAdapter(["unknown"]);
-  expect(await leaveMeeting(fakeStage(), idle)).toBe("left");
-  expect(idle.leaveCalls).toBe(0);
-});
+    throw new Error('button gone')
+  }
+  expect(await leaveMeeting(stage, a, { confirmMs: 200, pollMs: 10 })).toBe('closed')
+  const idle = fakeAdapter(['unknown'])
+  expect(await leaveMeeting(fakeStage(), idle)).toBe('left')
+  expect(idle.leaveCalls).toBe(0)
+})
 ```
 
 ```ts
 // packages/worker/src/control/commands.test.ts (replaces 01c's "commands run in order and leave runs once per batch")
-test("leave runs once per batch, as take_over when one was sent", async () => {
-  const calls: string[] = [];
+test('leave runs once per batch, as take_over when one was sent', async () => {
+  const calls: string[] = []
   const h = {
     leave: async (c: string) => void calls.push(`leave:${c}`),
-    stop: async () => void calls.push("stop"),
-    pause: async () => void calls.push("pause"),
-    resume: async () => void calls.push("resume"),
-  };
-  await dispatchCommands(
-    ["pause_for_signin", "leave_now", "take_over", "resume_after_signin"],
-    h,
-  );
-  expect(calls).toEqual(["pause", "leave:take_over", "resume"]);
-  calls.length = 0;
-  await dispatchCommands(["leave_now"], h);
-  expect(calls).toEqual(["leave:leave_now"]);
-});
+    stop: async () => void calls.push('stop'),
+    pause: async () => void calls.push('pause'),
+    resume: async () => void calls.push('resume')
+  }
+  await dispatchCommands(['pause_for_signin', 'leave_now', 'take_over', 'resume_after_signin'], h)
+  expect(calls).toEqual(['pause', 'leave:take_over', 'resume'])
+  calls.length = 0
+  await dispatchCommands(['leave_now'], h)
+  expect(calls).toEqual(['leave:leave_now'])
+})
 ```
 
 ```ts
 // packages/core/src/control.test.ts (added; hb() is a valid Heartbeat)
-test("a heartbeat may carry the joined link", () => {
+test('a heartbeat may carry the joined link', () => {
   expect(
     HeartbeatSchema.safeParse({
       ...hb(),
-      linkUsed: "https://example.zoom.us/j/00000000000?pwd=PASSCODE",
-    }).success,
-  ).toBe(true);
-  expect(
-    HeartbeatSchema.safeParse({ ...hb(), linkUsed: "javascript:alert(1)" })
-      .success,
-  ).toBe(false);
-});
+      linkUsed: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
+    }).success
+  ).toBe(true)
+  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'javascript:alert(1)' }).success).toBe(false)
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -701,38 +639,32 @@ git commit -m "feat(worker): leave first on take over"
 
 ```ts
 // packages/web/lib/meeting.ts
-export function takeOver(
-  scope: MemberScope,
-  id: string,
-): Promise<{ link: string | null } | null>; // null: not this member's occurrence
-export function controlState(
-  scope: MemberScope,
-  id: string,
-): Promise<{ state: OccurrenceState } | null>;
+export function takeOver(scope: MemberScope, id: string): Promise<{ link: string | null } | null> // null: not this member's occurrence
+export function controlState(scope: MemberScope, id: string): Promise<{ state: OccurrenceState } | null>
 
 // packages/web/lib/meeting-control.ts
 export const CONTROL_COPY: Record<
-  | "takeOverIntro"
-  | "takeOverButton"
-  | "waiting"
-  | "takeOverNoLink"
-  | "takeOverTimeout"
-  | "takeOverAnyway"
-  | "leaveIntro"
-  | "leaveButton"
-  | "leaveDone"
-  | "leaveTimeout"
-  | "notRunning",
+  | 'takeOverIntro'
+  | 'takeOverButton'
+  | 'waiting'
+  | 'takeOverNoLink'
+  | 'takeOverTimeout'
+  | 'takeOverAnyway'
+  | 'leaveIntro'
+  | 'leaveButton'
+  | 'leaveDone'
+  | 'leaveTimeout'
+  | 'notRunning',
   string
->;
+>
 export function waitUntilLeft(
   getState: () => Promise<OccurrenceState>,
   opts?: {
-    intervalMs?: number;
-    timeoutMs?: number;
-    sleep?: (ms: number) => Promise<void>;
-  },
-): Promise<"left" | "timeout">; // defaults 1_000 and 60_000
+    intervalMs?: number
+    timeoutMs?: number
+    sleep?: (ms: number) => Promise<void>
+  }
+): Promise<'left' | 'timeout'> // defaults 1_000 and 60_000
 ```
 
 Rules:
@@ -762,100 +694,78 @@ notRunning       The bot is not in this meeting.
 
 ```ts
 // packages/web/lib/meeting.test.ts (added)
-const LINK = "https://example.zoom.us/j/00000000000?pwd=PASSCODE";
+const LINK = 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
 
-test("take over queues once and returns the link the bot reported", async () => {
+test('take over queues once and returns the link the bot reported', async () => {
   // Review Focus
-  const { scope, occurrenceId } = await meetingFixture();
-  await scope.update(
-    occurrences,
-    { state: "in_meeting", linkUsed: LINK },
-    eq(occurrences.id, occurrenceId),
-  );
-  expect(await takeOver(scope, occurrenceId)).toEqual({ link: LINK });
-  expect(await takeOver(scope, occurrenceId)).toEqual({ link: LINK });
-  const [o] = await scope.select(occurrences, eq(occurrences.id, occurrenceId));
-  expect(o.pendingCommands).toEqual(["take_over"]);
-});
+  const { scope, occurrenceId } = await meetingFixture()
+  await scope.update(occurrences, { state: 'in_meeting', linkUsed: LINK }, eq(occurrences.id, occurrenceId))
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: LINK })
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: LINK })
+  const [o] = await scope.select(occurrences, eq(occurrences.id, occurrenceId))
+  expect(o.pendingCommands).toEqual(['take_over'])
+})
 
 test("a finished meeting refuses take over; another member's is not found", async () => {
   // Review Focus
-  const { db, a, b } = await twoMembers();
-  const sa = createScope(db, a.memberId);
-  await sa.update(
-    occurrences,
-    { state: "completed" },
-    eq(occurrences.id, a.ids.occurrences),
-  );
-  await expect(takeOver(sa, a.ids.occurrences)).rejects.toThrow(
-    "The bot is not in this meeting.",
-  );
-  expect(
-    await takeOver(createScope(db, b.memberId), a.ids.occurrences),
-  ).toBeNull();
-  expect(
-    await controlState(createScope(db, b.memberId), a.ids.occurrences),
-  ).toBeNull();
-});
+  const { db, a, b } = await twoMembers()
+  const sa = createScope(db, a.memberId)
+  await sa.update(occurrences, { state: 'completed' }, eq(occurrences.id, a.ids.occurrences))
+  await expect(takeOver(sa, a.ids.occurrences)).rejects.toThrow('The bot is not in this meeting.')
+  expect(await takeOver(createScope(db, b.memberId), a.ids.occurrences)).toBeNull()
+  expect(await controlState(createScope(db, b.memberId), a.ids.occurrences)).toBeNull()
+})
 ```
 
 ```ts
 // packages/web/lib/control.test.ts (added). 01c's controlFixture gains a `linkUsed` option; f.heartbeat(state) builds a
 // valid body for the fixture's occurrence, and f.occurrence() and f.events() read its rows.
-test("a heartbeat replaces link_used with the link the worker joined", async () => {
+test('a heartbeat replaces link_used with the link the worker joined', async () => {
   // Review Focus
   const f = await controlFixture({
-    state: "joining",
-    token: "1.abc",
-    linkUsed: "https://example.zoom.us/j/00000000000?pwd=OLD",
-  });
-  const r = await handleHeartbeat(f.deps, "Bearer 1.abc", {
-    ...f.heartbeat("joining"),
-    linkUsed: "https://example.zoom.us/j/00000000001?pwd=NEW",
-  });
-  expect(r.status).toBe(200);
-  expect((await f.occurrence()).linkUsed).toBe(
-    "https://example.zoom.us/j/00000000001?pwd=NEW",
-  );
-  expect(JSON.stringify(await f.events())).not.toContain("NEW");
-});
+    state: 'joining',
+    token: '1.abc',
+    linkUsed: 'https://example.zoom.us/j/00000000000?pwd=OLD'
+  })
+  const r = await handleHeartbeat(f.deps, 'Bearer 1.abc', {
+    ...f.heartbeat('joining'),
+    linkUsed: 'https://example.zoom.us/j/00000000001?pwd=NEW'
+  })
+  expect(r.status).toBe(200)
+  expect((await f.occurrence()).linkUsed).toBe('https://example.zoom.us/j/00000000001?pwd=NEW')
+  expect(JSON.stringify(await f.events())).not.toContain('NEW')
+})
 ```
 
 ```ts
 // packages/web/lib/meeting-control.test.ts
-test("waits until the bot is out of the active states", async () => {
-  const states: OccurrenceState[] = [
-    "in_meeting",
-    "in_meeting",
-    "left_by_member",
-  ];
-  let calls = 0;
+test('waits until the bot is out of the active states', async () => {
+  const states: OccurrenceState[] = ['in_meeting', 'in_meeting', 'left_by_member']
+  let calls = 0
   expect(
     await waitUntilLeft(async () => states[Math.min(calls++, 2)], {
-      sleep: async () => {},
-    }),
-  ).toBe("left");
-  expect(calls).toBe(3);
-});
+      sleep: async () => {}
+    })
+  ).toBe('left')
+  expect(calls).toBe(3)
+})
 
-test("gives up after the timeout", async () => {
-  let t = 0;
+test('gives up after the timeout', async () => {
+  let t = 0
   expect(
-    await waitUntilLeft(async () => "in_meeting", {
+    await waitUntilLeft(async () => 'in_meeting', {
       intervalMs: 1_000,
       timeoutMs: 60_000,
-      sleep: async (ms) => void (t += ms),
-    }),
-  ).toBe("timeout");
-  expect(t).toBe(60_000);
-});
+      sleep: async (ms) => void (t += ms)
+    })
+  ).toBe('timeout')
+  expect(t).toBe(60_000)
+})
 
-test("the take-over copy warns before it acts", () => {
-  expect(CONTROL_COPY.takeOverIntro).toStartWith(
-    "The bot will leave <entry> first",
-  );
-  expect(CONTROL_COPY.takeOverButton).toBe("Take over now");
-});
+test('the take-over copy warns before it acts', () => {
+  expect(CONTROL_COPY.takeOverIntro).toStartWith('The bot will leave <entry> first')
+  expect(CONTROL_COPY.takeOverButton).toBe('Take over now')
+})
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**

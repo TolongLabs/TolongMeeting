@@ -21,5 +21,18 @@
  * First used (MYT, UTC+8, 19 Oct 2026): 19:48:45.
  */
 
-const docs = [document, ...[...document.querySelectorAll('iframe')].map(f => { try { return f.contentDocument; } catch (e) { return null; } }).filter(Boolean)];
-docs.flatMap(d => [...d.querySelectorAll('input')].filter(i => i.type === 'text' || !i.type).map(i => JSON.stringify(i.value)))
+const docs = [
+  document,
+  ...[...document.querySelectorAll('iframe')]
+    .map((f) => {
+      try {
+        return f.contentDocument
+      } catch (e) {
+        return null
+      }
+    })
+    .filter(Boolean)
+]
+docs.flatMap((d) =>
+  [...d.querySelectorAll('input')].filter((i) => i.type === 'text' || !i.type).map((i) => JSON.stringify(i.value))
+)

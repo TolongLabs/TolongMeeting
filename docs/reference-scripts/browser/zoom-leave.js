@@ -25,18 +25,18 @@
  */
 
 // Added (not in the session): an approval switch, so this file cannot leave a meeting by accident.
-const USER_APPROVED_LEAVE = false;
-if (!USER_APPROVED_LEAVE) throw new Error('zoom-leave.js: the user has not approved leaving this meeting');
-if (!window.sdcRoot) throw new Error('Run zoom-root.js first');
-const d = sdcRoot();
-const leaveBtn = [...d.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'Leave');
-let confirmBtn = null;
+const USER_APPROVED_LEAVE = false
+if (!USER_APPROVED_LEAVE) throw new Error('zoom-leave.js: the user has not approved leaving this meeting')
+if (!window.sdcRoot) throw new Error('Run zoom-root.js first')
+const d = sdcRoot()
+const leaveBtn = [...d.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Leave')
+let confirmBtn = null
 if (leaveBtn) {
-  leaveBtn.click();
+  leaveBtn.click()
   for (let i = 0; i < 10 && !confirmBtn; i++) {
-    await new Promise(r => setTimeout(r, 300));
-    confirmBtn = [...d.querySelectorAll('button')].find(b => /leave meeting/i.test(b.textContent));
+    await new Promise((r) => setTimeout(r, 300))
+    confirmBtn = [...d.querySelectorAll('button')].find((b) => /leave meeting/i.test(b.textContent))
   }
-  if (confirmBtn) confirmBtn.click();
+  if (confirmBtn) confirmBtn.click()
 }
-({ leaveClicked: !!leaveBtn, confirmClicked: !!confirmBtn })
+;({ leaveClicked: !!leaveBtn, confirmClicked: !!confirmBtn })

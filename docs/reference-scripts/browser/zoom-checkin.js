@@ -43,19 +43,24 @@
 
 // Fix: queries go through sdcRoot() instead of document, so the probe also works when the client
 // is in iframe#webclient. The live meeting used the top document, where the two are the same.
-if (!window.sdcRoot) throw new Error('Run zoom-root.js first');
-const d = sdcRoot();
-const btns = [...d.querySelectorAll('button')];
-const label = b => b.getAttribute('aria-label') || '';
-const notices = btns.filter(b => /^(OK|Got it)$/i.test(b.textContent.trim()) && b.offsetParent);
-notices.forEach(b => b.click());
-if (!document.getElementById('sdc-hide-overlays')) { const s = document.createElement('style'); s.id = 'sdc-hide-overlays'; s.textContent = '#claude-agent-glow-border, #claude-static-indicator-container { display: none !important; }'; document.head.appendChild(s); }
-({
+if (!window.sdcRoot) throw new Error('Run zoom-root.js first')
+const d = sdcRoot()
+const btns = [...d.querySelectorAll('button')]
+const label = (b) => b.getAttribute('aria-label') || ''
+const notices = btns.filter((b) => /^(OK|Got it)$/i.test(b.textContent.trim()) && b.offsetParent)
+notices.forEach((b) => b.click())
+if (!document.getElementById('sdc-hide-overlays')) {
+  const s = document.createElement('style')
+  s.id = 'sdc-hide-overlays'
+  s.textContent = '#claude-agent-glow-border, #claude-static-indicator-container { display: none !important; }'
+  document.head.appendChild(s)
+}
+;({
   title: document.title,
-  participants: (btns.find(b => /participants list/i.test(label(b))) || {}).textContent,
-  audio: btns.filter(b => /^(audio|mute|unmute)/i.test(label(b))).map(label),
-  video: btns.filter(b => /^(video|start video|stop video)/i.test(label(b))).map(label),
-  notices: notices.map(b => b.textContent.trim()),
+  participants: (btns.find((b) => /participants list/i.test(label(b))) || {}).textContent,
+  audio: btns.filter((b) => /^(audio|mute|unmute)/i.test(label(b))).map(label),
+  video: btns.filter((b) => /^(video|start video|stop video)/i.test(label(b))).map(label),
+  notices: notices.map((b) => b.textContent.trim()),
   scroll: !!window.__sdcScroll,
   pull: window.__sdcPull ? window.__sdcPull(700) : 'no pull fn',
   bodyHint: d.body.innerText.slice(0, 120)
