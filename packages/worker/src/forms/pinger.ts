@@ -53,10 +53,10 @@ function locate(url: string): Location {
   return { host: u.host, path: u.pathname }
 }
 
-// Only some states have a 'fail' edge. Terminal states such as needs_member keep their state.
+// Only non-terminal states have an 'error' edge. Terminal states such as needs_member keep their state.
 function canFail(state: FormState): boolean {
   try {
-    nextFormState(state, 'fail')
+    nextFormState(state, 'error')
     return true
   } catch (err) {
     if (err instanceof IllegalTransition) return false
@@ -140,7 +140,7 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
         return
       }
       location = locate(c.url)
-      state = nextFormState(state, 'resolve')
+      state = nextFormState(state, 'resolve_started')
       await emit('form', { formId: null, state, source: c.source, trustReason: null, ...location })
 
       let form: ResolvedForm | null
@@ -191,12 +191,12 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       } else {
         await send(formNotSubmittedPing(cfg.entry.name, plainForm, clockOf(c.seenAt)))
         pinged = true
-        state = nextFormState(state, 'untrusted')
+        state = nextFormState(state, 'trust_failed')
       }
       rec = { ...rec, state, trustReason: decision.reason, pingedAt: now().toISOString() }
       await commit(rec, location)
     } catch (err) {
-      const ended: FormState = canFail(state) ? nextFormState(state, 'fail') : state
+      const ended: FormState = canFail(state) ? nextFormState(state, 'error') : state
       const failed = ended === 'failed'
       // A claimed form whose ping never went out is released whatever state it stopped in. Such a claim always
       // sits in checking_trust, which has a 'fail' edge, so `ended` is 'failed' for it too.

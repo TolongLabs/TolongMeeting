@@ -301,7 +301,7 @@ submitting       already_answered_seen   already_answered
 
 `untrusted` is terminal for the handler; only the dispatcher (Task 13) leaves it, through `trusted_candidate_seen`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const EDGES: [FormState, FormTrigger, FormState][] = [
@@ -378,16 +378,16 @@ test('applyFormTrigger appends to history without mutating', () => {
 Run: `bun test packages/core/src/form-machine.test.ts`
 Expected: FAIL on the added edges (`IllegalTransition`) and "applyFormTrigger is not a function".
 
-- [ ] **Step 3: Implement the table in `packages/core/src/form-machine.ts`**
+- [x] **Step 3: Implement the table in `packages/core/src/form-machine.ts`**
 
 A `Record<FormState, Partial<Record<FormTrigger, FormState>>>` plus the `error` rule for non-terminal states. Rename any 1A call site whose trigger name differs (the typecheck lists them). If 1A's manual-submission path drives a transition that is not in this table, keep that one entry with a `// removed in Task 14` comment; Task 14 deletes it with that path.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/core && bun run typecheck`
 Expected: PASS, and the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/form-machine.ts packages/core/src/form-machine.test.ts
