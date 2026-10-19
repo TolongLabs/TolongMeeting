@@ -1193,6 +1193,8 @@ git commit -m "feat(web): add AI keys page"
 - Create: `packages/web/lib/identities.ts`, `packages/web/lib/details.ts`, `packages/web/app/accounts/page.tsx`, `packages/web/app/accounts/actions.ts`, `packages/web/app/details/page.tsx`, `packages/web/app/details/actions.ts`
 - Test: `packages/web/lib/identities.test.ts`, `packages/web/lib/details.test.ts`
 
+**Deferred (Figma gate):** the two pages (`app/accounts/page.tsx`, `app/details/page.tsx`) and their markup wait for an approved design in Figma (`DESIGN.md` first). Step 3 stays open until they land. The actions files are plain functions until `requireMember()` (Task 5) exists. Tests live in `packages/web/test/` (COMMON.md), not beside the modules.
+
 **Interfaces:**
 
 - Consumes: `MemberScope` (Task 4); `ACCOUNT_KINDS`, `AccountKind` (Task 1); `SavedDetail`, `RunLocation` (architecture).
@@ -1201,7 +1203,7 @@ git commit -m "feat(web): add AI keys page"
 
 The Accounts page lists the member's identities, each with its settings form (run location select showing all three locations with the two non-server ones disabled and labelled "available later", Zoom guest display name defaulting to the member's display name), its account status, and a "Sign in" button that opens `/accounts/<identityId>/signin` (Task 18). The My details page shows the four built-in values first, then custom pairs, each with editable label variants, then the names the member answers to.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/identities.test.ts
@@ -1302,7 +1304,7 @@ test('duplicate labels and a malformed university email are refused', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/identities.test.ts packages/web/lib/details.test.ts`
 
@@ -1310,13 +1312,13 @@ Expected: FAIL with `Cannot find module './identities'`.
 
 - [ ] **Step 3: Implement the two modules and the two pages**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/identities.test.ts packages/web/lib/details.test.ts && bun run typecheck`
 
 Expected: PASS, `6 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/identities* packages/web/lib/details* packages/web/app/accounts packages/web/app/details
