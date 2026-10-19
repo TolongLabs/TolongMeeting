@@ -1,9 +1,11 @@
 // Test helpers: a real Postgres database per call and a seeded member. Import from tests only, never from app code.
 import { randomBytes } from 'node:crypto'
+import { symmetricEncrypt } from 'better-auth/crypto'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { MEMBER_OWNED, schema, type Db } from './index'
+import { authSecret } from '../lib/auth-secret'
 import { runMigrations } from './migrate'
 import { sealColumn } from './secrets'
 import type { Queue, QueueName } from './queues'
@@ -232,9 +234,14 @@ export async function withEntry(entry: EntryShape) {
   return { db, memberId, identityId, entryId: row!.id, q: new FakeQueue() }
 }
 
+/** The master key the auth test helpers seal GitHub tokens under; pass it to `authScope` and `createAuth`. */
+export const TEST_MASTER = Buffer.alloc(32, 7)
+
 export interface AuthUserOptions {
-  /** Stored as the user's GitHub access token; leave out for a user with no GitHub account row. */
+  /** Stored, sealed as Better Auth seals it, as the user's GitHub access token; leave out for a user with no GitHub account row. */
   githubToken?: string
+  /** The master key to seal `githubToken` under (default `TEST_MASTER`). */
+  master?: Buffer
   /** Adds one `auth_session` row. */
   session?: boolean
 }
@@ -250,7 +257,7 @@ export async function seedAuthUser(db: Db, opts: AuthUserOptions = {}): Promise<
       accountId: String(Math.floor(Math.random() * 1e9)),
       providerId: 'github',
       userId: authUserId,
-      accessToken: opts.githubToken
+      accessToken: await symmetricEncrypt({ key: authSecret(opts.master ?? TEST_MASTER), data: opts.githubToken })
     })
   }
   if (opts.session) {

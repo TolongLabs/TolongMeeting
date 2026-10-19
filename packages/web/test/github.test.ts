@@ -3,11 +3,11 @@ import { githubApi, GitHubTokenError } from '../lib/github'
 
 type Call = { url: string; headers: Record<string, string> }
 
-function fake(status: number, body: unknown = {}) {
+function fake(status: number, body: unknown = {}, headers: Record<string, string> = {}) {
   const calls: Call[] = []
   const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), headers: init?.headers as Record<string, string> })
-    return new Response(JSON.stringify(body), { status })
+    return new Response(JSON.stringify(body), { status, headers })
   }) as typeof fetch
   return { api: githubApi(fetchFn), calls }
 }
@@ -37,6 +37,14 @@ test('orgMembership() reads the state and keeps the token out of the URL', async
 test('403 and 404 mean no membership', async () => {
   expect(await fake(404).api.orgMembership('t', 'o')).toBe('none')
   expect(await fake(403).api.orgMembership('t', 'o')).toBe('none')
+})
+
+test('a 403 that is the rate limit is an outage, not "none"', async () => {
+  await expect(fake(403, {}, { 'x-ratelimit-remaining': '0' }).api.orgMembership('t', 'o')).rejects.toThrow(
+    'rate limited'
+  )
+  await expect(fake(403, {}, { 'retry-after': '60' }).api.orgMembership('t', 'o')).rejects.toThrow('rate limited')
+  expect(await fake(403, {}, { 'x-ratelimit-remaining': '4999' }).api.orgMembership('t', 'o')).toBe('none')
 })
 
 test('401 throws GitHubTokenError without the token in the message', async () => {

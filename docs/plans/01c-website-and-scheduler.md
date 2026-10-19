@@ -624,7 +624,7 @@ git commit -m "feat(web): add member scope"
 **Files:**
 
 - Create: `packages/web/lib/auth.ts`, `packages/web/lib/github.ts`, `packages/web/lib/authorise.ts`, `packages/web/lib/session.ts`, `packages/web/app/api/auth/[...all]/route.ts`, `packages/web/app/sign-in/page.tsx`, `packages/web/db/auth-schema.ts` (generated), `packages/web/scripts/add-member.ts`, `packages/scheduler/package.json`, `packages/scheduler/src/org-check.ts`
-- Modify: `packages/web/db/schema.ts` (foreign key from `members.auth_user_id` to `auth_user.id`, on delete set null), `packages/web/db/testing.ts` (`seedAuthUser`, `seedLinkedMember`), `packages/web/lib/scope.ts` (`authScope`), `packages/web/db/schema.test.ts` (table list)
+- Modify: `packages/web/db/schema.ts` (foreign key from `members.auth_user_id` to `auth_user.id`, on delete set null), `packages/web/db/testing.ts` (`seedAuthUser`, `seedLinkedMember`, `TEST_MASTER`; they seal the test token as Better Auth does), `packages/web/lib/scope.ts` (`authScope`), `packages/web/db/schema.test.ts` (table list)
 - Test: `packages/web/lib/authorise.test.ts`, `packages/scheduler/src/org-check.test.ts`
 
 **Interfaces:**
@@ -632,10 +632,10 @@ git commit -m "feat(web): add member scope"
 - Consumes: `deriveKey`, `loadMasterKey` (Task 2); `scopeForAuthUser` (Task 4).
 - Produces (adds to contracts): Better Auth tables `auth_user`, `auth_session`, `auth_account`, `auth_verification`, generated with `bunx @better-auth/cli generate --config packages/web/lib/auth.ts --output packages/web/db/auth-schema.ts`.
 - Produces: `interface GitHubApi { user(token: string): Promise<{ id: number; login: string }>; orgMembership(token: string, org: string): Promise<'active' | 'pending' | 'none'> }`; `githubApi(fetchFn = fetch): GitHubApi` (`GET https://api.github.com/user` and `GET https://api.github.com/user/memberships/orgs/{org}` with `Authorization: Bearer`, `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28`; 403 or 404 means `'none'`; 401 throws `GitHubTokenError`).
-- Produces: `authScope(db: Db = getDb()): AuthScope` with `githubToken(authUserId: string): Promise<string | null>`, `memberForGithub(githubId: number, login: string): Promise<{ id: string } | null>` (match on `github_id`, else on lower-cased `github_login` where `github_id` is null), `linkMember(memberId: string, githubId: number, authUserId: string): Promise<void>`, `linkedMembers(): Promise<{ memberId: string; authUserId: string }[]>`, `endSessions(authUserId: string): Promise<void>`.
-- Produces: `authoriseSession(deps: { github: GitHubApi; auth: AuthScope; org: string }, authUserId: string): Promise<void>`, which throws `APIError('FORBIDDEN', { message: 'Not an active TolongLabs member. Ask an admin to add you.' })`; `checkMemberships(deps: { github: GitHubApi; auth: AuthScope; org: string }): Promise<{ ended: string[] }>` (member ids whose sessions ended); `requireMember(): Promise<MemberScope>` and `requireAdmin(): Promise<MemberScope>` (redirect to `/sign-in` without a session or member, and to `/` for a non-admin).
+- Produces: `authScope(master: Buffer, db: Db = getDb()): AuthScope` with `githubToken(authUserId: string): Promise<string | null>` (the token is stored encrypted by Better Auth, and this opens it with `symmetricDecrypt` from `better-auth/crypto` under `authSecret(master)`), `memberForGithub(githubId: number, login: string): Promise<{ id: string } | null>` (match on `github_id`, else on lower-cased `github_login` where `github_id` is null), `linkMember(memberId: string, githubId: number, authUserId: string): Promise<void>`, `linkedMembers(): Promise<{ memberId: string; authUserId: string }[]>`, `endSessions(authUserId: string): Promise<void>`, `discardUnlinkedUser(authUserId: string): Promise<void>` (deletes the auth user and, by cascade, its account and token, unless a member is linked to it).
+- Produces: `authoriseSession(deps: { github: GitHubApi; auth: AuthScope; org: string }, authUserId: string): Promise<void>`, which throws `APIError('FORBIDDEN', { message: 'Not an active TolongLabs member. Ask an admin to add you.', code: 'NOT_A_MEMBER' })` (the code makes the OAuth callback redirect to `/sign-in?error=NOT_A_MEMBER`; a refusal also ends that auth user's sessions and deletes the auth user when no member is linked, so a non-member's token is never kept); `checkMemberships(deps: { github: GitHubApi; auth: AuthScope; org: string; log?: (message: string) => void }): Promise<{ ended: string[] }>` (member ids whose sessions ended; a per-member failure is logged by member id without a token and raised after the rest are checked; a 403 with `x-ratelimit-remaining: 0` counts as an outage, not a removal); `requireMember(): Promise<MemberScope>` and `requireAdmin(): Promise<MemberScope>` (redirect to `/sign-in` without a session or member, and to `/` for a non-admin).
 
-`auth.ts` configures Better Auth with `baseURL: TM_PUBLIC_URL`, `secret: deriveKey(loadMasterKey(), 'better-auth').toString('base64')`, the Drizzle adapter (`provider: 'pg'`, model names `auth_user`, `auth_session`, `auth_account`, `auth_verification`), `socialProviders.github` with `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `scope: ['read:org']`, and `databaseHooks.session.create.before` calling `authoriseSession(..., session.userId)`. The sign-in page has one "Sign in with GitHub" button and shows the refusal text when sign-in fails. `add-member.ts` bootstraps the first admin: `bun run packages/web/scripts/add-member.ts --login <github-login> --name "<display name>" [--tz <IANA zone>] [--admin]`.
+`auth.ts` configures Better Auth with `baseURL: TM_PUBLIC_URL`, `secret: deriveKey(loadMasterKey(), 'better-auth').toString('base64')`, the Drizzle adapter (`provider: 'pg'`, model names `auth_user`, `auth_session`, `auth_account`, `auth_verification`), `socialProviders.github` with `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `scope: ['read:org']`, `account: { encryptOAuthTokens: true, accountLinking: { enabled: false } }`, `advanced.useSecureCookies` true exactly when `TM_PUBLIC_URL` is https, and `databaseHooks.session.create.before` calling `authoriseSession(..., session.userId)`. `better-auth` is pinned to an exact version in `packages/web/package.json`. The sign-in page has one "Sign in with GitHub" button and shows the refusal text when sign-in fails. `add-member.ts` bootstraps the first admin: `bun run packages/web/scripts/add-member.ts --login <github-login> --name "<display name>" [--tz <IANA zone>] [--admin]`.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -647,7 +647,7 @@ const gh = (m: 'active' | 'pending' | 'none', user = { id: 42, login: 'Octo-Memb
 })
 const deps = (db: Db, m: 'active' | 'pending' | 'none', user?: { id: number; login: string }) => ({
   github: gh(m, user),
-  auth: authScope(db),
+  auth: authScope(TEST_MASTER, db),
   org: 'tolonglabs'
 })
 
@@ -704,7 +704,7 @@ test('the daily check ends the sessions of members who left or revoked the app',
   }
   const { ended } = await checkMemberships({
     github,
-    auth: authScope(db),
+    auth: authScope(TEST_MASTER, db),
     org: 'tolonglabs'
   })
   expect(ended.sort()).toEqual([left.memberId, revoked.memberId].sort())

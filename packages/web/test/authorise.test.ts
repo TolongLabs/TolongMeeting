@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { APIError } from 'better-auth/api'
-import { dropAllTestDbs, createTestDb, seedAuthUser, seedMember } from '../db/testing'
-import { members, type Db } from '../db'
-import { authoriseSession, NOT_A_MEMBER } from '../lib/authorise'
+import { dropAllTestDbs, createTestDb, seedAuthUser, seedMember, seedLinkedMember, TEST_MASTER } from '../db/testing'
+import { auth_account, auth_session, auth_user, members, type Db } from '../db'
+import { authoriseSession, NOT_A_MEMBER, NOT_A_MEMBER_CODE } from '../lib/authorise'
 import { GitHubTokenError, type GitHubApi } from '../lib/github'
 import { authScope } from '../lib/scope'
 
@@ -15,7 +15,7 @@ const gh = (m: 'active' | 'pending' | 'none', user = { id: 42, login: 'Octo-Memb
 })
 const deps = (db: Db, m: 'active' | 'pending' | 'none', user?: { id: number; login: string }) => ({
   github: gh(m, user),
-  auth: authScope(db),
+  auth: authScope(TEST_MASTER, db),
   org: 'tolonglabs'
 })
 
@@ -43,6 +43,8 @@ test('an organisation member nobody added is refused and gets no link', async ()
   expect(refusal).toBeInstanceOf(APIError)
   expect((refusal as APIError).status).toBe('FORBIDDEN')
   expect((refusal as APIError).body?.message).toBe(NOT_A_MEMBER)
+  // The code is what makes Better Auth redirect to `/sign-in?error=NOT_A_MEMBER` instead of showing a bare 403.
+  expect((refusal as APIError).body?.code).toBe(NOT_A_MEMBER_CODE)
   const [m] = await db.select().from(members).where(eq(members.id, memberId))
   expect(m).toMatchObject({ githubId: null, authUserId: null })
 })
@@ -65,7 +67,7 @@ test('a revoked token and a missing token are refused, not crashed on', async ()
     },
     orgMembership: async () => 'active'
   }
-  const auth = authScope(db)
+  const auth = authScope(TEST_MASTER, db)
   await expect(authoriseSession({ github, auth, org: 'tolonglabs' }, revoked)).rejects.toThrow(NOT_A_MEMBER)
   await expect(authoriseSession(deps(db, 'active'), none)).rejects.toThrow(NOT_A_MEMBER)
 })
@@ -80,9 +82,9 @@ test('a GitHub outage is not reported as a refusal', async () => {
     },
     orgMembership: async () => 'active'
   }
-  await expect(authoriseSession({ github, auth: authScope(db), org: 'tolonglabs' }, authUserId)).rejects.toThrow(
-    'status 500'
-  )
+  await expect(
+    authoriseSession({ github, auth: authScope(TEST_MASTER, db), org: 'tolonglabs' }, authUserId)
+  ).rejects.toThrow('status 500')
 })
 
 test('a renamed GitHub login still matches by id', async () => {
@@ -99,4 +101,48 @@ test('a login that now belongs to another GitHub id does not match a member alre
   await db.update(members).set({ githubId: 7 }).where(eq(members.id, memberId))
   const authUserId = await seedAuthUser(db, { githubToken: 'gho_test' })
   await expect(authoriseSession(deps(db, 'active'), authUserId)).rejects.toThrow(NOT_A_MEMBER)
+})
+
+test('a refusal deletes the new auth user and its token when no member is linked', async () => {
+  const db = await createTestDb()
+  const authUserId = await seedAuthUser(db, { githubToken: 'gho_stranger' })
+  await expect(authoriseSession(deps(db, 'active'), authUserId)).rejects.toThrow(NOT_A_MEMBER)
+  expect(await db.$count(auth_user, eq(auth_user.id, authUserId))).toBe(0)
+  expect(await db.$count(auth_account, eq(auth_account.userId, authUserId))).toBe(0)
+})
+
+test('a refusal for a linked member who left the organisation ends their sessions and keeps the member', async () => {
+  const db = await createTestDb()
+  const { memberId, authUserId } = await seedLinkedMember(db, 'gho_left')
+  await expect(authoriseSession(deps(db, 'none'), authUserId)).rejects.toThrow(NOT_A_MEMBER)
+  expect(await db.$count(auth_session, eq(auth_session.userId, authUserId))).toBe(0)
+  expect(await db.$count(auth_user, eq(auth_user.id, authUserId))).toBe(1)
+  const [m] = await db.select().from(members).where(eq(members.id, memberId))
+  expect(m!.authUserId).toBe(authUserId)
+})
+
+test('a GitHub outage deletes an unlinked auth user but leaves a linked member signed in', async () => {
+  const db = await createTestDb()
+  const stranger = await seedAuthUser(db, { githubToken: 'gho_stranger' })
+  const linked = await seedLinkedMember(db, 'gho_linked')
+  const github: GitHubApi = {
+    user: async () => {
+      throw new Error('GitHub /user failed with status 500')
+    },
+    orgMembership: async () => 'active'
+  }
+  const outage = { github, auth: authScope(TEST_MASTER, db), org: 'tolonglabs' }
+  await expect(authoriseSession(outage, stranger)).rejects.toThrow('status 500')
+  await expect(authoriseSession(outage, linked.authUserId)).rejects.toThrow('status 500')
+  expect(await db.$count(auth_user, eq(auth_user.id, stranger))).toBe(0)
+  expect(await db.$count(auth_session, eq(auth_session.userId, linked.authUserId))).toBe(1)
+})
+
+test('the stored GitHub token is sealed, opens under the same master key and fails under another', async () => {
+  const db = await createTestDb()
+  const authUserId = await seedAuthUser(db, { githubToken: 'gho_sealed' })
+  const [row] = await db.select().from(auth_account).where(eq(auth_account.userId, authUserId))
+  expect(row!.accessToken).not.toContain('gho_sealed')
+  expect(await authScope(TEST_MASTER, db).githubToken(authUserId)).toBe('gho_sealed')
+  await expect(authScope(Buffer.alloc(32, 1), db).githubToken(authUserId)).rejects.toThrow()
 })

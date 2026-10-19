@@ -1,9 +1,9 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { deriveKey } from '@tm/core'
 import * as authSchema from '../db/auth-schema'
 import { getDb, type Db } from '../db/index'
 import { loadMasterKey } from '../db/secrets'
+import { authSecret } from './auth-secret'
 import { authoriseSession } from './authorise'
 import { githubApi, type GitHubApi } from './github'
 import { authScope } from './scope'
@@ -20,26 +20,30 @@ export interface AuthOptions {
 }
 
 /**
- * Better Auth with GitHub as the only way in: no email or password, and no session unless `authoriseSession` allows it.
- * Cookies are httpOnly, secure and same-site lax. The `read:org` scope lets us ask GitHub whether the user is in the
- * organisation (at sign-in, and daily from the scheduler).
+ * Better Auth with GitHub as the only way in: no email or password, no account linking, and no session unless
+ * `authoriseSession` allows it. Cookies are httpOnly and same-site lax, and secure when `publicUrl` is https. The
+ * `read:org` scope lets us ask GitHub whether the user is in the organisation (at sign-in, and daily from the
+ * scheduler). The GitHub token is stored encrypted (`encryptOAuthTokens`, under the secret derived from the master key).
  */
 export function createAuth(options: AuthOptions) {
   const { db, publicUrl, clientId, clientSecret, org } = options
-  const deps = { github: options.github ?? githubApi(), auth: authScope(db), org }
+  const deps = { github: options.github ?? githubApi(), auth: authScope(options.master, db), org }
   return betterAuth({
     baseURL: publicUrl,
-    secret: deriveKey(options.master, 'better-auth').toString('base64'),
+    secret: authSecret(options.master),
     database: drizzleAdapter(db, {
       provider: 'pg',
       schema: authSchema
     }),
     user: { modelName: 'auth_user' },
     session: { modelName: 'auth_session' },
-    account: { modelName: 'auth_account' },
+    account: { modelName: 'auth_account', encryptOAuthTokens: true, accountLinking: { enabled: false } },
     verification: { modelName: 'auth_verification' },
     socialProviders: { github: { clientId, clientSecret, scope: ['read:org'] } },
-    advanced: { useSecureCookies: true, defaultCookieAttributes: { httpOnly: true, sameSite: 'lax' } },
+    advanced: {
+      useSecureCookies: publicUrl.startsWith('https://'),
+      defaultCookieAttributes: { httpOnly: true, sameSite: 'lax' }
+    },
     onAPIError: { errorURL: '/sign-in' },
     databaseHooks: {
       session: {

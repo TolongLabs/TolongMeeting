@@ -1,10 +1,12 @@
 import { resolve, sep } from 'node:path'
-import { and, eq, isNull, sql, type SQL } from 'drizzle-orm'
+import { symmetricDecrypt } from 'better-auth/crypto'
+import { and, eq, isNull, notExists, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
 import type { Queue } from '../db/queues'
-import { artefacts, auth_account, auth_session, MEMBER_OWNED, members, pkOf } from '../db/schema'
+import { artefacts, auth_account, auth_session, auth_user, MEMBER_OWNED, members, pkOf } from '../db/schema'
+import { authSecret } from './auth-secret'
 
 /** Every table with a `memberId` column. */
 export type MemberOwnedTable = (typeof MEMBER_OWNED)[keyof typeof MEMBER_OWNED]
@@ -23,6 +25,8 @@ export interface MemberScope {
   update<T extends MemberOwnedTable>(table: T, set: Partial<T['$inferInsert']>, where: SQL): Promise<number>
   remove<T extends MemberOwnedTable>(table: T, where: SQL): Promise<number>
   transaction<R>(fn: (s: MemberScope) => Promise<R>): Promise<R>
+  /** Takes a transaction-level advisory lock named `name` for this member. Throws outside `transaction`. */
+  lock(name: string): Promise<void>
   artefactFile(occurrenceId: string, relPath: string): Promise<string | null>
   /** Brings this member's future scheduled occurrences in line with their timetable (see `syncOccurrences`). */
   syncOccurrences(queue: Queue, now: Date): Promise<{ created: number; removed: number }>
@@ -45,7 +49,7 @@ function withoutMemberId<T extends object>(values: T): Omit<T, 'memberId'> {
   return copy as Omit<T, 'memberId'>
 }
 
-export function createScope(db: Db, memberId: string): MemberScope {
+export function createScope(db: Db, memberId: string, inTransaction = false): MemberScope {
   return {
     memberId,
 
@@ -99,7 +103,12 @@ export function createScope(db: Db, memberId: string): MemberScope {
     },
 
     transaction(fn) {
-      return db.transaction((tx) => fn(createScope(tx, memberId)))
+      return db.transaction((tx) => fn(createScope(tx, memberId, true)))
+    },
+
+    async lock(name) {
+      if (!inTransaction) throw new Error('lock() is only valid inside scope.transaction()')
+      await db.execute(sql`select pg_advisory_xact_lock(hashtextextended(${name + ':' + memberId}, 0))`)
     },
 
     async artefactFile(occurrenceId, relPath) {
@@ -142,7 +151,10 @@ export async function scopeForAuthUser(authUserId: string): Promise<MemberScope 
  * `MemberScope`: it acts before a member is known (or across all of them), and it never reads member-owned rows.
  */
 export interface AuthScope {
-  /** The GitHub access token stored for a Better Auth user, or `null` when there is none. */
+  /**
+   * The GitHub access token stored for a Better Auth user, decrypted, or `null` when there is none. Throws when the
+   * stored value can't be decrypted (another master key, or a token stored in plain text).
+   */
   githubToken(authUserId: string): Promise<string | null>
   /** The member added for this GitHub user: matched on `github_id`, else on the lower-cased login while `github_id` is unset. */
   memberForGithub(githubId: number, login: string): Promise<{ id: string } | null>
@@ -151,16 +163,26 @@ export interface AuthScope {
   linkedMembers(): Promise<{ memberId: string; authUserId: string }[]>
   /** Deletes every session of a Better Auth user. */
   endSessions(authUserId: string): Promise<void>
+  /**
+   * Deletes a Better Auth user, and with it their account and GitHub token, unless a member is linked to it. Used when
+   * sign-in is refused so that a stranger's token isn't kept.
+   */
+  discardUnlinkedUser(authUserId: string): Promise<void>
 }
 
-export function authScope(db: Db = getDb()): AuthScope {
+/**
+ * `master` is the 32-byte master key: Better Auth seals OAuth tokens under a secret derived from it (`encryptOAuthTokens`),
+ * and `githubToken` opens them with the same one.
+ */
+export function authScope(master: Buffer, db: Db = getDb()): AuthScope {
+  const secret = authSecret(master)
   return {
     async githubToken(authUserId) {
       const [row] = await db
         .select({ token: auth_account.accessToken })
         .from(auth_account)
         .where(and(eq(auth_account.userId, authUserId), eq(auth_account.providerId, 'github')))
-      return row?.token ?? null
+      return row?.token ? symmetricDecrypt({ key: secret, data: row.token }) : null
     },
 
     async memberForGithub(githubId, login) {
@@ -187,6 +209,17 @@ export function authScope(db: Db = getDb()): AuthScope {
 
     async endSessions(authUserId) {
       await db.delete(auth_session).where(eq(auth_session.userId, authUserId))
+    },
+
+    async discardUnlinkedUser(authUserId) {
+      await db
+        .delete(auth_user)
+        .where(
+          and(
+            eq(auth_user.id, authUserId),
+            notExists(db.select({ id: members.id }).from(members).where(eq(members.authUserId, authUserId)))
+          )
+        )
     }
   }
 }
