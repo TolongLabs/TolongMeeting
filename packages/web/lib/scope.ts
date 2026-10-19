@@ -2,6 +2,8 @@ import { resolve, sep } from 'node:path'
 import { and, eq, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { getDb, type Db } from '../db/index'
+import { identityClashes, syncOccurrences } from '../db/occurrences'
+import type { Queue } from '../db/queues'
 import { artefacts, MEMBER_OWNED, members, pkOf } from '../db/schema'
 
 /** Every table with a `memberId` column. */
@@ -22,6 +24,10 @@ export interface MemberScope {
   remove<T extends MemberOwnedTable>(table: T, where: SQL): Promise<number>
   transaction<R>(fn: (s: MemberScope) => Promise<R>): Promise<R>
   artefactFile(occurrenceId: string, relPath: string): Promise<string | null>
+  /** Brings this member's future scheduled occurrences in line with their timetable (see `syncOccurrences`). */
+  syncOccurrences(queue: Queue, now: Date): Promise<{ created: number; removed: number }>
+  /** Overlapping occurrences of one of this member's identities in `[from, to)`, winner first. */
+  identityClashes(identityId: string, from: Date, to: Date): ReturnType<typeof identityClashes>
 }
 
 function ownedBy(table: MemberOwnedTable, memberId: string, where?: SQL): SQL {
@@ -112,6 +118,14 @@ export function createScope(db: Db, memberId: string): MemberScope {
           and(eq(artefacts.memberId, memberId), eq(artefacts.occurrenceId, occurrenceId), eq(artefacts.path, relPath))
         )
       return row ? file : null
+    },
+
+    syncOccurrences(queue, now) {
+      return syncOccurrences(db, queue, now, memberId)
+    },
+
+    identityClashes(identityId, from, to) {
+      return identityClashes(db, identityId, from, to, memberId)
     }
   }
 }

@@ -28,6 +28,7 @@ import type {
   JobConfig,
   LinkSource,
   OccurrenceState,
+  RepeatRule,
   RunLocation,
   SenderRole,
   TranscriptionMode,
@@ -168,10 +169,6 @@ function ownedFk(
   return foreignKey({ name, columns, foreignColumns }).onDelete(onDelete)
 }
 
-// Replaced by core's RepeatRule when the occurrence expansion lands (plan 01c Task 6); the shapes are the same.
-export type RepeatRuleJson =
-  { kind: 'once'; date: string } | { kind: 'weekly'; days: (1 | 2 | 3 | 4 | 5 | 6 | 7)[]; from: string }
-
 export const members = pgTable(
   'members',
   {
@@ -263,7 +260,7 @@ export const timetableEntries = pgTable(
     identityId: uuid('identity_id').notNull(),
     name: text('name').notNull(),
     type: text('type').$type<EntryType>().notNull(),
-    repeat: jsonb('repeat').$type<RepeatRuleJson>().notNull(),
+    repeat: jsonb('repeat').$type<RepeatRule>().notNull(),
     startTime: time('start_time').notNull(),
     endTime: time('end_time').notNull(),
     link: jsonb('link').$type<LinkSource>().notNull(),

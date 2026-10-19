@@ -741,8 +741,8 @@ git commit -m "feat(web): add GitHub sign-in with org check"
 **Files:**
 
 - Create: `packages/core/src/timetable.ts`, `packages/core/src/schedule.ts`, `packages/web/db/queues.ts`, `packages/web/db/occurrences.ts`
-- Modify: `packages/web/db/testing.ts` (`FakeQueue`, `withEntry`), `packages/web/lib/scope.ts` (`MemberScope.syncOccurrences`, `MemberScope.identityClashes`)
-- Test: `packages/core/src/schedule.test.ts`, `packages/web/db/occurrences.test.ts`
+- Modify: `packages/web/db/testing.ts` (`FakeQueue`, `withEntry`; both are in testing.ts, not queues.ts), `packages/web/lib/scope.ts` (`MemberScope.syncOccurrences`, `MemberScope.identityClashes`)
+- Test: `packages/core/test/schedule.test.ts`, `packages/web/test/occurrences.test.ts`
 
 **Interfaces:**
 
@@ -754,10 +754,10 @@ git commit -m "feat(web): add GitHub sign-in with org check"
 
 `syncOccurrences` covers members whose `ai_keys.test_ok` is true. For each unpaused entry it expands slots in the member's time zone and inserts the missing occurrences (`on conflict do nothing`) with `entry_name`, `entry_type`, `transcription` and `delete_after = scheduled_end + 30 days`; refreshes those three columns on future `scheduled` occurrences; deletes future `scheduled` occurrences that no longer match a slot of an unpaused entry; and for each created occurrence sends `launch` with data `{ occurrenceId, scheduledStart }` (ISO), `startAfter` at the start minus 60 minutes (or now, if that has passed) and `singletonKey` `launch:<occurrenceId>:<scheduledStart>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/schedule.test.ts
+// packages/core/test/schedule.test.ts
 const now = new Date('2026-10-20T00:00:00Z')
 
 test('a weekly entry expands 14 days ahead in the member time zone', () => {
@@ -841,7 +841,7 @@ test('times are shown in the member time zone', () => {
 ```
 
 ```ts
-// packages/web/db/occurrences.test.ts
+// packages/web/test/occurrences.test.ts
 const now = new Date('2026-10-20T00:00:00Z')
 const WEDNESDAY_14 = {
   repeat: { kind: 'weekly', days: [3], from: '2026-10-01' },
@@ -896,27 +896,27 @@ test('a member without a working AI key gets no occurrences', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/schedule.test.ts packages/web/db/occurrences.test.ts`
+Run: `bun test packages/core/test/schedule.test.ts packages/web/test/occurrences.test.ts`
 
 Expected: FAIL with `Cannot find module './schedule'`.
 
-- [ ] **Step 3: Implement the modules**
+- [x] **Step 3: Implement the modules**
 
 Add `syncOccurrences(queue, now)` and `identityClashes(identityId, from, to)` to `MemberScope`, both limited to the scope's member.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/schedule.test.ts packages/web/db/occurrences.test.ts`
+Run: `bun test packages/core/test/schedule.test.ts packages/web/test/occurrences.test.ts`
 
 Expected: PASS, `10 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/timetable.ts packages/core/src/schedule* packages/web/db packages/web/lib/scope.ts
-git commit -m "feat(scheduler): expand timetables"
+git add packages/core/src/timetable.ts packages/core/src/schedule.ts packages/core/test/schedule.test.ts packages/web/db packages/web/lib/scope.ts packages/web/test/occurrences.test.ts packages/web/test/queues.test.ts
+git commit -m "feat(web): expand timetable into occurrences"
 ```
 
 ### Task 7: Notifications and ping copy

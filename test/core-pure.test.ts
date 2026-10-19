@@ -9,7 +9,7 @@ import ts from 'typescript'
 const core = join(import.meta.dir, '..', 'packages', 'core')
 /** Core may import only zod, luxon, node:crypto and its own files. */
 const ALLOWED = /^(\.{1,2}\/|zod$|luxon$|node:crypto$)/
-const ALLOWED_DEPS = ['zod', 'luxon']
+const ALLOWED_DEPS = ['zod', 'luxon', '@types/luxon']
 
 describe('core stays free of I/O', () => {
   test('source files import only zod, luxon, node:crypto and each other', async () => {
@@ -23,7 +23,7 @@ describe('core stays free of I/O', () => {
     expect(found).toEqual([])
   })
 
-  test('the manifest depends on nothing but zod and luxon', async () => {
+  test('the manifest depends on nothing but zod, luxon and the luxon types', async () => {
     const manifest = await Bun.file(join(core, 'package.json')).json()
     const deps = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })
     expect(deps.filter((name) => !ALLOWED_DEPS.includes(name))).toEqual([])

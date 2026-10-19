@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { MEMBER_OWNED, schema, type Db } from './index'
 import { runMigrations } from './migrate'
+import type { Queue, QueueName } from './queues'
 import { hashEventData } from './transitions'
 
 interface TestDbHandle {
@@ -183,4 +184,48 @@ export async function seedMember(db: Db, opts: SeedOptions = {}): Promise<Seeded
   }
 
   return { memberId, identityId, ids: ids as Seeded['ids'] }
+}
+
+export interface SentJob {
+  name: QueueName
+  data: Record<string, unknown>
+  opts: Parameters<Queue['send']>[2]
+}
+
+/** A `Queue` that records what was sent instead of queueing it. */
+export class FakeQueue implements Queue {
+  readonly sent: SentJob[] = []
+
+  async send(name: QueueName, data: Record<string, unknown>, opts?: SentJob['opts']): Promise<string | null> {
+    this.sent.push({ name, data, opts })
+    return `fake-${this.sent.length}`
+  }
+}
+
+export interface EntryShape {
+  repeat: typeof schema.timetableEntries.$inferInsert.repeat
+  startTime: string
+  endTime: string
+  name?: string
+}
+
+/** A fresh database with a seeded member (`full: false`, working AI key), one timetable entry and a `FakeQueue`. */
+export async function withEntry(entry: EntryShape) {
+  const db = await createTestDb()
+  const { memberId, identityId } = await seedMember(db, { full: false })
+  const [row] = await db
+    .insert(schema.timetableEntries)
+    .values({
+      memberId,
+      identityId,
+      name: entry.name ?? 'Seed lecture',
+      type: 'lecture',
+      repeat: entry.repeat,
+      startTime: entry.startTime,
+      endTime: entry.endTime,
+      link: { kind: 'paste' },
+      transcription: 'live'
+    })
+    .returning()
+  return { db, memberId, identityId, entryId: row!.id, q: new FakeQueue() }
 }
