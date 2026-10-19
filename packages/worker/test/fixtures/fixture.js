@@ -13,7 +13,9 @@
     'allow',
     'start video',
     'join breakout room',
-    'breakout join'
+    'breakout join',
+    // An OK or Got it inside a prompt that asks for something else (see the notices in zoom-meeting-top.html).
+    'unsafe ok'
   ])
   const read = () => JSON.parse(sessionStorage.getItem(KEY) || '{"clicks":[],"forbidden":[],"typedName":""}')
   const write = (state) => sessionStorage.setItem(KEY, JSON.stringify(state))

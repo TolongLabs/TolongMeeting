@@ -140,24 +140,35 @@
           time: `8:${String(10 + (i % 50)).padStart(2, '0')} PM`,
           text: `Message number ${i}`
         }))
+      // ?cold=1: at the bottom of the list the first row in view is a follow-up whose sender row has scrolled out.
+      const cold = [
+        { sender: 'Dr Lecturer (Host)', time: '8:41 PM', text: 'Attendance: https://forms.gle/abc' },
+        { group: true, text: 'Please submit before 9 PM' },
+        { group: true, text: '+1' },
+        { group: true, text: 'Thanks all' },
+        { sender: 'Student A', time: '8:42 PM', text: '+1' },
+        { sender: 'Student B', time: '8:43 PM', text: '+1' }
+      ]
       const messages = params.has('seed')
         ? seeded(Number(params.get('seed')))
-        : [
-            { sender: 'Dr Lecturer (Host)', time: '8:41 PM', text: 'Attendance: https://forms.gle/abc' },
-            { group: true, text: 'Please submit before 9 PM' },
-            {
-              id: 'msg-student-a',
-              sender: 'Student A',
-              time: '8:42 PM',
-              text: 'Is this the right form? https://forms.office.com/r/xyz'
-            },
-            {
-              sender: 'Student C',
-              time: '8:43 PM',
-              quote: 'Attendance: https://forms.gle/abc',
-              text: 'Done, thanks'
-            }
-          ]
+        : params.has('cold')
+          ? cold
+          : [
+              { sender: 'Dr Lecturer (Host)', time: '8:41 PM', text: 'Attendance: https://forms.gle/abc' },
+              { group: true, text: 'Please submit before 9 PM' },
+              {
+                id: 'msg-student-a',
+                sender: 'Student A',
+                time: '8:42 PM',
+                text: 'Is this the right form? https://forms.office.com/r/xyz'
+              },
+              {
+                sender: 'Student C',
+                time: '8:43 PM',
+                quote: 'Attendance: https://forms.gle/abc',
+                text: 'Done, thanks'
+              }
+            ]
 
       function element(tag, className, text) {
         const el = document.createElement(tag)
@@ -214,27 +225,31 @@
             rendered.delete(index)
           }
         }
+        let added = false
         for (let index = first; index <= last; index++) {
           if (!rendered.has(index)) {
-            const el = row(index)
-            rendered.set(index, el)
-            rows.append(el)
+            rendered.set(index, row(index))
+            added = true
           }
         }
+        // The DOM keeps the rows in message order, as Zoom's list does.
+        if (added) for (const index of [...rendered.keys()].sort((a, b) => a - b)) rows.append(rendered.get(index))
       }
       list.addEventListener('scroll', render)
 
       if (params.get('chat') === 'closed') panel.hidden = true
       render()
 
-      function notice(title, labels) {
-        const el = element('div', 'notice')
-        el.setAttribute('role', 'dialog')
+      // labels: [text, hidden?, click name?]. `bare` leaves out the dialog role and class: a prompt that Zoom's
+      // markup would not identify as a dialog.
+      function notice(title, labels, bare = false) {
+        const el = element('div', bare ? '' : 'notice')
+        if (!bare) el.setAttribute('role', 'dialog')
         el.append(element('p', '', title))
-        for (const [label, hidden] of labels) {
+        for (const [label, hidden, name] of labels) {
           const button = element('button', '', label)
           button.type = 'button'
-          button.dataset.click = label.toLowerCase()
+          button.dataset.click = name || label.toLowerCase()
           button.hidden = hidden
           el.append(button)
         }
@@ -264,7 +279,24 @@
         },
         // A breakout prompt that also carries an allowlist button: it must still not be accepted.
         breakoutNotice() {
-          notice('Breakout Room 2 is open', [['OK']])
+          notice('Breakout Room 2 is open', [['OK', false, 'unsafe ok']])
+        },
+        // The same prompt with no dialog role or class around it: nothing says it is a notice, so nothing is clicked.
+        bareBreakout() {
+          notice('Dr Lecturer invited you to a breakout room', [['OK', false, 'unsafe ok']], true)
+        },
+        // A dialog that asks for the camera: its OK is not an acknowledgement.
+        startVideoNotice() {
+          notice('The host asks you to start your video', [['OK', false, 'unsafe ok'], ['Start Video']])
+        },
+        // A plain recording notice: Got it only acknowledges.
+        recordingNotice() {
+          notice('This meeting is being recorded', [['Got it']])
+        },
+        // A notice that closes as soon as the pointer reaches it, like one that times out under the click.
+        vanishingNotice() {
+          const el = notice('Notice', [['OK']])
+          el.querySelector('button').addEventListener('mouseover', () => el.remove())
         },
         stopShare() {
           document.querySelector('#sharee-container canvas')?.remove()

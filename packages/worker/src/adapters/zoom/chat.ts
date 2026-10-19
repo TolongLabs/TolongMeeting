@@ -17,8 +17,21 @@ interface ParsedMessage {
   replyTo: string | null
 }
 
+// What a sweep reports: every message parsed so far, and whether it scrolled the whole list before its time ran out.
+interface ProbeResult {
+  messages: ParsedMessage[]
+  complete: boolean
+  // Scroll position reached and list height, in px, for the log.
+  reached: number
+  total: number
+}
+
+// A sweep stops after this long: a list that keeps growing, or a page that stalls, must not hold the meeting loop.
+export const SWEEP_BUDGET_MS = 45_000
+
 interface ProbeConfig {
   mode: 'read' | 'sweep'
+  sweepBudgetMs: number
   chatList: string
   chatItem: string
   chatSender: string
@@ -31,19 +44,25 @@ interface ProbeConfig {
 // Runs inside the Zoom document (the iframe or the top page), so it shares nothing with this module: every helper is
 // declared in the function. Modelled on docs/reference-scripts/browser/zoom-chat-capture.js.
 //
+// This function is serialised by Playwright and evaluated in the page. Do not bundle or transform it with a tool that
+// injects helpers (`--minify`, `--keep-names` and the like add `__name(...)` calls, which do not exist in the page).
+//
 // First call per document installs the parser (a MutationObserver plus a 3 s timer) and a 1.5 s timer that keeps the
 // chat list scrolled to the bottom; a later call finds `window.__tmChat` and reuses it. Zoom's list is virtualised:
 // only the rows in view exist, so a list scrolled up never renders new messages. 'read' parses what is rendered now;
 // 'sweep' scrolls the whole list so every row renders once. Both return every message parsed so far.
-async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
+//
+// A row that is a grouped follow-up (no sender or time of its own) takes the sender of the row before it in the same
+// render. When no earlier row of the render has a sender (the first row in view), the row cannot be attributed and is
+// left out: a sweep, which scrolls from the top, picks it up with its sender.
+async function chatProbe(cfg: ProbeConfig): Promise<ProbeResult> {
   interface Store {
     messages: ParsedMessage[]
     keys: Set<string>
     parse(): void
-    pin(): void
-    startPinning(): void
-    stopPinning(): void
-    scroller(): Element | null
+    pin(force?: boolean): void
+    sweeping(): boolean
+    sweep(budgetMs: number): Promise<{ complete: boolean; reached: number; total: number }>
   }
   const w = window as unknown as { __tmChat?: Store }
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -53,6 +72,8 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
     const messages: ParsedMessage[] = []
     const keys = new Set<string>()
     let pinTimer: number | null = null
+    let parseTimer: number | null = null
+    let sweepRun: Promise<{ complete: boolean; reached: number; total: number }> | null = null
 
     const list = () => document.querySelector(cfg.chatList)
     const scrollable = (el: Element) =>
@@ -61,7 +82,9 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
       const l = list()
       return l ? ([l, ...l.querySelectorAll('*')].find(scrollable) ?? null) : null
     }
-    const pin = () => {
+    // Jumping to the bottom moves the list out from under a sweep, so nothing but the sweep itself pins during one.
+    const pin = (force = false) => {
+      if (sweepRun && !force) return
       const s = scroller()
       if (s) s.scrollTop = s.scrollHeight
     }
@@ -95,6 +118,9 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
         const textEl = [...item.querySelectorAll<HTMLElement>(cfg.chatText)].find((e) => !e.querySelector(cfg.chatText))
         const text = textEl?.innerText.trim() ?? ''
         if (!text) continue
+        // Never store an unattributed row: it would read as a message from nobody and, once its sender is known,
+        // as a second copy. The next sweep attributes it.
+        if (!sender) continue
 
         // An id counts only when it belongs to this row: one on an ancestor shared by several rows would merge them.
         const ancestor = item.closest('[id]')
@@ -108,9 +134,6 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
         ) {
           id = ancestor.id
         }
-        // The first row in view can be a follow-up whose sender row scrolled out: with no sender it cannot be
-        // attributed, and when the same text is already stored it is that message, not a new one.
-        if (!id && !sender && messages.some((m) => m.text === text)) continue
         const key = id ? `id:${id}` : `${sender}|${time}|${text.slice(0, 200)}`
         if (keys.has(key)) continue
 
@@ -120,7 +143,7 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
         messages.push({
           key,
           sender,
-          senderRole: sender ? senderRole : 'unknown',
+          senderRole,
           time,
           seenAt: new Date().toISOString(),
           text,
@@ -137,10 +160,55 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
       if (pinTimer !== null) window.clearInterval(pinTimer)
       pinTimer = null
     }
-    new MutationObserver(parse).observe(document.body, { childList: true, subtree: true, characterData: true })
+
+    // Scrolls the list top to bottom so every row renders once, at most `budgetMs` long.
+    const runSweep = async (budgetMs: number) => {
+      const sc = scroller()
+      if (!sc) {
+        parse()
+        return { complete: true, reached: 0, total: 0 }
+      }
+      const started = Date.now()
+      let complete = true
+      let y = 0
+      stopPinning()
+      try {
+        for (; y <= sc.scrollHeight; y += Math.max(200, sc.clientHeight / 2)) {
+          if (Date.now() - started > budgetMs) {
+            complete = false
+            break
+          }
+          sc.scrollTop = y
+          await sleep(300)
+          parse()
+        }
+        pin(true)
+        await sleep(300)
+        parse()
+      } finally {
+        startPinning()
+      }
+      return { complete, reached: y, total: sc.scrollHeight }
+    }
+    // One sweep at a time: a caller that arrives during one gets that sweep's result.
+    const sweep = (budgetMs: number) => {
+      sweepRun ??= runSweep(budgetMs).finally(() => {
+        sweepRun = null
+      })
+      return sweepRun
+    }
+
+    // Bursts of mutations (a scroll re-renders many rows) are parsed once, 250 ms after the first.
+    const scheduleParse = () => {
+      parseTimer ??= window.setTimeout(() => {
+        parseTimer = null
+        parse()
+      }, 250)
+    }
+    new MutationObserver(scheduleParse).observe(document.body, { childList: true, subtree: true, characterData: true })
     window.setInterval(parse, 3000)
     startPinning()
-    w.__tmChat = { messages, keys, parse, pin, startPinning, stopPinning, scroller }
+    w.__tmChat = { messages, keys, parse, pin, sweeping: () => sweepRun !== null, sweep }
   }
 
   const store = w.__tmChat
@@ -149,34 +217,18 @@ async function chatProbe(cfg: ProbeConfig): Promise<ParsedMessage[]> {
     // The scroll event and the re-render of a virtualised list land a moment after scrollTop is set.
     await sleep(100)
     store.parse()
-  } else {
-    const sc = store.scroller()
-    if (sc) {
-      store.stopPinning()
-      try {
-        for (let y = 0; y <= sc.scrollHeight; y += Math.max(200, sc.clientHeight / 2)) {
-          sc.scrollTop = y
-          await sleep(300)
-          store.parse()
-        }
-        store.pin()
-        await sleep(300)
-        store.parse()
-      } finally {
-        store.startPinning()
-      }
-    } else {
-      store.parse()
-    }
+    return { messages: store.messages, complete: true, reached: 0, total: 0 }
   }
-  return store.messages
+  const outcome = await store.sweep(cfg.sweepBudgetMs)
+  return { messages: store.messages, ...outcome }
 }
 
-async function probe(page: Page, mode: ProbeConfig['mode']): Promise<ParsedMessage[]> {
+async function probe(page: Page, mode: ProbeConfig['mode'], sweepBudgetMs = SWEEP_BUDGET_MS): Promise<ProbeResult> {
   const { selectors: sel, texts } = await zoomSelectors()
   const root = await zoomRoot(page)
   return root.evaluate(chatProbe, {
     mode,
+    sweepBudgetMs,
     chatList: sel.chatList,
     chatItem: sel.chatItem,
     chatSender: sel.chatSender,
@@ -201,11 +253,18 @@ export async function zoomReadChat(
   // A page that navigates under the read yields nothing this time; the cursor stays where it was.
   const parsed = await duringNavigation('readChat', () => probe(page, 'read'))
   const seen = new Set(cursor.seenKeys)
-  const messages = (parsed ?? []).filter((m) => !seen.has(m.key)).map(toChatMessage)
+  const messages = (parsed?.messages ?? []).filter((m) => !seen.has(m.key)).map(toChatMessage)
   return { messages, cursor: { seenKeys: [...cursor.seenKeys, ...messages.map((m) => m.key)] } }
 }
 
-// Scrolls the whole list so every row renders, and returns every message parsed so far (not only new ones).
-export async function zoomSweepChat(page: Page): Promise<ChatMessage[]> {
-  return (await probe(page, 'sweep')).map(toChatMessage)
+// Scrolls the whole list so every row renders, and returns every message parsed so far (not only new ones). Stops after
+// `budgetMs`: the log then says how far it got, and the next sweep starts again from the top. A page that navigates
+// under the sweep yields nothing this time.
+export async function zoomSweepChat(page: Page, budgetMs: number = SWEEP_BUDGET_MS): Promise<ChatMessage[]> {
+  const result = await duringNavigation('sweepChat', () => probe(page, 'sweep', budgetMs))
+  if (!result) return []
+  if (!result.complete) {
+    console.warn(`zoom: chat sweep partial, reached ${result.reached} of ${result.total} px in ${budgetMs} ms`)
+  }
+  return result.messages.map(toChatMessage)
 }
