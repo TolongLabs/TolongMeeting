@@ -300,7 +300,7 @@ Other worker modules and their entry points (each plan that creates one owns its
 | `src/recorder/recorder.ts`                 | `startRecorder(screen: Screen, outDir: string, attempt: number): Promise<Recorder>`                                                           | 1A                                                  |
 | `src/frames/frames.ts`                     | `startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<void>, intervalMs = 2000): Stopper`                                            | 1A                                                  |
 | `src/qr/qr.ts`                             | `decodeQr(png: Buffer, region: Rect                                                                                                           | null): Promise<string[]>`                           | 1A             |
-| `src/forms/links.ts`                       | `resolveFormLink(c: FormCandidate): Promise<ResolvedForm                                                                                      | null>`                                              | 1A             |
+| `src/forms/links.ts`                       | `resolveFormLink(c: FormCandidate, opts?: ResolveOptions): Promise<ResolvedForm                                                               | null>`                                              | 1A             |
 | `src/forms/trust.ts`                       | `checkTrust(f: ResolvedForm, trustedSenders: string[]): { trusted: boolean; reason: TrustReason                                               | null }` (pre-open)                                  | 1A             |
 | `src/forms/handler.ts`                     | `handleForm(f: ResolvedForm, ctx: FormContext): Promise<FormRecord>`                                                                          | 1B                                                  |
 | `src/asr/live.ts`                          | `startLiveAsr(audio: AudioSource, ai: AiConfig, out: string): Promise<LiveAsr>`                                                               | 1A                                                  |
@@ -445,7 +445,7 @@ The milestone plans were written in parallel against this page. Each marks the s
 - **01a recorder and pings**:
   - core: `parseJob`, `JobError`, `IllegalTransition`, `formatOffset`, `localParts`, `ChatMessage.replyTo`, `JobConfig.identity.formProviders`;
   - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `PingError`, `AlertKind` and the ping builders;
-  - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `checkFormProviders`, `LinkResolveError`, `normaliseFormUrl`;
+  - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`;
   - pipeline: `Slide`, `InventorySchema`, `summaryFileName`;
   - data: `recording/attempts.json`, `outcome.json`, `errors/`.
 - **01b form submission**:
