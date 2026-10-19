@@ -14,7 +14,7 @@ const fakeScreen: Screen = {
 test('chrome flags from the design', () => {
   const a = chromeArgs(fakeScreen)
   for (const f of [
-    '--app=about:blank',
+    '--app=data:text/html,<title>stage</title>',
     '--window-position=0,0',
     '--window-size=1920,1080',
     '--disable-blink-features=AutomationControlled',
@@ -28,7 +28,8 @@ test('chrome flags from the design', () => {
     '--disable-background-timer-throttling',
     '--deny-permission-prompts',
     '--no-first-run',
-    '--no-default-browser-check'
+    '--no-default-browser-check',
+    '--test-type'
   ])
     expect(a).toContain(f)
   expect(a).not.toContain('--enable-automation')

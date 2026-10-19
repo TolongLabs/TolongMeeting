@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
+import { expect } from '@playwright/test'
 import type { BrowserContext, Page } from 'playwright'
 
 export interface WindowBounds {
@@ -22,8 +23,9 @@ export async function windowBounds(context: BrowserContext, page: Page): Promise
   }
 }
 
-// The command line of the Chrome browser process (the one without --type=), read from /proc.
-export function browserCmdline(): string[] {
+// The command line of the Chrome browser process (the one without --type=), read from /proc. `userDataDir` picks the
+// browser of one profile; a host may run other Chrome browsers, the image never does.
+export function browserCmdline(userDataDir?: string): string[] {
   const found: string[][] = []
   for (const pid of readdirSync('/proc').filter((name) => /^\d+$/.test(name))) {
     let args: string[]
@@ -33,7 +35,7 @@ export function browserCmdline(): string[] {
       continue // the process ended while we scanned
     }
     if (/(^|\/)(chrome|google-chrome)$/.test(args[0] ?? '') && !args.some((a) => a.startsWith('--type=')))
-      found.push(args)
+      if (userDataDir === undefined || args.includes(`--user-data-dir=${userDataDir}`)) found.push(args)
   }
   if (found.length !== 1) throw new Error(`expected one Chrome browser process, found ${found.length}`)
   return found[0]!
@@ -71,4 +73,51 @@ export async function sinkLevelDb(ms: number): Promise<number> {
   for (let i = 0; i < samples; i++) sum += (pcm.readInt16LE(i * 2) / 32768) ** 2
   const rms = Math.sqrt(sum / samples)
   return rms === 0 ? -120 : Math.max(-120, 20 * Math.log10(rms))
+}
+
+// Paints a page-filling test pattern on the stage (a lime frame, magenta inside, both drawn edge to edge) and checks
+// what the X display really shows at the stage rectangle: the pattern must reach every edge, so there is no browser
+// frame, infobar or offset around the 1920x1080 content.
+export async function expectStageFilled(stage: Page, display: string): Promise<void> {
+  await stage.setContent(
+    '<body style="margin:0"><div style="position:fixed;inset:0;background:#00ff00"></div>' +
+      '<div style="position:fixed;inset:4px;background:#ff00ff"></div></body>'
+  )
+  await stage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  const rgb = execFileSync(
+    'ffmpeg',
+    ['-loglevel', 'error', '-f', 'x11grab', '-video_size', '1920x1080', '-i', `${display}+0,0`].concat([
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-'
+    ]),
+    { maxBuffer: 1920 * 1080 * 3 + 1024 }
+  )
+  const at = (x: number, y: number) => [...rgb.subarray((y * 1920 + x) * 3, (y * 1920 + x) * 3 + 3)]
+  const lime = [0, 255, 0]
+  const magenta = [255, 0, 255]
+  const frame = [
+    [0, 0],
+    [1919, 0],
+    [0, 1079],
+    [1919, 1079],
+    [3, 540],
+    [1916, 540],
+    [960, 3],
+    [960, 1076]
+  ]
+  for (const [x, y] of frame) expect({ x, y, rgb: at(x!, y!) }).toEqual({ x, y, rgb: lime })
+  const inside = [
+    [4, 4],
+    [1915, 4],
+    [4, 1075],
+    [1915, 1075],
+    [960, 540]
+  ]
+  for (const [x, y] of inside) expect({ x, y, rgb: at(x!, y!) }).toEqual({ x, y, rgb: magenta })
 }
