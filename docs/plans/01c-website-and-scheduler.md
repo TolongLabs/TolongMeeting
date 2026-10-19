@@ -958,7 +958,7 @@ Ping copy (`<when>` is `formatWhen` and `<deleteOn>` is `formatDay`, in the memb
 
 `workerFailed` takes one of these reasons: `it crashed 3 times`, `it couldn't start`, `it ran past the hard stop`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/notify/src/messages.test.ts
@@ -1042,15 +1042,17 @@ Expected: FAIL with `Cannot find module './messages'`.
 
 - [ ] **Step 3: Implement the copy, the notifier, the ntfy admin client and the page**
 
+  Done except the page: `app/notifications/page.tsx` is deferred behind the Figma gate (no UI in this task).
+
 The notifier's error log names the ping title only and never prints the error, whose text can carry the token.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/notify/src/messages.test.ts packages/web/db/notifier.test.ts packages/web/lib/ntfy-admin.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/notify/src/messages* packages/web/db packages/web/lib/ntfy-admin* packages/web/app/notifications

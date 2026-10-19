@@ -17,6 +17,7 @@ export type AlertKind =
   | 'signin_forms'
   | 'ai_key'
   | 'recording_gap'
+  | 'form_ping_failed'
 
 const SUMMARY_LIMIT_BYTES = 3900
 
@@ -81,6 +82,109 @@ export function summaryFailedPing(entry: string, status: number): Ping {
   }
 }
 
+export type WorkerFailureReason = 'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop'
+
+// The member-facing pings of plan 01c. Each wording is fixed here; callers pass only the values that fill it in.
+export const pings = {
+  notificationsTest(): Ping {
+    return {
+      title: 'TolongMeeting test',
+      message: 'Notifications work. Meeting pings will arrive here.',
+      priority: 'default'
+    }
+  },
+
+  identityClashSaved(p: { loser: string; winner: string; when: string; identity: string; timetableUrl: string }): Ping {
+    return {
+      title: `Timetable clash on ${p.identity}`,
+      message: `${p.loser} at ${p.when} overlaps ${p.winner} on the same identity, so ${p.loser} won't be attended. Change a time or pick another identity.`,
+      priority: 'high',
+      actions: [{ label: 'Open timetable', url: p.timetableUrl }]
+    }
+  },
+
+  identityClashSkipped(p: {
+    entry: string
+    when: string
+    winner: string
+    identity: string
+    timetableUrl: string
+  }): Ping {
+    return {
+      title: `Skipped: ${p.entry}`,
+      message: `${p.entry} at ${p.when} overlaps ${p.winner}, which uses the same identity (${p.identity}), so the bot won't attend it.`,
+      priority: 'high',
+      actions: [{ label: 'Open timetable', url: p.timetableUrl }]
+    }
+  },
+
+  capacityClash(p: { entry: string; when: string; identity: string; accountsUrl: string }): Ping {
+    return {
+      title: `Skipped: ${p.entry} (server full)`,
+      message: `Two meetings are already running on the server, so the bot won't attend ${p.entry} at ${p.when}. To run it, switch the ${p.identity} identity to your PC.`,
+      priority: 'high',
+      actions: [{ label: 'Open accounts', url: p.accountsUrl }]
+    }
+  },
+
+  workerRestarted(p: { entry: string; n: number; meetingUrl: string }): Ping {
+    return {
+      title: `Restarting: ${p.entry}`,
+      message: `The bot stopped responding and is rejoining from its last checkpoint (restart ${p.n} of 3).`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  workerFailed(p: { entry: string; reason: WorkerFailureReason; meetingUrl: string }): Ping {
+    return {
+      title: `Failed: ${p.entry}`,
+      message: `The bot stopped and won't retry (${p.reason}). Anything it recorded is on the meeting page.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  deletionSoon(p: { entry: string; when: string; deleteOn: string; meetingUrl: string }): Ping {
+    return {
+      title: `Deleting in 3 days: ${p.entry}`,
+      message: `${p.entry} (${p.when}) will be deleted from the server on ${p.deleteOn}. Export anything you want to keep before then.`,
+      priority: 'default',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  waitingForPc(p: { entry: string; meetingUrl: string }): Ping {
+    return {
+      title: `Waiting for your PC: ${p.entry}`,
+      message: `Turn on your PC with the companion app to transcribe ${p.entry}.`,
+      priority: 'default',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  aiKeyProblem(p: { entry: string; status: number; meetingUrl: string; aiKeysUrl: string }): Ping {
+    return {
+      title: `Summary needs your key: ${p.entry}`,
+      message: `DashScope refused your key (${p.status}). Everything is kept; fix the key on the AI keys page, then press Re-run on the meeting page.`,
+      priority: 'high',
+      actions: [
+        { label: 'Open AI keys', url: p.aiKeysUrl },
+        { label: 'Open meeting page', url: p.meetingUrl }
+      ]
+    }
+  },
+
+  pipelineFailed(p: { entry: string; meetingUrl: string }): Ping {
+    return {
+      title: `Summary failed: ${p.entry}`,
+      message: 'Post-processing failed. The recording, chat and transcript are kept on the meeting page.',
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  }
+}
+
 // Sender-based sources need a name; a missing one is an error, not a blank in the copy.
 function trustSource(reason: TrustReason, sender: string | null): string {
   switch (reason) {
@@ -133,6 +237,8 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
       return `Your AI key was rejected (${requireDetail(kind, detail)}). Recording continues; the summary needs a working key.`
     case 'recording_gap':
       return `The recorder restarted; ${requireDetail(kind, detail)} seconds are missing from the recording.`
+    case 'form_ping_failed':
+      return "A form couldn't be checked or pinged. Open the meeting page to see what the bot recorded."
   }
 }
 

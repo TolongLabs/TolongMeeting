@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { MEMBER_OWNED, schema, type Db } from './index'
 import { runMigrations } from './migrate'
+import { sealColumn } from './secrets'
 import type { Queue, QueueName } from './queues'
 import { hashEventData } from './transitions'
 
@@ -269,4 +270,48 @@ export async function seedLinkedMember(db: Db, githubToken: string): Promise<{ m
   const authUserId = await seedAuthUser(db, { githubToken, session: true })
   await db.update(schema.members).set({ authUserId }).where(eq(schema.members.id, memberId))
   return { memberId, authUserId }
+}
+
+const TOPIC_CHARS = 'abcdefghijklmnopqrstuvwxyz234567'
+
+/** A seeded member (`full: false`) with a topic and a token sealed under `master`, as `ensureNtfy` leaves them. */
+export async function withNtfy(
+  token: string,
+  master: Buffer = Buffer.alloc(32)
+): Promise<{ db: Db; memberId: string; topic: string }> {
+  const db = await createTestDb()
+  const { memberId } = await seedMember(db, { full: false })
+  const topic = `tm-${Array.from(randomBytes(24), (b) => TOPIC_CHARS[b % 32]).join('')}`
+  await db
+    .update(schema.members)
+    .set({ ntfyTopic: topic, ntfyTokenEnc: sealColumn(master, memberId, 'members.ntfy_token', token) })
+    .where(eq(schema.members.id, memberId))
+  return { db, memberId, topic }
+}
+
+export interface FakeFetch {
+  (input: string, init?: RequestInit): Promise<Response>
+  /** One `METHOD path Scheme` entry per call, e.g. `POST /v1/users Bearer`; `none` when there is no Authorization header. */
+  readonly calls: string[]
+  /** The parsed JSON body of each call, in order; `undefined` for a call with no body. */
+  readonly bodies: unknown[]
+}
+
+/**
+ * A fetch that records each call and answers by URL path. A value is sent as JSON with status 200, unless it is a
+ * `Response`, which is sent as it is; a path with no entry answers `{}`.
+ */
+export function fakeFetch(responses: Record<string, unknown | Response> = {}): FakeFetch {
+  const calls: string[] = []
+  const bodies: unknown[] = []
+  const fetchFn = async (input: string, init?: RequestInit): Promise<Response> => {
+    const url = new URL(input)
+    const method = (init?.method ?? 'GET').toUpperCase()
+    const auth = new Headers(init?.headers).get('authorization')
+    calls.push(`${method} ${url.pathname} ${auth ? auth.split(' ')[0] : 'none'}`)
+    bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)))
+    const answer = responses[url.pathname] ?? {}
+    return answer instanceof Response ? answer : Response.json(answer)
+  }
+  return Object.assign(fetchFn, { calls, bodies })
 }

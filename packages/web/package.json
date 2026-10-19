@@ -18,6 +18,7 @@
   "dependencies": {
     "@tm/ai": "workspace:*",
     "@tm/core": "workspace:*",
+    "@tm/notify": "workspace:*",
     "better-auth": "^1.7.11",
     "drizzle-orm": "0.45.4",
     "next": "16.4.2",
