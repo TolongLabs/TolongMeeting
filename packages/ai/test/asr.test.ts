@@ -2,7 +2,15 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import type { AddressInfo } from 'node:net'
 import type { IncomingHttpHeaders } from 'node:http'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { AiKeyError, AsrDisconnected, dropOverlap, openAsrStream, type AiConfig, type AsrResult } from '../src/index'
+import {
+  AiKeyError,
+  AsrDisconnected,
+  AsrProtocolError,
+  dropOverlap,
+  openAsrStream,
+  type AiConfig,
+  type AsrResult
+} from '../src/index'
 
 // A real ws server on a random local port that imitates the DashScope realtime protocol.
 interface Conn {
@@ -80,6 +88,9 @@ function startFake() {
       const c = conns[i]
       if (c) c.ws.send(JSON.stringify(ev))
       else queued.set(i, [...(queued.get(i) ?? []), ev])
+    },
+    emitRaw(i: number, frame: string): void {
+      conns[i]!.ws.send(frame)
     },
     async waitForAppends(n: number): Promise<void> {
       await until(() => (conns[0]?.appends.length ?? 0) >= n)
@@ -300,5 +311,32 @@ test('a rejected key raises AiKeyError through onError', async () => {
   await until(() => errs.length === 1)
   expect(errs[0]).toBeInstanceOf(AiKeyError)
   expect(errs[0]).toMatchObject({ name: 'AiKeyError', status: 401 })
+  await s.close()
+})
+
+test.each([
+  ['a frame that is not JSON', 'not-json', 'secret transcript words {'],
+  ['a frame without a type', 'no-type', JSON.stringify({ transcript: 'secret transcript words' })],
+  [
+    'an event with a malformed body',
+    'bad-event',
+    JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 42 })
+  ]
+])('%s ends the stream with AsrProtocolError, once, without the frame in the error', async (_name, reason, frame) => {
+  const errs: Error[] = []
+  const s = openAsrStream(fake.cfg)
+  s.onError((e) => errs.push(e))
+  s.send(sec(1))
+  await fake.waitForAppends(10)
+  fake.emitRaw(0, frame)
+  fake.emitRaw(0, frame)
+  await until(() => errs.length === 1)
+  await Bun.sleep(30)
+  expect(errs).toHaveLength(1)
+  expect(errs[0]).toBeInstanceOf(AsrProtocolError)
+  expect(errs[0]).toMatchObject({ name: 'AsrProtocolError', reason })
+  expect(errs[0]!.message).not.toContain('secret')
+  expect(JSON.stringify(errs[0])).not.toContain('secret')
+  s.send(sec(1)) // after a failure send() still accepts audio and drops it
   await s.close()
 })

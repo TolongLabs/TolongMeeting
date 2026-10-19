@@ -516,7 +516,7 @@ git commit -m "feat(ai): add chat client with key errors"
 
 - Consumes: `AiConfig` (`asrUrl`, `apiKey`, `models.asr`), `AiKeyError` from Task 4.
 - Produces: `openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream`.
-- Produces (adds to contracts): `interface AsrResult { startMs: number; endMs: number; text: string }` (offsets from the first byte sent); `AsrStream` gains `onError(cb: (e: Error) => void): void`; `interface AsrOptions { now?: () => number; rotateAfterMs?: number; forceRotateMs?: number }`; `dropOverlap(prev: string, next: string): string`; `class AsrDisconnected extends Error`.
+- Produces (adds to contracts): `interface AsrResult { startMs: number; endMs: number; text: string }` (offsets from the first byte sent); `AsrStream` gains `onError(cb: (e: Error) => void): void`; `interface AsrOptions { now?: () => number; rotateAfterMs?: number; forceRotateMs?: number }`; `dropOverlap(prev: string, next: string): string`; `class AsrDisconnected extends Error`; `class AsrProtocolError extends Error` (terminal: a frame the client cannot read; fixed message, no frame content).
 
 - [x] **Step 1: Write the failing test**
 
@@ -1959,7 +1959,7 @@ git commit -m "feat(worker): ping form links to the member"
 
 **Interfaces:**
 
-- Consumes: `openAsrStream`, `AsrResult`, `AiKeyError` (Task 5); `AudioSource` (Task 10).
+- Consumes: `openAsrStream`, `AsrResult`, `AiKeyError`, `AsrDisconnected`, `AsrProtocolError` (Task 5); `AudioSource` (Task 10).
 - Produces: `startLiveAsr(audio: AudioSource, ai: AiConfig, out: string, opts?: LiveAsrOptions): Promise<LiveAsr>` (`out` is `<dataDir>/transcript/live.jsonl`).
 - Produces (adds to contracts): `interface LiveAsr { stop(): Promise<void> }`; `interface LiveAsrOptions { baseMs?: number; onError?: (e: Error) => void; open?: typeof openAsrStream }` (`baseMs` is the audio source's start minus the first recording start, so `live.jsonl` offsets are recording-relative).
 
@@ -2005,7 +2005,7 @@ Expected: FAIL with "Cannot find module './live'".
 
 - [x] **Step 3: Implement**
 
-Subscribe to `audio.onChunk` and forward each chunk to the stream; append each result to `out` as one JSON line with `baseMs` added to both offsets, as it arrives. The first `AiKeyError` unsubscribes from the audio, closes the stream and calls `onError` once; later errors are ignored; any other error is passed to `onError` and audio keeps flowing (the stream reconnects itself). `stop()` unsubscribes, then awaits `close()` so final results are written.
+Subscribe to `audio.onChunk` and forward each chunk to the stream; append each result to `out` as one JSON line with `baseMs` added to both offsets, as it arrives. `out` is created durably (file and directory entry fsynced), and a torn last line is cut with a one-line stderr note. `AiKeyError`, `AsrDisconnected` and `AsrProtocolError` are terminal: live unsubscribes from the audio, closes the stream, then calls `onError` once; later errors are ignored. Any other error is passed to `onError` and audio keeps flowing (the stream reconnects itself). `onError` is called through a helper that logs and ignores a throw, so it can never wedge the feed or the writes. An `AudioSource` fault is not forwarded to `onError` (the runner owns audio alerts); live only closes the ASR stream. A failed write is reported once, further dropped lines are counted silently, and one summary with the count is reported when writes recover or at `stop()`. Nothing calls `onError` after `stop()` returns. `stop()` unsubscribes, then awaits `close()` so final results are written.
 
 - [x] **Step 4: Run test to verify it passes**
 

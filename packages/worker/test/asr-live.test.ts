@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerWebSocket } from 'bun'
-import { AiKeyError, AsrDisconnected, openAsrStream, type AiConfig } from '@tm/ai'
+import { AiKeyError, AsrDisconnected, AsrProtocolError, openAsrStream, type AiConfig, type AsrStream } from '@tm/ai'
 import { startLiveAsr } from '../src/asr/live'
 import type { AudioSource } from '../src/audio/source'
 
@@ -13,6 +13,7 @@ interface FakeAsr {
   appendedBytes(): number
   finishes(): number
   emit(ev: object): void
+  emitRaw(frame: string): void
   rejectHandshake(status: number): void
   // Text the server sends as the transcript of the pending turn when the client asks it to finish.
   transcriptOnFinish(text: string): void
@@ -72,6 +73,9 @@ function startFakeAsr(): FakeAsr {
     connections: () => connections,
     emit(ev) {
       for (const ws of sockets) ws.send(JSON.stringify(ev))
+    },
+    emitRaw(frame) {
+      for (const ws of sockets) ws.send(frame)
     },
     rejectHandshake(status) {
       rejectWith = status
@@ -253,20 +257,201 @@ test('a transcription error is reported and the stream keeps writing', async () 
   expect(errs).toHaveLength(1)
 })
 
-test('an audio failure is reported once and closes the ASR stream', async () => {
+test('an audio failure closes the ASR stream and is left to the audio source to report', async () => {
   const errs: Error[] = []
   const audio = fakeAudio()
   const live = await startLiveAsr(audio, asr.cfg, join(dir, 'live.jsonl'), { onError: (e) => errs.push(e) })
   audio.push(SECOND)
   await until(() => asr.appendedBytes() === 32_000)
 
-  const parec = new Error('parec exited (1) before stop')
-  audio.fail(parec)
+  audio.fail(new Error('parec exited (1) before stop'))
   audio.fail(new Error('a second failure'))
+  await until(() => asr.finishes() === 1)
   await live.stop()
 
-  expect(errs).toEqual([parec])
+  expect(errs).toEqual([])
   expect(asr.finishes()).toBe(1)
+  expect(audio.subscribers()).toBe(0)
+})
+
+test('a frame the client cannot read ends the transcription loudly, once, and stops the feed', async () => {
+  const errs: Error[] = []
+  const audio = fakeAudio()
+  const live = await startLiveAsr(audio, asr.cfg, join(dir, 'live.jsonl'), { onError: (e) => errs.push(e) })
+  audio.push(SECOND)
+  await until(() => asr.appendedBytes() === 32_000)
+
+  asr.emitRaw('this is not json')
+  asr.emitRaw('neither is this')
+  await until(() => errs.length === 1)
+  await Bun.sleep(50)
+
+  expect(errs).toHaveLength(1)
+  expect(errs[0]).toBeInstanceOf(AsrProtocolError)
+  expect(audio.subscribers()).toBe(0)
+  audio.push(SECOND)
+  await Bun.sleep(50)
+  expect(asr.appendedBytes()).toBe(32_000)
+  expect(audio.stops()).toBe(0)
+  await live.stop()
+})
+
+test('an onError that throws cannot keep the audio flowing or wedge the writes', async () => {
+  const out = join(dir, 'live.jsonl')
+  const audio = fakeAudio()
+  const calls: Error[] = []
+  const stderr = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const live = await startLiveAsr(audio, asr.cfg, out, {
+      onError: (e) => {
+        calls.push(e)
+        throw new Error('handler blew up')
+      }
+    })
+    audio.push(SECOND)
+    await until(() => asr.appendedBytes() === 32_000)
+
+    asr.emit({ type: 'error', error: { code: 'Arrearage', message: 'account in arrears' } })
+    await until(() => calls.length === 1)
+    // The feed was cut before the handler ran, and the throw did not escape into the socket callback.
+    expect(audio.subscribers()).toBe(0)
+    await live.stop()
+    expect(calls).toHaveLength(1)
+    expect(stderr.mock.calls.map((c) => String(c[0]))).toContain('live transcription: the onError handler threw')
+  } finally {
+    stderr.mockRestore()
+  }
+})
+
+test('writes keep going after a failed write whose onError throws', async () => {
+  const sub = join(dir, 'transcript')
+  const out = join(sub, 'live.jsonl')
+  const audio = fakeAudio()
+  let calls = 0
+  const stderr = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const live = await startLiveAsr(audio, asr.cfg, out, {
+      onError: () => {
+        calls += 1
+        throw new Error('handler blew up')
+      }
+    })
+    audio.push(SECOND)
+    await until(() => asr.appendedBytes() === 32_000)
+    await rm(sub, { recursive: true })
+    asr.emit({ type: 'input_audio_buffer.speech_started', audio_start_ms: 0 })
+    asr.emit({ type: 'input_audio_buffer.speech_stopped', audio_end_ms: 500 })
+    asr.emit({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'lost' })
+    await until(() => calls === 1)
+
+    await mkdir(sub)
+    asr.emit({ type: 'input_audio_buffer.speech_started', audio_start_ms: 600 })
+    asr.emit({ type: 'input_audio_buffer.speech_stopped', audio_end_ms: 900 })
+    asr.emit({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'kept' })
+    await until(async () => (await linesOf(out)).length === 1)
+    await live.stop()
+    expect(await linesOf(out)).toEqual([{ startMs: 600, endMs: 900, text: 'kept' }])
+  } finally {
+    stderr.mockRestore()
+  }
+})
+
+// Emits one finished turn of speech, so the client writes one line.
+function say(text: string, startMs: number): void {
+  asr.emit({ type: 'input_audio_buffer.speech_started', audio_start_ms: startMs })
+  asr.emit({ type: 'input_audio_buffer.speech_stopped', audio_end_ms: startMs + 100 })
+  asr.emit({ type: 'conversation.item.input_audio_transcription.completed', transcript: text })
+}
+
+test('repeated write failures report the first, then one summary with the drop count when writes recover', async () => {
+  const sub = join(dir, 'transcript')
+  const out = join(sub, 'live.jsonl')
+  const audio = fakeAudio()
+  const errs: Error[] = []
+  const live = await startLiveAsr(audio, asr.cfg, out, { onError: (e) => errs.push(e) })
+  audio.push(SECOND)
+  await until(() => asr.appendedBytes() === 32_000)
+  await rm(sub, { recursive: true })
+  say('one', 0)
+  await until(() => errs.length === 1)
+  say('two', 200)
+  say('three', 400)
+  await Bun.sleep(100)
+  expect(errs).toHaveLength(1) // dropped lines are counted silently
+  expect(errs[0]).toMatchObject({ code: 'ENOENT' })
+
+  await mkdir(sub)
+  say('four', 600)
+  await until(() => errs.length === 2)
+  expect(errs[1]!.message).toContain('3 transcript lines were not written')
+  await live.stop()
+  expect(errs).toHaveLength(2)
+  expect(await linesOf(out)).toEqual([{ startMs: 600, endMs: 700, text: 'four' }])
+})
+
+test('failures still unrecovered at stop() are summarised once', async () => {
+  const sub = join(dir, 'transcript')
+  const audio = fakeAudio()
+  const errs: Error[] = []
+  const live = await startLiveAsr(audio, asr.cfg, join(sub, 'live.jsonl'), { onError: (e) => errs.push(e) })
+  audio.push(SECOND)
+  await until(() => asr.appendedBytes() === 32_000)
+  await rm(sub, { recursive: true })
+  say('one', 0)
+  await until(() => errs.length === 1)
+  say('two', 200)
+  await Bun.sleep(100)
+  await live.stop()
+  expect(errs).toHaveLength(2)
+  expect(errs[1]!.message).toContain('2 transcript lines were not written')
+})
+
+test('nothing reaches onError after stop() has returned', async () => {
+  let streamErr: ((e: Error) => void) | undefined
+  const errs: Error[] = []
+  const audio = fakeAudio()
+  const live = await startLiveAsr(audio, asr.cfg, join(dir, 'live.jsonl'), {
+    onError: (e) => errs.push(e),
+    open: (cfg) => {
+      const real = openAsrStream(cfg)
+      return {
+        send: (pcm) => real.send(pcm),
+        onResult: (cb) => real.onResult(cb),
+        onError(cb) {
+          streamErr = cb
+          real.onError(cb)
+        },
+        close: () => real.close()
+      } satisfies AsrStream
+    }
+  })
+  await live.stop()
+  streamErr!(new AiKeyError(402, 'out of credit'))
+  streamErr!(new Error('late'))
+  expect(errs).toEqual([])
+})
+
+test('a half written last line is cut off with a note on stderr', async () => {
+  const out = join(dir, 'live.jsonl')
+  await writeFile(out, '{"startMs":0,"endMs":1000,"text":"kept"}\n{"startMs":1000')
+  const stderr = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const live = await startLiveAsr(fakeAudio(), asr.cfg, out)
+    await live.stop()
+    expect(stderr.mock.calls.map((c) => String(c[0]))).toEqual([
+      'live transcription: cut a partial last line from the transcript file'
+    ])
+    expect(await linesOf(out)).toEqual([{ startMs: 0, endMs: 1000, text: 'kept' }])
+  } finally {
+    stderr.mockRestore()
+  }
+})
+
+test('the output file exists as soon as transcription starts', async () => {
+  const out = join(dir, 'transcript', 'live.jsonl')
+  const live = await startLiveAsr(fakeAudio(), asr.cfg, out)
+  expect(await readFile(out, 'utf8')).toBe('')
+  await live.stop()
 })
 
 test('a failed write is reported through onError', async () => {

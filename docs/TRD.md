@@ -550,6 +550,8 @@ Other worker modules and their entry points (each plan that creates one owns its
 | `src/watchers/{whatsapp,discord,teams}.ts` | `startWatcher(desk: Page, src: LinkSource, onLink: (c: FormCandidate                                                                                                                                                                                                                                                                                                                 | { meetingUrl: string }) => void): Promise<Stopper>` | 2 (Teams in 4) |
 | `src/run.ts`                               | `runOccurrence(cfg: JobConfig): Promise<OccurrenceOutcome>`, the worker's main sequence                                                                                                                                                                                                                                                                                              | 1A                                                  |
 
+`LiveAsrOptions.onError` (1A, `src/asr/live.ts`) receives: the one terminal fault that ended the transcription (`AiKeyError`, `AsrDisconnected` or `AsrProtocolError`; the audio feed is already cut and the stream closing when it runs), each non-fatal ASR error, and write failures (the first one, then one summary with the count of lines dropped, when writes recover or at `stop()`). It is never called after `stop()` returns, and a throw from it is logged to stderr and ignored. Audio capture faults are not passed to it; the runner owns audio alerts via `AudioSource.onFatal`. A fault in the audio source only closes the ASR stream.
+
 ## AI, notification and pipeline interfaces
 
 `packages/ai`:
@@ -585,6 +587,10 @@ export interface AsrOptions {
 }
 export class AsrDisconnected extends Error {
   constructor(cause: Error) // passed to onError after the last retry; `cause` is the last session's error or a close error
+}
+export class AsrProtocolError extends Error {
+  readonly reason: 'not-json' | 'no-type' | 'bad-event'
+  constructor(reason: 'not-json' | 'no-type' | 'bad-event') // terminal, like AsrDisconnected: the stream shut down on a frame it cannot read; fixed message, no frame content
 }
 export class AiKeyError extends AiError {
   status: 401 | 402 | 429

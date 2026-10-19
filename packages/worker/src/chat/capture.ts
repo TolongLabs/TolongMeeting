@@ -66,7 +66,7 @@ export async function appendDurably(
 }
 
 // Creates the file if missing, and fsyncs the directory so the new entry itself is durable.
-async function createDurably(file: string): Promise<void> {
+export async function createDurably(file: string): Promise<void> {
   const created = await open(file, 'a')
   try {
     await created.sync()

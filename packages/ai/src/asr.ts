@@ -31,6 +31,19 @@ export class AsrDisconnected extends Error {
   }
 }
 
+// The server sent something this client cannot read, so the stream was shut down. The message is fixed and `reason`
+// is one of a few fixed words: neither carries any of the frame, which may hold transcript text.
+export type AsrProtocolReason = 'not-json' | 'no-type' | 'bad-event'
+
+export class AsrProtocolError extends Error {
+  readonly reason: AsrProtocolReason
+  constructor(reason: AsrProtocolReason) {
+    super('ASR sent a message this client cannot read')
+    this.name = 'AsrProtocolError'
+    this.reason = reason
+  }
+}
+
 const BYTES_PER_MS = 32 // 16 kHz, mono, 16-bit
 const CHUNK_BYTES = 3_200 // 100 ms
 const REPLAY_BYTES = 160_000 // 5 s
@@ -246,12 +259,12 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
     try {
       json = JSON.parse(raw)
     } catch {
-      fail(new Error('ASR sent a message that is not JSON'))
+      fail(new AsrProtocolError('not-json'))
       return
     }
     const envelope = Envelope.safeParse(json)
     if (!envelope.success) {
-      fail(new Error('ASR sent a message without a type'))
+      fail(new AsrProtocolError('no-type'))
       return
     }
     const type = envelope.data.type
@@ -268,26 +281,26 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
         return
       case 'input_audio_buffer.speech_started': {
         const ev = SpeechStarted.safeParse(json)
-        if (!ev.success) return fail(badEvent(type))
+        if (!ev.success) return fail(new AsrProtocolError('bad-event'))
         turnFor(s, ev.data.item_id).start = s.baseMs + (ev.data.audio_start_ms ?? s.delivered / BYTES_PER_MS)
         return
       }
       case 'input_audio_buffer.speech_stopped': {
         const ev = SpeechStopped.safeParse(json)
-        if (!ev.success) return fail(badEvent(type))
+        if (!ev.success) return fail(new AsrProtocolError('bad-event'))
         turnFor(s, ev.data.item_id).end = s.baseMs + (ev.data.audio_end_ms ?? s.delivered / BYTES_PER_MS)
         if (s === current) rotateIfDue(true)
         return
       }
       case 'conversation.item.input_audio_transcription.completed': {
         const ev = Transcript.safeParse(json)
-        if (!ev.success) return fail(badEvent(type))
+        if (!ev.success) return fail(new AsrProtocolError('bad-event'))
         emitResult(s, ev.data.item_id, ev.data.transcript)
         return
       }
       case 'conversation.item.input_audio_transcription.failed': {
         const ev = TranscriptFailed.safeParse(json)
-        if (!ev.success) return fail(badEvent(type))
+        if (!ev.success) return fail(new AsrProtocolError('bad-event'))
         s.turns.delete(ev.data.item_id ?? '')
         const { code, message } = ev.data.error
         emitError(new Error(`ASR transcription failed (${code ?? 'no code'}): ${message ?? 'no message'}`))
@@ -295,7 +308,7 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
       }
       case 'error': {
         const ev = ServerError.safeParse(json)
-        if (!ev.success) return fail(badEvent(type))
+        if (!ev.success) return fail(new AsrProtocolError('bad-event'))
         const code = ev.data.code ?? ev.data.error?.code ?? ''
         const message = ev.data.message ?? ev.data.error?.message ?? code
         const status = keyStatusFor(code)
@@ -404,10 +417,6 @@ function keyStatusFor(code: string): 401 | 402 | 429 | undefined {
   if (/Arrearage|Quota|insufficient/i.test(code)) return 402
   if (/Throttl|RateLimit/i.test(code)) return 429
   return undefined
-}
-
-function badEvent(type: string): Error {
-  return new Error(`ASR sent a malformed ${type} event`)
 }
 
 async function waitUpTo(p: Promise<void>, ms: number): Promise<void> {
