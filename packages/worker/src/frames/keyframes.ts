@@ -11,7 +11,8 @@ export const HASH_DUP = 12
 export const DIFF_WIDTH = 0.74
 
 async function grey(png: Buffer, width: number, height: number): Promise<GreyImage> {
-  const { width: full = 0, height: fullHeight = 0 } = await sharp(png).metadata()
+  const { width: full, height: fullHeight } = await sharp(png).metadata()
+  if (full === undefined || fullHeight === undefined) throw new Error('frame has no width or height')
   const { data, info } = await sharp(png)
     .extract({ left: 0, top: 0, width: Math.floor(full * DIFF_WIDTH), height: fullHeight })
     .resize(width, height, { fit: 'fill' })

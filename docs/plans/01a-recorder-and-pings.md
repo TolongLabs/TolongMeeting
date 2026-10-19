@@ -1244,7 +1244,6 @@ Expected: FAIL with "Cannot find module".
 
 Run: `bun test packages/core/test/image.test.ts packages/worker/test/keyframes.test.ts packages/worker/test/health.test.ts packages/worker/test/frames.test.ts && docker run --rm --shm-size=2g tm-worker:dev test frames.spec.ts` (after `bun run image:worker`; the image part was not run on the build host, which has no PulseAudio)
 Expected: all pass.
-Expected: all pass.
 
 - [x] **Step 5: Commit**
 

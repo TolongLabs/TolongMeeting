@@ -10,13 +10,16 @@ export interface Frame {
 
 export interface FrameLoop extends Stopper {
   /**
-   * Called once if the loop cannot go on: ffmpeg died or `onFrame` threw. No more frames are delivered after this,
-   * and `stop()` rejects with the same error.
+   * Called once if the loop cannot go on: ffmpeg died or `onFrame` threw (or returned a rejected promise). No more
+   * frames are delivered after this, and `stop()` rejects with the same error. If the loop has already failed, `cb`
+   * is called at once with the stored error.
    */
   onFatal(cb: (error: Error) => void): void
 }
 
 const STOP_TIMEOUT_MS = 5000
+/** `stop()` waits this long for an in-flight `onFrame` before it proceeds anyway. */
+const ONFRAME_STOP_MS = 5000
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 // Cuts a byte stream of back-to-back PNG files into files. It walks the chunk structure (length, type, data, CRC), so
@@ -69,6 +72,15 @@ class PngSplitter {
       at = next
     }
   }
+}
+
+// Resolves when `p` settles or after `ms`, whichever comes first. Never rejects: the caller reads `failure` itself.
+function settleWithin(p: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms)
+  })
+  return Promise.race([p, deadline]).finally(() => clearTimeout(timer))
 }
 
 /**
@@ -136,7 +148,8 @@ export function startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<vo
     }
     for (const png of pngs) {
       if (stopping || failure !== null || running !== null) continue
-      running = onFrame({ at: new Date(), png }).then(
+      // An async wrapper turns a synchronous throw from onFrame into a rejection, so it reaches `fail` too.
+      running = (async () => onFrame({ at: new Date(), png }))().then(
         () => {
           running = null
         },
@@ -150,7 +163,8 @@ export function startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<vo
 
   return {
     onFatal(cb) {
-      fatalListeners.push(cb)
+      if (failure !== null) cb(failure)
+      else fatalListeners.push(cb)
     },
     async stop() {
       stopping = true
@@ -158,7 +172,7 @@ export function startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<vo
       const timer = setTimeout(() => child.kill('SIGKILL'), STOP_TIMEOUT_MS)
       await exited
       clearTimeout(timer)
-      await running
+      if (running !== null) await settleWithin(running, ONFRAME_STOP_MS)
       if (failure !== null) throw failure
     }
   }

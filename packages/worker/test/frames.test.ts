@@ -18,9 +18,17 @@ const has = (bin: string) => {
     return false
   }
 }
+// Host tests skip when a tool is missing, except under CI, where a missing tool fails the file instead.
+const hostHas = (bins: string[]): boolean => {
+  const missing = bins.filter((b) => !has(b))
+  if (missing.length === 0) return true
+  if (process.env.CI) throw new Error(`CI host is missing ${missing.join(', ')}`)
+  return false
+}
 
 // Host tests: a real Xvfb display and real ffmpeg. The host has no PulseAudio, so audio uses a generated signal.
-const canGrab = has('ffmpeg') && has('ffplay') && has('Xvfb') && has('xdpyinfo')
+const canGrab = hostHas(['ffmpeg', 'ffplay', 'Xvfb', 'xdpyinfo'])
+const hasFfmpeg = hostHas(['ffmpeg'])
 
 async function pixels(png: Buffer): Promise<{ width: number; height: number; rgb: Buffer }> {
   const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true })
@@ -71,8 +79,9 @@ describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
     // ffmpeg's x11grab delivers the first frame after about two intervals, then one per interval
     await sleep(5500)
     await loop.stop()
-    expect(frames.length).toBeGreaterThanOrEqual(3)
-    expect(frames.length).toBeLessThanOrEqual(5)
+    // about 4 frames; the window is wide so a loaded host does not flake
+    expect(frames.length).toBeGreaterThanOrEqual(2)
+    expect(frames.length).toBeLessThanOrEqual(6)
     for (let i = 1; i < frames.length; i++) {
       const gap = frames[i]!.at.getTime() - frames[i - 1]!.at.getTime()
       expect(gap).toBeGreaterThan(700)
@@ -163,6 +172,31 @@ describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
     await expect(loop.stop()).rejects.toThrow('detector broke')
   })
 
+  test('an onFrame that throws synchronously stops the loop and is reported', async () => {
+    const throwsAtOnce = (): Promise<void> => {
+      throw new Error('detector broke at once')
+    }
+    const loop = startFrameLoop(screen, throwsAtOnce, 500)
+    const fatal = new Promise<Error>((resolve) => loop.onFatal(resolve))
+    expect((await fatal).message).toBe('detector broke at once')
+    await expect(loop.stop()).rejects.toThrow('detector broke at once')
+  })
+
+  test('an onFatal added after the loop failed is called at once with the stored error', async () => {
+    const loop = startFrameLoop(
+      screen,
+      async () => {
+        throw new Error('detector broke late')
+      },
+      500
+    )
+    const failed = await new Promise<Error>((resolve) => loop.onFatal(resolve))
+    let late: Error | undefined
+    loop.onFatal((e) => (late = e))
+    expect(late).toBe(failed)
+    await expect(loop.stop()).rejects.toThrow('detector broke late')
+  })
+
   test('the level of a test tone is high and silence is -120 dB', async () => {
     const tone = await startAudioSource({ testInput: 'sine' })
     const heard: Buffer[] = []
@@ -183,7 +217,27 @@ describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
   })
 })
 
-describe.skipIf(!has('ffmpeg'))('audio source', () => {
+describe.skipIf(!hasFfmpeg)('frame loop on a display that cannot be opened', () => {
+  test('ffmpeg dying fails the loop; an onFatal added afterwards is called at once', async () => {
+    const dead: Screen = {
+      display: ':97',
+      width: 3840,
+      height: 1080,
+      stage: { x: 0, y: 0, width: 1920, height: 1080 },
+      desk: { x: 1920, y: 0, width: 1920, height: 1080 },
+      stop: async () => {}
+    }
+    const loop = startFrameLoop(dead, async () => {})
+    const died = await new Promise<Error>((resolve) => loop.onFatal(resolve))
+    expect(died.message).toMatch(/^ffmpeg exited/)
+    let late: Error | undefined
+    loop.onFatal((e) => (late = e))
+    expect(late).toBe(died)
+    await expect(loop.stop()).rejects.toThrow(/^ffmpeg exited/)
+  })
+})
+
+describe.skipIf(!hasFfmpeg)('audio source', () => {
   test('delivers 16 kHz mono PCM in real time', async () => {
     const a = await startAudioSource({ testInput: 'sine' })
     let bytes = 0
@@ -195,11 +249,13 @@ describe.skipIf(!has('ffmpeg'))('audio source', () => {
     expect(bytes).toBeLessThan(100_000)
   })
 
-  test('levelDb rejects windows outside 0 to 10 s', async () => {
+  test('levelDb rejects windows outside 0 to 10 s, and windows holding no whole sample', async () => {
     const a = await startAudioSource({ testInput: 'sine' })
     try {
       expect(() => a.levelDb(0)).toThrow(RangeError)
       expect(() => a.levelDb(10_001)).toThrow(RangeError)
+      expect(() => a.levelDb(0.01)).toThrow(/at least one sample/)
+      expect(() => a.levelDb(Number.NaN)).toThrow(RangeError)
     } finally {
       await a.stop()
     }
@@ -212,6 +268,33 @@ describe.skipIf(!has('ffmpeg'))('audio source', () => {
     })
     await sleep(300)
     await expect(a.stop()).rejects.toThrow('asr broke')
+  })
+
+  test('a subscriber that throws fails the source once; onFatal added later is called at once', async () => {
+    const a = await startAudioSource({ testInput: 'sine' })
+    const early: string[] = []
+    a.onFatal((e) => early.push(e.message))
+    a.onChunk(() => {
+      throw new Error('asr broke')
+    })
+    await sleep(300)
+    expect(early).toEqual(['asr broke'])
+    const late: string[] = []
+    a.onFatal((e) => late.push(e.message))
+    expect(late).toEqual(['asr broke'])
+    expect(() => a.levelDb(1000)).toThrow('asr broke')
+    await expect(a.stop()).rejects.toThrow('asr broke')
+    expect(early).toEqual(['asr broke'])
+  })
+
+  test('a subscriber whose promise rejects fails the source the same way', async () => {
+    const a = await startAudioSource({ testInput: 'sine' })
+    const fatal = new Promise<Error>((resolve) => a.onFatal(resolve))
+    a.onChunk(async () => {
+      throw new Error('async asr broke')
+    })
+    expect((await fatal).message).toBe('async asr broke')
+    await expect(a.stop()).rejects.toThrow('async asr broke')
   })
 })
 

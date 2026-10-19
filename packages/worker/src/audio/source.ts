@@ -12,9 +12,21 @@ const STOP_TIMEOUT_MS = 5000
 export interface AudioSource {
   /** Wall-clock time of the first sample: the live transcript's time origin. */
   startedAt: Date
-  /** Subscribes to 16 kHz mono signed 16-bit little-endian PCM chunks; whole samples only. Returns the unsubscribe. */
-  onChunk(cb: (pcm16le: Buffer) => void): () => void
-  /** RMS level in dBFS of the last `windowMs` (at most 10 s) of audio; -120 for digital silence. */
+  /**
+   * Subscribes to 16 kHz mono signed 16-bit little-endian PCM chunks; whole samples only. A subscriber that throws, or
+   * returns a promise that rejects, fails the source. Returns the unsubscribe.
+   */
+  onChunk(cb: (pcm16le: Buffer) => void | Promise<void>): () => void
+  /**
+   * Called once if the source fails: parec or ffmpeg died, or a subscriber threw. If it has already failed, `cb` is
+   * called at once with the stored error. The runner must wire this to an alert: a fault must not depend on someone
+   * calling `levelDb`.
+   */
+  onFatal(cb: (error: Error) => void): void
+  /**
+   * RMS level in dBFS of the last `windowMs` (at most 10 s) of audio; -120 for digital silence. Throws a RangeError for
+   * a window with no whole sample, and throws the source's error once it has failed.
+   */
   levelDb(windowMs: number): number
   /** Stops the capture process. Rejects if it died before that, or if a subscriber threw. */
   stop(): Promise<void>
@@ -84,8 +96,12 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
 
   let stopping = false
   let failure: Error | null = null
+  const fatalListeners: ((error: Error) => void)[] = []
   const fail = (error: Error) => {
-    failure ??= error
+    if (failure !== null) return
+    failure = error
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+    for (const cb of fatalListeners) cb(error)
   }
   child.once('error', (e) => fail(new Error(`cannot start ${bin}: ${e.message}`)))
   child.once('close', (code, signal) => {
@@ -100,7 +116,9 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
   let firstChunk!: () => void
   const first = new Promise<void>((resolve) => (firstChunk = resolve))
 
+  const subscriberFailed = (error: unknown) => fail(error instanceof Error ? error : new Error(String(error)))
   child.stdout!.on('data', (data: Buffer) => {
+    if (failure !== null) return
     const joined = spare.length > 0 ? Buffer.concat([spare, data]) : data
     const whole = joined.length - (joined.length % 2)
     spare = joined.subarray(whole)
@@ -114,10 +132,11 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
     keptBytes += whole
     while (kept.length > 1 && keptBytes - kept[0]!.length >= KEEP_MS * BYTES_PER_MS) keptBytes -= kept.shift()!.length
     for (const cb of subscribers) {
+      if (failure !== null) break
       try {
-        cb(pcm)
+        Promise.resolve(cb(pcm)).catch(subscriberFailed)
       } catch (error) {
-        fail(error instanceof Error ? error : new Error(String(error)))
+        subscriberFailed(error)
       }
     }
   })
@@ -130,11 +149,12 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
     clearTimeout(timer)
   }
 
+  let firstChunkTimer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
-    setTimeout(
+    firstChunkTimer = setTimeout(
       () => reject(new Error(`${bin} gave no audio within ${FIRST_CHUNK_TIMEOUT_MS / 1000} s: ${stderr.trim()}`)),
       FIRST_CHUNK_TIMEOUT_MS
-    ).unref()
+    )
   })
   const died = new Promise<never>((_, reject) => {
     child.once('error', (e) => reject(new Error(`cannot start ${bin}: ${e.message}`)))
@@ -147,6 +167,8 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
   } catch (error) {
     await kill()
     throw error
+  } finally {
+    clearTimeout(firstChunkTimer)
   }
 
   return {
@@ -155,11 +177,19 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
       subscribers.add(cb)
       return () => void subscribers.delete(cb)
     },
+    onFatal(cb) {
+      if (failure !== null) cb(failure)
+      else fatalListeners.push(cb)
+    },
     levelDb(windowMs) {
-      if (!(windowMs > 0 && windowMs <= KEEP_MS))
-        throw new RangeError(`windowMs must be in (0, ${KEEP_MS}], got ${windowMs}`)
+      const samples = Math.floor((windowMs * SAMPLE_RATE) / 1000)
+      if (!(samples >= 1))
+        throw new RangeError(
+          `levelDb window must hold at least one sample (${1000 / SAMPLE_RATE} ms), got ${windowMs} ms`
+        )
+      if (windowMs > KEEP_MS) throw new RangeError(`levelDb window must be at most ${KEEP_MS} ms, got ${windowMs} ms`)
       if (failure !== null) throw failure
-      const want = Math.floor((windowMs * BYTES_PER_MS) / 2) * 2
+      const want = samples * 2
       const parts: Buffer[] = []
       let have = 0
       for (let i = kept.length - 1; i >= 0 && have < want; i--) {
