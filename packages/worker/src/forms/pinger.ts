@@ -14,6 +14,7 @@ import type {
 import { canonicalFormUrl, formIdFor, IllegalTransition, localParts, nextFormState } from '@tm/core'
 import { formNotSubmittedPing, formToSubmitPing, linkUncheckedPing, type Ping } from '@tm/notify'
 import { LinkResolveError, normaliseFormUrl, resolveFormLink } from './links'
+import { loadFormRecords } from './store'
 import { checkTrust } from './trust'
 
 export interface FormPingerDeps {
@@ -25,6 +26,9 @@ export interface FormPingerDeps {
 }
 
 export interface FormPinger {
+  // Settles once the forms already on disk are known. It rejects if the forms directory cannot be read. `offer`
+  // waits for it, so callers need not.
+  readonly ready: Promise<void>
   offer(c: FormCandidate): Promise<void>
   idle(): Promise<void>
 }
@@ -92,6 +96,15 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
   const offered = new Set<string>() // raw URLs seen in flight or done
   const formKeys = new Set<string>() // normalised final URLs: one ping per form
   const tasks = new Set<Promise<void>>()
+  // Forms already handled by an earlier run of this occurrence: every forms/<formId>/ directory counts, whatever its
+  // record holds, so a restart never pings or submits one again.
+  const handled = new Set<string>()
+  const ready = loadFormRecords(cfg.dataDir).then(({ records, invalid }) => {
+    for (const r of records) handled.add(r.formId)
+    for (const id of invalid) handled.add(id)
+  })
+  // A caller that never reads `ready` must not trigger an unhandled rejection: `offer` rethrows it.
+  ready.catch(() => {})
 
   // Times in pings are wall-clock HH:MM in the entry's zone.
   function clockOf(at: string): string {
@@ -156,12 +169,20 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
         return
       }
 
+      // A form an earlier run left on disk is not pinged again, whatever state it stopped in.
+      const found = formIdFor(form.finalUrl)
+      if (handled.has(found)) {
+        location = locate(form.finalUrl)
+        await emit('form', { formId: found, outcome: 'ignored', reason: 'already_handled', ...location })
+        return
+      }
+
       // Checked and claimed with no await in between, so two candidates for one form cannot both ping.
       const key = normaliseFormUrl(form.finalUrl)
       if (formKeys.has(key)) return
       formKeys.add(key)
       claimedKey = key
-      formId = formIdFor(form.finalUrl)
+      formId = found
 
       location = locate(form.finalUrl)
       state = nextFormState(state, 'resolved')
@@ -228,7 +249,9 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
   }
 
   return {
+    ready,
     async offer(c) {
+      await ready
       if (offered.has(c.url)) return
       offered.add(c.url)
       const task: Promise<void> = run(c).finally(() => tasks.delete(task))

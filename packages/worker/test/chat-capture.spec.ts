@@ -157,9 +157,11 @@ test('a thrown read is reported and capture carries on', async ({ page }) => {
   await expect.poll(async () => (await keys()).length).toBe(4)
   await c.stop()
   expect(errors().map((e) => [e.where, e.step, e.message])).toEqual([
-    ['chat', 'read', 'frame was detached'],
-    ['chat', 'read', 'frame was detached']
+    ['chat', 'read', 'read failed'],
+    ['chat', 'read', 'read failed']
   ])
+  // The thrown message is not copied into the event.
+  expect(JSON.stringify(events)).not.toContain('detached')
   expect(new Set(await keys()).size).toBe(4)
 })
 
@@ -185,7 +187,7 @@ test('a failed append is retried and writes nothing twice', async ({ page }) => 
   )
   await expect.poll(async () => (await keys()).length).toBe(4)
   await c.stop()
-  expect(errors()).toEqual([{ where: 'chat', step: 'append', code: 'EIO', message: 'EIO: input/output error' }])
+  expect(errors()).toEqual([{ where: 'chat', step: 'append', code: 'EIO', message: 'append failed' }])
   expect(new Set(await keys()).size).toBe(4)
   expect(delivered).toEqual(await keys())
 })
@@ -298,6 +300,85 @@ test('a delivery that throws is retried on the next tick and delivered once, in 
   expect(errors()).toEqual([{ where: 'chat', step: 'deliver', code: null, message: 'delivery failed' }])
   // The failure's text is chat text and must not reach an event.
   expect(JSON.stringify(events)).not.toContain('Attendance')
+})
+
+test('a delivery that always throws is abandoned after three attempts and the rows behind it go on', async ({
+  page
+}) => {
+  await page.goto('/zoom-meeting-top.html')
+  const attempts = new Map<string, number>()
+  const delivered: string[] = []
+  let stuck: string | null = null
+  const c = await startChatCapture(
+    page,
+    zoomAdapter,
+    file,
+    async (m) => {
+      stuck ??= m.key
+      attempts.set(m.key, (attempts.get(m.key) ?? 0) + 1)
+      if (m.key === stuck) throw new Error(`cannot show ${m.text}`)
+      delivered.push(m.key)
+    },
+    { pollMs: 200, emit }
+  )
+  await expect.poll(() => delivered.length, { timeout: 5_000 }).toBe(3)
+  const before = await readFile(file, 'utf8')
+  // Further ticks neither retry the skipped row nor write anything.
+  await new Promise((r) => setTimeout(r, 700))
+  await c.stop()
+  expect(await readFile(file, 'utf8')).toBe(before)
+  expect(attempts.get(stuck!)).toBe(3)
+  const written = await keys()
+  expect(written).toHaveLength(4)
+  expect(delivered).toEqual(written.filter((k) => k !== stuck))
+  const abandoned = errors().filter((e) => e.message === 'delivery abandoned')
+  expect(abandoned).toEqual([
+    { where: 'chat', step: 'deliver', code: null, message: 'delivery abandoned', line: written.indexOf(stuck!) + 1 }
+  ])
+  expect(errors().filter((e) => e.message === 'delivery failed')).toHaveLength(2)
+  expect(JSON.stringify(events)).not.toContain('Attendance')
+  expect(JSON.stringify(events)).not.toContain(stuck!)
+})
+
+test('a replay that always throws is abandoned after three attempts, with step replay', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  const row = (n: number): ChatMessage => ({
+    key: `Student ${n}|8:4${n} PM|secret text ${n}`,
+    sender: `Student ${n}`,
+    senderRole: 'participant',
+    time: `8:4${n} PM`,
+    seenAt: `2026-10-21T08:4${n}:00.000Z`,
+    text: `secret text ${n}`,
+    links: [],
+    replyTo: null
+  })
+  const seeded = [row(1), row(2), row(3)].map((m) => `${JSON.stringify(m)}\n`).join('')
+  await writeFile(file, seeded)
+  const idle: PlatformAdapter = {
+    ...zoomAdapter,
+    readChat: async (_p, cursor) => ({ messages: [], cursor }),
+    sweepChat: async () => []
+  }
+  const replayed: string[] = []
+  const tries = new Map<string, number>()
+  const c = await startChatCapture(page, idle, file, async () => {}, {
+    pollMs: 200,
+    emit,
+    onReplay: async (m) => {
+      tries.set(m.key, (tries.get(m.key) ?? 0) + 1)
+      if (m.key === row(2).key) throw new Error(m.text)
+      replayed.push(m.key)
+    }
+  })
+  await expect.poll(() => replayed.length, { timeout: 5_000 }).toBe(2)
+  await c.stop()
+  expect(replayed).toEqual([row(1).key, row(3).key])
+  expect(tries.get(row(2).key)).toBe(3)
+  expect(errors().filter((e) => e.message === 'delivery abandoned')).toEqual([
+    { where: 'chat', step: 'replay', code: null, message: 'delivery abandoned', line: 2 }
+  ])
+  expect(await readFile(file, 'utf8')).toBe(seeded)
+  expect(JSON.stringify(events)).not.toContain('secret')
 })
 
 test('a restart replays the rows on disk through onReplay before the first poll, and does not deliver them', async ({

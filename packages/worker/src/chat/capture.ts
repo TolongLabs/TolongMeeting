@@ -30,14 +30,18 @@ export interface AppendHandle {
   close(): Promise<void>
 }
 
-type Step = 'read' | 'sweep' | 'append' | 'deliver' | 'load'
+type Step = 'read' | 'sweep' | 'append' | 'deliver' | 'replay' | 'load'
 
 const POLL_MS = 3_000
 const SWEEP_MS = 600_000
 const UNREADABLE_ROW = 'chat.jsonl has a row that is not valid JSON'
 const DELIVERY_FAILED = 'delivery failed'
+const DELIVERY_ABANDONED = 'delivery abandoned'
+// Event messages are fixed text plus a code: an error's own message can carry chat text.
+const FAILED_MESSAGE = { read: 'read failed', sweep: 'sweep failed', append: 'append failed' } as const
+// Attempts per delivery: the first, and two retries on later ticks. Then the row is skipped.
+const MAX_ATTEMPTS = 3
 
-const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 const codeOf = (err: unknown): string | null =>
   err instanceof Error && 'code' in err && typeof err.code === 'string' ? err.code : null
 
@@ -91,13 +95,20 @@ const parseRow = (line: string): ChatMessage | null => {
 
 // Rows already in the file, in file order. A last line with no newline is a write a crash cut short: it was never
 // acknowledged, so it is cut off and the message is read again. Any other unparseable line fails the start. Its
-// error event carries no row text, since a row is chat.
-async function loadRows(file: string, emit: NonNullable<ChatCaptureOptions['emit']>): Promise<ChatMessage[]> {
+// error event carries no row text, since a row is chat. `lines` holds each row's 1-based line in the file and
+// `lineCount` the number of complete lines.
+async function loadRows(
+  file: string,
+  emit: NonNullable<ChatCaptureOptions['emit']>
+): Promise<{ rows: ChatMessage[]; lines: number[]; lineCount: number }> {
   const bytes = await readFile(file)
   const complete = bytes.lastIndexOf(0x0a) + 1
   if (complete !== bytes.length) await truncate(file, complete)
   const rows: ChatMessage[] = []
-  for (const line of bytes.subarray(0, complete).toString('utf8').split('\n')) {
+  const lines: number[] = []
+  const text = bytes.subarray(0, complete).toString('utf8').split('\n')
+  text.pop() // what follows the last newline is empty
+  for (const [i, line] of text.entries()) {
     if (line === '') continue
     const row = parseRow(line)
     if (row === null) {
@@ -105,8 +116,9 @@ async function loadRows(file: string, emit: NonNullable<ChatCaptureOptions['emit
       throw new Error(UNREADABLE_ROW)
     }
     rows.push(row)
+    lines.push(i + 1)
   }
-  return rows
+  return { rows, lines, lineCount: text.length }
 }
 
 const stderrEmit = async (type: EventType, data: Record<string, unknown>): Promise<void> => {
@@ -117,16 +129,20 @@ const stderrEmit = async (type: EventType, data: Record<string, unknown>): Promi
 //
 // Writes and delivery:
 // - A row is appended and fsynced before its cursor moves or `onMessage` runs, so no row is written twice.
-// - A row whose delivery fails stays at the head of a pending queue and is retried on the next tick. Rows behind it wait,
-//   so delivery stays in file order. A row still pending at `stop()` is on disk: the next start replays it.
+// - A row whose delivery fails stays at the head of a pending queue and is retried on a later tick. Rows behind it wait,
+//   so delivery stays in file order. Each delivery gets three attempts, one per tick at most. After the third failure
+//   it is skipped with one `error` event (message 'delivery abandoned', the file line, no key and no text), and the
+//   rows behind it go on. A skipped row stays in the file. A row still pending at `stop()` is on disk: the next start
+//   replays it.
 // - On start every row already in the file is queued for `onReplay`, in file order, before the first poll.
-// - Delivery is therefore at-least-once across restarts; the callee must dedupe (the form pinger does).
+// - Delivery is therefore at-least-once across restarts; the callee must dedupe. The form pinger does: it ignores a
+//   form that already has a forms/<formId>/ directory, and it loads those directories when it is created.
 //
 // Callers: `await sweepNow()` before `stop()`, so the rows the polls missed are written first. A sweep reads the list
 // top to bottom and can append older rows after newer ones, so the file is not sorted; the pipeline sorts it.
 //
-// Polls and sweeps run one at a time through one queue. A failed step emits an `error` event with its code and step,
-// and the next tick tries again.
+// Polls and sweeps run one at a time through one queue. A failed step emits an `error` event with its step, its code
+// and a fixed message, and the next tick tries again.
 export async function startChatCapture(
   page: Page,
   adapter: PlatformAdapter,
@@ -142,12 +158,24 @@ export async function startChatCapture(
 
   await mkdir(dirname(file), { recursive: true })
   await createDurably(file)
-  const loaded = await loadRows(file, emit)
+  const { rows: loaded, lines: loadedLines, lineCount } = await loadRows(file, emit)
+  let fileLines = lineCount // complete lines in the file, so a new row's line number is known
   // The cursor the adapter reads against: every key durably written. It only grows after an append resolves.
   const seen = new Set(loaded.map((m) => m.key))
-  // Deliveries not yet done, in file order. A thunk that throws stays at the head until a later tick succeeds.
-  const pending: Array<() => Promise<void> | void> = []
-  if (onReplay) for (const m of loaded) pending.push(() => onReplay(m))
+  // Deliveries not yet done, in file order. One that throws stays at the head until a later tick succeeds or it
+  // has used its attempts.
+  interface Delivery {
+    step: 'deliver' | 'replay'
+    line: number
+    attempts: number
+    run: () => Promise<void> | void
+  }
+  const pending: Delivery[] = []
+  if (onReplay) {
+    for (const [i, m] of loaded.entries()) {
+      pending.push({ step: 'replay', line: loadedLines[i], attempts: 0, run: () => onReplay(m) })
+    }
+  }
   let stopped = false
   let queue: Promise<void> = Promise.resolve()
   let pollQueued = false
@@ -159,10 +187,10 @@ export async function startChatCapture(
     return queue
   }
 
-  // Each tick catches its own failure, so one failed read or write never ends the capture. The event carries the
-  // code and the step only for a delivery failure, so no chat text can reach it.
-  async function report(step: Step, err: unknown, message: string = messageOf(err)): Promise<void> {
-    const data = { where: 'chat', step, code: codeOf(err), message }
+  // Each tick catches its own failure, so one failed read or write never ends the capture. The event carries a step,
+  // a code and fixed text, so no chat text can reach it.
+  async function report(step: Step, err: unknown, message: string, extra: Record<string, unknown> = {}): Promise<void> {
+    const data = { where: 'chat', step, code: codeOf(err), message, ...extra }
     try {
       await emit('error', data)
     } catch (emitErr) {
@@ -170,14 +198,22 @@ export async function startChatCapture(
     }
   }
 
-  // Runs the pending deliveries in order. Stops at the first failure, which stays at the head for the next tick.
-  async function deliverPending(): Promise<void> {
+  // Runs the pending deliveries in order. A failure that has attempts left stays at the head for the next tick: the
+  // delivery is not tried twice in one tick (`tried`). One that has used its attempts is dropped and reported once.
+  async function deliverPending(tried: Set<Delivery>): Promise<void> {
     while (pending.length > 0) {
+      const head = pending[0]
+      if (tried.has(head)) return
+      tried.add(head)
+      head.attempts += 1
       try {
-        await pending[0]()
+        await head.run()
       } catch (err) {
-        await report('deliver', err, DELIVERY_FAILED)
-        return
+        if (head.attempts < MAX_ATTEMPTS) {
+          await report(head.step, err, DELIVERY_FAILED)
+          return
+        }
+        await report(head.step, err, DELIVERY_ABANDONED, { line: head.line })
       }
       pending.shift()
     }
@@ -185,7 +221,7 @@ export async function startChatCapture(
 
   // Writes the unseen messages in one append, then marks them seen and queues them for delivery. Duplicates within
   // `found`, or rows already written by an earlier poll or sweep, are dropped here.
-  async function record(found: ChatMessage[]): Promise<void> {
+  async function record(found: ChatMessage[], tried: Set<Delivery>): Promise<void> {
     const batch = new Map<string, ChatMessage>()
     for (const m of found) if (!seen.has(m.key) && !batch.has(m.key)) batch.set(m.key, m)
     if (batch.size === 0) return
@@ -194,26 +230,30 @@ export async function startChatCapture(
       await append(file, fresh.map((m) => `${JSON.stringify(m)}\n`).join(''))
     } catch (err) {
       // Nothing is marked seen, so the next poll or sweep finds these rows again and retries.
-      await report('append', err)
+      await report('append', err, FAILED_MESSAGE.append)
       return
     }
     for (const m of fresh) seen.add(m.key)
-    for (const m of fresh) pending.push(() => onMessage(m))
-    await deliverPending()
+    for (const m of fresh) {
+      fileLines += 1
+      pending.push({ step: 'deliver', line: fileLines, attempts: 0, run: () => onMessage(m) })
+    }
+    await deliverPending(tried)
   }
 
   async function tick(step: 'read' | 'sweep', found: () => Promise<ChatMessage[]>): Promise<void> {
     if (stopped) return
     // Earlier failed deliveries and the replay of loaded rows go first, so replay runs before the first poll.
-    await deliverPending()
+    const tried = new Set<Delivery>()
+    await deliverPending(tried)
     let messages: ChatMessage[]
     try {
       messages = await found()
     } catch (err) {
-      await report(step, err)
+      await report(step, err, FAILED_MESSAGE[step])
       return
     }
-    await record(messages)
+    await record(messages, tried)
   }
 
   const poll = (): Promise<void> =>

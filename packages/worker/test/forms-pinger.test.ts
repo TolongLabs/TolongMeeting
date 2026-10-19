@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formIdFor, parseJob, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
@@ -306,9 +306,10 @@ test('an emit that throws for error and alert events never rejects the task', as
 
 test('a record write that fails right after resolution releases the form', async () => {
   // A plain file where the forms directory belongs makes every record write fail, for real.
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  await p.ready
   const blocker = join(dataDir, 'forms')
   await writeFile(blocker, 'in the way')
-  const p = createFormPinger({ cfg, send, emit, resolve })
   await p.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
   await p.idle()
 
@@ -338,4 +339,31 @@ test('a prefilled or direct-submit link pings the plain form, so opening it neve
   expect(ntfyBodies[0].actions).toEqual([{ action: 'view', label: 'Open form', url: PLAIN_FORM, clear: false }])
   expect(JSON.stringify(ntfyBodies)).not.toMatch(/formResponse|entry\.1|submit=/)
   expect((await onlyRecord()).formId).toBe(formIdFor(PLAIN_FORM))
+})
+
+test('a restart does not ping a form that already has a directory, valid record or not', async () => {
+  const other = 'https://docs.google.com/forms/d/e/1FAOther/viewform'
+  const first = createFormPinger({ cfg, send, emit, resolve })
+  await first.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await first.idle()
+  expect(sent).toHaveLength(1)
+  // A second form whose record an earlier run left unreadable.
+  await mkdir(join(dataDir, 'forms', formIdFor(other)), { recursive: true })
+  await writeFile(join(dataDir, 'forms', formIdFor(other), 'record.json'), '{"formId": ')
+
+  sent = []
+  ev = []
+  const direct = async (c: FormCandidate) => ({ ...c, finalUrl: c.url, provider: 'google' as const })
+  const fresh = createFormPinger({ cfg, send, emit, resolve: direct })
+  for (const url of [FORM, other]) {
+    await fresh.offer({ url, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  }
+  await fresh.idle()
+
+  expect(sent).toEqual([])
+  expect(ev.filter((e) => e.data.outcome === 'ignored').map((e) => [e.data.formId, e.data.reason])).toEqual([
+    [formIdFor(PLAIN_FORM), 'already_handled'],
+    [formIdFor(other), 'already_handled']
+  ])
+  expect(await readdir(join(dataDir, 'forms'))).toHaveLength(2)
 })
