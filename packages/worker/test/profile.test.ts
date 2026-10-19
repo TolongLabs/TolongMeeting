@@ -11,6 +11,7 @@ import {
   checkpointProfile,
   prepareProfile,
   restoreProfile,
+  scheduleTicks,
   startCheckpoints
 } from '../src/profile/profile'
 import { hostnameFor, machineIdFor } from '../src/profile/keys'
@@ -246,12 +247,15 @@ test('startCheckpoints writes checkpoints on an interval and stop waits for the 
   const key = randomBytes(32)
   const errors: unknown[] = []
   const runner = startCheckpoints(dir, out, key, (err) => errors.push(err), 20)
-  const deadline = Date.now() + 5000
-  while (!existsSync(out) || (await readdir(out)).filter((f) => f.endsWith('.tar.enc')).length === 0) {
-    if (Date.now() > deadline) throw new Error('no checkpoint written within 5 s')
-    await Bun.sleep(10)
+  try {
+    const deadline = Date.now() + 5000
+    while (!existsSync(out) || (await readdir(out)).filter((f) => f.endsWith('.tar.enc')).length === 0) {
+      if (Date.now() > deadline) throw new Error('no checkpoint written within 5 s')
+      await Bun.sleep(10)
+    }
+  } finally {
+    await runner.stop()
   }
-  await runner.stop()
   expect(errors).toEqual([])
   const files = await readdir(out)
   expect(files.some((f) => f.includes('.tmp'))).toBe(false)
@@ -267,24 +271,33 @@ test('startCheckpoints writes checkpoints on an interval and stop waits for the 
   expect(await tree(restored)).toEqual(['Default/Cookies'])
 })
 
-test('startCheckpoints never runs two checkpoints at once', async () => {
-  // Each checkpoint takes longer than the 1 ms tick, so an overlapping run would show two tmp files at once.
-  for (let i = 0; i < 8; i++) await put(join(dir, `Default/blob-${i}`), randomBytes(256 * 1024))
-  const failLoudly = (err: unknown): void => {
-    throw err
-  }
-  const runner = startCheckpoints(dir, out, randomBytes(32), failLoudly, 1)
+test('scheduled ticks never overlap a tick that is still running', async () => {
+  // Each tick takes 15 ms and the timer fires every 1 ms, so an overlapping tick would show up as two in flight.
+  let inFlight = 0
   let maxInFlight = 0
-  const deadline = Date.now() + 10_000
-  let done = 0
-  while (done < 4 && Date.now() < deadline) {
-    const names = existsSync(out) ? await readdir(out) : []
-    maxInFlight = Math.max(maxInFlight, names.filter((f) => f.includes('.tmp')).length)
-    done = names.filter((f) => f.endsWith('.tar.enc')).length
-    await Bun.sleep(1)
+  let finished = 0
+  const errors: unknown[] = []
+  const runner = scheduleTicks(
+    async () => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await Bun.sleep(15)
+      inFlight--
+      finished++
+    },
+    (err) => errors.push(err),
+    1
+  )
+  try {
+    const deadline = Date.now() + 3000
+    while (finished < 3) {
+      if (Date.now() > deadline) throw new Error('fewer than 3 ticks finished within 3 s')
+      await Bun.sleep(5)
+    }
+  } finally {
+    await runner.stop()
   }
-  await runner.stop()
-  expect(done).toBeGreaterThanOrEqual(4)
+  expect(errors).toEqual([])
   expect(maxInFlight).toBe(1)
 })
 
@@ -293,12 +306,15 @@ test('a failed tick goes to onError and the timer keeps running', async () => {
   await writeFile(out, 'a file where the checkpoint folder should be')
   const errors: unknown[] = []
   const runner = startCheckpoints(dir, out, randomBytes(32), (err) => errors.push(err), 10)
-  const deadline = Date.now() + 5000
-  while (errors.length < 2) {
-    if (Date.now() > deadline) throw new Error('onError was not called twice within 5 s')
-    await Bun.sleep(10)
+  try {
+    const deadline = Date.now() + 5000
+    while (errors.length < 2) {
+      if (Date.now() > deadline) throw new Error('onError was not called twice within 5 s')
+      await Bun.sleep(10)
+    }
+  } finally {
+    await runner.stop()
   }
-  await runner.stop()
   expect(errors[0]).toBeInstanceOf(Error)
 })
 

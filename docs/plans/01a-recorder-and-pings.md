@@ -890,7 +890,7 @@ git commit -m "feat(worker): add screen split and chrome launch"
 
 - Consumes: `Stopper` from Task 7.
 - Produces: `prepareProfile(dir: string, identityId: string, host?: HostInfo): Promise<void>`, `checkpointProfile(dir: string, out: string, key: Buffer, now?: () => Date): Promise<string>` (the optional parameters only serve tests).
-- Produces (adds to contracts): `restoreProfile(file: string, dir: string, key: Buffer): Promise<void>`; `startCheckpoints(dir: string, out: string, key: Buffer, intervalMs = 300_000): Stopper`; `deriveProfileKey(masterKey: Buffer, identityId: string): Buffer` (HKDF-SHA256, salt `tolongmeeting/v1` (matches plan 01c's `profileKey`), info `profile:<identityId>`, 32 bytes); `readMasterKey(file: string): Promise<Buffer>` (base64 that must decode to 32 bytes); `machineIdFor(identityId: string): string` (first 32 hex characters of SHA-256); `hostnameFor(identityId: string): string` (`tm-` plus the first 20 characters); `interface HostInfo { hostname: string; machineIdPath: string }`; errors `ProfileHostMismatch` and `CheckpointAuthError`; checkpoint format `TMCK1\n`, a 12-byte IV, the AES-256-GCM ciphertext of a tar and a 16-byte tag, named `<YYYYMMDDTHHmmssZ>.tar.enc`.
+- Produces (adds to contracts): `restoreProfile(file: string, dir: string, key: Buffer): Promise<void>`; `startCheckpoints(dir: string, out: string, key: Buffer, onError: (err: unknown) => void, intervalMs = 300_000): Stopper` (a failed tick goes to `onError`; the timer keeps running); `deriveProfileKey(masterKey: Buffer, identityId: string): Buffer` (HKDF-SHA256, salt `tolongmeeting/v1` (matches plan 01c's `profileKey`), info `profile:<identityId>`, 32 bytes); `readMasterKey(file: string): Promise<Buffer>` (base64 that must decode to 32 bytes); `machineIdFor(identityId: string): string` (first 32 hex characters of SHA-256); `hostnameFor(identityId: string): string` (`tm-` plus the first 20 characters); `interface HostInfo { hostname: string; machineIdPath: string }`; errors `ProfileHostMismatch` and `CheckpointAuthError`; checkpoint format `TMCK1\n`, a 12-byte IV, the AES-256-GCM ciphertext of a tar and a 16-byte tag, named `<YYYYMMDDTHHmmssZ>.tar.enc`.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -2212,7 +2212,7 @@ The sequence (every awaited step has the timeout of its module; a failure saves 
  1  link.kind !== 'fixed' -> failed 'link_source_unsupported'. Create dataDir subfolders; events = createEventLog(dataDir/events.jsonl).
     key = deriveProfileKey(readMasterKey(TM_MASTER_KEY_FILE), identity.id); checkpoints dir = TM_PROFILE_ROOT/<identity.id>/checkpoints.
     If profileDir is empty and a checkpoint exists, restoreProfile(latest). prepareProfile(profileDir, identity.id).
- 2  screen = startScreen(); { context, stage, desk } = launchBrowser(profileDir, screen); startCheckpoints(profileDir, checkpoints, key).
+ 2  screen = startScreen(); { context, stage, desk } = launchBrowser(profileDir, screen); startCheckpoints(profileDir, checkpoints, key, onError, intervalMs).
  3  lecture: for each provider in checkFormProviders(desk, identity.formProviders): ping alert signin_forms (detail "Google" or "Microsoft").
  4  sleep until start - 10 min. audio = startAudioSource(); recorder = startRecorder(screen, dataDir/recording, attempt);
     recorder.onGap -> event recording_gap + ping alert recording_gap.

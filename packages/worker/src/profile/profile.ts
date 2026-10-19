@@ -80,12 +80,13 @@ export async function checkpointProfile(
   const file = join(out, `${stampFor(now())}.tar.enc`)
   // A random suffix keeps two checkpoints in the same second from sharing a tmp file.
   const tmp = `${file}.tmp-${randomBytes(6).toString('hex')}`
-  const iv = randomBytes(IV_BYTES)
-  const cipher = createCipheriv('aes-256-gcm', key, iv)
-  const archive = tar.c({ cwd: dir, portable: true, filter: (p) => !isCacheEntry(p) }, ['.'])
+  // Open first: if this throws, no archive stream has been created yet.
   const fh = await open(tmp, 'wx', 0o600)
   let written = false
   try {
+    const iv = randomBytes(IV_BYTES)
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
+    const archive = tar.c({ cwd: dir, portable: true, filter: (p) => !isCacheEntry(p) }, ['.'])
     await pipeline(archive, cipher, sealFrame(iv, cipher), writeAllTo(fh))
     await fh.sync()
     written = true
@@ -114,7 +115,6 @@ export async function restoreProfile(file: string, dir: string, key: Buffer): Pr
   }
 }
 
-// Ticks never overlap. A failed tick goes to onError and the timer keeps running.
 export function startCheckpoints(
   dir: string,
   out: string,
@@ -122,10 +122,20 @@ export function startCheckpoints(
   onError: (err: unknown) => void,
   intervalMs = 300_000
 ): Stopper {
+  return scheduleTicks(() => checkpointProfile(dir, out, key), onError, intervalMs)
+}
+
+// Runs `task` every intervalMs. Ticks never overlap. A failed tick goes to onError and the timer keeps running.
+// Exported so tests can drive a slow task; startCheckpoints is the only production caller.
+export function scheduleTicks(
+  task: () => Promise<unknown>,
+  onError: (err: unknown) => void,
+  intervalMs: number
+): Stopper {
   let inFlight: Promise<void> | null = null
   const timer = setInterval(() => {
     if (inFlight) return
-    const tick = checkpointProfile(dir, out, key).then(
+    const tick = task().then(
       () => undefined,
       (err: unknown) => onError(err)
     )
