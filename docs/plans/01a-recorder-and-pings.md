@@ -771,19 +771,20 @@ git commit -m "feat(worker): add pinned worker image"
 
 **Files:**
 
-- Create: `packages/worker/src/types.ts`, `packages/worker/src/display/screen.ts`, `packages/worker/src/chrome/launch.ts`, `packages/worker/src/chrome/mute.ts`, `packages/worker/playwright.config.ts`, `packages/worker/test/serve.mjs`, `packages/worker/test/helpers/image.ts` (`windowBounds`, `browserCmdline`, `playTone`, `sinkLevelDb`)
-- Test: `packages/worker/src/chrome/launch.test.ts`, `packages/worker/test/image/launch.spec.ts`
+- Create: `packages/worker/src/types.ts`, `packages/worker/src/display/screen.ts`, `packages/worker/src/chrome/launch.ts`, `packages/worker/src/chrome/mute.ts`, `packages/worker/test/helpers/image.ts` (`windowBounds`, `browserCmdline`, `playTone`, `sinkLevelDb`)
+- Modify: `packages/worker/playwright.config.ts` (Task 13 created it; this task adds the `fixtures`, `image` and `host` projects)
+- Test: `packages/worker/test/chrome-launch.test.ts`, `packages/worker/test/image/launch.spec.ts`, `packages/worker/test/host/launch-host.spec.ts`
 
 **Interfaces:**
 
 - Consumes: the image from Task 6 (Xvfb, openbox, Chrome, `tm_sink`).
 - Produces: `startScreen(): Promise<Screen>`, `launchBrowser(profileDir: string, screen: Screen): Promise<{ context: BrowserContext; stage: Page; desk: Page }>`.
-- Produces (adds to contracts): in `src/types.ts`, `interface Stopper { stop(): Promise<void> }` and `interface Screen { display: string; width: 3840; height: 1080; stage: Rect; desk: Rect; stop(): Promise<void> }`; `chromeArgs(screen: Screen): string[]`; `launchGuestStage(screen: Screen): Promise<{ browser: Browser; stage: Page }>` (a throw-away profile on the stage, for the Zoom guest fallback); `muteDesk(page: Page): Promise<void>`. Playwright config: project `fixtures` (headless bundled Chromium, `webServer` running `node packages/worker/test/serve.mjs` on port 4173 to serve `test/fixtures/`, `baseURL` `http://localhost:4173`) and project `image` (files under `test/image/`, skipped unless `TM_IN_IMAGE=1`).
+- Produces (adds to contracts): in `src/types.ts`, `interface Stopper { stop(): Promise<void> }` and `interface Screen { display: string; width: 3840; height: 1080; stage: Rect; desk: Rect; stop(): Promise<void> }`; `chromeArgs(screen: Screen): string[]`; `launchGuestStage(screen: Screen): Promise<{ browser: Browser; stage: Page }>` (a throw-away profile on the stage, for the Zoom guest fallback); `muteDesk(page: Page): Promise<void>`. Playwright config: project `fixtures` (headless bundled Chromium; Task 13's `test/support/fixture-server.mjs` on port 4780 serves `test/fixtures/`, so no `serve.mjs` and no port 4173) and project `image` (files under `test/image/`, skipped unless `TM_IN_IMAGE=1`) and project `host` (files under `test/host/`, skipped unless `TM_HOST_LAUNCH=1`; the launch proof for a machine with Xvfb and Chrome but no openbox). `startScreen(options?: ScreenOptions)` takes `{ display?: string; windowManager?: 'openbox' | 'none' }`; the default requires openbox and fails loudly without it, and `none` is for tests on hosts without openbox.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/chrome/launch.test.ts
+// packages/worker/test/chrome-launch.test.ts
 test('chrome flags from the design', () => {
   const a = chromeArgs(fakeScreen)
   for (const f of [
@@ -847,19 +848,19 @@ test('stage and desk split, no automation flag, devices denied, desk muted', asy
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/chrome/launch.test.ts`, then `docker run --rm --shm-size=2g tm-worker:dev test launch.spec.ts`
+Run: `bun test packages/worker/test/chrome-launch.test.ts`, then `docker run --rm --shm-size=2g tm-worker:dev test launch.spec.ts`
 Expected: FAIL with "Cannot find module './launch'" in both.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-`startScreen()` spawns `Xvfb :99 -screen 0 3840x1080x24 -nolisten tcp` and `openbox`, waits up to 10 s for `xdpyinfo -display :99` to report `3840x1080`, sets `DISPLAY=:99` and returns the stage and desk rectangles from Global Constraints; `stop()` kills both. `launchBrowser` calls `chromium.launchPersistentContext(profileDir, { channel: 'chrome', headless: false, viewport: null, ignoreDefaultArgs: ['--enable-automation'], args: chromeArgs(screen) })`, with any flags spike 2's report adds; the stage is `context.pages()[0]`; the desk is a new window from the browser CDP session's `Target.createTarget({ url: 'about:blank', newWindow: true })`, placed with `Browser.setWindowBounds` at `{ left: 1920, top: 0, width: 1920, height: 1080, windowState: 'normal' }`; the stage bounds are set the same way at `0,0`; then `muteDesk(desk)`. `muteDesk` applies the desk-muting method from spike 2's report; if the report names none, it adds an init script that sets `muted = true` on every media element and routes every `AudioContext` destination through a zero gain node. `launchGuestStage` launches non-persistent Chrome with the same flags and a temporary `--user-data-dir`, placed at the stage rectangle.
+`startScreen()` spawns `Xvfb :99 -screen 0 3840x1080x24 -nolisten tcp` and `openbox`, waits up to 10 s for `xdpyinfo -display :99` to report `3840x1080`, sets `DISPLAY=:99` and returns the stage and desk rectangles from Global Constraints; `stop()` kills both. `launchBrowser` calls `chromium.launchPersistentContext(profileDir, { channel: 'chrome', headless: false, viewport: null, ignoreDefaultArgs: ['--enable-automation'], args: chromeArgs(screen) })`, with any flags spike 2's report adds; the stage is `context.pages()[0]`; the desk is a new window from the browser CDP session's `Target.createTarget({ url: 'about:blank', newWindow: true })`, placed with `Browser.setWindowBounds` at `{ left: 1920, top: 0, width: 1920, height: 1080, windowState: 'normal' }`; the stage bounds are set the same way at `0,0`; then `muteDesk(desk)`. `muteDesk` applies the desk-muting method from spike 2's report; if the report names none, it adds an init script that sets `muted = true` on every media element and routes every `AudioContext` destination through a zero gain node. `launchGuestStage` launches Chrome with the same flags on a temporary profile directory (a persistent context, because Playwright's non-persistent launch cannot see the `--app` window), placed at the stage rectangle; the directory is removed when the browser disconnects. Chrome's sandbox stays on except in the image (`TM_IN_IMAGE=1`), where Docker denies user namespaces and the container is the isolation boundary.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/chrome/launch.test.ts && bun run image:worker && docker run --rm --shm-size=2g tm-worker:dev test launch.spec.ts`
+Run: `bun test packages/worker/test/chrome-launch.test.ts && bun run image:worker && docker run --rm --shm-size=2g tm-worker:dev test launch.spec.ts`
 Expected: 1 pass, then `1 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker docs/TRD.md

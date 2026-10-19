@@ -58,8 +58,8 @@ export async function sinkLevelDb(ms: number): Promise<number> {
   const chunks: Buffer[] = []
   parec.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
   const done = new Promise<void>((resolve, reject) => {
-    parec.once('error', reject)
-    parec.once('close', () => resolve())
+    parec.on('error', reject)
+    parec.on('close', () => resolve())
   })
   await new Promise((resolve) => setTimeout(resolve, ms))
   parec.kill('SIGTERM')
