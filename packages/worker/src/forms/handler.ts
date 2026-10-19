@@ -20,7 +20,7 @@ import { looksLikeAttendance, orgRestricted } from './rules'
 import { formEventData, saveFormRecord } from './store'
 import { checkTrust } from './trust'
 import { errorText } from './redact'
-import type { Answer, FormContext, FormPage } from './types'
+import type { Answer, FormContext, FormPage, PageKind } from './types'
 
 export const SUBMIT_DEADLINE_MS = 120_000
 const MAX_PAGES = 30 // a guard against a form whose Next never ends
@@ -112,14 +112,17 @@ class FormRun {
 
   async run(): Promise<void> {
     await this.start()
-    const kind = await this.open()
+    let kind = await this.open()
+    if (kind === 'signin') kind = await this.retryAfterSignin()
     if (kind === 'form') await this.apply('page_loaded')
     else if (kind === 'already_answered') await this.finish('already_answered_seen')
     else if (kind === 'closed') await this.fail('form_closed')
     else if (kind === 'no_access') await this.fail('no_access')
     else if (kind === 'captcha') await this.fail('captcha')
     else if (kind === 'unknown') await this.fail('unknown_page')
-    else await this.fail('unexpected_error') // 'signin' and 'confirmation': sign-in handling is Task 12
+    else if (kind === 'signin')
+      await this.fail('signin_required_again') // the wall came back after the one retry
+    else await this.fail('unexpected_error') // 'confirmation' before any submit
     for (let n = 1; ; n++) {
       if (n > MAX_PAGES) await this.fail('unknown_page')
       if (await this.page(n)) return
@@ -157,7 +160,25 @@ class FormRun {
     }
   }
 
-  private async open() {
+  // The sign-in wall: ping the member, wait (read-only) while they sign in themselves, then open the plain form in a
+  // new desk tab. The retry happens once, and never after a Submit click: the driver's submit guard is per Page, so a
+  // retry must not be able to reach a click that already happened.
+  private async retryAfterSignin(): Promise<PageKind> {
+    if (this.rec.signinRetried) await this.fail('signin_required_again')
+    if (this.rec.history.some((h) => h.state === 'submitting')) {
+      throw new Error('refusing to retry a form after Submit was clicked')
+    }
+    await this.apply('signin_wall') // pings "Sign in again"; the tab stays open and untouched
+    const signedIn = await this.ctx.waitForSignin(this.tab!, this.f.provider, this.ctx.signal)
+    if (!signedIn) await this.fail(this.ctx.signal.aborted ? 'meeting_ended' : 'signin_not_completed')
+    await this.closeTab() // TabCloseFailedError stops the run and raises the alert
+    this.rec = { ...this.rec, signinRetried: true }
+    await this.apply('signed_in')
+    this.deadline = Date.now() + SUBMIT_DEADLINE_MS
+    return await this.open()
+  }
+
+  private async open(): Promise<PageKind> {
     try {
       this.tab = await openDeskTab(this.ctx.desk)
     } catch (error) {

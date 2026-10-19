@@ -2159,10 +2159,10 @@ The new branch, for kind `signin` in step 3:
 
 - If `rec.signinRetried` is already true, fail `signin_required_again`.
 - Otherwise apply `signin_wall` (pings "Sign in again") and keep the tab open, untouched, then `ok = await ctx.waitForSignin(tab, f.provider, ctx.signal)`.
-- If `ok`, set `signinRetried = true`, apply `signed_in`, move the deadline to now + `SUBMIT_DEADLINE_MS`, and repeat step 3's `openForm` in the same tab.
+- If `ok`, set `signinRetried = true`, apply `signed_in`, move the deadline to now + `SUBMIT_DEADLINE_MS`, close the old tab (a `TabCloseFailedError` stops the run and alerts), and repeat step 3 in a new desk tab: the driver's submit guard is keyed by `Page`, so one `Page` serves one attempt. A retry is never made after a Submit click.
 - If not, fail `meeting_ended` when `ctx.signal.aborted`, else `signin_not_completed`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const stateOf = (events: Record<string, unknown>[]) => events.at(-1)?.state
@@ -2237,19 +2237,19 @@ test('fails with signin_not_completed when the wait times out', async ({ context
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-signin.spec.ts`
 Expected: FAIL: the records end `failed` with reason `unexpected_error`, and no "Sign in again" ping is sent.
 
-- [ ] **Step 3: Replace the `signin` branch in `handleForm` as specified**
+- [x] **Step 3: Replace the `signin` branch in `handleForm` as specified**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-signin.spec.ts test/forms-handler.spec.ts`
 Expected: PASS (15 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/handler.ts packages/worker/test/forms-signin.spec.ts
