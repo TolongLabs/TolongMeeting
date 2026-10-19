@@ -47,10 +47,13 @@ export function formNotSubmittedPing(entry: string, f: ResolvedForm, hhmm: strin
 }
 
 export function linkUncheckedPing(entry: string, c: FormCandidate, hhmm: string): Ping {
-  const source = c.source === 'qr' ? 'A QR code on the shared screen' : (c.sender ?? 'Someone')
+  const message =
+    c.source === 'qr'
+      ? `A QR code on the shared screen pointed to a link at ${hhmm} that couldn't be checked within 5 seconds. It may be a form.`
+      : `${c.sender ?? 'Someone'} shared a link at ${hhmm} that couldn't be checked within 5 seconds. It may be a form.`
   return {
     title: `Link seen, not checked: ${entry}`,
-    message: `${source} shared a link at ${hhmm} that couldn't be checked within 5 seconds. It may be a form.`,
+    message,
     priority: 'high',
     actions: [{ label: 'Open link', url: c.url }]
   }
@@ -88,11 +91,13 @@ function trustSource(reason: TrustReason, sender: string | null): string {
     case 'co_host':
       return 'a co-host'
     case 'trusted_sender':
-    case 'org_restricted':
       if (sender === null) {
         throw new Error(`formToSubmitPing: reason ${reason} needs a sender name`)
       }
       return sender
+    // The page itself is restricted to the member's organisation; the sender is not involved.
+    case 'org_restricted':
+      return 'your organisation'
   }
 }
 

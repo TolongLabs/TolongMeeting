@@ -75,13 +75,33 @@ test('a detail-bearing alert without its detail fails loudly', () => {
 })
 
 test('summary cut to 3900 bytes never splits a multi-byte character', () => {
-  // 'é' is two bytes, so 3,000 of them are 6,000 bytes and the cut lands mid-character at byte 3900.
-  const text = 'é'.repeat(3000)
+  // 'a' is one byte and 'é' is two, so byte 3900 is the second byte of an 'é': the cut lands mid-character.
+  const text = 'a' + 'é'.repeat(3000)
   const message = summaryReadyPing('Data Mining', text).message
   expect(message.endsWith('\n(truncated)')).toBe(true)
   const kept = message.slice(0, -'\n(truncated)'.length)
   expect(new TextEncoder().encode(kept).length).toBeLessThanOrEqual(3900)
-  expect(kept).toBe('é'.repeat(1950))
+  // 'a' plus 1,949 'é' is 3,899 bytes; the split 'é' is dropped whole.
+  expect(kept).toBe('a' + 'é'.repeat(1949))
+})
+
+test('org_restricted names the organisation and accepts a null sender', () => {
+  expect(resolvedQr.sender).toBeNull()
+  const p = formToSubmitPing('Data Mining', resolvedQr, 'org_restricted', '20:45')
+  expect(p.message).toBe(
+    "A form from your organisation was seen at 20:45. The bot doesn't submit forms yet: open it and submit it yourself."
+  )
+  expect(p.actions).toEqual([{ label: 'Open form', url: resolvedQr.finalUrl }])
+})
+
+test('a link from the shared screen is worded as a QR code, not a sender', () => {
+  expect(linkUncheckedPing('Data Mining', resolvedQr, '20:46')).toEqual({
+    title: 'Link seen, not checked: Data Mining',
+    message:
+      "A QR code on the shared screen pointed to a link at 20:46 that couldn't be checked within 5 seconds. It may be a form.",
+    priority: 'high',
+    actions: [{ label: 'Open link', url: resolvedQr.url }]
+  })
 })
 
 test('a summary that fits is sent whole', () => {

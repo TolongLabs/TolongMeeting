@@ -1,4 +1,6 @@
+import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import type { NtfyConfig } from '@tm/core'
 
 export interface PingAction {
@@ -45,7 +47,8 @@ export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void> {
     return
   }
 
-  const body = await readAttachment(ping.attachPath)
+  // A Buffer can be sent again on a retry, unlike a consumed stream.
+  const body = await readFile(ping.attachPath)
   const headers: Record<string, string> = {
     ...auth,
     Title: headerValue(ping.title),
@@ -57,15 +60,6 @@ export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void> {
     headers.Actions = headerValue(ping.actions.map((a) => `view, ${a.label}, ${a.url}`).join('; '))
   }
   await send(`${cfg.url}/${cfg.topic}`, { method: 'PUT', headers, body })
-}
-
-// A Blob can be sent again on a retry, unlike a consumed stream.
-async function readAttachment(path: string): Promise<Blob> {
-  const file = Bun.file(path)
-  if (!(await file.exists())) {
-    throw new Error(`attachment not found: ${path}`)
-  }
-  return file
 }
 
 // Non-ASCII header values are sent as RFC 2047 encoded words, which ntfy decodes.
@@ -85,7 +79,7 @@ async function send(url: string, init: RequestInit): Promise<void> {
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) })
     } catch (err) {
       if (canRetry) {
-        await Bun.sleep(RETRY_DELAYS_MS[retry])
+        await sleep(RETRY_DELAYS_MS[retry])
         continue
       }
       throw new PingError(`ntfy request failed: ${err instanceof Error ? err.message : String(err)}`, null)
@@ -95,7 +89,7 @@ async function send(url: string, init: RequestInit): Promise<void> {
       return
     }
     if (res.status >= 500 && canRetry) {
-      await Bun.sleep(RETRY_DELAYS_MS[retry])
+      await sleep(RETRY_DELAYS_MS[retry])
       continue
     }
     throw new PingError(`ntfy responded ${res.status}`, res.status)

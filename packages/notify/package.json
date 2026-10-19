@@ -10,5 +10,8 @@
   },
   "dependencies": {
     "@tm/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
   }
 }
