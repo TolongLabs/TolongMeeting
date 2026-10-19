@@ -533,7 +533,7 @@ failed (high) "Form needs you"
   open_timeout            it didn't load within 15 seconds
   signin_required_again   it asked for sign-in again after you signed in
   signin_not_completed    sign-in wasn't completed within 15 minutes
-  meeting_ended           the meeting ended before sign-in was completed
+  meeting_ended           the meeting ended before it could be submitted
   form_closed             it's no longer accepting responses
   no_access               your account doesn't have access to it
   captcha                 it asks for a CAPTCHA

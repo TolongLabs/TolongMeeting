@@ -177,6 +177,8 @@ class FormRun {
     if (this.ctx.signal.aborted) await this.fail('meeting_ended') // the meeting may end while the sign-in tab closes
     this.rec = { ...this.rec, signinRetried: true }
     await this.apply('signed_in')
+    // Saving and pinging take time too: check again right before the retry tab opens.
+    if (this.ctx.signal.aborted) await this.fail('meeting_ended')
     this.deadline = Date.now() + SUBMIT_DEADLINE_MS
     return await this.open()
   }
