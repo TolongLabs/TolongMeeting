@@ -277,7 +277,7 @@ Everything belonging to a meeting occurrence is deleted from the server 30 days 
 
 #### Isolation
 
-Each member sees only their own timetable, identities, meetings and files through the website and API. One member's session can't reach another member's meetings, profiles, files or ntfy topic. A person with root access to the server can technically read everything; the app doesn't pretend otherwise (anti-goal 6, and [security and privacy](TRD.md#security-and-privacy)).
+Each member sees only their own timetable, identities, meetings and files through the website and API. One member's session can't reach another member's meetings, profiles, files or ntfy topic. The limit of this isolation is stated in anti-goal 6, and [security and privacy](TRD.md#security-and-privacy) says how it is enforced.
 
 #### Privacy and consent
 

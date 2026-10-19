@@ -1,9 +1,20 @@
 # TolongMeeting TRD
 
-The code-level decisions every TolongMeeting plan shares: repository layout, tooling, shared types, interfaces between packages, on-disk data layout and environment variables. Each milestone plan builds against this page, so names here are binding; a plan that needs to change one updates this page in the same commit. It implements the [TolongMeeting design](app-design/2026-10-20-meeting-bot-design.md), revision 2.
+The technical design of TolongMeeting and the code-level decisions every plan shares: architecture, components, state machines, security, platform realities, repository layout, tooling, shared types, interfaces between packages, on-disk data layout and environment variables. Each milestone plan builds against this page, so the names from [repository layout](#repository-layout) onwards are binding; a plan that needs to change one updates this page in the same commit. It implements the [PRD](PRD.md), revision 2 of the approved design, for the product in [PRODUCT.md](PRODUCT.md), and the screens are in the [design](DESIGN.md). Component deep-dives are in [`docs/trd/`](#components).
 
 Contents:
 
+1.  [Architecture overview](#architecture-overview)
+1.  [Components](#components)
+1.  [Tech stack](#tech-stack)
+1.  [State machines](#state-machines)
+1.  [Data and storage](#data-and-storage)
+1.  [Security and privacy](#security-and-privacy)
+1.  [Platform realities](#platform-realities)
+1.  [Lessons carried over from the session](#lessons-carried-over-from-the-session)
+1.  [Deployment and cost](#deployment-and-cost)
+1.  [Testing approach](#testing-approach)
+1.  [Early spikes](#early-spikes)
 1.  [Repository layout](#repository-layout)
 1.  [Tooling and conventions](#tooling-and-conventions)
 1.  [Runtime processes](#runtime-processes)
@@ -19,6 +30,216 @@ Contents:
     1.  [Changed shapes](#changed-shapes)
     1.  [Name reconciliation](#name-reconciliation)
     1.  [Known follow-ups](#known-follow-ups)
+
+## Architecture overview
+
+TolongMeeting is one TypeScript repository deployed with Docker Compose on one server. The member's browser reaches a Caddy reverse proxy, which serves the Next.js website and API, the self-hosted ntfy server and, for the signed-in owner only, the remote view of a worker's desk. Postgres holds the data and the job queue. The scheduler turns timetable entries into occurrences and starts one worker container per occurrence through a restricted Docker socket proxy. The worker attends the meeting, records and watches it, and sends heartbeats to the server; the reply carries the member's commands. When the worker exits, the pipeline builds the transcript, slides, chat and summary, and the member is pinged. On the member's PC, the Electron companion app shows notifications, saves summaries, runs native transcription and, for identities set to run locally, runs the same worker container.
+
+| Process               | What it does                                                           | Where                                      |
+| --------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| `tm-web`              | Website and API                                                        | Server, behind Caddy                       |
+| `tm-scheduler`        | Expands timetables, runs the queue, launches workers, deletes old data | Server                                     |
+| `tm-worker`           | Attends one meeting occurrence                                         | Server, or the member's PC through Docker  |
+| `tm-pipeline`         | Builds the transcript, slides, chat and summary after the worker exits | Server, or the member's PC for native mode |
+| `tm-companion`        | Notifications, summary files, native transcription, local mode         | The member's PC                            |
+| ntfy, Caddy, Postgres | Pings, HTTPS and WebSocket proxy, data and queue                       | Server                                     |
+
+The packages, milestones and entry points behind these processes are in [runtime processes](#runtime-processes) and [repository layout](#repository-layout).
+
+## Components
+
+Each component has a deep-dive under `docs/trd/`. The binding names, types and interfaces stay on this page, from [repository layout](#repository-layout) onwards.
+
+| Component                     | Technical design                                                                    | Requirements                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Website and API               | [Website and API](trd/website-and-api.md)                                           | [Website and accounts](PRD.md#website-and-accounts)         |
+| Scheduler                     | [Scheduler](trd/scheduler-and-control.md#scheduler)                                 | [Scheduling and attending](PRD.md#scheduling-and-attending) |
+| Control channel               | [Control channel](trd/scheduler-and-control.md#control-channel)                     | [Scheduling and attending](PRD.md#scheduling-and-attending) |
+| Meeting worker                | [Meeting worker](trd/meeting-worker.md#meeting-worker)                              | [Scheduling and attending](PRD.md#scheduling-and-attending) |
+| Platform adapters             | [Platform adapters](trd/meeting-worker.md#platform-adapters)                        | [Scheduling and attending](PRD.md#scheduling-and-attending) |
+| Link watchers                 | [Link watchers](trd/link-watchers.md)                                               | [Link watching](PRD.md#link-watching)                       |
+| Attendance form handler       | [Attendance form handler](trd/attendance-forms.md)                                  | [Attendance forms](PRD.md#attendance-forms)                 |
+| Name-mention detection        | [Name-mention detection](trd/transcription-and-summaries.md#name-mention-detection) | [Name mentions](PRD.md#name-mentions)                       |
+| Transcription                 | [Transcription](trd/transcription-and-summaries.md#transcription)                   | [Transcription](PRD.md#transcription)                       |
+| Post-processing and summaries | [Post-processing](trd/transcription-and-summaries.md#post-processing)               | [Summaries](PRD.md#summaries)                               |
+| Notifications                 | [Notifications](trd/notifications-and-companion.md#notifications)                   | [Notifications](PRD.md#notifications)                       |
+| Companion app                 | [Companion app](trd/notifications-and-companion.md#companion-app)                   | [Companion app](PRD.md#companion-app)                       |
+| Run locations                 | [Run locations](trd/notifications-and-companion.md#run-locations)                   | [Run locations](PRD.md#run-locations)                       |
+| Exports                       | [Exports](trd/exports.md)                                                           | [Exports](PRD.md#exports)                                   |
+
+## Tech stack
+
+All designer's calls.
+
+- **Language**: TypeScript throughout, one repository with Bun workspaces (Bun is the requester's default package manager and runner).
+- **Website and API**: Next.js, run with Bun. GitHub sign-in restricted to the TolongLabs organisation.
+- **Reverse proxy**: Caddy, for HTTPS, the website, ntfy, and the noVNC WebSockets (through `forward_auth`, because Next.js route handlers don't proxy WebSockets on their own).
+- **Database and queue**: Postgres, with a Postgres-backed job queue (for example pg-boss), so there's no Redis.
+- **Meeting worker**:
+  - **Browser**: Playwright driving pinned full Chrome, run on Node 24 inside the container, because Playwright officially supports Node.
+  - **Display and audio**: Xvfb, openbox, PulseAudio.
+  - **Capture**: ffmpeg for recording and frames.
+  - **QR decoding**: zxing-cpp (WebAssembly build) and OpenCV's WeChat detector, compared in [spike 3](#early-spikes).
+  - **Remote view**: x11vnc clipped to the desk half, served by noVNC.
+- **Docker access**: a restricted Docker socket proxy (for example `tecnativa/docker-socket-proxy` with only the needed endpoints).
+- **Notifications**: self-hosted ntfy.
+- **Cloud AI (bring your own key)**: each member's own DashScope key, Singapore region, through the OpenAI-compatible endpoint (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, or the workspace endpoint `https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` when a Workspace ID is given). One client takes a configurable base URL and a model ID per task, with thinking mode off unless a task's tests show it's needed. Defaults as of 20 October 2026 (re-check at build time; details in [AI providers](research/ai-providers.md)):
+  - **Summaries**: `qwen3.7-plus`.
+  - **Slide reading**: `qwen3-vl-plus`.
+  - **Form-label matching**: the cheapest current flash model (`qwen-flash`, or `qwen3.7-flash` if it's cheaper and as fast at build time).
+  - **Live speech recognition**: `qwen3-asr-flash-realtime`, over WebSocket rather than the OpenAI-compatible endpoint.
+- **ModelScope**: an alternative provider for text tasks, with its own model-ID mapping, for members who prefer it. Its free quota is unclear and has no service guarantee, and access may need mainland China identity checks. It is never used for live speech recognition, and never as the only route for form matching.
+- **Companion app**: Electron, for a reliable tray icon, click-to-open notifications with a registered app ID on Windows, child processes and `safeStorage`.
+- **Deployment**: Docker Compose on one server.
+
+## State machines
+
+Meeting occurrence (stored in Postgres; every transition is an event):
+
+```text
+scheduled -> starting -> verifying_accounts -> watching_for_link -> joining -> in_lobby -> in_meeting -> leaving -> uploading -> transcribing -> post_processing -> completed
+
+Side exits:
+  verifying_accounts  -> waiting_for_signin -> verifying_accounts      (member signs in)
+  watching_for_link   -> no_link                                       (30 minutes after start)
+  in_lobby            -> denied | in_lobby (knock again, at most 2)
+  any running state   -> restarting -> previous state                  (up to 3 times)
+  any running state   -> left_by_member                                (leave_now or take_over)
+  starting            -> skipped_capacity | skipped_identity_clash | skipped_pc_offline
+  transcribing        -> waiting_for_pc                                (native mode)
+  any state           -> failed                                        (with reason)
+completed | failed | ... -> deleted                                    (30 days after the meeting)
+```
+
+Attendance form:
+
+```text
+detected -> resolving -> checking_trust -> opening -> inspecting -> filling -> submitting -> submitted
+
+Side exits:
+  checking_trust -> untrusted                         (ping)
+  inspecting     -> not_attendance | quiz             (ping)
+  opening        -> awaiting_signin -> opening        (member signs in; once)
+  filling        -> needs_member                      (unmatched required question; ping)
+  submitting     -> already_answered                  (ping)
+  any            -> failed                            (ping)
+```
+
+The names are the `OccurrenceState` and `FormState` types in [core types](#core-types).
+
+## Data and storage
+
+Main records (designer's sketch). The binding tables are in [database](#database), and the files on disk are in [data directory layout](#data-directory-layout).
+
+- **Member**: GitHub identity, display name, time zone, ntfy topic, role.
+- **Identity**: a member's named sign-in identity (for example University, Work), its run location and Zoom guest display name.
+- **Browser profile**: one per identity; latest encrypted checkpoint, last-verified time per account, and where it lives.
+- **Details**: saved form values with label variants, and names for mention alerts.
+- **Timetable entry**: the fields in the [entry form](DESIGN.md#timetable-and-entry-form).
+- **Meeting occurrence**: entry, scheduled and actual times, state, worker attempts, transcription mode, and the link used. Passcodes are removed from the stored link once the meeting ends.
+- **Artefacts**: recording, frames, slides, transcript, chat and summary, as files on disk referenced by path.
+- **Form record**: URL, source, sender, trust reason, times, state, fields filled (names only in logs), screenshots, result.
+- **Event**: timestamped log per occurrence (joined, notice dismissed, form seen, alert, error, deletion).
+- **Connection**: export target tokens, encrypted.
+
+Retention is a requirement; see [retention](PRD.md#retention).
+
+## Security and privacy
+
+- **Browser profiles** are the most sensitive data: they hold live sessions for university, work, WhatsApp and Discord accounts.
+  - **Encryption**: each identity's checkpoints are encrypted with AES-256-GCM under a key derived from the server master key and the identity's id (HKDF).
+  - **Master key**: kept in a Docker secret file outside the database and the repository.
+  - **Working copies**: live only on an encrypted host volume, mounted only into that identity's worker.
+- **Honesty about admins**: isolation between members is enforced by the app, the API and the identity lock. A person with root access to the server can read everything, so only trusted maintainers get server access (anti-goal 6).
+- **Starting containers**: the scheduler talks to Docker through a restricted socket proxy that allows only creating, starting, stopping and inspecting worker containers from the fixed worker image with fixed mounts. It blocks `exec`, archive downloads, privileged mode and other images.
+- **Network**: worker containers may reach the public internet (HTTPS, and the UDP and TCP ports WebRTC media needs) and the app's own API. They are blocked from private address ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`) and other containers. A domain allowlist isn't used, because university sign-in, link redirects and media relays reach unpredictable hosts.
+- **Remote view**: noVNC reaches the desk side of a worker only, through Caddy with `forward_auth` against the website, for the owning member. It closes after 15 minutes idle. The managed Chrome policy blocks local files, developer tools and downloads.
+- **Secrets**: export tokens, ntfy tokens and members' AI keys are encrypted at rest and never logged.
+- **Logs**: logs and events redact meeting passcodes, tokens and form field values; only field names are logged, and values show on the member's own meeting page. No personal data or secrets go in URL query strings, except where a platform's own meeting link requires a passcode.
+- **Form text is untrusted**: the form-matching model only sees question labels and options, cut to 120 characters, and must answer in a fixed JSON schema. Form descriptions never reach a model.
+- **Cloud AI**: transcripts, slides and form questions go to Alibaba Cloud on the member's key. Alibaba's policy (updated 1 October 2026) keeps prompts and responses for up to 30 days and doesn't use business inputs for training without consent. The AI keys page states this.
+- **Signing in**: the app never automates a login form and never stores a password. When a session expires, it asks the member to sign in again.
+
+The recording-others and consent rules are requirements; see [privacy and consent](PRD.md#privacy-and-consent).
+
+## Platform realities
+
+From research and expert review on 20 October 2026; verify before relying on them. Details: [platform constraints](research/platform-constraints.md).
+
+- **Zoom**: since March 2026, Meeting SDK apps that join other accounts' meetings need Zoom-issued authorisation tokens and app review. This design avoids that by using the web client signed in as the member.
+  - **One meeting per account**: a signed-in account can't usually be in two meetings at once, and joining the same meeting from a second device disconnects one session. That's why the Zoom adapter has a guest fallback and pings have a "Take over" button.
+  - **Guest joins**: joining through the web client as a guest worked on 19 October 2026.
+- **Teams**: from about the end of October 2026, Teams detects and labels external meeting-assistant bots in the lobby, with organiser approval required. A signed-in member joining from a browser isn't expected to be labelled, but this is unverified (spike 2).
+- **Google Meet**: the Meet Media API no longer accepts new registrations. Guests can land in a review queue that defaults to deny, while signed-in members of the host's organisation can join directly. Meet blocks browsers that report automation, hence the Chrome settings above.
+- **University and work sign-in policies**: institutions may limit how long web sessions last on unmanaged devices, re-check sessions when the address changes, or require managed devices. Reusing a session from a data centre while the member is active elsewhere can look like impossible travel. Spike 1 measures this, and the run locations give two ways round it.
+- **Chat apps**: Discord and WhatsApp terms forbid automating personal accounts; see [link watchers](trd/link-watchers.md).
+- **Borrowed code**: joinly and screenappai/meeting-bot are MIT-licensed and fine to borrow join flows from, with attribution. Attendee uses the Elastic License 2.0; read it for ideas only. Details: [open-source meeting bots](research/open-source-meeting-bots.md).
+
+## Lessons carried over from the session
+
+Requirements that come straight from the [problems and fixes](session-record/problems-and-fixes.md) catalogue:
+
+- Never synthesise keyboard or mouse input on a member's desktop; the worker runs on its own virtual screen ([SAFE-02](session-record/problems-and-fixes.md#safe-02-os-level-keystrokes-went-to-the-users-whatsapp), [DESK-02](session-record/problems-and-fixes.md#desk-02-restoring-chrome-stole-focus-and-covered-the-users-work)).
+- Alert on black frames from the first seconds, and never let the recorded window be covered or hidden ([DESK-01](session-record/problems-and-fixes.md#desk-01-chrome-meeting-window-minimised-during-capture), [OBS-04](session-record/problems-and-fixes.md#obs-04-obs-recorded-black-frames-while-chrome-was-covered), [CAP-03](session-record/problems-and-fixes.md#cap-03-the-watcher-missed-black-frames-and-the-gap-was-misdated)).
+- Join through the web-client URL, never the launcher page ([ZOOM-05](session-record/problems-and-fixes.md#zoom-05-zooms-launcher-page-opened-the-desktop-app)).
+- Detect the meeting end from page signals, checked every few seconds ([CAP-04](session-record/problems-and-fixes.md#cap-04-the-watcher-did-not-detect-the-meeting-end)).
+- Treat chat as a virtualised list: keep it at the bottom, sweep it periodically, store it as it arrives, and advance cursors only after a durable write ([CHAT-02](session-record/problems-and-fixes.md#chat-02-the-virtualised-chat-list-hid-new-messages), [CHAT-03](session-record/problems-and-fixes.md#chat-03-the-pull-cursor-skipped-messages-that-were-never-saved)).
+- Re-resolve browser tabs by purpose on every step; never hold tab handles across restarts ([BRW-08](session-record/problems-and-fixes.md#brw-08-the-extensions-tab-group-and-tab-ids-were-lost)).
+- Run one heavy transcription job at a time, and budget memory per worker ([ASR-02](session-record/problems-and-fixes.md#asr-02-transcription-jobs-were-killed-for-low-memory)).
+- Correct names from slides and other authoritative sources ([ASR-04](session-record/problems-and-fixes.md#asr-04-every-engine-misheard-proper-nouns)).
+- Record into crash-safe Matroska segments, and write every capture incrementally.
+
+## Deployment and cost
+
+- **Server**: one virtual machine in Singapore with 8 vCPUs, 16 GB of memory and 200 GB of disk, running at most 2 meetings at once (decision 38).
+  - **Per worker**: the expert review estimates 2.5 to 3.5 vCPUs and 3.5 to 4.5 GB, because Chrome renders video in software without a GPU. [Spike 6](#early-spikes) measures the real figure, and the concurrency cap is set from it.
+  - **Cost**: about US$45 to 80 a month.
+- **Cloud AI**: paid by each member on their own DashScope key. Estimates from Alibaba's Singapore price list of 19 October 2026 (check the console; the English and Chinese pages disagree on speech pricing):
+  - live speech recognition: about US$0.32 per meeting hour;
+  - a lecture summary: about US$0.02;
+  - slide reading: about US$0.05 for 60 slides;
+  - form matching: a fraction of a cent.
+
+  A 2-hour lecture comes to roughly US$0.70; native mode removes the speech cost.
+
+- **Native mode**: free per minute; uses the member's GPU.
+- **Backups**: nightly Postgres dump and encrypted profile checkpoints to off-server storage, kept for 7 days so deleted meetings don't linger (designer's call).
+- **HTTPS**: a TolongLabs subdomain through Caddy.
+
+## Testing approach
+
+Acceptance tests run on real meetings and are listed in the [PRD](PRD.md#acceptance-tests). The code is tested as [tooling and conventions](#tooling-and-conventions) describes: end-to-end and integration tests through each package's public entry points, and Playwright against static fixtures of each platform's pages for the worker. The monthly smoke test in [platform adapters](trd/meeting-worker.md#platform-adapters) joins each platform's test meeting.
+
+**Test accounts** (designer's call): TolongLabs' own test accounts weren't confirmed. Build organisation-restricted test forms with the member's own university account, since students can usually create forms limited to their university. Host test meetings from free accounts, keeping Zoom tests under its 40-minute free limit. Run the 90-minute test on Google Meet, Teams, or a university-licensed Zoom account.
+
+## Early spikes
+
+Throwaway checks before milestone 1A, because each could change the design:
+
+1.  **Sign-in from the server**: sign in to the member's university Microsoft and Google accounts, and their work account, in a worker on the Singapore server.
+    - Reopen the profile a day and a week later.
+    - Join a meeting and open an organisation-restricted form while the member is actively using the same accounts in Malaysia.
+    - Check whether the work tenant demands a managed device for Teams.
+
+    Repeat through a Tailscale exit node at home. The results set each identity's default run location.
+
+1.  **Browser in the container**: signed-in joins, audio heard, chat read and end detected on Zoom, Teams and Meet, in Xvfb on the server. This also covers:
+    - the Chrome flags, the policy and the stage and desk layout;
+    - muting desk tabs;
+    - whether Teams labels a signed-in browser as a bot.
+1.  **QR decoding**: share slides with QR codes of different sizes from another account, with the chat panel open. Measure decode rate and time with zxing-cpp and OpenCV WeChat on 1080p stage frames.
+1.  **Forms**: use a two-page Google Form and a two-page Microsoft Form restricted to an organisation, with:
+    - name and ID questions;
+    - an attendance confirmation;
+    - radio, checkbox and dropdown questions;
+    - a required free-text question.
+
+    The handler must fill the first ones and refuse the free text. Also test "already responded", an expired login, an untrusted sender, and a Safe Links-wrapped link.
+
+1.  **Speech recognition**: a 15-minute recording of a Malaysian lecture mixing English and Malay through `qwen3-asr-flash-realtime`. Check accuracy, stream-offset timestamps and reconnection, and look for a streaming model with native timestamps and vocabulary support.
+1.  **Resources**: CPU, memory and disk per worker over 2 hours, with chat watchers open.
+1.  **Profile persistence**: archive, encrypt and restore a profile signed in to Google, Microsoft, Zoom, Discord and WhatsApp Web across 3 fresh containers over 24 hours, including one forced crash. Check that cookies survive (`--password-store=basic`, fixed machine ID) and that WhatsApp stays linked.
+1.  **ntfy attachments**: whether attachments can require authentication and expire within 3 hours.
 
 ## Repository layout
 
@@ -243,7 +464,7 @@ export function nextOccurrenceState(from: OccurrenceState, event: OccurrenceTrig
 export function nextFormState(from: FormState, event: FormTrigger): FormState // throws IllegalTransition
 ```
 
-`OccurrenceTrigger` and `FormTrigger` are string unions defined by milestone 1A (form) and 1C (occurrence), following the transitions in the design's [state machines](app-design/2026-10-20-meeting-bot-design.md#state-machines).
+`OccurrenceTrigger` and `FormTrigger` are string unions defined by milestone 1A (form) and 1C (occurrence), following the transitions in the design's [state machines](#state-machines).
 
 ## Worker interfaces
 
@@ -302,6 +523,8 @@ Other worker modules and their entry points (each plan that creates one owns its
 | `src/qr/qr.ts`                             | `decodeQr(png: Buffer, region: Rect                                                                                                           | null): Promise<string[]>`                           | 1A             |
 | `src/forms/links.ts`                       | `resolveFormLink(c: FormCandidate, opts?: ResolveOptions): Promise<ResolvedForm                                                               | null>`                                              | 1A             |
 | `src/forms/trust.ts`                       | `checkTrust(f: ResolvedForm, trustedSenders: string[]): { trusted: boolean; reason: TrustReason                                               | null }` (pre-open)                                  | 1A             |
+| `src/forms/pinger.ts`                      | `createFormPinger(deps: FormPingerDeps): FormPinger`, `FormPinger.offer(c: FormCandidate)`, `FormPinger.idle()`                               | 1A                                                  |
+| `src/forms/provider-check.ts`              | `checkFormProviders(desk: Page, providers: FormProvider[], opts?: { urls? }): Promise<FormProvider[]>` (signed-out providers)                 | 1A                                                  |
 | `src/forms/handler.ts`                     | `handleForm(f: ResolvedForm, ctx: FormContext): Promise<FormRecord>`                                                                          | 1B                                                  |
 | `src/asr/live.ts`                          | `startLiveAsr(audio: AudioSource, ai: AiConfig, out: string): Promise<LiveAsr>`                                                               | 1A                                                  |
 | `src/control/heartbeat.ts`                 | `startHeartbeat(cfg: JobConfig, getStatus: () => Heartbeat): Stopper` (no-op when `control` is null)                                          | 1C                                                  |
@@ -334,7 +557,7 @@ export async function chatText(
   timeoutMs: number,
   opts?: ChatOptions
 ): Promise<string>
-export function openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
+export function openAsrStream(cfg: AiConfig): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
 export class AiKeyError extends AiError {
   status: 401 | 402 | 429
 }
@@ -386,7 +609,7 @@ recording/meeting.mkv                 joined at the end
 frames/<NNNN>_<HHMMSS>.png            kept keyframes (stage only)
 chat.jsonl                            one ChatMessage per line, appended as read
 events.jsonl                          one MeetingEvent per line
-forms/<formId>/record.json            FormRecord (milestone 1B), or the pinged candidate (1A)
+forms/<formId>/record.json            FormRecord (milestone 1B), or FormPingRecord (1A)
 forms/<formId>/filled.png             page-only screenshots
 forms/<formId>/confirmation.png
 transcript/live.jsonl                 { startMs, endMs, text } per result, recording-relative
@@ -444,8 +667,8 @@ The milestone plans were written in parallel against this page. Each marks the s
   - extra managed Chrome policies (no password saving, no browser sign-in or sync, no capture devices).
 - **01a recorder and pings**:
   - core: `parseJob`, `JobError`, `IllegalTransition`, `formatOffset`, `localParts`, `ChatMessage.replyTo`, `JobConfig.identity.formProviders`;
-  - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `AsrOptions`, `AsrDisconnected`, `PingError`, `AlertKind` and the ping builders;
-  - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`;
+  - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `PingError`, `AlertKind` and the ping builders;
+  - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `FormPinger`, `FormPingerDeps`, `FormPingRecord`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`;
   - pipeline: `Slide`, `InventorySchema`, `summaryFileName`, `LiveLine`, `Gap`, `TranscriptBlock`, `isHallucination`, `paragraphs`, `correctNames`, `buildTranscript`, `orderChat`, `stripInviteLinks`, `buildChat`;
   - data: `recording/attempts.json`, `outcome.json`, `errors/`.
 - **01b form submission**:
