@@ -1,0 +1,9 @@
+{
+  "name": "tm-spike-qr",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "sharp": "0.35.5",
+    "zxing-wasm": "3.1.6"
+  }
+}

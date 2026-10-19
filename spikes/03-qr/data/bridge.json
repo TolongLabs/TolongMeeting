@@ -1,0 +1,10 @@
+{
+  "frames": 100,
+  "pngKB": 223,
+  "startMs": 188,
+  "overheadP50Ms": 0.3,
+  "overheadP95Ms": 0.6,
+  "overheadMaxMs": 3.7,
+  "roundTripP95Ms": 90.2,
+  "decodeP95Ms": 89.7
+}

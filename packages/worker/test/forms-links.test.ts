@@ -232,11 +232,33 @@ test('a redirect to a non-http scheme ends the chain with null', async () => {
   expect(calls.length).toBe(2)
 })
 
-test('a forms.gle link that answers 200 with no redirect is not a form', async () => {
+test('a short link that answers 200 with no redirect is unresolved, not a non-form', async () => {
   const calls: Call[] = []
-  expect(await resolveFormLink(cand('https://forms.gle/gle-200'), { fetch: routedFetch(base, calls) })).toBeNull()
+  const err = await resolveFormLink(cand('https://forms.gle/gle-200'), { fetch: routedFetch(base, calls) }).catch(
+    (e: unknown) => e
+  )
+  expect(err).toBeInstanceOf(LinkResolveError)
+  expect(err).toMatchObject({ reason: 'network' })
+  expect((err as Error).message).toBe('short link forms.gle/gle-200 did not redirect')
   expect(calls.map((c) => c.url)).toEqual(['https://forms.gle/gle-200'])
-  expect(calls.length).toBe(1)
+  await expect(resolveFormLink(cand('https://bit.ly/gle-200'), { fetch: routedFetch(base, calls) })).rejects.toMatchObject({
+    reason: 'network'
+  })
+})
+
+test('a body that fails to close raises LinkResolveError with reason network', async () => {
+  const broken: typeof fetch = Object.assign(
+    async () =>
+      new Response(new ReadableStream({ cancel: () => Promise.reject(new Error('socket reset')) }), {
+        status: 302,
+        headers: { location: DOCS_FORM }
+      }),
+    { preconnect: fetch.preconnect }
+  )
+  const err = await resolveFormLink(cand('https://docs.google.com/x'), { fetch: broken }).catch((e: unknown) => e)
+  expect(err).toBeInstanceOf(LinkResolveError)
+  expect(err).toMatchObject({ reason: 'network' })
+  expect((err as Error).message).toBe('form link docs.google.com/x could not be closed')
 })
 
 test('a malformed Location header raises LinkResolveError with reason network', async () => {
