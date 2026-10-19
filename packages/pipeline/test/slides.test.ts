@@ -262,6 +262,17 @@ test('an AI key error stops the slide reading', async () => {
   await expect(buildSlides(cfg)).rejects.toBeInstanceOf(AiKeyError)
 })
 
+test('a backslash in a model title cannot turn escaped brackets into a link', async () => {
+  const { cfg } = await occurrenceWithKeyframes((width) =>
+    width === SCREEN.width
+      ? { status: 200, body: completion({ title: 'x\\[y\\](https://evil.example)', text: 'body' }) }
+      : readsAll(width)
+  )
+  const { mdPath } = await buildSlides(cfg)
+  const md = await Bun.file(mdPath).text()
+  expect(md).toContain('## Slide 02: x\\\\\\[y\\\\\\](https://evil.example)\n')
+})
+
 test('a model title is one line and cannot break the markdown', async () => {
   const { cfg } = await occurrenceWithKeyframes((width) =>
     width === SCREEN.width

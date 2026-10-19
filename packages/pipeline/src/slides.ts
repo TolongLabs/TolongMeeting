@@ -137,8 +137,9 @@ const isTransient = (e: unknown): boolean =>
 // One model title as one line: no newlines or runs of spaces.
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
-// A title is model output and goes into markdown: brackets would break the image label, a leading # a heading.
-const markdownTitle = (title: string): string => title.replace(/[[\]]/g, '\\$&').replace(/^#/, '\\#')
+// A title is model output and goes into markdown: backslashes and brackets would break the image label or form a
+// link, a leading # a heading. Backslashes are escaped too, so `\[` can't undo the bracket escape.
+const markdownTitle = (title: string): string => title.replace(/[\\[\]]/g, '\\$&').replace(/^#/, '\\#')
 
 type SlideRead = { title: string; text: string; failed?: true }
 
