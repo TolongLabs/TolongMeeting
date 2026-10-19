@@ -869,18 +869,19 @@ git commit -m "feat(worker): add screen split and chrome launch"
 **Files:**
 
 - Create: `packages/worker/src/profile/profile.ts`, `packages/worker/src/profile/keys.ts`
-- Test: `packages/worker/src/profile/profile.test.ts`, `packages/worker/src/profile/keys.test.ts`
+- Create: `packages/worker/src/types.ts` (only if absent; Task 7 extends it)
+- Test: `packages/worker/test/profile.test.ts`, `packages/worker/test/profile-keys.test.ts`
 
 **Interfaces:**
 
 - Consumes: `Stopper` from Task 7.
 - Produces: `prepareProfile(dir: string, identityId: string, host?: HostInfo): Promise<void>`, `checkpointProfile(dir: string, out: string, key: Buffer, now?: () => Date): Promise<string>` (the optional parameters only serve tests).
-- Produces (adds to contracts): `restoreProfile(file: string, dir: string, key: Buffer): Promise<void>`; `startCheckpoints(dir: string, out: string, key: Buffer, intervalMs = 300_000): Stopper`; `deriveProfileKey(masterKey: Buffer, identityId: string): Buffer` (HKDF-SHA256, salt `tolongmeeting`, info `profile:<identityId>`, 32 bytes); `readMasterKey(file: string): Promise<Buffer>` (base64 that must decode to 32 bytes); `machineIdFor(identityId: string): string` (first 32 hex characters of SHA-256); `hostnameFor(identityId: string): string` (`tm-` plus the first 20 characters); `interface HostInfo { hostname: string; machineIdPath: string }`; errors `ProfileHostMismatch` and `CheckpointAuthError`; checkpoint format `TMCK1\n`, a 12-byte IV, the AES-256-GCM ciphertext of a tar and a 16-byte tag, named `<YYYYMMDDTHHmmssZ>.tar.enc`.
+- Produces (adds to contracts): `restoreProfile(file: string, dir: string, key: Buffer): Promise<void>`; `startCheckpoints(dir: string, out: string, key: Buffer, intervalMs = 300_000): Stopper`; `deriveProfileKey(masterKey: Buffer, identityId: string): Buffer` (HKDF-SHA256, salt `tolongmeeting/v1` (matches plan 01c's `profileKey`), info `profile:<identityId>`, 32 bytes); `readMasterKey(file: string): Promise<Buffer>` (base64 that must decode to 32 bytes); `machineIdFor(identityId: string): string` (first 32 hex characters of SHA-256); `hostnameFor(identityId: string): string` (`tm-` plus the first 20 characters); `interface HostInfo { hostname: string; machineIdPath: string }`; errors `ProfileHostMismatch` and `CheckpointAuthError`; checkpoint format `TMCK1\n`, a 12-byte IV, the AES-256-GCM ciphertext of a tar and a 16-byte tag, named `<YYYYMMDDTHHmmssZ>.tar.enc`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/profile/profile.test.ts
+// packages/worker/test/profile.test.ts
 test('prepare removes Chrome singleton files and keeps the rest', async () => {
   await symlink('tm-host-123', join(dir, 'SingletonLock'))
   await writeFile(join(dir, 'SingletonSocket'), '')
@@ -922,35 +923,35 @@ test('only the newest 3 checkpoints are kept and no .tmp file is left', async ()
 ```
 
 ```ts
-// packages/worker/src/profile/keys.test.ts
+// packages/worker/test/profile-keys.test.ts
 test('derived keys are 32 bytes, stable and per identity', () => {
   const m = Buffer.alloc(32, 7)
   expect(deriveProfileKey(m, 'a').length).toBe(32)
   expect(deriveProfileKey(m, 'a').equals(deriveProfileKey(m, 'a'))).toBe(true)
   expect(deriveProfileKey(m, 'a').equals(deriveProfileKey(m, 'b'))).toBe(false)
   expect(machineIdFor('a')).toMatch(/^[0-9a-f]{32}$/)
-  expect(hostnameFor('university-identity-123456')).toBe('tm-university-identity-1')
+  expect(hostnameFor('university-identity-123456')).toBe('tm-university-identity-')
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/profile`
-Expected: FAIL with "Cannot find module './profile'".
+Run: `bun test packages/worker/test/profile`
+Expected: FAIL with "Cannot find module '../src/profile/profile'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-`prepareProfile` checks `host.hostname === hostnameFor(identityId)` and that the trimmed contents of `host.machineIdPath` equal `machineIdFor(identityId)` (defaults `os.hostname()` and `/etc/machine-id`), then removes `SingletonLock`, `SingletonSocket` and `SingletonCookie` with `rm({ force: true })` (they may be dangling symlinks). `checkpointProfile` streams `tar.c` (the `tar` package) with a filter that skips any path with a segment `Cache`, `Code Cache`, `GPUCache` or `Crashpad`, or the pair `Service Worker/CacheStorage`, through `createCipheriv('aes-256-gcm', key, iv)` into `<name>.tmp`, appends the tag, renames, then deletes all but the newest 3 `.tar.enc` files. `restoreProfile` reads the tag from the last 16 bytes, calls `setAuthTag` before streaming, extracts into an empty temporary directory and renames it to `dir` only after `final()` succeeds; an authentication failure throws `CheckpointAuthError`. `startCheckpoints` runs `checkpointProfile` every `intervalMs` and never runs two at once.
+`prepareProfile` checks `host.hostname === hostnameFor(identityId)` and that the trimmed contents of `host.machineIdPath` equal `machineIdFor(identityId)` (defaults `os.hostname()` and `/etc/machine-id`), then removes `SingletonLock`, `SingletonSocket` and `SingletonCookie` with `rm({ force: true })` (they may be dangling symlinks). `checkpointProfile` streams `tar.c` (the `tar` package) with a filter that skips any path with a segment `Cache`, `Code Cache`, `GPUCache` or `Crashpad`, or the pair `Service Worker/CacheStorage`, through `createCipheriv('aes-256-gcm', key, iv)` into `<name>.tmp`, appends the tag, renames, then deletes all but the newest 3 `.tar.enc` files. `restoreProfile` reads the tag from the last 16 bytes. It first streams the whole ciphertext through a decipher with `setAuthTag`, discarding the output, so an authentication failure throws `CheckpointAuthError` before any file is written. It then decrypts again into an empty sibling staging directory and renames it to `dir` only after the second pass completes. `startCheckpoints` runs `checkpointProfile` every `intervalMs` and never runs two at once.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/profile`
+Run: `bun test packages/worker/test/profile`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/profile docs/TRD.md
+git add packages/worker/src/types.ts packages/worker/src/profile packages/worker/test/profile.test.ts packages/worker/test/profile-keys.test.ts packages/worker/package.json bun.lock docs/TRD.md docs/plans/01a-recorder-and-pings.md
 git commit -m "feat(worker): add encrypted profile checkpoints"
 ```
 
