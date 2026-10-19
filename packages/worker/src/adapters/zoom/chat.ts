@@ -199,7 +199,7 @@ export async function zoomReadChat(
   cursor: ChatCursor
 ): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }> {
   // A page that navigates under the read yields nothing this time; the cursor stays where it was.
-  const parsed = await duringNavigation(() => probe(page, 'read'))
+  const parsed = await duringNavigation('readChat', () => probe(page, 'read'))
   const seen = new Set(cursor.seenKeys)
   const messages = (parsed ?? []).filter((m) => !seen.has(m.key)).map(toChatMessage)
   return { messages, cursor: { seenKeys: [...cursor.seenKeys, ...messages.map((m) => m.key)] } }

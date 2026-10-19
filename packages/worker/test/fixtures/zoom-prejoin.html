@@ -32,10 +32,14 @@
       join.disabled = input.value.trim() === ''
       input.addEventListener('input', () => {
         window.__fixture.typeName(input.value)
+        // ?refuse=1: the page wipes whatever is typed, so the name never sticks.
+        if (params.get('refuse') === '1') input.value = ''
         join.disabled = input.value.trim() === ''
       })
       document.getElementById('continue1').addEventListener('click', () => {
         window.__fixture.click('continue')
+        // ?loop=1: the prompt never goes away, as when Zoom keeps asking about devices.
+        if (params.get('loop') === '1') return
         document.getElementById('devices1').hidden = true
         document.getElementById('devices2').hidden = false
       })

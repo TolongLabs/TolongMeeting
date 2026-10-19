@@ -9,7 +9,13 @@ export async function loadSelectors<T>(platform: Platform, schema: z.ZodType<T>)
   const dir = process.env.TM_SELECTORS_DIR ?? '/app/config/selectors'
   const file = join(dir, `${platform}.json`)
   const raw = await readFile(file, 'utf8')
-  const parsed = schema.safeParse(JSON.parse(raw))
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch (error) {
+    throw new Error(`selector map ${file} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const parsed = schema.safeParse(json)
   if (!parsed.success) throw new Error(`selector map ${file} is invalid: ${parsed.error.message}`)
   return parsed.data
 }

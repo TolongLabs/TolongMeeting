@@ -29,7 +29,7 @@ async function pageText(root: PwFrame, chatList: string): Promise<string> {
 
 export async function zoomMeetingState(page: Page): Promise<MeetingState> {
   const { selectors: sel, texts } = await zoomSelectors()
-  const state = await duringNavigation(async (): Promise<MeetingState> => {
+  const state = await duringNavigation('meetingState', async (): Promise<MeetingState> => {
     const root = await zoomRoot(page)
     const text = await pageText(root, sel.chatList)
     if (textPattern(texts.ended).test(text)) return 'ended'
@@ -48,7 +48,7 @@ export async function zoomMeetingState(page: Page): Promise<MeetingState> {
 export async function zoomDismissNotices(page: Page): Promise<string[]> {
   const { selectors: sel, texts, noticeAllowlist } = await zoomSelectors()
   const clicked: string[] = []
-  await duringNavigation(async () => {
+  await duringNavigation('dismissNotices', async () => {
     const root = await zoomRoot(page)
     const buttons = await root.locator('button').filter({ visible: true }).elementHandles()
     try {

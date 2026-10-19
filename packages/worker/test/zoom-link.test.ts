@@ -10,7 +10,7 @@ test('every Zoom link becomes the web-client join URL or null', () => {
   expect(n('https://example-uni.zoom.us/j/00000000000?pwd=PWD#success')).toBe(
     'https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD'
   )
-  expect(n('https://app.zoom.us/wc/00000000000/join?pwd=PWD')).toBe('https://app.zoom.us/wc/00000000000/join?pwd=PWD')
+  expect(n('https://app.zoom.us/wc/00000000000/join?pwd=PWD')).toBe('https://app.zoom.us/wc/join/00000000000?pwd=PWD')
   expect(n('https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD')).toBe(
     'https://example-uni.zoom.us/wc/join/00000000000?pwd=PWD'
   )

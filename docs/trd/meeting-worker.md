@@ -61,7 +61,7 @@ One module per platform behind a common interface, so the platform order doesn't
 Platform notes:
 
 - **Zoom (first)**:
-  - Rewrite `/j/<id>?pwd=` to `/wc/join/<id>?pwd=`, which never launches the desktop app.
+  - Rewrite `/j/<id>?pwd=` to `/wc/join/<id>?pwd=`, which never launches the desktop app. `/wc/<id>/join` is rewritten to `/wc/join/<id>` too.
   - Pre-join asks twice to continue without microphone and camera.
   - The in-meeting DOM can be in the top document or in `iframe#webclient`, so resolve it at run time.
   - Controls are found by `aria-label`, and chat by the classes in [techniques](../session-record/techniques.md#web-client-dom).

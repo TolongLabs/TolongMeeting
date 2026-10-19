@@ -11,6 +11,11 @@ import {
   zoomSharedScreenRegion
 } from './meeting'
 
+export { ZOOM_TIMEOUTS } from './join'
+export { zoomRoot } from './root'
+export { ZoomSelectorsSchema } from './selectors'
+export { loadSelectors } from '../selectors'
+
 export const zoomAdapter: PlatformAdapter = {
   platform: 'zoom',
   normaliseLink: normaliseZoomLink,

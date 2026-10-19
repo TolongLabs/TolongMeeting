@@ -1,6 +1,9 @@
 import type { PlatformAdapter } from './types'
 import { zoomAdapter } from './zoom'
 
+export { loadSelectors } from './selectors'
+export { ZOOM_TIMEOUTS, zoomRoot, ZoomSelectorsSchema } from './zoom'
+
 export { DevicesOnError } from './types'
 export type { PlatformAdapter } from './types'
 export { zoomAdapter }
