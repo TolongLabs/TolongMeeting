@@ -69,6 +69,8 @@ Contents:
 
 ### Task 1: Monorepo scaffold and tooling
 
+> **Done differently**: the workspace setup was copied from `TolongLabs/sdp-hack` instead (see [architecture](architecture.md#tooling-and-conventions)): `tsconfig.json`, `.prettierrc.json`, `commitlint.config.mjs`, scripts `lint` and `lint:fix` in place of `format`, and the `test/core-pure.test.ts` guardrail in place of `scripts/repo.test.ts`. The package skeletons, `.env.example`, `scripts/build-worker-image.sh` and the `build:worker`, `image:worker`, `tm-worker` and `tm-pipeline` scripts are as below.
+
 **Files:**
 
 - Create: `package.json`, `tsconfig.base.json`, `.prettierrc`, `.prettierignore`, `commitlint.config.js`, `.husky/pre-commit`, `.husky/commit-msg`, `.env.example`, `.gitignore`, `scripts/build-worker-image.sh`
@@ -80,7 +82,7 @@ Contents:
 - Consumes: nothing.
 - Produces (adds to contracts): workspace package names `@tm/core`, `@tm/ai`, `@tm/notify`, `@tm/worker`, `@tm/pipeline`; root scripts `test`, `typecheck`, `format`, `build:worker`, `image:worker`, `tm-worker`, `tm-pipeline`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // scripts/repo.test.ts
@@ -127,12 +129,12 @@ test('commitlint caps the header at 50 characters', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test scripts/repo.test.ts`
 Expected: FAIL with "ENOENT" for `.env.example`.
 
-- [ ] **Step 3: Implement the scaffold**
+- [x] **Step 3: Implement the scaffold**
 
 Root `package.json`: `"private": true`, `"workspaces": ["packages/*"]`, `"type": "module"`, scripts `test: bun test`, `typecheck: bun run --filter '*' typecheck`, `format: bunx prettier --write .`, `build:worker: bun build packages/worker/src/cli.ts --target=node --outdir packages/worker/dist --external playwright --external sharp --external zxing-wasm`, `image:worker: sh scripts/build-worker-image.sh`, `tm-worker: node packages/worker/dist/cli.js`, `tm-pipeline: bun packages/pipeline/src/cli.ts`, `prepare: husky`, and `"lint-staged": { "*.{ts,js,json,md,yaml,yml}": "prettier --write" }`. Dev dependencies: `typescript`, `prettier`, `husky`, `lint-staged`, `@commitlint/cli`, `@commitlint/config-conventional`, `@types/bun`, `zod` at the root for all packages. `tsconfig.base.json`: `strict: true`, `target: "ES2023"`, `module: "ESNext"`, `moduleResolution: "bundler"`, `noUncheckedIndexedAccess: true`, `skipLibCheck: true`. `.prettierrc` is `{}`; `.prettierignore` lists `dist`, `bun.lock`, `test-results` and `packages/worker/test/fixtures`. `.husky/pre-commit` runs `bunx lint-staged`; `.husky/commit-msg` runs `bunx --no -- commitlint --edit "$1"`. `.gitignore`: `node_modules`, `dist`, `.env`, `data/`, `test-results/`. `packages/worker/package.json` sets `"engines": { "node": ">=24" }` and its tsconfig adds `"types": ["node"]`. `scripts/build-worker-image.sh`:
 
@@ -142,12 +144,12 @@ set -eu
 docker build $(grep -v '^#' docker/worker/versions.env | sed 's/^/--build-arg=/') -f docker/worker/Dockerfile -t tm-worker:dev .
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun install && bun test scripts/repo.test.ts && bun run typecheck`
 Expected: 3 pass, typecheck exits 0. Then `printf 'feat: %s\n' "$(printf 'x%.0s' $(seq 1 46))" | bunx commitlint` exits 1 with "header must not be longer than 50 characters".
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

@@ -24,11 +24,11 @@ Contents:
 
 ```text
 TolongMeeting/
-├── package.json              Bun workspaces root ("workspaces": ["packages/*"]); scripts: test, typecheck, format
+├── package.json              Bun workspaces root ("workspaces": ["packages/*"]); scripts: lint, lint:fix, test, typecheck, graph
 ├── bun.lock
-├── tsconfig.base.json        strict, ES2023, moduleResolution "bundler"
-├── .prettierrc               TolongLabs default (Prettier, no overrides)
-├── commitlint.config.js      conventional commits, header 50 characters at most
+├── tsconfig.json             strict, ES2023, moduleResolution "bundler"; packages extend it
+├── .prettierrc.json          TolongLabs default (printWidth 120, single quotes, no semicolons)
+├── commitlint.config.mjs     conventional commits, header 50 characters at most
 ├── .env.example              every variable in "Environment variables", no values
 ├── config/
 │   └── selectors/            zoom.json, teams.json, meet.json (adapter selector maps)
@@ -53,11 +53,12 @@ TolongMeeting/
 ## Tooling and conventions
 
 - **Runtimes**: Bun 1.x for everything except the worker. The worker runs on Node 24, because Playwright officially supports Node; it is still written in TypeScript and built with `bun build --target=node`.
-- **Language**: TypeScript strict everywhere; `bun run typecheck` runs `tsc --noEmit -p` for each package.
+- **Workspace setup**: copied from `TolongLabs/sdp-hack`: `AGENTS.md` (with `CLAUDE.md` and `GEMINI.md` linking to it), `docs/agents/`, `docs/references/`, the skills in `.agents/skills/` and `.claude/skills/`, `.claude/settings.json`, `.codex/hooks.json`, husky hooks, CI and the Graphify graph in `graphify-out/graph.json`. [Project conventions](../references/project-conventions.md) apply to every plan.
+- **Language**: TypeScript strict everywhere; `bun run typecheck` runs `tsc` at the root (scripts and tests) and then each package's `tsc` (its `src`).
 - **Validation**: zod for every config file, API body and JSON produced by a model.
-- **Unit tests**: `bun test`, colocated as `*.test.ts` next to the source. Pure logic (state machines, trust rules, link unwrapping, summary rendering, schedulers) must be unit-tested.
+- **Tests**: `bun test`, in `packages/<package>/test/*.test.ts` and the root `test/` and `e2e/`. Following the project conventions, tests prove behaviour through each package's public entry points the way its callers use it (the worker against fixture pages, the pipeline CLI against an occurrence directory, the website and scheduler against a real Postgres), not private helpers. The behaviour cases each plan lists (state machines, trust rules, link unwrapping, summary rendering, schedulers) are kept, exercised through those entry points.
 - **Browser integration tests**: Playwright Test on Node 24, in `packages/worker/test/`, against static HTML fixtures in `packages/worker/test/fixtures/` that imitate each platform's DOM and the two form providers. Run with `bunx playwright test -c packages/worker/playwright.config.ts`.
-- **Formatting**: Prettier through `bunx prettier`, with husky and lint-staged on commit, as in other TolongLabs repositories. Git hooks need Node 24 on the PATH.
+- **Formatting**: Prettier, `bun run lint` to check and `bun run lint:fix` to fix, with husky and lint-staged on commit, as in other TolongLabs repositories. A change is done when `bun run lint` passes.
 - **Commits**: conventional commits (`feat:`, `fix:`, `test:`, `chore:`, `docs:`), header at most 50 characters, one task per commit or less.
 - **Secrets**: never committed, never logged, never in URL query strings of the app's own API. `.env.example` lists names only.
 - **Pinned versions**: Chrome, Playwright, ffmpeg and Node versions for the worker image live in `docker/worker/versions.env`, set by spike 2 and changed only together with a passing smoke test.
