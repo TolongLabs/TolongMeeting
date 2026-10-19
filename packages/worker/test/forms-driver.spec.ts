@@ -33,7 +33,8 @@ const CASES = [
       organisation: 'Example University',
       signedInAs: 'student@example.edu.my',
       orgOnly: false
-    }
+    },
+    assets: [] as string[]
   },
   {
     provider: 'microsoft' as const,
@@ -43,7 +44,9 @@ const CASES = [
       'Hi, Test Student. When you submit this form, the owner will see your name and email address.',
       'student@example.edu.my'
     ],
-    org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: true }
+    // Microsoft org trust is off (no org-specific signal yet): a signed-in account is necessary, never sufficient.
+    org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: false },
+    assets: ['https://forms.office.com/Pages/fixture.js']
   }
 ]
 
@@ -234,7 +237,7 @@ for (const c of CASES)
       await page.goto(c.url('attendance'))
       const own = (await driver.readPage(page, 1)).restriction
       expect(own).toEqual(c.org)
-      expect(orgRestricted(own, ORG)).toBe(true)
+      expect(orgRestricted(own, ORG)).toBe(c.org.orgOnly || c.org.organisation !== null)
       await page.goto(c.url('external'))
       const spoof = await driver.readPage(page, 1)
       // The description copies the provider's sentence and an email: none of it is provider-owned.
@@ -247,7 +250,7 @@ for (const c of CASES)
       await page.goto(c.url('attendance'))
       const form = await driver.readPage(page, 1)
       await driver.fill(page, form, [text('p1q0', 'Test Student')])
-      expect(fx.requests).toEqual([c.url('attendance')])
+      expect(fx.requests).toEqual([c.url('attendance'), ...c.assets])
     })
   })
 
@@ -305,7 +308,7 @@ test.describe('google selector map', () => {
     expect((await driver.readPage(page, 1)).restriction.orgOnly).toBe(true)
   })
 
-  test('a page that is not http(s) is unknown, not a sign-in step', async ({ page }) => {
+  test('a page that is not https is unknown, not a sign-in step', async ({ page }) => {
     await page.goto('about:blank')
     expect(await (await driverFor('google')).pageKind(page)).toBe('unknown')
   })
@@ -316,6 +319,7 @@ test.describe('microsoft selector map', () => {
     const map = await loadFormSelectors('microsoft')
     expect(map.formHosts).toEqual(['forms.office.com', 'forms.microsoft.com'])
     expect([map.orgFooter, map.orgFooterPattern]).toEqual([null, null])
+    expect([map.orgOnlyNotice, map.orgOnlyTexts]).toEqual([null, []])
   })
 
   test('a notice or account copied into the description or a label is not provider evidence', async ({
@@ -348,21 +352,53 @@ test.describe('microsoft selector map', () => {
     expect((await driver.readPage(page, 1)).restriction).toEqual({
       organisation: null,
       signedInAs: 'student@example.edu.my',
-      orgOnly: true
+      orgOnly: false
     })
   })
 
-  test('forms open at their canonical URL, and a short code is case-sensitive', async ({ page, context }) => {
-    const fx = await routeFormFixtures(context)
-    expect(canonicalFormUrl(microsoftUrl('attendance'))).toBe(microsoftUrl('attendance'))
-    await page.goto(microsoftUrl('attendance'))
-    expect(await (await driverFor('microsoft')).pageKind(page)).toBe('form')
-    await page.goto(microsoftUrl('Attendance'))
-    expect(await (await driverFor('microsoft')).pageKind(page)).toBe('unknown')
-    expect(fx.requests).toEqual([microsoftUrl('attendance'), microsoftUrl('Attendance')])
+  test('a genuine owner notice and account on an outside form are not organisation evidence', async ({
+    page,
+    context
+  }) => {
+    await routeFormFixtures(context)
+    await page.goto(microsoftUrl('external-record-name'))
+    const form = await (await driverFor('microsoft')).readPage(page, 1)
+    expect(form.restriction).toEqual({ organisation: null, signedInAs: 'student@example.edu.my', orgOnly: false })
+    expect(orgRestricted(form.restriction, ORG)).toBe(false)
   })
 
-  test('a page that is not http(s) is unknown, not a sign-in step', async ({ page }) => {
+  test('a mixed-case form id is a different form: the canonical URL keeps its case', () => {
+    expect(canonicalFormUrl(microsoftUrl('attendance'))).toBe(microsoftUrl('attendance'))
+    expect(canonicalFormUrl(microsoftUrl('Attendance'))).toBe(microsoftUrl('Attendance'))
+    expect(canonicalFormUrl(microsoftUrl('Attendance'))).not.toBe(canonicalFormUrl(microsoftUrl('attendance')))
+  })
+
+  test('forms.microsoft.com is a form host', async ({ page, context }) => {
+    await routeFormFixtures(context)
+    await page.goto('https://forms.microsoft.com/Pages/ResponsePage.aspx?id=attendance')
+    expect(await (await driverFor('microsoft')).pageKind(page)).toBe('form')
+  })
+
+  test('a look-alike host or plain http is never a form, and no action runs there', async ({ page, context }) => {
+    const fx = await routeFormFixtures(context)
+    const driver = await driverFor('microsoft')
+    await page.goto(microsoftUrl('attendance'))
+    const form = await driver.readPage(page, 1)
+    for (const [url, kind] of [
+      ['https://forms.office.com.evil.test/Pages/ResponsePage.aspx?id=attendance', 'signin'],
+      ['http://forms.office.com/Pages/ResponsePage.aspx?id=attendance', 'unknown']
+    ] as const) {
+      await page.goto(url)
+      expect(await driver.pageKind(page)).toBe(kind)
+      await expect(driver.readPage(page, 1)).rejects.toMatchObject({ code: 'not_a_form' })
+      await expect(driver.fill(page, form, [text('p1q0', 'x')])).rejects.toMatchObject({ code: 'not_a_form' })
+      await expect(driver.next(page)).rejects.toMatchObject({ code: 'not_a_form' })
+      await expect(driver.submit(page)).rejects.toMatchObject({ code: 'not_a_form' })
+    }
+    expect(fx.submissions).toHaveLength(0)
+  })
+
+  test('a page that is not https is unknown, not a sign-in step', async ({ page }) => {
     await page.goto('about:blank')
     expect(await (await driverFor('microsoft')).pageKind(page)).toBe('unknown')
   })

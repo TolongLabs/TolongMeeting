@@ -725,7 +725,7 @@ const CONFIRM_NEGATIVE =
 
 - `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a normalised entry keyword of 3 or more characters as a whole word or phrase (`bm` never matches `submit it`). Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
 - `confirmsAttendance`: true only when the option matches `CONFIRM_POSITIVE`, does not match `CONFIRM_NEGATIVE`, and every word of it is in `CONFIRM_VOCABULARY`: present, presence, hadir, kehadiran, attend, attending, attended, attendance, here, im, am, is, me, my, confirm, confirmed, confirming, that, this, the, class, lecture, session, today, kelas, kuliah, saya, ya, yes, yep, online, in, person, physically, physical, late, lewat, on, time, and, mark, marked, as, sudah, telah, dah. `i` and `m` are not in the list. A bare `i` counts only when the next word is am, m, confirm, confirmed, confirming, attend, attending, attended, was, will, have or hereby. `m` counts only when the word before it is `i` (the `I'm` split). So `Class I` and `Kelas M` do not confirm. Any other word (`tk`, `ga`, `x`, a name, a group or section label, a room number) means not a confirmation, so the member is pinged. `CONFIRM_NEGATIVE` also matches a lone `t`, which is what an apostrophe leaves behind (`can't` -> `can t`, `T/Hadir` -> `t hadir`).
-- `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms' evidence is its organisation-only notice.
+- `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms has no org trust until a live capture finds an org-specific signal: its owner notice is generic, so it is not evidence.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -1719,8 +1719,8 @@ git commit -m "feat(worker): add Google Forms driver"
   "accountLine": "[data-automation-id='userEmail']",
   "orgFooter": null,
   "orgFooterPattern": null,
-  "orgOnlyNotice": "[data-automation-id='respondentNotice']",
-  "orgOnlyTexts": ["the owner will see your name and email address"],
+  "orgOnlyNotice": null,
+  "orgOnlyTexts": [],
   "captcha": "iframe[src*='captcha'], iframe[title*='captcha' i]",
   "texts": {
     "signin": ["Sign in to continue"],
@@ -1734,7 +1734,7 @@ git commit -m "feat(worker): add Google Forms driver"
 
 Microsoft fixtures carry the same names and questions as the Google ones (Task 8's table), in this map's DOM, with these differences:
 
-- **Organisation evidence**: no footer. Instead, `attendance.html`, `attendance-unmatched.html`, `quiz.html`, `not-attendance.html` and `captcha.html` show the account line `student@example.edu.my` and the notice "Hi, Test Student. When you submit this form, the owner will see your name and email address." in `respondentNotice`. `external.html` has neither, and its description holds that notice text and the email address instead.
+- **Organisation evidence**: no footer, and no organisation-only notice. Microsoft org trust is off (decided at the Task 9 review): the owner notice "Hi, Test Student. When you submit this form, the owner will see your name and email address." is generic and shows on any form that records a name, so it is not organisation evidence. `attendance.html`, `attendance-unmatched.html`, `quiz.html`, `not-attendance.html` and `captcha.html` still show the account line `student@example.edu.my` and that notice in `respondentNotice`, and `external.html` holds the notice text and the email address in its description. `external-record-name.html` is a genuine owner notice and account on an outside form: `orgRestricted` must be false. `signedInAs` is necessary, never sufficient. Microsoft org trust returns only when a live capture finds an org-specific signal (a distinct org-only element or text, or a tenant check against `OrgConfig`).
 - **Quiz**: points lines read "(1 point)".
 - **Send-a-copy box**: labelled "Send me an email receipt of my responses".
 - **Pages and submission**: pages are sections with Next. `fixture.js` submits by `fetch` POST of the same JSON to `https://forms.office.com/formapi/api/fixture/responses`, then replaces the form with "Your response was submitted." or, when the reply is `{ "alreadyResponded": true }`, "You've already responded".
@@ -1746,7 +1746,7 @@ Microsoft fixtures carry the same names and questions as the Google ones (Task 8
 - [x] **Step 1: Add the Microsoft row to `CASES` in `forms-driver.spec.ts`**
 
 ```ts
-{ provider: 'microsoft' as const, url: microsoftUrl, org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: true } },
+{ provider: 'microsoft' as const, url: microsoftUrl, org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: false }, assets: ['https://forms.office.com/Pages/fixture.js'] },
 ```
 
 - [x] **Step 2: Run the tests to verify the Microsoft ones fail**

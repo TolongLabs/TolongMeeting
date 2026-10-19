@@ -205,7 +205,7 @@ export function createDriver(
 
   async function pageKind(page: Page): Promise<PageKind> {
     const url = new URL(page.url())
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'unknown'
+    if (url.protocol !== 'https:') return 'unknown' // plain http is never a form, even on a form host
     if (!map.formHosts.includes(url.hostname.toLowerCase())) return 'signin'
     if ((await page.locator(map.captcha).count()) > 0) return 'captcha'
     if ((await questions(page).count()) > 0) return 'form'

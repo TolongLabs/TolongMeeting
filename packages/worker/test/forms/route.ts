@@ -10,6 +10,7 @@ const GOOGLE_PATH = /^\/forms\/d\/e\/([^/]+)\/(viewform|formResponse|fixture\.js
 const MICROSOFT_FORM_PATH = '/Pages/ResponsePage.aspx' // the id is case-sensitive, as a Microsoft short code is
 const MICROSOFT_SUBMIT_PATH = '/formapi/api/fixture/responses'
 const MICROSOFT_SCRIPT_PATH = '/Pages/fixture.js'
+const FORM_ID = /^[A-Za-z0-9-]+$/ // a Microsoft form id: letters, digits and hyphens, case kept
 
 export interface FixtureServer {
   requests: string[] // every form-provider URL requested
@@ -110,9 +111,13 @@ export async function routeFormFixtures(context: BrowserContext): Promise<Fixtur
   await context.route('https://accounts.google.com/**', async (route) =>
     fulfil(route, html(await fixtureFile('google', 'signin.html')))
   )
-  await context.route('https://forms.office.com/**', async (route) => {
+  // Both Microsoft hosts from the map. Every request to them is recorded; only a form page is served from a fixture.
+  const microsoftHost = (url: URL) =>
+    url.protocol === 'https:' && (url.hostname === 'forms.office.com' || url.hostname === 'forms.microsoft.com')
+  await context.route(microsoftHost, async (route) => {
     const request = route.request()
     const url = new URL(request.url())
+    fx.requests.push(request.url())
     if (url.pathname === MICROSOFT_SCRIPT_PATH) {
       return fulfil(route, {
         status: 200,
@@ -122,8 +127,9 @@ export async function routeFormFixtures(context: BrowserContext): Promise<Fixtur
     }
     if (url.pathname === MICROSOFT_SUBMIT_PATH) {
       const name = url.searchParams.get('id')
-      if (request.method() !== 'POST' || name === null) return fulfil(route, html('method not allowed', 405))
-      fx.requests.push(request.url())
+      if (request.method() !== 'POST' || name === null || !FORM_ID.test(name)) {
+        return fulfil(route, html('method not allowed, or no valid form id', 405))
+      }
       const { answers, sendCopy } = JSON.parse(request.postData() ?? 'null') as Pick<
         FixtureServer['submissions'][number],
         'answers' | 'sendCopy'
@@ -137,9 +143,10 @@ export async function routeFormFixtures(context: BrowserContext): Promise<Fixtur
       }[fx.submitResult.get(name) ?? 'confirmation']
       return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify(reply) })
     }
-    const name = url.pathname === MICROSOFT_FORM_PATH ? url.searchParams.get('id') : null
-    if (name === null) return fulfil(route, { status: 200, body: '' }) // the captcha frame and other assets
-    fx.requests.push(request.url())
+    if (url.pathname !== MICROSOFT_FORM_PATH) return fulfil(route, { status: 200, body: '' }) // the captcha frame, assets
+    const name = url.searchParams.get('id')
+    // The id names a fixture file, so it is checked before it is joined into a path.
+    if (name === null || !FORM_ID.test(name)) return fulfil(route, html('no such form', 400))
     if (fx.signedOut.has(name)) {
       const location = `https://login.microsoftonline.com/common/oauth2/authorize?redirect_uri=${encodeURIComponent(microsoftUrl(name))}`
       return fulfil(route, html(`<!doctype html><script>location.replace(${JSON.stringify(location)})</script>`))
@@ -158,6 +165,14 @@ export async function routeFormFixtures(context: BrowserContext): Promise<Fixtur
     loads.set(name, count)
     fx.onFormLoad?.(name, count)
   })
+  // Look-alikes: a page that looks like the attendance form on a host that is not a form host, or on plain http. The
+  // driver must treat each one as not a form. They are not provider requests, so they are not recorded.
+  const decoy = async (route: Route) => {
+    const page = new URL(route.request().url()).pathname === MICROSOFT_FORM_PATH
+    return fulfil(route, page ? html(await fixtureFile('microsoft', 'attendance.html')) : { status: 200, body: '' })
+  }
+  await context.route('https://forms.office.com.evil.test/**', decoy)
+  await context.route('http://forms.office.com/**', decoy)
   await context.route('https://login.microsoftonline.com/**', async (route) =>
     fulfil(route, html(await fixtureFile('microsoft', 'signin.html')))
   )

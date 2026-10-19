@@ -21,8 +21,8 @@
   "accountLine": "[data-automation-id='userEmail']",
   "orgFooter": null,
   "orgFooterPattern": null,
-  "orgOnlyNotice": "[data-automation-id='respondentNotice']",
-  "orgOnlyTexts": ["the owner will see your name and email address"],
+  "orgOnlyNotice": null,
+  "orgOnlyTexts": [],
   "captcha": "iframe[src*='captcha'], iframe[title*='captcha' i]",
   "texts": {
     "signin": ["Sign in to continue"],
