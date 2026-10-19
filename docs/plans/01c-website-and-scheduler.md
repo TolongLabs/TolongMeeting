@@ -1654,7 +1654,7 @@ git commit -m "feat(web): add meeting page"
 
 - Create: `packages/scheduler/src/container-spec.ts`, `packages/scheduler/src/docker-gate/validate.ts`, `packages/scheduler/src/docker-gate/main.ts`
 - Modify: `packages/core/src/control.ts` (`SpecEnv`)
-- Test: `packages/scheduler/src/container-spec.test.ts`, `packages/scheduler/src/docker-gate/validate.test.ts`
+- Test: `packages/scheduler/test/container-spec.test.ts`, `packages/scheduler/test/docker-gate-validate.test.ts`, `packages/scheduler/test/docker-gate.test.ts`
 
 The design asks the proxy to block privileged mode, other images and other mounts. `tecnativa/docker-socket-proxy` filters by endpoint only and can't read request bodies, so 1C runs this small gate as the compose service `docker-proxy` instead.
 
@@ -1701,7 +1701,7 @@ The sign-in body uses `"Cmd": ["--signin", "<profileRoot>/<identityId>/job/<name
 
 Gate rules: paths may carry a `/v1.NN` prefix. Allowed: `GET /_ping`; `POST /containers/create?name=<name>`; `POST /containers/<id>/start`; `POST /containers/<id>/stop` (optional `?t=N`); `GET /containers/<id>/json`. Anything else gets 403 with `endpoint not allowed`. A create body must have only the keys `Image`, `Cmd`, `Env`, `Labels`, `HostConfig`; `Image` equal to `WORKER_IMAGE`; a role label of `worker` or `signin` that agrees with the name pattern and with `Cmd[0]`; `Cmd[1]` under `<profileRoot>/<uuid>/job/`; `Env` names only from the four above; `HostConfig` keys only from the body above, with `Binds` exactly the role's binds (source equals target, uuids only, no options), `NetworkMode` `tm-workers`, `ShmSize` 2147483648, `Dns` as above, every `ExtraHosts` entry ending `:172.30.0.2`, and `Sysctls` exactly the IPv6 one.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/scheduler/src/docker-gate/validate.test.ts
@@ -1795,26 +1795,26 @@ test('the worker spec keeps host paths, the shm size and no secrets in its envir
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/container-spec.test.ts packages/scheduler/src/docker-gate/validate.test.ts`
+Run: `bun test packages/scheduler/test`
 
 Expected: FAIL with `Cannot find module './container-spec'`.
 
-- [ ] **Step 3: Implement `containerSpec`, `validateRequest` and the gate server**
+- [x] **Step 3: Implement `containerSpec`, `validateRequest` and the gate server**
 
 The gate logs method, path and the refusal reason, never bodies.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/scheduler/src/container-spec.test.ts packages/scheduler/src/docker-gate/validate.test.ts`
+Run: `bun test packages/scheduler/test`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/scheduler/src/container-spec* packages/scheduler/src/docker-gate
+git add packages/scheduler
 git commit -m "feat(scheduler): add docker socket gate"
 ```
 
