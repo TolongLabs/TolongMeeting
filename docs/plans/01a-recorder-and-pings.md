@@ -2375,7 +2375,7 @@ git commit -m "feat(pipeline): build transcript and chat files"
 **Interfaces:**
 
 - Consumes: `keyframe` events in `events.jsonl` and PNGs in `frames/` (Task 18); `GreyImage`, `meanLuma`, `dHash256`, `hamming` (Task 10); `chatJson` (Task 4).
-- Produces (adds to contracts): `interface Slide { n: number; file: string; atMs: number; title: string; text: string }` (`file` is `slides/NN.webp`); `interface KeptFrame { file: string; offsetMs: number; region: Rect | null }`; `brightnessCrop(img: GreyImage, search: Rect): Rect | null`; `selectSlides(frames: { frame: KeptFrame; hash: bigint; luma: number }[]): KeptFrame[]`; `buildSlides(cfg: JobConfig, opts?: { concurrency?: number }): Promise<{ slides: Slide[]; mdPath: string }>`; `slides/slides.json` holds `Slide[]`.
+- Produces (adds to contracts): `interface Slide { n: number; file: string; atMs: number; title: string; text: string; failed?: true }` (`file` is `slides/NN.webp`; `failed: true` marks a slide whose text could not be read, rendered as `*Slide text could not be read.*` under its heading); `interface KeptFrame { file: string; offsetMs: number; region: Rect | null }`; `brightnessCrop(img: GreyImage, search: Rect): Rect | null`; `selectSlides(frames: { frame: KeptFrame; hash: bigint; luma: number }[]): KeptFrame[]`; `buildSlides(cfg: JobConfig, opts?: { concurrency?: number }): Promise<{ slides: Slide[]; mdPath: string }>`; `slides/slides.json` holds `Slide[]`.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -2469,8 +2469,8 @@ git commit -m "feat(pipeline): extract slides"
 **Interfaces:**
 
 - Consumes: Tasks 19 and 20 builders; `chatJson`, `AiKeyError` (Task 4); `sendPing`, `summaryReadyPing`, `summaryFailedPing` (Task 3); `forms/<formId>/record.json` (Task 16, read with a local schema `{ state: string; url: string }`).
-- Produces: `runPipeline(cfg: JobConfig): Promise<PipelineResult>`; CLI `tm-pipeline --job <path>` with exit codes 0, 1 (other error), 2 (`AiKeyError`), 64 (usage), 65 (invalid job).
-- Produces (adds to contracts): `InventorySchema`, `type Inventory` and `type InventoryItem = Inventory['items'][number]` (below); `type AttendanceInfo = { kind: 'not_seen' } | { kind: 'needs_you'; url: string }`; `chooseDue(item: InventoryItem): { due: string | null; note: string | null }`; `buildInventory(cfg: JobConfig, src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] }): Promise<Inventory>`; `renderLectureSummary(inv: Inventory, ctx: { cfg: JobConfig; attendance: AttendanceInfo | null; outDir: string }): string` (`attendance` null leaves the line out, for work entries until plan 06); `summaryFileName(cfg: JobConfig): string`; (`ATTACH_SUMMARY` is dropped: spike 8 set `ntfy.attachSummary=false`.)
+- Produces: `runPipeline(cfg: JobConfig, opts?: { pingOnKeyError?: boolean }): Promise<PipelineResult>` (`pingOnKeyError` defaults to true; the 1C consumer passes false); CLI `tm-pipeline --job <path>` with exit codes 0, 1 (other error), 2 (`AiKeyError`), 64 (usage), 65 (invalid job).
+- Produces (adds to contracts): `InventorySchema`, `type Inventory` and `type InventoryItem = Inventory['items'][number]` (below); `chooseDue(item: InventoryItem): { due: string | null; note: string | null }`; `buildInventory(cfg: JobConfig, src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] }): Promise<Inventory>`; `renderLectureSummary(inv: Inventory, ctx: { cfg: JobConfig; attendance: string | null; outDir: string }): string` (`attendance` is the text after "Attendance: ", `needs you: <url>` or `not seen`; null leaves the line out, for work entries until plan 06; plan 01b supplies `attendanceLine` later); `summaryFileName(cfg: JobConfig): string`; (`ATTACH_SUMMARY` is dropped: spike 8 set `ntfy.attachSummary=false`.)
 
 ```ts
 const Source = z.enum(['slide', 'lecturer_chat', 'speech'])
@@ -2500,7 +2500,7 @@ export const InventorySchema = z.object({
 })
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/pipeline/src/summary/render.test.ts
@@ -2613,12 +2613,12 @@ test('a rejected key keeps the inputs, pings and rethrows', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `TZ=UTC bun test packages/pipeline/src/summary packages/pipeline/src/pipeline.test.ts`
 Expected: FAIL with "Cannot find module".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `buildInventory` sends one `chatJson(cfg.ai, cfg.ai.models.summary, ..., InventorySchema, 180_000)` call. The user turn has four sections: `## Slides` (`Slide NN: <title>` then the text), `## Lecturer chat` (messages whose role is host or co-host, or whose sender is a trusted sender, as `[time] sender: text`), `## Other chat`, and `## Transcript`. The system prompt (exact copy):
 
@@ -2634,14 +2634,14 @@ You extract an inventory from one lecture. Reply with JSON for the given schema 
 - Keep names as written on the slides. Do not add a preamble, a recap or advice.
 ```
 
-`chooseDue` takes the value from the highest-ranked source with a non-null date (slide, then lecturer chat, then speech) and notes every other differing date as `slide says`, `chat says` or `heard as`, plus the date, joined by `; `. `renderLectureSummary` follows the design's lecture template: the title line (`, <sessionLabel>` only when present; weekday, date and times from `localParts` in the entry's time zone); `Do next:` the earliest-due deadline or task (with its due text), else `nextAction`, else `nothing to do from this session`; the attendance line; `To do` (deadlines and tasks by due date, undated last, first 5); `What was covered` (first 5); `Announcements` (announcements then links, first 5); `More deadlines` (every remaining deadline and task, and any overflowing announcement with a date, uncapped); `Details: transcript.md, slides.md and chat.md in <outDir>`. Due text is `due <Ddd D Mon YYYY>` plus `, HH:mm` when timed, then `; <note>` when there is one. Empty sections are left out; sections are separated by one blank line. `summaryFileName`: `<localParts.date> <localParts.hhmm> <name>.md`, with each of `/ \ : * ? " < > |` replaced by `-`, whitespace collapsed and the name cut to 120 characters. `runPipeline`: `mkdir out`; `buildSlides`; vocabulary = `entry.formDetails` values plus capitalised words of at least 6 letters in slide text; `buildTranscript` (when `live.jsonl` is missing the transcript says `_No live transcript for this meeting._`); `buildChat`; `buildInventory`; render to `out/<summaryFileName>`; attendance is `needs_you` with the first `needs_member` record's URL, else `not_seen`; `sendPing(cfg.ntfy, summaryReadyPing(entry.name, md))`; the ping has no `attachPath` (spike 8: ntfy serves attachments to anyone with the URL). An `AiKeyError` anywhere sends `summaryFailedPing(entry.name, status)` and is rethrown. `cli.ts` mirrors the worker CLI's argument and error handling.
+`chooseDue` formats dates from the `YYYY-MM-DD[Thh:mm]` strings with a UTC-based formatter (no zone applies). It takes the value from the highest-ranked source with a non-null date (slide, then lecturer chat, then speech) and notes every other differing date as `slide says`, `chat says` or `heard as`, plus the date, joined by `; `. `renderLectureSummary` follows the design's lecture template: the title line (`, <sessionLabel>` only when present; weekday, date and times from `localParts` in the entry's time zone); `Do next:` the earliest-due deadline or task (with its due text), else `nextAction`, else `nothing to do from this session`; the attendance line; `To do` (deadlines and tasks by due date, undated last, first 5); `What was covered` (first 5); `Announcements` (announcements then links, first 5); `More deadlines` (every remaining deadline and task, and any overflowing announcement with a date, uncapped); `Details: transcript.md, slides.md and chat.md in <outDir>`. Due text is `due <Ddd D Mon YYYY>` plus `, HH:mm` when timed, then `; <note>` when there is one. Empty sections are left out; sections are separated by one blank line. `summaryFileName`: `<localParts.date> <localParts.hhmm> <name>.md`, with each of `/ \ : * ? " < > |` replaced by `-`, whitespace collapsed and the name cut to 120 characters. `runPipeline`: `mkdir out`; `buildSlides`; vocabulary = `entry.formDetails` values plus capitalised words of at least 6 letters in slide text; `buildTranscript` (when `live.jsonl` is missing the transcript says `_No live transcript for this meeting._`); `buildChat`; `buildInventory`; render to `out/<summaryFileName>`; attendance is `needs you: <url>` with the first `needs_member` record's canonical URL, else `not seen`; `sendPing(cfg.ntfy, summaryReadyPing(entry.name, md))`; the ping has no `attachPath` (spike 8: ntfy serves attachments to anyone with the URL) and is sent once: `out/summary-pinged` is written after it succeeds. An `AiKeyError` anywhere sends `summaryFailedPing(entry.name, status)` and is rethrown. `cli.ts` mirrors the worker CLI's argument and error handling.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `TZ=UTC bun test packages/pipeline && bun run typecheck`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline docs/TRD.md
