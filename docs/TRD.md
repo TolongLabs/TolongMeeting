@@ -641,7 +641,7 @@ Each occurrence owns one directory, `$TM_DATA_ROOT/occurrences/<occurrenceId>/`:
 ```text
 recording/attempt_<N>_seg_<NNN>.mkv   5-minute Matroska segments
 recording/meeting.mkv                 joined at the end
-recording/attempts.json                [{ attempt, startedAt, stoppedAt: string | null, gaps?: [{ from, to }] }], the transcript's time origin; stoppedAt is null for a crashed attempt, gaps lists each ffmpeg death that was resumed in the next segment
+recording/attempts.json                [{ attempt, startedAt, stoppedAt: string | null, gaps?: [{ from, to }] }], the transcript's time origin; stoppedAt is null for a crashed attempt, gaps lists each ffmpeg death or hang that was resumed in the next segment; `from` is when the last good segment stopped receiving data and `to` the first frame of the new one
 frames/<NNNN>_<HHMMSS>.png            kept keyframes (stage only)
 chat.jsonl                            one ChatMessage per line, appended as read; a sweep can add older rows after newer ones, so it is not sorted; restarts replay the rows on disk through `onReplay`. Callers `await chat.sweepNow()` before `chat.stop()`. A delivery (live or replay) gets three attempts, one per tick; then it is skipped with one `error` event `{ where: 'chat', step: 'deliver' | 'replay', code, message: 'delivery abandoned', line }` (1-based file line; no key, no text) and the row stays in the file
 events.jsonl                          one MeetingEvent per line

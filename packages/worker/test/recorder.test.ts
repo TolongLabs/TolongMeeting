@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { durationSeconds, killFfmpeg, probe } from './helpers/media'
+import { durationSeconds, killFfmpeg, lastPacketEnd, probe } from './helpers/media'
 import { joinRecording } from '../src/recorder/join'
 import { recorderArgs, startRecorder } from '../src/recorder/recorder'
 import { startScreen } from '../src/display/screen'
@@ -72,6 +72,8 @@ test('ffmpeg arguments record the stage and the sink into Matroska segments', ()
     '300',
     '-segment_format',
     'matroska',
+    '-segment_format_options',
+    'flush_packets=1:cluster_time_limit=1000',
     '-reset_timestamps',
     '1',
     '-segment_start_number',
@@ -140,12 +142,15 @@ describe.skipIf(!canRecord)('recording a real Xvfb display', () => {
     )
     await sleep(1000)
   })
-  afterEach(async () => {
+  const stopPattern = async () => {
     if (pattern.exitCode === null && pattern.signalCode === null) {
       const gone = new Promise((resolve) => pattern.once('exit', resolve))
       pattern.kill('SIGTERM')
       await gone
     }
+  }
+  afterEach(async () => {
+    await stopPattern()
     await screen.stop()
     await rm(dir, { recursive: true, force: true })
   })
@@ -160,6 +165,7 @@ describe.skipIf(!canRecord)('recording a real Xvfb display', () => {
     const before = await segments(dir)
     const lastBefore = Number(/seg_(\d+)/.exec(before.at(-1)!)![1])
     expect(before[0]).toBe('attempt_1_seg_000.mkv')
+    const killedAt = Date.now()
     killFfmpeg(dir)
     await waitFor(() => gaps.length > 0)
     await sleep(2500)
@@ -170,8 +176,12 @@ describe.skipIf(!canRecord)('recording a real Xvfb display', () => {
     expect(after).toContain(`attempt_1_seg_${String(lastBefore + 1).padStart(3, '0')}.mkv`)
     expect(new Set(after).size).toBe(after.length)
     expect(gaps).toHaveLength(1)
-    expect(+gaps[0]!.to - +gaps[0]!.from).toBeGreaterThanOrEqual(1000)
-    expect(+gaps[0]!.to - +gaps[0]!.from).toBeLessThan(3000)
+    // The gap brackets the real loss: the data stopped no later than the kill and (with flushed packets) within a
+    // few seconds of it, and the new segment's first frame came after the 1 s restart delay.
+    expect(+gaps[0]!.from).toBeLessThanOrEqual(killedAt + 200)
+    expect(+gaps[0]!.from).toBeGreaterThan(killedAt - 4000)
+    expect(+gaps[0]!.to).toBeGreaterThan(killedAt + 900)
+    expect(+gaps[0]!.to).toBeLessThan(killedAt + 12_000)
 
     // attempts.json: the shape the pipeline reads, plus the gap.
     const attempts = JSON.parse(await readFile(join(dir, 'attempts.json'), 'utf8'))
@@ -217,7 +227,7 @@ describe.skipIf(!canRecord)('recording a real Xvfb display', () => {
   }, 30_000)
 
   test('when ffmpeg cannot be restarted, the recorder reports it and stop() fails', async () => {
-    const r = await startRecorder(screen, dir, 1, { segmentSeconds: 2, testAudio: 'silence' })
+    const r = await startRecorder(screen, dir, 1, { segmentSeconds: 2, testAudio: 'silence', restartBudgetMs: 5000 })
     const fatal = new Promise<Error>((resolve) => r.onFatal(resolve))
     const path = process.env.PATH
     try {
@@ -232,6 +242,84 @@ describe.skipIf(!canRecord)('recording a real Xvfb display', () => {
     const attempts = JSON.parse(await readFile(join(dir, 'attempts.json'), 'utf8'))
     expect(attempts[0].stoppedAt).toBeString()
   }, 40_000)
+
+  test('a SIGKILLed ffmpeg on a static silent stage loses only a few seconds', async () => {
+    await stopPattern() // nothing moves on the stage
+    const r = await startRecorder(screen, dir, 1, { testAudio: 'silence' })
+    await sleep(10_000)
+    const killedAt = Date.now()
+    killFfmpeg(dir)
+    const recorded = await lastPacketEnd(join(dir, 'attempt_1_seg_000.mkv'))
+    const elapsed = (killedAt - +r.startedAt) / 1000
+    expect(recorded).toBeGreaterThan(elapsed - 4)
+    await r.stop()
+  }, 40_000)
+
+  test('a throwing listener is logged and the recording continues', async () => {
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const r = await startRecorder(screen, dir, 1, { segmentSeconds: 2, testAudio: 'silence' })
+      const gaps: { from: Date; to: Date }[] = []
+      r.onGap(() => {
+        throw new Error('listener bug')
+      })
+      r.onGap((g) => gaps.push(g))
+      killFfmpeg(dir)
+      await waitFor(() => gaps.length > 0)
+      expect(logged.mock.calls.flat().join('\n')).toContain('onGap listener failed: listener bug')
+      // ffmpeg is recording again: the newest segment keeps growing
+      const newest = async () => {
+        const name = (await segments(dir)).at(-1)!
+        return (await stat(join(dir, name))).size
+      }
+      const size = await newest()
+      await waitFor(async () => (await newest()) !== size, 5000)
+      await r.stop()
+    } finally {
+      logged.mockRestore()
+    }
+  }, 40_000)
+
+  test('an ffmpeg that keeps dying after 1 s ends in one onFatal within the budget, and stop() fails', async () => {
+    const fake = await mkdtemp(join(tmpdir(), 'tm-fake-ffmpeg-'))
+    await writeFile(join(fake, 'ffmpeg'), '#!/bin/sh\necho "fake ffmpeg is failing" >&2\nsleep 1\nexit 1\n')
+    await chmod(join(fake, 'ffmpeg'), 0o755)
+    const path = process.env.PATH
+    const r = await startRecorder(screen, dir, 1, { segmentSeconds: 2, testAudio: 'silence', restartBudgetMs: 8000 })
+    const fatals: Error[] = []
+    r.onFatal((e) => fatals.push(e))
+    try {
+      const killedAt = Date.now()
+      killFfmpeg(dir)
+      process.env.PATH = `${fake}:${path}` // every restart is now the failing fake
+      await waitFor(() => fatals.length > 0, 20_000)
+      expect(Date.now() - killedAt).toBeLessThan(8000 + 1500)
+    } finally {
+      process.env.PATH = path
+      await rm(fake, { recursive: true, force: true })
+    }
+    await sleep(2500) // no second call
+    expect(fatals).toHaveLength(1)
+    expect(fatals[0]!.message).toContain('could not be restarted within 8 s')
+    expect(fatals[0]!.message).toContain('fake ffmpeg is failing')
+    await expect(r.stop()).rejects.toThrow('could not be restarted')
+  }, 40_000)
+
+  test('an ffmpeg that hangs (stopped) is killed and restarted by the watchdog', async () => {
+    const r = await startRecorder(screen, dir, 1, { segmentSeconds: 2, testAudio: 'silence', stallMs: 4000 })
+    const gaps: { from: Date; to: Date }[] = []
+    r.onGap((g) => gaps.push(g))
+    await sleep(2500)
+    const stoppedAt = Date.now()
+    killFfmpeg(dir, 'SIGSTOP')
+    await waitFor(() => gaps.length > 0, 25_000)
+    // data stopped when ffmpeg did; the new segment came after the stall was noticed (4 s) and the restart
+    expect(+gaps[0]!.from).toBeLessThanOrEqual(stoppedAt + 200)
+    expect(+gaps[0]!.from).toBeGreaterThan(stoppedAt - 4000)
+    expect(+gaps[0]!.to).toBeGreaterThan(stoppedAt + 4000)
+    await r.stop() // the hung process is gone: pgrep would find exactly one ffmpeg while recording, none now
+    expect(() => killFfmpeg(dir, 'SIGCONT')).toThrow()
+  }, 50_000)
 
   test.skipIf(has('pactl'))('without the PulseAudio sink and without the test option, it fails loudly', async () => {
     await expect(startRecorder(screen, dir, 1)).rejects.toThrow(/PulseAudio|pactl/)

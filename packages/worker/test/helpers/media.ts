@@ -33,6 +33,28 @@ export async function durationSeconds(file: string): Promise<number> {
   return Number(stdout)
 }
 
+// Seconds into a segment where its last frame ends, from the packets ffprobe finds (a killed file has no duration).
+export async function lastPacketEnd(file: string): Promise<number> {
+  const { stdout } = await run('ffprobe', [
+    '-v',
+    'error',
+    '-show_entries',
+    'packet=pts_time,duration_time',
+    '-of',
+    'csv=p=0',
+    file
+  ])
+  return Math.max(
+    ...stdout
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const [pts, duration] = line.split(',').map(Number)
+        return pts! + (duration || 0)
+      })
+  )
+}
+
 // Sends `signal` to the one ffmpeg whose command line names `dir`: how memory pressure kills the recorder's ffmpeg.
 export function killFfmpeg(dir: string, signal: NodeJS.Signals = 'SIGKILL'): void {
   const pids = execFileSync('pgrep', ['-f', `ffmpeg.*${dir}`])

@@ -19,12 +19,20 @@ async function ffmpeg(args: string[]): Promise<void> {
 // An entry of the concat demuxer's list file: single quotes are escaped as '\''.
 const concatLine = (file: string) => `file '${file.replaceAll("'", "'\\''")}'`
 
+export interface JoinOptions {
+  /** Called once for each segment that is skipped because it cannot be read. Default: written to stderr. */
+  onWarning?: (message: string) => void
+}
+
 /**
  * Joins `attempt_<N>_seg_<NNN>.mkv` (by attempt, then number) into `<recordingDir>/meeting.mkv` and returns its path.
  * Each segment is remuxed first, which repairs one cut short by a crash. An empty file (ffmpeg died as it opened the
- * segment) holds nothing and is skipped. Gaps are not filled; `attempts.json` records them.
+ * segment) holds nothing and is skipped silently. A non-empty segment that cannot be remuxed is skipped with a
+ * warning, so one bad segment does not lose the meeting; if no segment is usable the join throws.
+ * Gaps are not filled; `attempts.json` records them.
  */
-export async function joinRecording(recordingDir: string): Promise<string> {
+export async function joinRecording(recordingDir: string, opts: JoinOptions = {}): Promise<string> {
+  const warn = opts.onWarning ?? ((message: string) => console.error(`[join] ${message}`))
   const segments = (await readdir(recordingDir))
     .map((name) => ({ name, match: SEGMENT.exec(name) }))
     .filter((s) => s.match !== null)
@@ -40,9 +48,15 @@ export async function joinRecording(recordingDir: string): Promise<string> {
     const remuxed: string[] = []
     for (const s of present) {
       const out = join(work, s.name)
-      await ffmpeg(['-err_detect', 'ignore_err', '-i', join(recordingDir, s.name), '-map', '0', '-c', 'copy', out])
-      remuxed.push(out)
+      try {
+        await ffmpeg(['-err_detect', 'ignore_err', '-i', join(recordingDir, s.name), '-map', '0', '-c', 'copy', out])
+        remuxed.push(out)
+      } catch (error) {
+        warn(`skipped corrupt segment ${s.name}: ${(error as Error).message}`)
+      }
     }
+    if (remuxed.length === 0)
+      throw new Error(`no usable segments in ${recordingDir}: all ${present.length} are corrupt`)
     const list = join(work, 'list.txt')
     await writeFile(list, `${remuxed.map(concatLine).join('\n')}\n`)
     const joined = join(work, 'meeting.mkv')

@@ -102,10 +102,23 @@ describe.skipIf(!hasFfmpeg)('joinRecording', () => {
     expect(await durationSeconds(out)).toBeGreaterThan(1.8)
   })
 
-  test('a corrupt non-empty segment fails loudly and leaves no meeting.mkv', async () => {
+  test('a corrupt non-empty segment is skipped with a warning, the rest still joins', async () => {
     await lavfiSegment(dir, 'attempt_1_seg_000.mkv', 2)
     await writeFile(join(dir, 'attempt_1_seg_001.mkv'), 'garbage, not matroska')
-    await expect(joinRecording(dir)).rejects.toThrow('ffmpeg')
+    await lavfiSegment(dir, 'attempt_1_seg_002.mkv', 2)
+    const warnings: string[] = []
+    const out = await joinRecording(dir, { onWarning: (w) => warnings.push(w) })
+    expect(await durationSeconds(out)).toBeGreaterThan(3.5)
+    expect(await durationSeconds(out)).toBeLessThan(4.5)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('attempt_1_seg_001.mkv')
+  })
+
+  test('when no segment is usable it fails loudly and leaves no meeting.mkv', async () => {
+    await writeFile(join(dir, 'attempt_1_seg_000.mkv'), 'garbage, not matroska')
+    const warnings: string[] = []
+    await expect(joinRecording(dir, { onWarning: (w) => warnings.push(w) })).rejects.toThrow('no usable segments')
+    expect(warnings).toHaveLength(1)
     await expect(stat(join(dir, 'meeting.mkv'))).rejects.toThrow()
   })
 

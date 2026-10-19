@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { access, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
@@ -21,9 +21,15 @@ export interface Recorder {
   startedAt: Date
   /** Stops ffmpeg (SIGINT, so the last segment is closed properly) and sets `stoppedAt`. Rejects if the recorder gave up. */
   stop(): Promise<void>
-  /** Called after ffmpeg died and recording resumed in the next segment. `from` is the death, `to` the resume. */
+  /**
+   * Called after ffmpeg died (or hung) and recording resumed in the next segment. `from` is when the last good segment
+   * stopped receiving data, `to` the first frame of the new segment. A listener that throws is logged and ignored.
+   */
   onGap(cb: (g: { from: Date; to: Date }) => void): void
-  /** Called once if recording cannot be resumed (or a callback threw). Nothing is recorded after this. */
+  /**
+   * Called once if recording cannot be resumed within the restart budget. Nothing is recorded after this.
+   * A listener that throws is logged and ignored.
+   */
   onFatal(cb: (error: Error) => void): void
 }
 
@@ -32,13 +38,24 @@ export interface RecorderOptions {
   segmentSeconds?: number
   /** Test-only. Leave unset in production: the recorder then requires the PulseAudio sink and fails if it is absent. */
   testAudio?: 'silence'
+  /** How long restarts may keep failing, from the moment ffmpeg died, before the recorder gives up. Default 5 minutes. */
+  restartBudgetMs?: number
+  /** How long the newest segment may stay the same size while ffmpeg is alive before it is killed and restarted. Default 15 s. */
+  stallMs?: number
 }
 
 const SEGMENT_PATTERN = (attempt: number) => new RegExp(`^attempt_${attempt}_seg_(\\d+)\\.mkv$`)
-const RESTART_DELAY_MS = 1000
 const FIRST_SEGMENT_TIMEOUT_MS = 10_000
 const STOP_TIMEOUT_MS = 10_000
-const MAX_FAILED_RESTARTS = 5
+/** Restarts wait 1, 2, 4, 8, 16 s ... up to MAX_BACKOFF_MS between tries. */
+const RESTART_DELAY_MS = 1000
+const MAX_BACKOFF_MS = 30_000
+const DEFAULT_RESTART_BUDGET_MS = 5 * 60_000
+/** A restarted ffmpeg counts as healthy once it has lived this long and its segment is growing. */
+const HEALTHY_AFTER_MS = 3000
+const GROWTH_WAIT_MS = 3000
+const DEFAULT_STALL_MS = 15_000
+const POLL_MS = 500
 
 // The ffmpeg command line from the design (spike 6's tested command, preset `veryfast`).
 export function recorderArgs(
@@ -98,6 +115,10 @@ export function recorderArgs(
     String(segmentSeconds),
     '-segment_format',
     'matroska',
+    // The Matroska muxer writes whole clusters (5 s by default) and buffers them; without these a SIGKILL loses
+    // everything since the last flush, which on a static silent screen was ~25 s. Now it loses ~1 s.
+    '-segment_format_options',
+    'flush_packets=1:cluster_time_limit=1000',
     '-reset_timestamps',
     '1',
     '-segment_start_number',
@@ -136,13 +157,7 @@ async function writeAttempts(file: string, records: AttemptRecord[]): Promise<vo
 }
 
 async function nextSegmentNumber(outDir: string, attempt: number): Promise<number> {
-  const pattern = SEGMENT_PATTERN(attempt)
-  let highest = -1
-  for (const name of await readdir(outDir)) {
-    const match = pattern.exec(name)
-    if (match) highest = Math.max(highest, Number(match[1]))
-  }
-  return highest + 1
+  return ((await segmentNumbers(outDir, attempt)).at(-1) ?? -1) + 1
 }
 
 async function requirePulseSource(): Promise<void> {
@@ -226,9 +241,85 @@ async function interrupt(r: Running): Promise<void> {
   }
 }
 
+// ffmpeg that hangs ignores SIGINT (a stopped one never handles it), so a hung process is killed outright.
+async function kill(r: Running): Promise<void> {
+  if (isAlive(r)) r.child.kill('SIGKILL')
+  await r.exited
+}
+
+// Calls every listener on its own: one that throws (or rejects) is logged and must not stop the recording.
+function notify<T>(listeners: ((value: T) => void)[], value: T, what: string): void {
+  const report = (error: unknown) =>
+    console.error(`[recorder] ${what} listener failed: ${error instanceof Error ? error.message : String(error)}`)
+  for (const listener of listeners) {
+    try {
+      const result: unknown = listener(value)
+      if (result instanceof Promise) result.catch(report)
+    } catch (error) {
+      report(error)
+    }
+  }
+}
+
+async function segmentNumbers(outDir: string, attempt: number): Promise<number[]> {
+  const pattern = SEGMENT_PATTERN(attempt)
+  return (await readdir(outDir))
+    .map((name) => pattern.exec(name))
+    .filter((match) => match !== null)
+    .map((match) => Number(match[1]))
+    .sort((a, b) => a - b)
+}
+
+// The newest segment's number and size: it changes whenever ffmpeg writes (or rolls to a new segment).
+async function growth(outDir: string, attempt: number, fileOf: (n: number) => string): Promise<string> {
+  const newest = (await segmentNumbers(outDir, attempt)).at(-1)
+  if (newest === undefined) return 'none'
+  return `${newest}:${(await stat(fileOf(newest))).size}`
+}
+
+// First and end timestamp (seconds into the segment) of the frames in a segment, from ffprobe; null when it holds none.
+async function probeSpan(file: string): Promise<{ start: number; end: number } | null> {
+  let stdout: string
+  try {
+    ;({ stdout } = await run(
+      'ffprobe',
+      ['-v', 'error', '-show_entries', 'packet=pts_time,duration_time', '-of', 'csv=p=0', file],
+      {
+        maxBuffer: 64_000_000
+      }
+    ))
+  } catch {
+    return null // not a readable Matroska file: this segment holds no usable frames
+  }
+  let start = Infinity
+  let end = -Infinity
+  for (const line of stdout.split('\n')) {
+    const [pts, duration] = line.split(',').map(Number)
+    if (pts === undefined || Number.isNaN(pts)) continue
+    start = Math.min(start, pts)
+    end = Math.max(end, pts + (duration && !Number.isNaN(duration) ? duration : 0))
+  }
+  return start === Infinity ? null : { start, end }
+}
+
 /**
- * Records the stage and the sink into `<outDir>/attempt_<attempt>_seg_<NNN>.mkv` and keeps recording:
- * when ffmpeg dies it restarts after 1 s in the next segment number and reports the gap.
+ * When the newest segment that holds frames last received data. Segment timestamps restart at 0, so the wall clock
+ * comes from the file's modification time; with `flush_packets=1` that is when ffmpeg last wrote a packet.
+ * Null when no segment of the attempt holds a frame.
+ */
+async function lastDataTime(outDir: string, attempt: number, fileOf: (n: number) => string): Promise<Date | null> {
+  for (const number of (await segmentNumbers(outDir, attempt)).reverse()) {
+    const file = fileOf(number)
+    if ((await probeSpan(file)) !== null) return new Date((await stat(file)).mtimeMs)
+  }
+  return null
+}
+
+/**
+ * Records the stage and the sink into `<outDir>/attempt_<attempt>_seg_<NNN>.mkv` and keeps recording. When ffmpeg
+ * dies, or its segment stops growing for 15 s, it is restarted in the next segment number after 1, 2, 4, 8 ... s
+ * (until a restart stays alive 3 s and writes) and the gap is reported. If restarts keep failing for 5 minutes,
+ * `onFatal` fires once and `stop()` rejects.
  * Production needs the PulseAudio sink `tm_sink`; without it this throws. Tests on hosts without PulseAudio pass
  * `{ testAudio: 'silence' }`.
  */
@@ -239,6 +330,8 @@ export async function startRecorder(
   opts: RecorderOptions = {}
 ): Promise<Recorder> {
   const segmentSeconds = opts.segmentSeconds ?? 300
+  const restartBudgetMs = opts.restartBudgetMs ?? DEFAULT_RESTART_BUDGET_MS
+  const stallMs = opts.stallMs ?? DEFAULT_STALL_MS
   const audio: AudioInput = opts.testAudio === 'silence' ? 'silence' : 'pulse'
   if (audio === 'pulse') await requirePulseSource()
   await mkdir(outDir, { recursive: true })
@@ -288,13 +381,59 @@ export async function startRecorder(
     wake = resolve
   })
 
+  // Waits `ms`, or less when stop() runs or `r` exits.
+  const pause = (ms: number, r: Running) => delay(ms, Promise.race([stopped, r.exited]))
+  const stalled = (since: number) => Date.now() - since >= stallMs
+
+  // Returns when `r` has exited or stop() ran. Kills `r` if its segment stops growing while it is alive (hung x11grab).
+  const watch = async (r: Running): Promise<void> => {
+    let last = await growth(outDir, attempt, segmentFile)
+    let changedAt = Date.now()
+    while (isAlive(r) && !stopping) {
+      await pause(POLL_MS, r)
+      const now = await growth(outDir, attempt, segmentFile)
+      if (now !== last) {
+        last = now
+        changedAt = Date.now()
+      } else if (isAlive(r) && !stopping && stalled(changedAt)) {
+        console.error(`[recorder] ffmpeg wrote nothing for ${stallMs / 1000} s; restarting it`)
+        await kill(r)
+      }
+    }
+  }
+
+  // A restart is healthy when ffmpeg lives HEALTHY_AFTER_MS and its newest segment grows. Returns the wall time of
+  // the new segment's first frame, or null when this try failed.
+  const confirmHealthy = async (r: Running, file: string): Promise<Date | null> => {
+    await pause(HEALTHY_AFTER_MS, r)
+    if (stopping || !isAlive(r)) return null
+    const before = await growth(outDir, attempt, segmentFile)
+    const deadline = Date.now() + GROWTH_WAIT_MS
+    while ((await growth(outDir, attempt, segmentFile)) === before) {
+      if (stopping || !isAlive(r) || Date.now() > deadline) return null
+      await pause(250, r)
+    }
+    const span = await probeSpan(file)
+    if (!span) return null
+    // The segment's first frame is as far before its last write as the frames it holds are long.
+    return new Date((await stat(file)).mtimeMs - (span.end - span.start) * 1000)
+  }
+
   const supervise = async (): Promise<void> => {
     for (;;) {
-      await current.exited
+      await watch(current)
       if (stopping) return
-      const from = new Date()
-      for (let failures = 0; ;) {
-        await delay(RESTART_DELAY_MS, stopped)
+      await current.exited
+      const diedAt = Date.now()
+      const from = (await lastDataTime(outDir, attempt, segmentFile)) ?? startedAt
+      let lastError = current.stderr()
+      for (let failures = 0; ; failures += 1) {
+        const wait = Math.min(RESTART_DELAY_MS * 2 ** failures, MAX_BACKOFF_MS)
+        if (Date.now() + wait > diedAt + restartBudgetMs)
+          throw new Error(
+            `ffmpeg could not be restarted within ${restartBudgetMs / 1000} s (${failures} tries); recording stopped at ${from.toISOString()}${lastError ? `: ${lastError}` : ''}`
+          )
+        await delay(wait, stopped)
         if (stopping) return
         const next = await launch()
         current = next.running
@@ -302,22 +441,21 @@ export async function startRecorder(
           await interrupt(current) // stop() ran while the launch was under way and did not see this process
           return
         }
-        if (await waitForFile(segmentFile(next.number), current, FIRST_SEGMENT_TIMEOUT_MS)) {
-          const gap = { from, to: new Date() }
+        const firstFrame = await confirmHealthy(current, segmentFile(next.number))
+        if (stopping) {
+          await interrupt(current)
+          return
+        }
+        if (firstFrame) {
+          const gap = { from, to: firstFrame < from ? from : firstFrame }
           await update((record) => {
             record.gaps = [...(record.gaps ?? []), { from: gap.from.toISOString(), to: gap.to.toISOString() }]
           })
-          for (const cb of gapCallbacks) cb(gap)
+          notify(gapCallbacks, gap, 'onGap')
           break
         }
-        if (stopping) return
-        failures += 1
-        const stderr = current.stderr()
-        await interrupt(current)
-        if (failures >= MAX_FAILED_RESTARTS)
-          throw new Error(
-            `ffmpeg could not be restarted after ${failures} tries; recording stopped at ${from.toISOString()}${stderr ? `: ${stderr}` : ''}`
-          )
+        lastError = current.stderr() || lastError
+        await kill(current)
       }
     }
   }
@@ -326,8 +464,8 @@ export async function startRecorder(
     await interrupt(current)
     await update((record) => {
       record.stoppedAt = new Date().toISOString()
-    })
-    for (const cb of fatalCallbacks) cb(fatal)
+    }).catch((e: unknown) => console.error(`[recorder] cannot close attempts.json: ${String(e)}`))
+    notify(fatalCallbacks, fatal, 'onFatal')
   })
 
   let stopPromise: Promise<void> | null = null
