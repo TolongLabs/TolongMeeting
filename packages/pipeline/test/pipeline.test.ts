@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdir, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { ChatMessage, JobConfig } from '@tm/core'
+import sharp from 'sharp'
 import { runPipeline } from '../src/index'
 import type { Inventory } from '../src/summary/inventory'
 import { startFakeAi, startFakeNtfy, type FakeAi, type FakeServer } from './fakes'
@@ -134,4 +135,43 @@ test('other AI failures rethrow without a ping', async () => {
   ai.fail(500)
   await expect(runPipeline(cfg)).rejects.toMatchObject({ name: 'AiError', status: 500 })
   expect(ntfy.requests).toHaveLength(0)
+})
+
+test('a slide the vision model could not read is told to the summary model and named in the summary', async () => {
+  const frame = await sharp({
+    create: { width: 1920, height: 1080, channels: 3, background: { r: 0, g: 0, b: 0 } }
+  })
+    .composite([
+      {
+        input: await sharp({
+          create: { width: 1000, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } }
+        })
+          .png()
+          .toBuffer(),
+        left: 100,
+        top: 100
+      }
+    ])
+    .png()
+    .toBuffer()
+  await mkdir(join(occ.dataDir, 'frames'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'frames', '0001_200000.png'), frame)
+  await writeLines(join(occ.dataDir, 'events.jsonl'), [
+    {
+      occurrenceId: 'occ-1',
+      attempt: 1,
+      at: '2026-10-21T12:00:00Z',
+      type: 'keyframe',
+      data: { file: 'frames/0001_200000.png', region: null, offsetMs: 0 }
+    }
+  ])
+  ai.failModel('m2', 400)
+  const r = await runPipeline(cfg)
+  const summaryCall = ai.requests.find((q) => q.json.model === 'm1')!
+  expect(summaryCall.json.messages[1].content).toContain(
+    'Slide 01: [text could not be read; list nothing from this slide]'
+  )
+  expect(await Bun.file(r.summaryPath).text()).toContain(
+    'Slide text could not be read for slide 01. Items on those slides may be missing.'
+  )
 })

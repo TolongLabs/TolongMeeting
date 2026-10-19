@@ -93,7 +93,12 @@ async function build(cfg: JobConfig): Promise<{ result: PipelineResult; md: stri
     chat: await loadChat(cfg)
   })
   const attendance = cfg.entry.type === 'lecture' ? await attendanceText(cfg.dataDir) : null
-  const md = renderLectureSummary(inventory, { cfg, attendance, outDir })
+  const md = renderLectureSummary(inventory, {
+    cfg,
+    attendance,
+    outDir,
+    unreadSlides: slides.filter((s) => s.failed === true).map((s) => s.n)
+  })
   const summaryPath = join(outDir, summaryFileName(cfg))
   await writeAtomic(summaryPath, md)
   return { result: { summaryPath, transcriptPath, slidesPath, chatPath }, md }

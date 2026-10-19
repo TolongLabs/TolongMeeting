@@ -34,7 +34,8 @@ const inventory: Inventory = {
 
 const slides: Slide[] = [
   { n: 1, file: 'slides/01.webp', atMs: 0, title: 'Clustering', text: 'k-means\nChoosing k' },
-  { n: 2, file: 'slides/02.webp', atMs: 1, title: '', text: 'Assignment 2 due Sunday' }
+  { n: 2, file: 'slides/02.webp', atMs: 1, title: '', text: 'Assignment 2 due Sunday' },
+  { n: 3, file: 'slides/03.webp', atMs: 2, title: '', text: '', failed: true }
 ]
 
 function message(
@@ -71,7 +72,9 @@ test('one uncapped inventory call with thinking off and sources labelled', async
   })
   expect(body.messages[0].content).toContain('lecture date 2026-10-21')
   const user: string = body.messages[1].content
-  expect(user).toContain('## Slides\n\nSlide 01: Clustering\nk-means\nChoosing k\n\nSlide 02\nAssignment 2 due Sunday')
+  expect(user).toContain(
+    '## Slides\n\nSlide 01: Clustering\nk-means\nChoosing k\n\nSlide 02\nAssignment 2 due Sunday\n\nSlide 03: [text could not be read; list nothing from this slide]'
+  )
   expect(user).toMatch(/## Lecturer chat\n\n\[8:41 PM\] Dr Lecturer: Assignment 2/)
   expect(user).toContain('[8:43 PM] TA Bob: Office hours moved')
   expect(user).toMatch(

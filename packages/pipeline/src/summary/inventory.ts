@@ -51,7 +51,10 @@ function slidesSection(slides: Slide[]): string {
   if (slides.length === 0) return NONE
   return slides
     .map((s) => {
-      const head = `Slide ${String(s.n).padStart(2, '0')}${s.title === '' ? '' : `: ${s.title}`}`
+      const label = `Slide ${String(s.n).padStart(2, '0')}`
+      // An unread slide says so, so the model neither sees an empty slide nor invents its content.
+      if (s.failed === true) return `${label}: [text could not be read; list nothing from this slide]`
+      const head = s.title === '' ? label : `${label}: ${s.title}`
       return s.text === '' ? head : `${head}\n${s.text}`
     })
     .join('\n\n')

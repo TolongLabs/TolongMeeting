@@ -77,7 +77,7 @@ function titleLine(cfg: JobConfig, inv: Inventory): string {
  */
 export function renderLectureSummary(
   inv: Inventory,
-  ctx: { cfg: JobConfig; attendance: string | null; outDir: string }
+  ctx: { cfg: JobConfig; attendance: string | null; outDir: string; unreadSlides?: number[] }
 ): string {
   const actionable = inv.items.filter((i) => i.kind === 'deadline' || i.kind === 'task').sort(byDue)
   const notices = [...inv.items.filter((i) => i.kind === 'announcement'), ...inv.items.filter((i) => i.kind === 'link')]
@@ -99,6 +99,11 @@ export function renderLectureSummary(
   if (covered.length > 0) blocks.push(`What was covered\n${numbered(covered)}`)
   if (announcements.length > 0) blocks.push(`Announcements\n${numbered(announcements.map(itemLine))}`)
   if (more.length > 0) blocks.push(`More deadlines\n${numbered(more.map(itemLine))}`)
+  const unread = ctx.unreadSlides ?? []
+  if (unread.length > 0) {
+    const numbers = unread.map((n) => String(n).padStart(2, '0')).join(', ')
+    blocks.push(`Slide text could not be read for slide ${numbers}. Items on those slides may be missing.`)
+  }
   blocks.push(`Details: transcript.md, slides.md and chat.md in ${ctx.outDir}`)
   return `${blocks.join('\n\n')}\n`
 }

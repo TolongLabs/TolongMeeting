@@ -176,3 +176,10 @@ test('source priority: slide over lecturer chat over speech', () => {
   ).toEqual({ due: '2026-11-01', note: 'chat says Mon 2 Nov 2026, 09:30' })
   expect(chooseDue(item({ due: null }))).toEqual({ due: null, note: null })
 })
+
+test('unread slides are named in the summary', () => {
+  const out = renderLectureSummary(smallInventory, { cfg, attendance: null, outDir: '/o', unreadSlides: [3, 12] })
+  expect(out).toContain(
+    '\nSlide text could not be read for slide 03, 12. Items on those slides may be missing.\n\nDetails: '
+  )
+})
