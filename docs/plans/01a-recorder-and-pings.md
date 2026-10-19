@@ -518,7 +518,7 @@ git commit -m "feat(ai): add chat client with key errors"
 - Produces: `openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream`.
 - Produces (adds to contracts): `interface AsrResult { startMs: number; endMs: number; text: string }` (offsets from the first byte sent); `AsrStream` gains `onError(cb: (e: Error) => void): void`; `interface AsrOptions { now?: () => number; rotateAfterMs?: number; forceRotateMs?: number }`; `dropOverlap(prev: string, next: string): string`; `class AsrDisconnected extends Error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/ai/src/asr.test.ts: a `ws` WebSocketServer fake at cfg.asrUrl scripts server events per connection
@@ -622,12 +622,12 @@ test('rejected key raises AiKeyError through onError', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/ai/src/asr.test.ts`
 Expected: FAIL with "Cannot find module './asr'".
 
-- [ ] **Step 3: Implement `openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream` in `packages/ai/src/asr.ts`**
+- [x] **Step 3: Implement `openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream` in `packages/ai/src/asr.ts`**
 
 Connect with `ws` to `${cfg.asrUrl}?model=${cfg.models.asr}` with header `Authorization: Bearer <apiKey>`; on open send `session.update` with `{ input_audio_format: 'pcm', sample_rate: 16000, turn_detection: { type: 'server_vad' } }`; audio goes as `input_audio_buffer.append` with base64 `audio` in 3,200-byte (100 ms) chunks; `close()` sends `session.finish` and waits up to 5 s for `session.finished`. Event names are DashScope's real-time protocol as recorded in spike 5's report. Defaults: `rotateAfterMs` 6,000,000 (100 minutes), `forceRotateMs` 6,600,000 (110 minutes). Handshake status 401, 402 or 429, or an `error` event whose `code` matches `/InvalidApiKey|Unauthorized/` (401), `/Arrearage|Quota|insufficient/i` (402) or `/Throttl|RateLimit/i` (429), raises `AiKeyError`. The offset and rotation rules:
 
@@ -648,12 +648,12 @@ dropOverlap     -> compare lowercased words without punctuation; remove the long
                    that equals a suffix of prev; return the remaining words of next in their original form
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/ai/src/asr.test.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/ai docs/plans/architecture.md

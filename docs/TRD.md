@@ -334,7 +334,7 @@ export async function chatText(
   timeoutMs: number,
   opts?: ChatOptions
 ): Promise<string>
-export function openAsrStream(cfg: AiConfig): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
+export function openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
 export class AiKeyError extends AiError {
   status: 401 | 402 | 429
 }
@@ -444,7 +444,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - extra managed Chrome policies (no password saving, no browser sign-in or sync, no capture devices).
 - **01a recorder and pings**:
   - core: `parseJob`, `JobError`, `IllegalTransition`, `formatOffset`, `localParts`, `ChatMessage.replyTo`, `JobConfig.identity.formProviders`;
-  - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `PingError`, `AlertKind` and the ping builders;
+  - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `AsrOptions`, `AsrDisconnected`, `PingError`, `AlertKind` and the ping builders;
   - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`;
   - pipeline: `Slide`, `InventorySchema`, `summaryFileName`, `LiveLine`, `Gap`, `TranscriptBlock`, `isHallucination`, `paragraphs`, `correctNames`, `buildTranscript`, `orderChat`, `stripInviteLinks`, `buildChat`;
   - data: `recording/attempts.json`, `outcome.json`, `errors/`.
