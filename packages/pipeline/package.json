@@ -7,5 +7,10 @@
   },
   "scripts": {
     "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@tm/ai": "workspace:*",
+    "@tm/core": "workspace:*",
+    "@tm/notify": "workspace:*"
   }
 }

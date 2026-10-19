@@ -446,7 +446,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - core: `parseJob`, `JobError`, `IllegalTransition`, `formatOffset`, `localParts`, `ChatMessage.replyTo`, `JobConfig.identity.formProviders`;
   - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `PingError`, `AlertKind` and the ping builders;
   - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`;
-  - pipeline: `Slide`, `InventorySchema`, `summaryFileName`;
+  - pipeline: `Slide`, `InventorySchema`, `summaryFileName`, `LiveLine`, `Gap`, `TranscriptBlock`, `isHallucination`, `paragraphs`, `correctNames`, `buildTranscript`, `orderChat`, `stripInviteLinks`, `buildChat`;
   - data: `recording/attempts.json`, `outcome.json`, `errors/`.
 - **01b form submission**:
   - core: `FormRecord`, `FilledField`, `StopReason`, `FormRecordSchema`, `newFormRecord`, `canonicalFormUrl`, `formIdFor`, `TERMINAL_FORM_STATES`, `isTerminalFormState`, `applyFormTrigger`, `JobConfig.identity.organisation`;
