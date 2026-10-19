@@ -68,7 +68,7 @@ test('the lecture template, exactly', () => {
       '1. k-means',
       '2. Choosing k',
       '',
-      'Details: transcript.md, slides.md and chat.md in /data/out',
+      'Details: the transcript, slides and chat files in /data/out',
       ''
     ].join('\n')
   )

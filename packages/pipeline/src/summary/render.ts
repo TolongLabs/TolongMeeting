@@ -104,6 +104,6 @@ export function renderLectureSummary(
     const numbers = unread.map((n) => String(n).padStart(2, '0')).join(', ')
     blocks.push(`Slide text could not be read for slide ${numbers}. Items on those slides may be missing.`)
   }
-  blocks.push(`Details: transcript.md, slides.md and chat.md in ${ctx.outDir}`)
+  blocks.push(`Details: the transcript, slides and chat files in ${ctx.outDir}`)
   return `${blocks.join('\n\n')}\n`
 }

@@ -28,9 +28,10 @@ const PORT_PATH = `(?::\\d+)?(?:[/?#]\\S*${END})?`
 
 // Every form of a meeting join link: Zoom (any link on zoom.us, *.zoom.us or zoomgov.com, and the zoommtg:// and
 // zoomus:// schemes), Teams (any link on teams.microsoft.com, *.teams.microsoft.com or teams.live.com: join links
-// come in many shapes) and Meet.
+// come in many shapes, and the msteams: and ms-teams: schemes) and Meet.
 const MEETING_LINKS: RegExp[] = [
   new RegExp(`\\bzoom(?:mtg|us):\\/\\/\\S*${END}`, 'gi'),
+  new RegExp(`\\b(?:msteams|ms-teams):\\S*${END}`, 'gi'),
   new RegExp(`${START}${SUBDOMAINS}(?:zoom\\.us|zoomgov\\.com)${HOST_END}${PORT_PATH}`, 'gi'),
   new RegExp(`${START}${SUBDOMAINS}teams\\.microsoft\\.com${HOST_END}${PORT_PATH}`, 'gi'),
   new RegExp(`${START}teams\\.live\\.com${HOST_END}${PORT_PATH}`, 'gi'),
@@ -92,8 +93,10 @@ function stripEncodedPasscode(link: string): string {
 }
 
 // A token (a run without spaces) with a percent escape that carries a join link in its encoded part.
+// Whole tokens are tested, not a `\S*%xx\S*` pattern, which is quadratic on a long token with no escape.
 function removeEncodedJoinLinks(text: string): string {
-  return text.replace(/\S*%[0-9a-f]{2}\S*/gi, (token) => {
+  return text.replace(/\S+/g, (token) => {
+    if (!/%[0-9a-f]{2}/i.test(token)) return token
     const [, core = token, tail = ''] = /^(.*?)([.,;:!?)\]'"<>]*)$/s.exec(token) ?? []
     return carriesMeetingLink(core) ? `${MEETING_LINK_REMOVED}${tail}` : token
   })
@@ -125,11 +128,12 @@ const linkify = new LinkifyIt({ fuzzyLink: true, fuzzyEmail: true, fuzzyIP: true
 
 // Schemes whose links do something without `//`.
 const DANGEROUS_SCHEMES =
-  'javascript|data|vbscript|file|mailto|tel|sms|intent|geo|magnet|skype|callto|view-source|market|content|whatsapp|tg|ftp'
+  'javascript|data|vbscript|file|mailto|tel|sms|intent|geo|magnet|skype|callto|view-source|market|content|whatsapp|tg|ftp|' +
+  'msteams|ms-teams|facetime|facetime-audio|sip|xmpp|bitcoin|smsto|mms|upi|maps|news'
 // Any scheme followed by `//`; a dangerous scheme followed by anything; http(s) and its lookalikes (`hxxps`, `h**ps`,
 // `https:evil.example`) followed by anything. `[:]` is a defanged colon.
 const SCHEME_URL = new RegExp(
-  `(?:[a-z][a-z0-9+.-]*\\[?:\\]?(?=\\/\\/)|h[tx*]{2}ps?\\[?:\\]?(?=\\S)|` +
+  `(?:(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*\\[?:\\]?(?=\\/\\/)|h[tx*]{2}ps?\\[?:\\]?(?=\\S)|` +
     `(?<![\\p{L}\\p{N}])(?:${DANGEROUS_SCHEMES})\\[?:\\]?(?=\\S))\\S*${END}`,
   'giu'
 )
@@ -146,29 +150,50 @@ type Span = readonly [start: number, end: number]
 // linkify-it only starts a link after a space or similar and ends it at a TLD followed by little else, so `.evil.com/x`,
 // `wait...evil.com`, `v1.2.3.4`, `evil.com:8080`, `evil.com-x` and `evil.com.pdf` give nothing, where a phone's
 // linkifier finds the host. So each word is also read as every piece that starts after a punctuation character or a
-// letter-to-digit change (or at the start) and ends before a punctuation character (or at the end). A word this long
-// is no word: it is one candidate as it stands.
-const MAX_WORD = 2000
+// letter-to-digit change (or at the start) and ends before a punctuation character (or at the end).
+// Only a dot, colon, slash or `@` can make a link, so a word without one is skipped. A word over MAX_WORD characters
+// is not scanned: with a dot, colon or slash it is one removed candidate, otherwise it is kept.
+const MAX_WORD = 256
+const LINK_MARK = /[.:/@\u3002\uFF61\uFF0E]/
+// linkify-it finds no host whose label is over 63 characters, so for an alphanumeric run of 64 or more before a dot-TLD
+// the last 63 characters are read too; a link found there begins where the whole run begins.
+const LONG_LABEL = /[\p{L}\p{N}]{64,}(?=\.(?:xn--|\p{L}{2,}))/gu
+const MAX_LABEL = 63
 
 function linkifySpans(text: string): Span[] {
   const spans: Span[] = []
-  const found = (piece: string, offset: number): void => {
-    for (const m of linkify.match(piece) ?? []) spans.push([offset + m.index, offset + m.lastIndex])
+  const found = (piece: string, offset: number, origin?: number): void => {
+    for (const m of linkify.match(piece) ?? []) {
+      const start = origin !== undefined && m.index === 0 ? origin : offset + m.index
+      spans.push([start, offset + m.lastIndex])
+    }
   }
   found(text, 0)
   for (const word of text.matchAll(/\S+/gu)) {
     const [chars, base] = [word[0], word.index]
+    if (!LINK_MARK.test(chars)) continue
     if (chars.length > MAX_WORD) {
-      spans.push([base, base + chars.length])
+      if (/[.:/]/.test(chars)) spans.push([base, base + chars.length])
       continue
     }
     const starts = [0]
     const ends = [chars.length]
+    const origin = new Map<number, number>()
+    for (const label of chars.matchAll(LONG_LABEL)) {
+      const labelEnd = label.index + label[0].length
+      starts.push(labelEnd - MAX_LABEL)
+      origin.set(labelEnd - MAX_LABEL, label.index)
+    }
     for (let i = 1; i < chars.length; i++) {
       if (PUNCTUATION.test(chars[i - 1]!) || (LETTER.test(chars[i - 1]!) && DIGIT.test(chars[i]!))) starts.push(i)
       if (PUNCTUATION.test(chars[i]!)) ends.push(i)
     }
-    for (const start of starts) for (const end of ends) if (end > start) found(chars.slice(start, end), base + start)
+    for (const start of starts)
+      for (const end of ends) {
+        if (end <= start) continue
+        const from = origin.get(start)
+        found(chars.slice(start, end), base + start, from === undefined ? undefined : base + from)
+      }
   }
   return spans
 }

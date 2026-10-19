@@ -220,3 +220,52 @@ test('a passcode parameter with an encoded "=" is stripped from any query', () =
   expect(scrub('https://example.com/x?a=1')).toBe('https://example.com/x?a=1')
   expect(scrub(scrub('https://example.com/x?pwd%3Dabc'))).toBe('https://example.com/x')
 })
+
+test('a 200 KB input of 2,000-char dotted tokens is scrubbed and gated in under 2 s', () => {
+  const text = Array.from({ length: 100 }, () => 'a.'.repeat(1000)).join(' ')
+  expect(text.length).toBeGreaterThan(200_000)
+  let started = performance.now()
+  scrub(text)
+  expect(performance.now() - started).toBeLessThan(2000)
+  started = performance.now()
+  const gated = gate(text)
+  expect(performance.now() - started).toBeLessThan(2000)
+  expect(gated).toBe(Array.from({ length: 100 }, () => '[link removed]').join(' '))
+})
+
+test('a 200k run of "a" is scrubbed and gated in under 2 s, and is kept', () => {
+  const run = 'a'.repeat(200_000)
+  const started = performance.now()
+  expect(gate(run)).toBe(run)
+  expect(performance.now() - started).toBeLessThan(2000)
+})
+
+test('a word over 256 characters is one removed candidate with a dot, colon or slash, and kept without', () => {
+  expect(gate(`see ${'a'.repeat(300)} now`)).toBe(`see ${'a'.repeat(300)} now`)
+  expect(gate(`see ${'a.'.repeat(150)} now`)).toBe('see [link removed] now')
+  expect(gate(`see ${'a'.repeat(300)}/x now`)).toBe('see [link removed] now')
+})
+
+test('a host label over 63 characters does not hide a link', () => {
+  expect(gate(`see ${'a'.repeat(63)}.com/x now`)).toBe('see [link removed] now')
+  expect(gate(`see ${'a'.repeat(64)}.com/x now`)).toBe('see [link removed] now')
+  expect(gate(`see x.${'a'.repeat(70)}.com now`)).toBe('see x.[link removed] now')
+})
+
+test('the Teams and Meeting schemes added to the lists are removed', () => {
+  expect(scrub('join msteams:/l/meetup-join/19%3ameeting_x/0 now')).toBe(`join ${REMOVED} now`)
+  expect(scrub('join ms-teams:/l/meetup-join/19 now')).toBe(`join ${REMOVED} now`)
+  for (const url of [
+    'facetime:+60123',
+    'facetime-audio:+60123',
+    'sip:a@evil.example',
+    'xmpp:a@evil.example',
+    'bitcoin:1abc',
+    'smsto:+60123',
+    'mms:+60123',
+    'upi://pay?pa=a@evil',
+    'maps:0,0',
+    'news:evil'
+  ])
+    expect(gate(`see ${url} now`), url).toBe('see [link removed] now')
+})
