@@ -2,14 +2,15 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
-import type { ChatMessage, FormCandidate, FormProvider, JobConfig } from '@tm/core'
+import type { ChatMessage, FormCandidate, FormProvider, JobConfig, ResolvedForm } from '@tm/core'
 import type { Ping } from '@tm/notify'
 import { DevicesOnError } from '../../src/adapters'
 import type { AdmissionResult, JoinResult, MeetingState, PlatformAdapter } from '../../src/adapters/types'
 import type { ChatCaptureOptions } from '../../src/chat/capture'
 import type { LiveAsrOptions } from '../../src/asr/live'
 import type { Frame } from '../../src/frames/frames'
-import type { FormPinger } from '../../src/forms/pinger'
+import type { FormDispatcher } from '../../src/forms/dispatcher'
+import { formProviderOf } from '../../src/forms/links'
 import type { RunDeps } from '../../src/run-deps'
 
 const MINUTE = 60_000
@@ -27,8 +28,14 @@ export interface FakeOptions {
   /** The sink level `levelDb` reports. Default -20; null means unknown. */
   level?: number | null
   signedOut?: FormProvider[]
-  /** The pinger's `ready` rejects, as when the forms directory cannot be read. */
-  pingerReadyRejects?: boolean
+  /** `startFormDispatcher` throws, as when the forms directory cannot be read. */
+  dispatcherStartFails?: Error
+  /** Called by the dispatcher's `close`; it may never settle. */
+  formsClose?: () => Promise<void>
+  /** What `resolveFormLink` answers. Default: the real rules for a link already on a form host, else not a form. */
+  resolve?: (c: FormCandidate) => Promise<ResolvedForm | null>
+  /** Called by `launchBrowser`; it may never settle. */
+  onLaunch?: () => void | Promise<void>
   /** Called by `restoreProfile`. Default: succeeds. */
   restore?: (file: string) => Promise<void>
   /** Called at the start of every `meetingState` call with its 1-based number; it may throw or await. */
@@ -67,7 +74,8 @@ export interface FakeDeps extends RunDeps {
   /** Every URL the stage pages were sent to, in order. */
   gotos: string[]
   leftAt: Date | null
-  formPinger: (FormPinger & { offers: FormCandidate[] }) | null
+  /** The fake dispatcher the run started, with the forms it was offered. Null until started. */
+  forms: (FormDispatcher & { offers: ResolvedForm[] }) | null
   /** Hooks into what the runner wired up. */
   hooks: {
     chat: { onMessage?: (m: ChatMessage) => Promise<void>; opts?: ChatCaptureOptions }
@@ -148,7 +156,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     joinOpts: [] as unknown[],
     gotos: [] as string[],
     leftAt: null as Date | null,
-    formPinger: null as FakeDeps['formPinger'],
+    forms: null as FakeDeps['forms'],
     hooks: {
       chat: {},
       asr: {},
@@ -261,6 +269,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     launchBrowser: async () => {
       rec('launchBrowser')
+      await opts.onLaunch?.()
       return {
         context: {
           close: async () => {
@@ -340,20 +349,28 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       fake.hooks.asr.opts = asrOpts
       return { stop: async () => rec('asr.stop') }
     },
-    createFormPinger: () => {
-      const offers: FormCandidate[] = []
-      const ready = opts.pingerReadyRejects
-        ? Promise.reject(new Error('forms directory unreadable'))
-        : Promise.resolve()
-      const pinger = {
-        ready,
+    startFormDispatcher: async () => {
+      rec('startFormDispatcher')
+      if (opts.dispatcherStartFails) throw opts.dispatcherStartFails
+      const offers: ResolvedForm[] = []
+      const dispatcher = {
         offers,
-        offer: async (c: FormCandidate) => void offers.push(c),
-        idle: async () => rec('pinger.idle')
+        offer: (f: ResolvedForm) => void offers.push(f),
+        close: async () => {
+          rec('forms.close')
+          await opts.formsClose?.()
+          return []
+        }
       }
-      fake.formPinger = pinger
-      return pinger
+      fake.forms = dispatcher
+      return dispatcher
     },
+    resolveFormLink:
+      opts.resolve ??
+      (async (c) => {
+        const provider = formProviderOf(c.url)
+        return provider === null ? null : { ...c, finalUrl: c.url, provider }
+      }),
     ...(opts.teardownBudgetMs === undefined ? {} : { teardownBudgetMs: opts.teardownBudgetMs }),
     sendPing: async (_cfg, ping) => void pings.push(ping),
     now: clock,

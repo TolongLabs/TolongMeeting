@@ -33,10 +33,6 @@ const EDGES: [FormState, FormTrigger, FormState][] = [
 ]
 test.each(EDGES)('%s --%s--> %s', (from, t, to) => expect(nextFormState(from, t)).toBe(to))
 
-test('the 1A manual-submission edge still goes to needs_member', () => {
-  expect(nextFormState('checking_trust', 'manual_only')).toBe('needs_member')
-})
-
 test('every non-terminal state fails on error', () => {
   const nonTerminal: FormState[] = [
     'detected',

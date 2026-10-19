@@ -1,10 +1,9 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { localParts, meanDiff, meanLuma, type GreyImage } from '@tm/core'
+import { localParts, meanDiff, meanLuma, type FormCandidate, type GreyImage } from '@tm/core'
 import type { AlertKind } from '@tm/notify'
 import type { Rect } from '../adapters/types'
 import type { EventLog } from '../events'
-import type { FormPinger } from '../forms/pinger'
 import { HealthMonitor } from '../health/health'
 import { decodeQr } from '../qr/qr'
 import { QrConfirmer } from '../qr/confirm'
@@ -24,7 +23,8 @@ export interface FrameHandlerDeps {
   emit: EventLog['emit']
   /** `detail` names what failed for the kinds that need one (`component_failed`). */
   onAlert: (k: AlertKind, detail?: string) => void
-  pinger: FormPinger | null
+  /** Gets each code that reads as a link; null for a work entry. It is not awaited and must not throw. */
+  onCandidate: ((c: FormCandidate) => void) | null
   /** Test seam: defaults to decodeQr. */
   decode?: typeof decodeQr
   /** Test seam: a decode that takes longer than this fails. Default 10 s. */
@@ -130,13 +130,7 @@ export function createFrameHandler(d: FrameHandlerDeps): FrameHandler {
     if (stopped) return
     for (const text of confirmer.push(texts)) {
       if (!/^https?:\/\//i.test(text)) continue
-      try {
-        await d.pinger!.offer({ url: text, source: 'qr', sender: null, senderRole: null, seenAt: f.at.toISOString() })
-      } catch (error) {
-        // The pinger already emitted its own error event.
-        console.error(`frame handler: form offer failed: ${(error as Error).message}`)
-        d.onAlert('form_ping_failed')
-      }
+      d.onCandidate!({ url: text, source: 'qr', sender: null, senderRole: null, seenAt: f.at.toISOString() })
     }
   }
 
@@ -149,7 +143,7 @@ export function createFrameHandler(d: FrameHandlerDeps): FrameHandler {
   }
 
   function submit(f: Frame): void {
-    if (!d.lecture || d.pinger === null || stopped) return
+    if (!d.lecture || d.onCandidate === null || stopped) return
     slot = f
     kick()
   }

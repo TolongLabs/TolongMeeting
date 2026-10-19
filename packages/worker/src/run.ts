@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
 import { AiKeyError } from '@tm/ai'
-import { localParts, type ChatMessage, type EventType, type JobConfig } from '@tm/core'
+import { localParts, type ChatMessage, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
 import { joinedPing, type Ping } from '@tm/notify'
 import { z } from 'zod'
 import { DevicesOnError } from './adapters'
@@ -11,7 +11,9 @@ import { createAlerter, createLimiter, type Alerter } from './alerts'
 import type { AudioSource } from './audio/source'
 import type { ChatCapture } from './chat/capture'
 import { createEventLog, type EventLog } from './events'
-import type { FormPinger } from './forms/pinger'
+import { makeFormContextBase } from './forms/context'
+import type { FormDispatcher } from './forms/dispatcher'
+import { onFormCandidate } from './forms/intake'
 import { writeFileAtomic } from './forms/store'
 import { createFrameHandler, type FrameHandler } from './frames/handler'
 import type { FrameLoop } from './frames/frames'
@@ -58,7 +60,7 @@ const BOUND = {
   stopFrames: 5_000,
   stopQr: 3_000,
   stopAsr: 5_000,
-  pinger: 8_000,
+  forms: 10_000,
   stopRecorder: 15_000,
   stopAudio: 5_000,
   closeBrowser: 10_000,
@@ -132,7 +134,9 @@ class OccurrenceRun {
   private recordingStart: Date | null = null
   private adapter: PlatformAdapter | null = null
   private url = ''
-  private pinger: FormPinger | null = null
+  private forms: FormDispatcher | null = null
+  /** Raw links being resolved now: a link seen twice while it resolves is offered once. */
+  private readonly linksInFlight = new Set<string>()
   private chat: ChatCapture | null = null
   private frames: FrameLoop | null = null
   private asr: LiveAsr | null = null
@@ -393,11 +397,16 @@ class OccurrenceRun {
     this.adapter = adapter
     this.url = url
 
-    const profile = await this.step('prepareProfile', () => setupProfile(cfg, deps))
+    // These steps race the stop signal: one that hangs (a restore, Xvfb, Chrome) must not outlive SIGTERM. A step
+    // abandoned that way is left running, and its late failure is swallowed.
+    const profile = await this.abortable('prepareProfile', () => setupProfile(cfg, deps))
+    if (profile === ABORTED) return this.terminated()
     this.profile = profile
-    const screen = await this.step('startScreen', () => deps.startScreen())
+    const screen = await this.abortable('startScreen', () => deps.startScreen())
+    if (screen === ABORTED) return this.terminated()
     this.screen = screen
-    const browser = await this.step('launchBrowser', () => deps.launchBrowser(cfg.profileDir, screen))
+    const browser = await this.abortable('launchBrowser', () => deps.launchBrowser(cfg.profileDir, screen))
+    if (browser === ABORTED) return this.terminated()
     this.context = browser.context
     this.stage = browser.stage
     this.desk = browser.desk
@@ -407,7 +416,12 @@ class OccurrenceRun {
       )
     )
 
-    if (this.lecture) await this.checkFormSignIns(browser.desk)
+    if (this.lecture) {
+      const started = await this.untilAborted(
+        this.checkFormSignIns(browser.desk).then(() => this.startForms(browser.desk))
+      )
+      if (started === ABORTED) return this.terminated()
+    }
 
     await this.waitUntil(this.start - JOIN_LEAD_MS)
     if (this.isAborted) return this.terminated()
@@ -438,6 +452,18 @@ class OccurrenceRun {
     if (this.isAborted) return this.terminated()
     await this.startComponents()
     return this.supervise()
+  }
+
+  // The form dispatcher is an extra: if it cannot start, the meeting is still recorded, the member is told, and links
+  // from trusted senders reach them as "link seen, not checked" (see onFormCandidate).
+  private async startForms(desk: Page): Promise<void> {
+    const { cfg, deps } = this
+    await this.optional('form submission', async () => {
+      // The meeting page links (1C) are not known yet.
+      const links = { meetingPage: null, signIn: null }
+      const base = makeFormContextBase(cfg, desk, this.ev, links, (p) => deps.sendPing(cfg.ntfy, p))
+      this.forms = await deps.startFormDispatcher(base)
+    })
   }
 
   private async checkFormSignIns(desk: Page): Promise<void> {
@@ -618,25 +644,6 @@ class OccurrenceRun {
   // on: the recording itself does not depend on them.
   private async startComponents(): Promise<void> {
     const { cfg, deps } = this
-    if (this.lecture) {
-      this.pinger = await this.optional('form pinger', () => {
-        const pinger = deps.createFormPinger({
-          cfg,
-          send: (p) => deps.sendPing(cfg.ntfy, p),
-          emit: async (type, data) => {
-            // The pinger reports a form it could not ping as an `alert` event; the ping follows from it.
-            if (type === 'alert' && data.kind === 'form_ping_failed')
-              this.alerter.alert('form_ping_failed', undefined, { recorded: true })
-            await this.ev(type, data)
-          }
-        })
-        pinger.ready.catch((e: unknown) => {
-          void this.report('form pinger', e)
-          this.alerter.alert('form_ping_failed')
-        })
-        return pinger
-      })
-    }
     this.chat = await this.optional('chat capture', () => this.openChat())
     const handler = createFrameHandler({
       dataDir: cfg.dataDir,
@@ -648,7 +655,7 @@ class OccurrenceRun {
       levelDb: () => this.audio!.levelDb(1000),
       emit: this.ev,
       onAlert: (kind, detail) => this.alerter.alert(kind, detail),
-      pinger: this.pinger
+      onCandidate: this.lecture ? (c) => void this.offerForm(c) : null
     })
     this.handler = handler
     const frames = await this.optional('screen capture', () => deps.startFrameLoop(this.screen!, handler))
@@ -686,7 +693,7 @@ class OccurrenceRun {
     )
   }
 
-  // After the guest browser took over, chat capture reads the new stage. Its file keeps the rows; the pinger dedupes.
+  // After the guest browser took over, chat capture reads the new stage. Its file keeps the rows; the dispatcher dedupes.
   private async restartChat(): Promise<void> {
     if (this.chat === null) return
     const old = this.chat
@@ -696,23 +703,31 @@ class OccurrenceRun {
     this.chat = await this.optional('chat capture', () => this.openChat())
   }
 
-  // Awaited one link at a time. A failure pings and is rethrown, so chat capture retries the delivery.
+  // A link from the shared screen or the chat. It is resolved and handed to the form dispatcher without being awaited:
+  // resolving takes seconds, and the chat and frame loops must not wait for it. `onFormCandidate` never rejects.
+  private offerForm(c: FormCandidate): Promise<void> {
+    return onFormCandidate(c, {
+      cfg: this.cfg,
+      resolve: (candidate) => this.deps.resolveFormLink(candidate),
+      dispatcher: this.forms,
+      emitEvent: this.ev,
+      ping: async (p) => {
+        try {
+          await this.deps.sendPing(this.cfg.ntfy, p)
+        } catch (error) {
+          await this.report('form_ping', error)
+        }
+      },
+      inFlight: this.linksInFlight
+    })
+  }
+
+  // Chat links go to the dispatcher one message at a time. A restarted worker replays the file's rows here: the
+  // dispatcher knows the forms an earlier run handled (their records are on disk) and does not handle them again.
   private async offerLinks(m: ChatMessage): Promise<void> {
-    const pinger = this.pinger
-    if (pinger === null) return
+    if (!this.lecture) return
     for (const url of m.links) {
-      try {
-        await pinger.offer({
-          url,
-          source: 'meeting_chat',
-          sender: m.sender,
-          senderRole: m.senderRole,
-          seenAt: m.seenAt
-        })
-      } catch (error) {
-        this.alerter.alert('form_ping_failed')
-        throw error
-      }
+      void this.offerForm({ url, source: 'meeting_chat', sender: m.sender, senderRole: m.senderRole, seenAt: m.seenAt })
     }
   }
 
@@ -844,7 +859,7 @@ class OccurrenceRun {
   // --- teardown ---
 
   // Always runs, inside the stop timeout: 50 s in all, counted from the stop signal when there is one, else from now.
-  // Order: chat sweep, leave, chat, frames, live ASR, forms, recorder, audio, browser, checkpoint timer, final
+  // Order: chat sweep, leave, chat, frames, live ASR, forms (the dispatcher fails queued forms as meeting_ended, unopened), recorder, audio, browser, checkpoint timer, final
   // checkpoint, held-back alerts, screen. The checkpoint comes before the work the pipeline can redo later (joining the
   // segments, `finishRecording`), and the steps before it leave it a share of the budget. It is skipped only when the
   // browser would not close: a profile that is still open could be copied half-written. A step that fails or overruns
@@ -865,7 +880,7 @@ class OccurrenceRun {
     this.handler?.stop()
     await this.bounded('qr bridge', BOUND.stopQr, () => closeQr())
     if (this.asr) await this.bounded('asr.stop', BOUND.stopAsr, () => this.asr!.stop())
-    if (this.pinger) await this.bounded('pinger.idle', BOUND.pinger, () => this.pinger!.idle())
+    if (this.forms) await this.bounded('forms.close', BOUND.forms, () => this.forms!.close())
     if (this.recorder) await this.bounded('recorder.stop', BOUND.stopRecorder, () => this.recorder!.stop())
     if (this.audio) await this.bounded('audio.stop', BOUND.stopAudio, () => this.audio!.stop())
     await this.closeBrowser()

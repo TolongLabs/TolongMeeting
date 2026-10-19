@@ -6,13 +6,6 @@ import { z } from 'zod'
 
 const ATTENDANCE_CONFIRMATION = 'attendance_confirmation'
 
-// The fields of a 1A FormPingRecord that decide whether its ping went out. The rest is ours to trust.
-const PingRecordSchema = z.object({
-  formId: z.string().min(1),
-  url: z.string().min(1),
-  pingedAt: z.string().nullable()
-})
-
 function formDir(dataDir: string, formId: string): string {
   return join(dataDir, 'forms', formId)
 }
@@ -75,7 +68,7 @@ export async function saveFormRecord(dataDir: string, rec: FormRecord): Promise<
 }
 
 // A form directory whose record cannot be read or fails the schema is reported as invalid. It still counts as
-// handled, so the worker never submits that form again.
+// handled, so the worker never submits that form again. This includes the records of the 1A pinger (FormPingRecord).
 export async function loadFormRecords(dataDir: string): Promise<{ records: FormRecord[]; invalid: string[] }> {
   const records: FormRecord[] = []
   const invalid: string[] = []
@@ -89,39 +82,6 @@ export async function loadFormRecords(dataDir: string): Promise<{ records: FormR
     }
   }
   return { records, invalid }
-}
-
-// The form ids an earlier run handled, for FormPinger.ready. A form counts as handled when a sent ping is recorded:
-// - a 1B FormRecord, unless it is a failure with an empty pings log (it failed before any ping went out);
-// - a 1A FormPingRecord whose pingedAt is set.
-// A record that does not parse, or matches neither shape, also counts as handled: it cannot show whether a ping went
-// out, and a repeated ping is the worse error. A form dir with no record.json was never recorded, so it is not
-// handled and a restart pings it. Any other read error (EACCES, EIO) rejects: a form must not be skipped unseen.
-export async function loadHandledFormIds(dataDir: string): Promise<string[]> {
-  const handled: string[] = []
-  for (const formId of await formDirIds(dataDir)) {
-    const raw = await readRecordText(dataDir, formId)
-    if (raw !== null && isHandled(parseJson(raw))) handled.push(formId)
-  }
-  return handled
-}
-
-// The text of a form's record.json, or null when there is no such file.
-async function readRecordText(dataDir: string, formId: string): Promise<string | null> {
-  try {
-    return await readFile(join(formDir(dataDir, formId), 'record.json'), 'utf8')
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw err
-  }
-}
-
-function isHandled(json: unknown): boolean {
-  const form = FormRecordSchema.safeParse(json)
-  if (form.success) return form.data.state !== 'failed' || form.data.pings.length > 0
-  const ping = PingRecordSchema.safeParse(json)
-  if (ping.success) return ping.data.pingedAt !== null
-  return true
 }
 
 // The event payload for the `form` event and the forms table. Field values never appear here, only the names of

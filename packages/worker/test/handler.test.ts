@@ -7,7 +7,6 @@ import sharp from 'sharp'
 import type { EventType, FormCandidate } from '@tm/core'
 import type { AlertKind } from '@tm/notify'
 import { createFrameHandler, type FrameHandlerDeps } from '../src/frames/handler'
-import type { FormPinger } from '../src/forms/pinger'
 import { closeQr } from '../src/qr/qr'
 import { qrFrame } from './helpers/qr-frame'
 
@@ -31,11 +30,6 @@ beforeEach(async () => {
   events = []
   alerts = []
   alertDetails = []
-  const pinger: FormPinger = {
-    ready: Promise.resolve(),
-    offer: async (c) => void offers.push(c),
-    idle: async () => undefined
-  }
   deps = {
     dataDir,
     timeZone: 'UTC',
@@ -49,7 +43,7 @@ beforeEach(async () => {
       alerts.push(k)
       alertDetails.push(detail)
     },
-    pinger
+    onCandidate: (c) => void offers.push(c)
   }
 })
 afterEach(() => rm(dataDir, { recursive: true, force: true }))
@@ -79,9 +73,9 @@ test('QR seen twice is offered once; keyframes saved with clock names', async ()
 
 test('work entries read no codes; keyframe numbers go on after an earlier attempt', async () => {
   const f = await qrFrame('https://forms.gle/abc', 300, { x: 800, y: 300 })
-  const first = createFrameHandler({ ...deps, lecture: false, pinger: null })
+  const first = createFrameHandler({ ...deps, lecture: false, onCandidate: null })
   for (const at of ['2026-10-21T12:00:00Z', '2026-10-21T12:00:02Z']) await first({ at: new Date(at), png: f })
-  const second = createFrameHandler({ ...deps, lecture: false, pinger: null })
+  const second = createFrameHandler({ ...deps, lecture: false, onCandidate: null })
   for (const at of ['2026-10-21T12:10:00Z', '2026-10-21T12:10:02Z']) await second({ at: new Date(at), png: f })
   expect((await readdir(join(dataDir, 'frames'))).sort()).toEqual(['0001_120002.png', '0002_121002.png'])
   expect(offers).toEqual([])

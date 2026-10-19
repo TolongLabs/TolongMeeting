@@ -1,16 +1,7 @@
 import { test, expect } from 'bun:test'
 import type { ResolvedForm } from '@tm/core'
 import type { Ping } from '../src/index'
-import {
-  joinedPing,
-  formToSubmitPing,
-  formNotSubmittedPing,
-  alertPing,
-  summaryReadyPing,
-  summaryFailedPing,
-  linkUncheckedPing,
-  pings
-} from '../src/index'
+import { joinedPing, alertPing, summaryReadyPing, summaryFailedPing, linkUncheckedPing, pings } from '../src/index'
 
 const resolvedQr: ResolvedForm = {
   url: 'https://forms.gle/abc',
@@ -38,15 +29,6 @@ test('ping copy', () => {
     message: 'In the meeting with 41 participants. Recording.',
     priority: 'default'
   })
-  const p = formToSubmitPing('Data Mining', resolvedQr, 'qr_on_screen', '20:41')
-  expect(p.priority).toBe('high')
-  expect(p.actions).toEqual([{ label: 'Open form', url: resolvedQr.finalUrl }])
-  expect(p.message).toBe(
-    "A form from a QR code on the shared screen was seen at 20:41. The bot doesn't submit forms yet: open it and submit it yourself."
-  )
-  expect(formNotSubmittedPing('Data Mining', resolvedChat, '20:42').message).toBe(
-    "Student A posted a form in the chat at 20:42. They aren't the host, a co-host or a trusted sender, so it wasn't treated as an attendance form."
-  )
   expect(alertPing('Data Mining', 'black_frames').title).toBe('Alert: Data Mining')
   expect(summaryReadyPing('Data Mining', 'x'.repeat(5000)).message.length).toBeLessThanOrEqual(
     3900 + '\n(truncated)'.length
@@ -55,9 +37,6 @@ test('ping copy', () => {
 
 test('copy for the remaining builders', () => {
   expect(joinedPing('Data Mining', null).message).toBe('In the meeting. Recording.')
-  expect(formToSubmitPing('Data Mining', resolvedChat, 'trusted_sender', '20:43').message).toStartWith(
-    'A form from Student A was seen at 20:43.'
-  )
   expect(linkUncheckedPing('Data Mining', resolvedChat, '20:44')).toEqual({
     title: 'Link seen, not checked: Data Mining',
     message: "Student A shared a link at 20:44 that couldn't be checked within 5 seconds. It may be a form.",
@@ -105,15 +84,6 @@ test('summary cut to 3900 bytes never splits a multi-byte character', () => {
   expect(new TextEncoder().encode(kept).length).toBeLessThanOrEqual(3900)
   // 'a' plus 1,949 'é' is 3,899 bytes; the split 'é' is dropped whole.
   expect(kept).toBe('a' + 'é'.repeat(1949))
-})
-
-test('org_restricted names the organisation and accepts a null sender', () => {
-  expect(resolvedQr.sender).toBeNull()
-  const p = formToSubmitPing('Data Mining', resolvedQr, 'org_restricted', '20:45')
-  expect(p.message).toBe(
-    "A form from your organisation was seen at 20:45. The bot doesn't submit forms yet: open it and submit it yourself."
-  )
-  expect(p.actions).toEqual([{ label: 'Open form', url: resolvedQr.finalUrl }])
 })
 
 test('a link from the shared screen is worded as a QR code, not a sender', () => {

@@ -2409,7 +2409,7 @@ git commit -m "feat(worker): dispatch forms once per meeting"
 
 - Create: `packages/worker/src/forms/intake.ts`, `packages/worker/test/forms/model-stub.ts`
 - Modify: `packages/worker/src/run.ts` (1A's form path), `packages/core/src/form-machine.ts` (only to delete any entry marked `// removed in Task 14`)
-- Test: `packages/worker/src/forms/intake.test.ts`, `packages/worker/test/forms-speed.spec.ts`
+- Test: `packages/worker/test/forms-intake.test.ts`, `packages/worker/test/forms-speed.spec.ts`
 
 **Interfaces:**
 
@@ -2439,7 +2439,7 @@ Changes to `runOccurrence`:
 - **Candidates**: where 1A resolved, trust-checked and pinged a form candidate for manual submission, call `onFormCandidate(c, { resolve: resolveFormLink, dispatcher: forms, emitEvent: emit })` without awaiting it in the frame or chat loop, and delete 1A's manual-submission ping path.
 - **End**: `await forms?.close()` after leaving the meeting and before the browser context closes.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/forms/intake.test.ts
@@ -2559,19 +2559,19 @@ test('a form page that never loads is pinged within 30 seconds', async ({ contex
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/worker/src/forms/intake.test.ts`
 Expected: FAIL with "Cannot find module './intake'".
 
-- [ ] **Step 3: Implement `onFormCandidate` and the model stub, and make the three `runOccurrence` changes**
+- [x] **Step 3: Implement `onFormCandidate` and the model stub, and make the three `runOccurrence` changes**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/worker packages/core && bunx playwright test -c packages/worker/playwright.config.ts && bun run typecheck`
 Expected: PASS, including `forms-speed.spec.ts` (3 tests) and 1A's own worker tests; the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/intake.ts packages/worker/src/forms/intake.test.ts packages/worker/test/forms/model-stub.ts packages/worker/test/forms-speed.spec.ts packages/worker/src/run.ts packages/core/src/form-machine.ts

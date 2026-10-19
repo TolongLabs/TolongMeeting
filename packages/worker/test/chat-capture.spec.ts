@@ -1,11 +1,11 @@
-import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { parseJob, type ChatMessage, type EventType, type FormCandidate, type ResolvedForm } from '@tm/core'
 import { zoomAdapter, type PlatformAdapter } from '../src/adapters'
 import { appendDurably, startChatCapture, type AppendHandle } from '../src/chat/capture'
-import { createFormPinger, type FormPingerDeps } from '../src/forms/pinger'
+import { onFormCandidate } from '../src/forms/intake'
 import { formProviderOf } from '../src/forms/links'
 
 const GOOGLE_FORM = 'https://docs.google.com/forms/d/e/1FAIpQ/viewform'
@@ -57,7 +57,7 @@ test('each message lands in chat.jsonl once, before it is delivered', async ({ p
   expect(errors()).toEqual([])
 })
 
-test('form links in messages are offered to the form pinger', async ({ page }) => {
+test('form links in messages are resolved and offered to the form dispatcher', async ({ page }) => {
   await page.goto('/zoom-meeting-top.html')
   const cfg = parseJob({
     occurrenceId: 'occ-chat',
@@ -93,15 +93,9 @@ test('form links in messages are offered to the form pinger', async ({ page }) =
     const provider = formProviderOf(finalUrl)
     return provider === null ? null : { ...c, finalUrl, provider }
   }
-  const pings: unknown[] = []
-  const pinger = createFormPinger({
-    cfg,
-    send: async (p) => {
-      pings.push(p)
-    },
-    emit,
-    resolve
-  } satisfies FormPingerDeps)
+  const offered: ResolvedForm[] = []
+  const tasks: Promise<void>[] = []
+  const inFlight = new Set<string>()
 
   const c = await startChatCapture(
     page,
@@ -109,22 +103,34 @@ test('form links in messages are offered to the form pinger', async ({ page }) =
     file,
     async (m) => {
       for (const url of m.links) {
-        await pinger.offer({
+        const candidate: FormCandidate = {
           url,
           source: 'meeting_chat',
           sender: m.sender,
           senderRole: m.senderRole,
           seenAt: m.seenAt
-        })
+        }
+        tasks.push(
+          onFormCandidate(candidate, {
+            cfg,
+            resolve,
+            dispatcher: { offer: (f) => void offered.push(f), close: async () => [] },
+            emitEvent: emit,
+            ping: async () => {},
+            inFlight
+          })
+        )
       }
     },
     { pollMs: 200, emit }
   )
   await expect.poll(async () => (await rows()).length).toBe(4)
   await c.stop()
-  await pinger.idle()
-  expect(pings).toHaveLength(2)
-  expect((await readdir(join(dir, 'forms'))).length).toBe(2)
+  await Promise.all(tasks)
+  expect(offered.map((f) => [f.finalUrl, f.provider]).sort()).toEqual([
+    [GOOGLE_FORM, 'google'],
+    ['https://forms.office.com/r/xyz', 'microsoft']
+  ])
   expect((await rows()).flatMap((m) => m.links)).toEqual(['https://forms.gle/abc', 'https://forms.office.com/r/xyz'])
 })
 

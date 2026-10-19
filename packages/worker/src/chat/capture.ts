@@ -135,8 +135,8 @@ const stderrEmit = async (type: EventType, data: Record<string, unknown>): Promi
 //   rows behind it go on. A skipped row stays in the file. A row still pending at `stop()` is on disk: the next start
 //   replays it.
 // - On start every row already in the file is queued for `onReplay`, in file order, before the first poll.
-// - Delivery is therefore at-least-once across restarts; the callee must dedupe. The form pinger does: it ignores a
-//   form whose record shows a sent ping (or does not parse), and it loads those records when it is created.
+// - Delivery is therefore at-least-once across restarts; the callee must dedupe. The form dispatcher does: it loads the
+//   forms' records when it starts and never handles a form that has one again (or whose record does not parse).
 //
 // Callers: `await sweepNow()` before `stop()`, so the rows the polls missed are written first. A sweep reads the list
 // top to bottom and can append older rows after newer ones, so the file is not sorted; the pipeline sorts it.

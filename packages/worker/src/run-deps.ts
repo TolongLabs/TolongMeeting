@@ -5,7 +5,8 @@ import { startAudioSource } from './audio/source'
 import { startChatCapture } from './chat/capture'
 import { launchBrowser, launchGuestStage } from './chrome/launch'
 import { startScreen } from './display/screen'
-import { createFormPinger } from './forms/pinger'
+import { startFormDispatcher } from './forms/dispatcher'
+import { resolveFormLink } from './forms/links'
 import { checkFormProviders } from './forms/provider-check'
 import { startFrameLoop } from './frames/frames'
 import { checkpointProfile, prepareProfile, restoreProfile, startCheckpoints } from './profile/profile'
@@ -39,7 +40,8 @@ export interface RunDeps {
   startChatCapture: typeof startChatCapture
   startFrameLoop: typeof startFrameLoop
   startLiveAsr: typeof startLiveAsr
-  createFormPinger: typeof createFormPinger
+  startFormDispatcher: typeof startFormDispatcher
+  resolveFormLink: typeof resolveFormLink
   sendPing: typeof sendPing
   now(): Date
   sleep(ms: number): Promise<void>
@@ -66,7 +68,8 @@ export const defaultDeps: RunDeps = {
   startChatCapture,
   startFrameLoop,
   startLiveAsr,
-  createFormPinger,
+  startFormDispatcher,
+  resolveFormLink,
   sendPing,
   now: () => new Date(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))

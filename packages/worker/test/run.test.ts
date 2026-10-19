@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { AiKeyError } from '@tm/ai'
-import type { ChatMessage, JobConfig } from '@tm/core'
+import { formIdFor, newFormRecord, type ChatMessage, type FormCandidate, type JobConfig } from '@tm/core'
+import { startFormDispatcher } from '../src/forms/dispatcher'
+import { loadFormRecords, saveFormRecord } from '../src/forms/store'
 import { CheckpointAuthError } from '../src/profile/profile'
 import { runOccurrence } from '../src/run'
 import { fakeDeps, makeCfg, type FakeDeps } from './helpers/fake-deps'
@@ -51,6 +53,7 @@ test('happy path: order of steps and outcome', async () => {
     'launchBrowser',
     'startCheckpoints',
     'checkFormProviders',
+    'startFormDispatcher',
     'startAudioSource',
     'startRecorder',
     'goto',
@@ -66,7 +69,7 @@ test('happy path: order of steps and outcome', async () => {
     'chat.stop',
     'frames.stop',
     'asr.stop',
-    'pinger.idle',
+    'forms.close',
     'recorder.stop',
     'audio.stop',
     'context.close',
@@ -154,7 +157,8 @@ test('work entries skip forms; non-fixed links are refused', async () => {
   const d = fakeDeps({ states: ['ended'] })
   await runOccurrence(workCfg, d)
   expect(d.calls).not.toContain('checkFormProviders')
-  expect(d.formPinger).toBeNull()
+  expect(d.forms).toBeNull()
+  expect(d.calls).not.toContain('startFormDispatcher')
   expect(
     await runOccurrence(
       {
@@ -209,7 +213,7 @@ test('a bad tick never ends the meeting', async () => {
 test('component faults ping once each, never silently', async () => {
   const d = fakeDeps({
     states: ['in_meeting', 'in_meeting', 'ended'],
-    pingerReadyRejects: true,
+    dispatcherStartFails: new Error('forms directory unreadable'),
     onState: (n) => {
       if (n !== 1) return
       const boom = new Error('boom')
@@ -226,7 +230,7 @@ test('component faults ping once each, never silently', async () => {
   expect(messages(d).sort()).toEqual(
     [
       'In the meeting with 5 participants. Recording.',
-      "A form couldn't be checked or pinged. Open the meeting page to see what the bot recorded.",
+      "The bot's form submission stopped working. The recording continues.",
       "The bot's audio capture stopped working. The recording continues.",
       "The bot's profile checkpoint stopped working. The recording continues.",
       "The bot's screen capture stopped working. The recording continues.",
@@ -264,29 +268,117 @@ test('silence for two minutes reconnects audio and pings; an unknown level does 
   expect(messages(unknown).filter((m) => m.startsWith('No meeting sound'))).toHaveLength(0)
 })
 
-test('links in chat messages go to the pinger, one after the other', async () => {
+const chatMessage = (over: Partial<ChatMessage>): ChatMessage => ({
+  key: 'k1',
+  sender: 'Dr Lee',
+  senderRole: 'host',
+  time: '8:01 PM',
+  seenAt: '2026-10-21T12:01:00.000Z',
+  text: 'sign here',
+  links: [],
+  replyTo: null,
+  ...over
+})
+const candidateOf = (url: string): FormCandidate => ({
+  url,
+  source: 'meeting_chat',
+  sender: 'Dr Lee',
+  senderRole: 'host',
+  seenAt: '2026-10-21T12:01:00.000Z'
+})
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+const GOOGLE = (id: string) => `https://docs.google.com/forms/d/e/${id}/viewform`
+
+test('links in chat messages are resolved and offered to the form dispatcher without being awaited', async () => {
   const d = fakeDeps({
     states: ['in_meeting', 'ended'],
     onState: async (n) => {
       if (n !== 1) return
-      const m: ChatMessage = {
-        key: 'k1',
-        sender: 'Dr Lee',
-        senderRole: 'host',
-        time: '8:01 PM',
-        seenAt: '2026-10-21T12:01:00.000Z',
-        text: 'sign here',
-        links: ['https://forms.gle/a', 'https://forms.gle/b'],
-        replyTo: null
-      }
-      await d.hooks.chat.onMessage!(m)
+      await d.hooks.chat.onMessage!(chatMessage({ links: ['https://forms.gle/a', 'https://zoom.us/j/1'] }))
+      await settle()
     }
   })
   await runOccurrence(lectureCfg, d)
-  expect(d.formPinger!.offers.map((o) => [o.url, o.source, o.sender, o.senderRole])).toEqual([
-    ['https://forms.gle/a', 'meeting_chat', 'Dr Lee', 'host'],
-    ['https://forms.gle/b', 'meeting_chat', 'Dr Lee', 'host']
+  expect(d.forms!.offers.map((o) => [o.url, o.finalUrl, o.provider, o.source, o.sender, o.senderRole])).toEqual([
+    ['https://forms.gle/a', 'https://forms.gle/a', 'google', 'meeting_chat', 'Dr Lee', 'host']
   ])
+  expect(
+    (await events(lectureCfg)).filter((e) => e.type === 'form').map((e) => [e.data.outcome, e.data.reason, e.data.host])
+  ).toEqual([['ignored', 'not_a_form', 'zoom.us']])
+})
+
+test('forms are only handled in lectures, and the dispatcher closes before the recorder stops', async () => {
+  const d = fakeDeps({ states: ['ended'] })
+  await runOccurrence(lectureCfg, d)
+  expect(d.calls.indexOf('forms.close')).toBeGreaterThan(d.calls.indexOf('asr.stop'))
+  expect(d.calls.indexOf('forms.close')).toBeLessThan(d.calls.indexOf('recorder.stop'))
+  const work = fakeDeps({ states: ['ended'], onState: () => work.hooks.chat.onMessage?.(chatMessage({})) })
+  await runOccurrence(workCfg, work)
+  expect(work.calls).not.toContain('forms.close')
+})
+
+test('a dispatcher that cannot start is pinged, and trusted links still reach the member', async () => {
+  const d = fakeDeps({
+    states: ['in_meeting', 'ended'],
+    dispatcherStartFails: new Error('forms directory unreadable'),
+    onState: async (n) => {
+      if (n !== 1) return
+      await d.hooks.chat.onMessage!(chatMessage({ links: [GOOGLE('host-form')] }))
+      await d.hooks.chat.onMessage!(
+        chatMessage({ key: 'k2', sender: 'Classmate', senderRole: 'participant', links: [GOOGLE('peer-form')] })
+      )
+      await settle()
+    }
+  })
+  expect(await runOccurrence(lectureCfg, d)).toMatchObject({ result: 'completed' })
+  expect(messages(d).filter((m) => !m.startsWith('In the meeting'))).toEqual([
+    "The bot's form submission stopped working. The recording continues.",
+    "Dr Lee shared a link at 20:01 that couldn't be checked within 5 seconds. It may be a form."
+  ])
+  expect(await errorsAt(lectureCfg, 'form submission')).toHaveLength(1)
+  expect(
+    (await events(lectureCfg)).filter((e) => e.type === 'form').map((e) => [e.data.outcome, e.data.reason, e.data.host])
+  ).toEqual([
+    ['unresolved', 'dispatcher_unavailable', 'docs.google.com'],
+    ['unresolved', 'dispatcher_unavailable', 'docs.google.com']
+  ])
+})
+
+test('after a restart the chat replay does not handle or ping a form an earlier run handled', async () => {
+  const handled = (id: string) => {
+    const rec = newFormRecord({ ...candidateOf(GOOGLE(id)), finalUrl: GOOGLE(id), provider: 'google' }, 'occ-1')
+    return { ...rec, state: 'submitted' as const, submittedAt: '2026-10-21T12:05:00.000Z' }
+  }
+  const submitted = handled('done')
+  await saveFormRecord(lectureCfg.dataDir, submitted)
+  // A record the 1A pinger wrote: it does not parse as a FormRecord, and still counts as handled.
+  const oldId = formIdFor(GOOGLE('old'))
+  await mkdir(join(lectureCfg.dataDir, 'forms', oldId), { recursive: true })
+  await writeFile(
+    join(lectureCfg.dataDir, 'forms', oldId, 'record.json'),
+    JSON.stringify({ formId: oldId, url: GOOGLE('old'), pingedAt: '2026-10-21T12:02:00.000Z' })
+  )
+  const handledCalls: string[] = []
+  const d = fakeDeps({
+    states: ['in_meeting', 'ended'],
+    onState: async (n) => {
+      if (n !== 1) return
+      const replay = d.hooks.chat.opts!.onReplay!
+      await replay(chatMessage({ links: [GOOGLE('done'), GOOGLE('old'), GOOGLE('fresh')] }))
+      await settle()
+    }
+  })
+  d.startFormDispatcher = (base) =>
+    startFormDispatcher(base, async (f) => {
+      handledCalls.push(f.finalUrl)
+      return { ...newFormRecord(f, 'occ-1'), state: 'submitted' as const, submittedAt: '2026-10-21T12:06:00.000Z' }
+    })
+  await runOccurrence(lectureCfg, d)
+  expect(handledCalls).toEqual([GOOGLE('fresh')])
+  expect(d.pings.map((p) => p.title)).toEqual(['Joined: Data Mining'])
+  const { records, invalid } = await loadFormRecords(lectureCfg.dataDir)
+  expect(records.find((r) => r.formId === submitted.formId)).toEqual(submitted)
+  expect(invalid).toEqual([oldId])
 })
 
 test('a failing teardown step is reported and the later steps still run', async () => {
@@ -554,3 +646,37 @@ test('SIGTERM right after the join starts none of the extras', async () => {
   expect(d.calls).toContain('leave')
   expect(d.calls).toContain('checkpointProfile')
 })
+
+test('a hung form dispatcher close is bounded, reported, and the checkpoint still runs', async () => {
+  const d = fakeDeps({ states: ['ended'], formsClose: hang, teardownBudgetMs: 1000 })
+  const started = Date.now()
+  await runOccurrence(lectureCfg, d)
+  expect(Date.now() - started).toBeLessThan(1000 + 500)
+  expect(await errorsAt(lectureCfg, 'teardown forms.close')).toHaveLength(1)
+  for (const step of ['recorder.stop', 'context.close', 'checkpointProfile']) expect(d.calls).toContain(step)
+})
+
+// --- set-up steps before the join end at SIGTERM ---
+
+test.each(['prepareProfile', 'startScreen', 'launchBrowser'] as const)(
+  'SIGTERM while %s hangs ends the run, and the abandoned step failing later is swallowed',
+  async (step) => {
+    const abort = new AbortController()
+    const lateFailures: ((e: Error) => void)[] = []
+    const stuck = () =>
+      new Promise<never>((_, reject) => {
+        lateFailures.push(reject)
+        abort.abort()
+      })
+    const d = fakeDeps({})
+    if (step === 'launchBrowser') d.launchBrowser = stuck
+    else d[step] = stuck
+    const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+    expect(o).toMatchObject({ result: 'failed', endedBy: 'terminated', reason: 'terminated', joinedAt: null })
+    expect(d.calls).not.toContain('startCheckpoints')
+    expect(await outcomeFile(lectureCfg)).toEqual(o)
+    // The step fails after the run has ended. Nothing may be thrown from it (an unhandled rejection fails the run).
+    for (const fail of lateFailures) fail(new Error('chrome crashed late'))
+    await settle()
+  }
+)

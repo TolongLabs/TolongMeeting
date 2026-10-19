@@ -1,4 +1,4 @@
-import type { FormCandidate, ResolvedForm, TrustReason } from '@tm/core'
+import type { FormCandidate } from '@tm/core'
 import type { Ping } from './ntfy'
 
 export type AlertKind =
@@ -33,24 +33,6 @@ export function joinedPing(entry: string, participants: number | null): Ping {
       ? 'In the meeting. Recording.'
       : `In the meeting with ${participants} participants. Recording.`
   return { title: `Joined: ${entry}`, message, priority: 'default' }
-}
-
-export function formToSubmitPing(entry: string, f: ResolvedForm, reason: TrustReason, hhmm: string): Ping {
-  return {
-    title: `Form to submit: ${entry}`,
-    message: `A form from ${trustSource(reason, f.sender)} was seen at ${hhmm}. The bot doesn't submit forms yet: open it and submit it yourself.`,
-    priority: 'high',
-    actions: [{ label: 'Open form', url: f.finalUrl }]
-  }
-}
-
-export function formNotSubmittedPing(entry: string, f: ResolvedForm, hhmm: string): Ping {
-  return {
-    title: `Form seen, not submitted: ${entry}`,
-    message: `${f.sender ?? 'Someone'} posted a form in the chat at ${hhmm}. They aren't the host, a co-host or a trusted sender, so it wasn't treated as an attendance form.`,
-    priority: 'high',
-    actions: [{ label: 'Open form', url: f.finalUrl }]
-  }
 }
 
 export function linkUncheckedPing(entry: string, c: FormCandidate, hhmm: string): Ping {
@@ -188,26 +170,6 @@ export const pings = {
       priority: 'high',
       actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
     }
-  }
-}
-
-// Sender-based sources need a name; a missing one is an error, not a blank in the copy.
-function trustSource(reason: TrustReason, sender: string | null): string {
-  switch (reason) {
-    case 'qr_on_screen':
-      return 'a QR code on the shared screen'
-    case 'host':
-      return 'the host'
-    case 'co_host':
-      return 'a co-host'
-    case 'trusted_sender':
-      if (sender === null) {
-        throw new Error(`formToSubmitPing: reason ${reason} needs a sender name`)
-      }
-      return sender
-    // The page itself is restricted to the member's organisation; the sender is not involved.
-    case 'org_restricted':
-      return 'your organisation'
   }
 }
 

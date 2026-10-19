@@ -22,9 +22,6 @@ export type FormTrigger =
   | 'confirmed'
   | 'error'
 
-// 1A's manual-submission path only. Removed with that path in 01b Task 14.
-type ManualOnlyTrigger = 'manual_only'
-
 export class IllegalTransition extends Error {
   constructor(from: string, trigger: string) {
     super(`${from} --${trigger}-->`)
@@ -46,14 +43,13 @@ export function isTerminalFormState(s: FormState): boolean {
   return TERMINAL_FORM_STATES.includes(s)
 }
 
-const table: Partial<Record<FormState, Partial<Record<FormTrigger | ManualOnlyTrigger, FormState>>>> = {
+const table: Partial<Record<FormState, Partial<Record<FormTrigger, FormState>>>> = {
   detected: { resolve_started: 'resolving' },
   resolving: { resolved: 'checking_trust' },
   checking_trust: {
     trusted: 'opening',
     trust_deferred: 'opening', // untrusted sender: open to look for organisation evidence
-    trust_failed: 'untrusted', // untrusted sender and no organisation configured
-    manual_only: 'needs_member' // removed in 01b Task 14
+    trust_failed: 'untrusted' // untrusted sender and no organisation configured
   },
   untrusted: { trusted_candidate_seen: 'checking_trust' }, // only the dispatcher leaves untrusted
   opening: {
@@ -79,7 +75,7 @@ const table: Partial<Record<FormState, Partial<Record<FormTrigger | ManualOnlyTr
   }
 }
 
-export function nextFormState(from: FormState, event: FormTrigger | ManualOnlyTrigger): FormState {
+export function nextFormState(from: FormState, event: FormTrigger): FormState {
   const next = table[from]?.[event]
   if (next !== undefined) return next
   // Every non-terminal state fails on error. Terminal states have no error edge.
