@@ -1,5 +1,6 @@
 // Test helpers: a real Postgres database per call and a seeded member. Import from tests only, never from app code.
 import { randomBytes } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { MEMBER_OWNED, schema, type Db } from './index'
@@ -228,4 +229,44 @@ export async function withEntry(entry: EntryShape) {
     })
     .returning()
   return { db, memberId, identityId, entryId: row!.id, q: new FakeQueue() }
+}
+
+export interface AuthUserOptions {
+  /** Stored as the user's GitHub access token; leave out for a user with no GitHub account row. */
+  githubToken?: string
+  /** Adds one `auth_session` row. */
+  session?: boolean
+}
+
+/** Inserts a Better Auth user, optionally with a GitHub account holding `githubToken` and a session. Returns its id. */
+export async function seedAuthUser(db: Db, opts: AuthUserOptions = {}): Promise<string> {
+  const s = schema
+  const authUserId = randomBytes(8).toString('hex')
+  await db.insert(s.auth_user).values({ id: authUserId, name: 'Seed', email: `${authUserId}@users.noreply.test` })
+  if (opts.githubToken) {
+    await db.insert(s.auth_account).values({
+      id: randomBytes(8).toString('hex'),
+      accountId: String(Math.floor(Math.random() * 1e9)),
+      providerId: 'github',
+      userId: authUserId,
+      accessToken: opts.githubToken
+    })
+  }
+  if (opts.session) {
+    await db.insert(s.auth_session).values({
+      id: randomBytes(8).toString('hex'),
+      token: randomBytes(16).toString('hex'),
+      userId: authUserId,
+      expiresAt: new Date(Date.now() + 7 * 24 * hour)
+    })
+  }
+  return authUserId
+}
+
+/** A member linked to a new auth user that holds `githubToken` and one session (what sign-in leaves behind). */
+export async function seedLinkedMember(db: Db, githubToken: string): Promise<{ memberId: string; authUserId: string }> {
+  const { memberId } = await seedMember(db, { full: false })
+  const authUserId = await seedAuthUser(db, { githubToken, session: true })
+  await db.update(schema.members).set({ authUserId }).where(eq(schema.members.id, memberId))
+  return { memberId, authUserId }
 }

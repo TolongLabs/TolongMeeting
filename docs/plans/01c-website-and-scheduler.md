@@ -637,7 +637,7 @@ git commit -m "feat(web): add member scope"
 
 `auth.ts` configures Better Auth with `baseURL: TM_PUBLIC_URL`, `secret: deriveKey(loadMasterKey(), 'better-auth').toString('base64')`, the Drizzle adapter (`provider: 'pg'`, model names `auth_user`, `auth_session`, `auth_account`, `auth_verification`), `socialProviders.github` with `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `scope: ['read:org']`, and `databaseHooks.session.create.before` calling `authoriseSession(..., session.userId)`. The sign-in page has one "Sign in with GitHub" button and shows the refusal text when sign-in fails. `add-member.ts` bootstraps the first admin: `bun run packages/web/scripts/add-member.ts --login <github-login> --name "<display name>" [--tz <IANA zone>] [--admin]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/authorise.test.ts
@@ -713,23 +713,25 @@ test('the daily check ends the sessions of members who left or revoked the app',
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/authorise.test.ts packages/scheduler/src/org-check.test.ts`
 
 Expected: FAIL with `Cannot find module './authorise'`.
 
-- [ ] **Step 3: Implement the modules, then generate the auth schema and its migration**
+- [x] **Step 3: Implement the modules, then generate the auth schema and its migration**
 
 Run the Better Auth generator, then `bunx drizzle-kit generate --config packages/web/drizzle.config.ts --name auth`. Add the four `auth_*` tables to the `TABLES` list in `schema.test.ts`, and exclude them, like `members`, from the `member_id` check.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/authorise.test.ts packages/scheduler/src/org-check.test.ts packages/web/db/schema.test.ts && bun run typecheck`
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+Note: `app/sign-in/page.tsx` is not built here; it waits for the Figma gate (the user approves the design first). The tests live in `packages/web/test/` and `packages/scheduler/test/`.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web packages/scheduler
@@ -1203,6 +1205,8 @@ git commit -m "feat(web): add AI keys page"
 - Produces, `packages/web/lib/details.ts`: `BUILTIN_DETAILS = [{ key: 'full_name', label: 'Full name as registered' }, { key: 'student_id', label: 'Student ID' }, { key: 'university_email', label: 'University email' }, { key: 'programme', label: 'Programme' }]`; `DetailsInputSchema` (`details`: array of `{ key: /^[a-z0-9_]{1,40}$/, value: 1 to 200 characters, labels: at most 10, each 1 to 120 characters, unique ignoring case }` with unique keys, and `university_email`'s value an email address; `mentionNames`: at most 20, each 1 to 60 characters, unique ignoring case); `saveDetails(scope: MemberScope, input: unknown): Promise<void>` (replaces all `details` and `mention_names` rows in one transaction, `position` in input order); `loadDetails(scope: MemberScope): Promise<{ details: SavedDetail[]; mentionNames: string[] }>`.
 
 The Accounts page lists the member's identities, each with its settings form (run location select showing all three locations with the two non-server ones disabled and labelled "available later", Zoom guest display name defaulting to the member's display name), its account status, and a "Sign in" button that opens `/accounts/<identityId>/signin` (Task 18). The My details page shows the four built-in values first, then custom pairs, each with editable label variants, then the names the member answers to.
+
+Deferred page step: the Accounts page must confirm a deletion before it runs, and list what will be removed with the identity: its past meetings, recordings and summaries (finished occurrences cascade with the identity), and name what blocks it instead when a timetable entry, an unfinished meeting or sign-in, or a hold stops the delete.
 
 - [x] **Step 1: Write the failing tests**
 

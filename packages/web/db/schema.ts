@@ -35,6 +35,10 @@ import type {
   TrustReason
 } from '@tm/core'
 import type { AccountStatus } from '@tm/core/control'
+import { auth_user } from './auth-schema'
+
+// The Better Auth tables (generated) are part of the schema, so drizzle-kit and `Db` see them.
+export * from './auth-schema'
 
 // Column values for the check constraints. Each list must cover its union: the `Covers` aliases below fail to
 // compile when a value is missing from a list, and `satisfies` fails when a list holds a value the union lacks.
@@ -175,7 +179,9 @@ export const members = pgTable(
     id: id(),
     githubLogin: text('github_login').notNull().unique(),
     githubId: bigint('github_id', { mode: 'number' }).unique(),
-    authUserId: text('auth_user_id').unique(),
+    authUserId: text('auth_user_id')
+      .unique()
+      .references(() => auth_user.id, { onDelete: 'set null' }),
     displayName: text('display_name').notNull(),
     timeZone: text('time_zone').notNull().default('Asia/Kuala_Lumpur'),
     role: text('role').$type<MemberRole>().notNull().default('member'),

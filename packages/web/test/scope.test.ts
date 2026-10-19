@@ -17,7 +17,7 @@ import {
   timetableEntries,
   type Db
 } from '../db'
-import { createTestDb, dropAllTestDbs, seedMember, testDbUrl, type Seeded } from '../db/testing'
+import { createTestDb, dropAllTestDbs, seedAuthUser, seedMember, testDbUrl, type Seeded } from '../db/testing'
 import { createScope, scopeForAuthUser, type MemberOwnedTable } from '../lib/scope'
 
 let db: Db
@@ -221,7 +221,7 @@ describe('scope operations', () => {
 
   test('scopeForAuthUser returns the scope of the linked member, or null', async () => {
     const a = await seedMember(db)
-    const authUserId = `auth-${a.memberId}`
+    const authUserId = await seedAuthUser(db)
     await db.update(members).set({ authUserId }).where(eq(members.id, a.memberId))
     await withEnv('DATABASE_URL', testDbUrl(db), async () => {
       try {

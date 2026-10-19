@@ -1,30 +1,18 @@
-import { createIdentity, deleteIdentity, InputError, InUseError, updateIdentity } from '../../lib/identities'
-import type { MemberScope } from '../../lib/scope'
+'use server'
 
-// Plain functions, not `'use server'` actions yet, like app/ai-keys/actions.ts: the member's scope comes from
-// `requireMember()` (plan 01c Task 5, `lib/session.ts`), which doesn't exist yet. Refusals the member can act on come back
-// as a message; any other failure still throws.
+import { createIdentityFor, deleteIdentityFor, updateIdentityFor, type IdentityResult } from '../../lib/action-results'
+import { requireMember } from '../../lib/session'
 
-export type IdentityResult = { ok: true } | { ok: false; error: string }
+// Server actions: public endpoints, so each takes only the form input and gets the member from the session.
 
-async function outcome(run: () => Promise<unknown>): Promise<IdentityResult> {
-  try {
-    await run()
-    return { ok: true }
-  } catch (e) {
-    if (e instanceof InputError || e instanceof InUseError) return { ok: false, error: e.message }
-    throw e
-  }
+export async function createIdentityAction(input: unknown): Promise<IdentityResult> {
+  return createIdentityFor(await requireMember(), input)
 }
 
-export function createIdentityFor(scope: MemberScope, input: unknown): Promise<IdentityResult> {
-  return outcome(() => createIdentity(scope, input))
+export async function updateIdentityAction(id: string, input: unknown): Promise<IdentityResult> {
+  return updateIdentityFor(await requireMember(), id, input)
 }
 
-export function updateIdentityFor(scope: MemberScope, id: string, input: unknown): Promise<IdentityResult> {
-  return outcome(() => updateIdentity(scope, id, input))
-}
-
-export function deleteIdentityFor(scope: MemberScope, id: string): Promise<IdentityResult> {
-  return outcome(() => deleteIdentity(scope, id))
+export async function deleteIdentityAction(id: string): Promise<IdentityResult> {
+  return deleteIdentityFor(await requireMember(), id)
 }

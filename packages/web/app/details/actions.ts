@@ -1,18 +1,10 @@
-import { InputError } from '../../lib/identities'
-import { saveDetails } from '../../lib/details'
-import type { MemberScope } from '../../lib/scope'
+'use server'
 
-// Plain functions, not `'use server'` actions yet (see app/accounts/actions.ts). A validation failure comes back as its
-// message; the saved values are never echoed back or logged.
+import { saveDetailsFor, type DetailsResult } from '../../lib/action-results'
+import { requireMember } from '../../lib/session'
 
-export type DetailsResult = { ok: true } | { ok: false; error: string }
+// A server action: a public endpoint, so it takes only the form input and gets the member from the session.
 
-export async function saveDetailsFor(scope: MemberScope, input: unknown): Promise<DetailsResult> {
-  try {
-    await saveDetails(scope, input)
-    return { ok: true }
-  } catch (e) {
-    if (e instanceof InputError) return { ok: false, error: e.message }
-    throw e
-  }
+export async function saveDetailsAction(input: unknown): Promise<DetailsResult> {
+  return saveDetailsFor(await requireMember(), input)
 }

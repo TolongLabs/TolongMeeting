@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tm/core": "workspace:*",
-    "@tm/web": "workspace:*"
+    "@tm/web": "workspace:*",
+    "drizzle-orm": "0.45.4"
   }
 }

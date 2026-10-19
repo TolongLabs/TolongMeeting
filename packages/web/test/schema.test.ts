@@ -3,12 +3,13 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq, getTableName, sql } from 'drizzle-orm'
 import { closeDb, getDb, MEMBER_OWNED, pkOf, schema, type Db } from '../db'
 import { migrationsFolder, runMigrations } from '../db/migrate'
-import { createTestDb, dropAllTestDbs, dropTestDb, seedMember, testDbUrl } from '../db/testing'
+import { createTestDb, dropAllTestDbs, dropTestDb, seedAuthUser, seedMember, testDbUrl } from '../db/testing'
 
 const { aiKeys, artefacts, connections, details, deviceTokens, events, forms, identities, members } = schema
 const { mentionNames, occurrences, profiles, signinSessions, timetableEntries } = schema
 
-const TABLES = [
+const AUTH_TABLES = ['auth_account', 'auth_session', 'auth_user', 'auth_verification']
+const APP_TABLES = [
   'ai_keys',
   'artefacts',
   'connections',
@@ -24,6 +25,9 @@ const TABLES = [
   'signin_sessions',
   'timetable_entries'
 ]
+const TABLES = [...APP_TABLES, ...AUTH_TABLES].sort()
+// Tables with a member_id: everything but `members` and the Better Auth tables.
+const MEMBER_TABLES = APP_TABLES.filter((t) => t !== 'members')
 
 /** Runs a statement that must fail and returns the Postgres error code and constraint it failed on. */
 async function violation(statement: PromiseLike<unknown>): Promise<{ code: string; constraint: string | undefined }> {
@@ -64,12 +68,12 @@ describe('migrations', () => {
       sql`select table_name from information_schema.columns
           where table_schema = 'public' and column_name = 'member_id' and is_nullable = 'NO'`
     )
-    expect(rows.map((r) => r.table_name).sort()).toEqual(TABLES.filter((t) => t !== 'members'))
+    expect(rows.map((r) => r.table_name).sort()).toEqual(MEMBER_TABLES)
   })
 
   test('MEMBER_OWNED lists exactly the tables with a member_id', () => {
     const names: string[] = Object.values(MEMBER_OWNED).map((t) => getTableName(t))
-    expect(names.sort()).toEqual(TABLES.filter((t) => t !== 'members'))
+    expect(names.sort()).toEqual(MEMBER_TABLES)
   })
 
   test('pkOf finds the primary key of every table', () => {
@@ -172,13 +176,11 @@ describe('members, identities and details', () => {
   test('GitHub id, auth user, ntfy topic are each unique', async () => {
     const a = await seedMember(db, { full: false })
     const b = await seedMember(db, { full: false })
-    await db
-      .update(members)
-      .set({ githubId: 42, authUserId: 'auth-1', ntfyTopic: 'topic-1' })
-      .where(eq(members.id, a.memberId))
+    const authUserId = await seedAuthUser(db)
+    await db.update(members).set({ githubId: 42, authUserId, ntfyTopic: 'topic-1' }).where(eq(members.id, a.memberId))
     for (const [patch, constraint] of [
       [{ githubId: 42 }, 'members_github_id_unique'],
-      [{ authUserId: 'auth-1' }, 'members_auth_user_id_unique'],
+      [{ authUserId }, 'members_auth_user_id_unique'],
       [{ ntfyTopic: 'topic-1' }, 'members_ntfy_topic_unique']
     ] as const) {
       expect(await violation(db.update(members).set(patch).where(eq(members.id, b.memberId)))).toEqual({
@@ -186,6 +188,22 @@ describe('members, identities and details', () => {
         constraint
       })
     }
+  })
+
+  test('a member can only link to an auth user that exists, and deleting the auth user unlinks the member', async () => {
+    const a = await seedMember(db, { full: false })
+    expect(await violation(db.update(members).set({ authUserId: 'nobody' }).where(eq(members.id, a.memberId)))).toEqual(
+      {
+        code: FOREIGN_KEY,
+        constraint: 'members_auth_user_id_auth_user_id_fk'
+      }
+    )
+    const authUserId = await seedAuthUser(db, { githubToken: 'gho_x', session: true })
+    await db.update(members).set({ authUserId }).where(eq(members.id, a.memberId))
+    await db.delete(schema.auth_user).where(eq(schema.auth_user.id, authUserId))
+    const [row] = await db.select().from(members).where(eq(members.id, a.memberId))
+    expect(row).toMatchObject({ id: a.memberId, authUserId: null })
+    expect(await db.$count(schema.auth_session, eq(schema.auth_session.userId, authUserId))).toBe(0)
   })
 
   test('an identity name is unique per member, and the run location is checked', async () => {

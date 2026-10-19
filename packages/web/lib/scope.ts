@@ -1,10 +1,10 @@
 import { resolve, sep } from 'node:path'
-import { and, eq, sql, type SQL } from 'drizzle-orm'
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
 import type { Queue } from '../db/queues'
-import { artefacts, MEMBER_OWNED, members, pkOf } from '../db/schema'
+import { artefacts, auth_account, auth_session, MEMBER_OWNED, members, pkOf } from '../db/schema'
 
 /** Every table with a `memberId` column. */
 export type MemberOwnedTable = (typeof MEMBER_OWNED)[keyof typeof MEMBER_OWNED]
@@ -135,4 +135,79 @@ export async function scopeForAuthUser(authUserId: string): Promise<MemberScope 
   const db = getDb()
   const [row] = await db.select({ id: members.id }).from(members).where(eq(members.authUserId, authUserId))
   return row ? createScope(db, row.id) : null
+}
+
+/**
+ * What sign-in and the daily organisation check need to know about members and their Better Auth users. This is not a
+ * `MemberScope`: it acts before a member is known (or across all of them), and it never reads member-owned rows.
+ */
+export interface AuthScope {
+  /** The GitHub access token stored for a Better Auth user, or `null` when there is none. */
+  githubToken(authUserId: string): Promise<string | null>
+  /** The member added for this GitHub user: matched on `github_id`, else on the lower-cased login while `github_id` is unset. */
+  memberForGithub(githubId: number, login: string): Promise<{ id: string } | null>
+  linkMember(memberId: string, githubId: number, authUserId: string): Promise<void>
+  /** Members linked to a Better Auth user that has at least one session, for the daily check. */
+  linkedMembers(): Promise<{ memberId: string; authUserId: string }[]>
+  /** Deletes every session of a Better Auth user. */
+  endSessions(authUserId: string): Promise<void>
+}
+
+export function authScope(db: Db = getDb()): AuthScope {
+  return {
+    async githubToken(authUserId) {
+      const [row] = await db
+        .select({ token: auth_account.accessToken })
+        .from(auth_account)
+        .where(and(eq(auth_account.userId, authUserId), eq(auth_account.providerId, 'github')))
+      return row?.token ?? null
+    },
+
+    async memberForGithub(githubId, login) {
+      const [byId] = await db.select({ id: members.id }).from(members).where(eq(members.githubId, githubId))
+      if (byId) return byId
+      const [byLogin] = await db
+        .select({ id: members.id })
+        .from(members)
+        .where(and(eq(members.githubLogin, login.toLowerCase()), isNull(members.githubId)))
+      return byLogin ?? null
+    },
+
+    async linkMember(memberId, githubId, authUserId) {
+      await db.update(members).set({ githubId, authUserId }).where(eq(members.id, memberId))
+    },
+
+    async linkedMembers() {
+      const rows = await db
+        .selectDistinct({ memberId: members.id, authUserId: auth_session.userId })
+        .from(members)
+        .innerJoin(auth_session, eq(auth_session.userId, members.authUserId))
+      return rows
+    },
+
+    async endSessions(authUserId) {
+      await db.delete(auth_session).where(eq(auth_session.userId, authUserId))
+    }
+  }
+}
+
+export interface NewMember {
+  githubLogin: string
+  displayName: string
+  timeZone?: string
+  role?: 'member' | 'admin'
+}
+
+/** Adds a member by GitHub login (the admin's invitation). Throws when the login already exists. Used by `scripts/add-member.ts`. */
+export async function addMember(input: NewMember, db: Db = getDb()): Promise<{ id: string }> {
+  const [row] = await db
+    .insert(members)
+    .values({
+      githubLogin: input.githubLogin.toLowerCase(),
+      displayName: input.displayName,
+      ...(input.timeZone ? { timeZone: input.timeZone } : {}),
+      role: input.role ?? 'member'
+    })
+    .returning({ id: members.id })
+  return row!
 }
