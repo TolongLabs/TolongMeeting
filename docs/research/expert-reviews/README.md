@@ -1,6 +1,6 @@
 # Expert reviews
 
-Three specialist reviews of revision 1 of the [TolongMeeting design](../../app-design/2026-10-20-meeting-bot-design.md), made on 20 October 2026, and the triage of every finding into revision 2. The requester asked whether the spec was rigid enough to build from and feasible; all three reviewers answered "feasible with changes".
+Three specialist reviews of revision 1 of the TolongMeeting design (now the [PRD](../../PRD.md), [TRD](../../TRD.md) and [design](../../DESIGN.md)), made on 20 October 2026, and the triage of every finding into revision 2. The requester asked whether the spec was rigid enough to build from and feasible; all three reviewers answered "feasible with changes".
 
 Contents:
 
@@ -43,7 +43,7 @@ Several blockers describe the same problem from different angles. Merged, they a
 
 ## Triage
 
-"Adopted" means revision 2 takes the recommendation; "adapted" means it solves the problem differently; "partly" and "not adopted" give the reason. Section names refer to the [design](../../app-design/2026-10-20-meeting-bot-design.md).
+"Adopted" means revision 2 takes the recommendation; "adapted" means it solves the problem differently; "partly" and "not adopted" give the reason. Section names refer to revision 1 of the design, which is now split into the [PRD](../../PRD.md), [TRD](../../TRD.md) and [design](../../DESIGN.md); the [section map](../../app-design/2026-10-20-meeting-bot-design.md) shows where each old section went.
 
 ### Meeting-bot infrastructure
 

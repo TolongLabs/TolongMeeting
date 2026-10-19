@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun and TypeScript; marked (Markdown lexer); fflate (zip); pdfmake with DejaVu Sans fonts (PDF); docx (Word); sharp (WebP to JPEG); zod; Drizzle, pg and Next.js as set up by plan 01c; GitHub REST API version `2022-11-28`; Google Drive API v3 and Google Picker; Notion API version `2026-03-11` (the newest on 20 October 2026; re-check at build time).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 

@@ -1,6 +1,6 @@
 # TolongMeeting
 
-An internal TolongLabs app that attends online lectures and work meetings as the member, on Zoom, Microsoft Teams and Google Meet. It catches and submits attendance forms, and delivers an ADHD-friendly summary with full details on a small website. This repository holds the research, the approved design and the build plans; implementation hasn't started.
+An internal TolongLabs app that attends online lectures and work meetings as the member, on Zoom, Microsoft Teams and Google Meet. It catches and submits attendance forms, and delivers an ADHD-friendly summary with full details on a small website. This repository holds the research, the product, requirements, technical and screen documents, and the build plans; implementation hasn't started.
 
 Contents:
 
@@ -11,8 +11,11 @@ Contents:
 ## Start here
 
 - [Docs index](docs/README.md): what's in this repository and how to read it.
-- [Design](docs/app-design/2026-10-20-meeting-bot-design.md): goals, decisions, components, state machines and build order (revision 2).
-- [Build plans](docs/plans/README.md): the roadmap, the shared [architecture and contracts](docs/TRD.md), and one plan per milestone.
+- [Product](docs/PRODUCT.md): the problem, users, principles and terminology (a draft awaiting confirmation).
+- [PRD](docs/PRD.md): goals, decisions, requirements, acceptance tests and milestones (revision 2).
+- [TRD](docs/TRD.md): architecture, components, security and the binding contracts every plan builds against.
+- [Design](docs/DESIGN.md): screens, pings, the summary format and the states to design for.
+- [Build plans](docs/plans/README.md): the roadmap and one plan per milestone, built against the [TRD](docs/TRD.md).
 - [Research](docs/research/README.md): open-source meeting bots, platform constraints, AI providers and three expert reviews.
 - [Session record](docs/session-record/overview.md): the manual run on 19 October 2026 that the app automates.
 

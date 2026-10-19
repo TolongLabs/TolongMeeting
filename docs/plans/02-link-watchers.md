@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright and Playwright Test on Node 24, `bun test`, zod, Next.js App Router (website notes), React server rendering for component tests.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 

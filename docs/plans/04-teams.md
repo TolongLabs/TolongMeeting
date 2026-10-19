@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright on Node 24 driving the pinned Chrome, Playwright Test, `bun test`, zod, Next.js (the Teams chat option and presence note).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -1681,7 +1681,7 @@ git commit -m "test(worker): add teams monthly smoke entry"
 
 ### Task 12: Milestone acceptance
 
-Manual verification on real Teams meetings, mapped to the design's [acceptance tests](../app-design/2026-10-20-meeting-bot-design.md#acceptance-tests) and to spike 2's open question. Record each result (date, pass or fail, evidence path) in this task.
+Manual verification on real Teams meetings, mapped to the PRD's [acceptance tests](../PRD.md#acceptance-tests) and to spike 2's open question. Record each result (date, pass or fail, evidence path) in this task.
 
 **Files:**
 

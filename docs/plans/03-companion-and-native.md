@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron (the current stable major at build time, pinned exactly in `packages/companion/package.json`), electron-builder with the NSIS target, TypeScript bundled with `bun build`, zod, Next.js route handlers, Drizzle on Postgres, pg-boss, ffmpeg and ffprobe, ntfy's JSON stream, whisper-transcriber.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 

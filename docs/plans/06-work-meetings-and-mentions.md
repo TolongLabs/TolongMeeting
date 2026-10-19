@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Bun 1.x, `bun test`, zod, Playwright on Node 24 (worker), Next.js App Router with server actions, React server rendering for component tests, DashScope through 1A's `chatJson`, self-hosted ntfy.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 

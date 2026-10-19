@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Bun 1.x, Next.js (App Router), Drizzle ORM and drizzle-kit, Postgres 17, PGlite (tests), pg-boss, Better Auth (GitHub provider), Luxon, zod, noVNC, x11vnc, websockify, Caddy 2 (`forward_auth`), ntfy, Docker Compose, iptables.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
