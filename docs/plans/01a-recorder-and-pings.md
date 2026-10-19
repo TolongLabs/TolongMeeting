@@ -158,11 +158,13 @@ git commit -m "chore: scaffold bun workspaces and tooling"
 
 ### Task 2: Core types, job schema and form machine
 
+> **Done differently**: tests live in `packages/core/test/` (COMMON rule, imports from `../src/...`), not beside the source. `IllegalTransition` is exported from `form-machine.ts`. The schema uses zod 4's `z.iso.datetime({ offset: true })`, the current form of the plan's `z.string().datetime({ offset: true })`. `parseJob` throws `JobError` (see architecture).
+
 **Files:**
 
 - Create: `packages/core/src/types.ts`, `packages/core/src/job.ts`, `packages/core/src/form-machine.ts`, `packages/core/src/time.ts`
 - Modify: `packages/core/src/index.ts`
-- Test: `packages/core/src/job.test.ts`, `packages/core/src/form-machine.test.ts`, `packages/core/src/time.test.ts`
+- Test: `packages/core/test/job.test.ts`, `packages/core/test/form-machine.test.ts`, `packages/core/test/time.test.ts`
 
 **Interfaces:**
 
@@ -176,10 +178,10 @@ git commit -m "chore: scaffold bun workspaces and tooling"
   - `class IllegalTransition extends Error` (message `${from} --${trigger}-->`);
   - `formatOffset(ms: number): string` (`HH:MM:SS`), `localParts(at: Date | string, timeZone: string): { date: string; hhmm: string; hhmmss: string; weekday: string; dayMonthYear: string }` (`2026-10-21`, `2000`, `200000`, `Wed`, `21 Oct 2026`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/form-machine.test.ts
+// packages/core/test/form-machine.test.ts
 import { test, expect } from 'bun:test'
 import { nextFormState, IllegalTransition } from './form-machine'
 
@@ -199,7 +201,7 @@ test('terminal states accept no trigger', () => {
 ```
 
 ```ts
-// packages/core/src/job.test.ts (fixture: a complete valid job object `validJob` built in the test file)
+// packages/core/test/job.test.ts (fixture: a complete valid job object `validJob` built in the test file)
 test('valid job parses; bad values are reported by path only', () => {
   expect(parseJob(validJob).entry.timeZone).toBe('Asia/Kuala_Lumpur')
   const bad = {
@@ -231,7 +233,7 @@ test('end after start, safe occurrence id, absolute dirs, wss asr url', () => {
 ```
 
 ```ts
-// packages/core/src/time.test.ts
+// packages/core/test/time.test.ts
 test('offsets and local parts', () => {
   expect(formatOffset(3_723_400)).toBe('01:02:03')
   expect(localParts('2026-10-21T12:00:00Z', 'Asia/Kuala_Lumpur')).toEqual({
@@ -244,12 +246,12 @@ test('offsets and local parts', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core`
 Expected: FAIL with "Cannot find module './form-machine'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `types.ts` copies architecture "Core types" verbatim and adds `replyTo: string | null` to `ChatMessage`. `job.ts`: `JobConfigSchema` per the architecture's `JobConfig` with these rules: `occurrenceId` matches `^[A-Za-z0-9_-]{1,64}$`; `attempt` integer at least 1; `start` and `end` are `z.string().datetime({ offset: true })` with `end > start`; `timeZone` accepted only if `new Intl.DateTimeFormat('en', { timeZone })` doesn't throw; `link` is a discriminated union on `kind`; `ai.baseUrl` is a URL, `ai.apiKey` non-empty, `ai.asrUrl` starts with `wss://`; `ntfy.url` is a URL, `topic` and `token` non-empty; `dataDir` and `profileDir` absolute; `identity.zoomGuestName` non-empty; `identity.formProviders` an array of `'google' | 'microsoft'`; `control` nullable. `form-machine.ts`:
 
@@ -269,12 +271,12 @@ const table: Partial<Record<FormState, Partial<Record<FormTrigger, FormState>>>>
 
 `time.ts` uses `Intl.DateTimeFormat` with the given `timeZone` (never the process zone).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core && bun run typecheck`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core docs/plans/architecture.md
