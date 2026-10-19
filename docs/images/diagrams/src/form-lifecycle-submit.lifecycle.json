@@ -1,0 +1,133 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Attendance Form: Filling to Submitted",
+    "output": ".archify/form-lifecycle-submit/form-lifecycle-submit.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Fill and submit"
+    },
+    {
+      "id": "terminal",
+      "label": "Not submitted"
+    }
+  ],
+  "states": [
+    {
+      "id": "inspecting",
+      "type": "external",
+      "label": "Inspecting",
+      "sublabel": "previous diagram",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "filling",
+      "type": "active",
+      "label": "Filling",
+      "sublabel": "matched fields, confirmations",
+      "lane": "main",
+      "col": 1,
+      "step": "06",
+      "width": 160
+    },
+    {
+      "id": "submitting",
+      "type": "active",
+      "label": "Submitting",
+      "sublabel": "screenshot, submit",
+      "lane": "main",
+      "col": 2,
+      "step": "07",
+      "width": 160
+    },
+    {
+      "id": "submitted",
+      "type": "success",
+      "label": "Submitted",
+      "sublabel": "ping with screenshots",
+      "lane": "main",
+      "col": 3,
+      "step": "08",
+      "width": 160
+    },
+    {
+      "id": "needs_member",
+      "type": "failure",
+      "label": "Needs member",
+      "sublabel": "required question unmatched",
+      "lane": "terminal",
+      "col": 1,
+      "width": 160
+    },
+    {
+      "id": "already_answered",
+      "type": "neutral",
+      "label": "Already answered",
+      "sublabel": "ping, normal priority",
+      "lane": "terminal",
+      "col": 2,
+      "width": 160
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "Failed",
+      "sublabel": "from any state, ping",
+      "lane": "terminal",
+      "col": 4,
+      "width": 160
+    }
+  ],
+  "transitions": [
+    {
+      "id": "inspecting-to-filling",
+      "from": "inspecting",
+      "to": "filling",
+      "label": "attendance"
+    },
+    {
+      "id": "filling-to-submitting",
+      "from": "filling",
+      "to": "submitting",
+      "label": "all required matched",
+      "variant": "emphasis"
+    },
+    {
+      "id": "submitting-to-submitted",
+      "from": "submitting",
+      "to": "submitted",
+      "label": "confirmation page",
+      "variant": "emphasis"
+    },
+    {
+      "id": "filling-to-needs_member",
+      "from": "filling",
+      "to": "needs_member",
+      "label": "unmatched",
+      "variant": "security"
+    },
+    {
+      "id": "submitting-to-already_answered",
+      "from": "submitting",
+      "to": "already_answered",
+      "label": "already answered",
+      "variant": "security"
+    },
+    {
+      "id": "submitting-to-failed",
+      "from": "submitting",
+      "to": "failed",
+      "label": "any state",
+      "variant": "security"
+    }
+  ],
+  "cards": []
+}
