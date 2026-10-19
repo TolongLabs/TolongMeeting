@@ -6,7 +6,7 @@ import { syncOccurrences } from '../db/occurrences'
 import { createTestDb, dropAllTestDbs, testDbUrl, withEntry, type EntryShape } from '../db/testing'
 import { occurrences } from '../db'
 
-afterAll(dropAllTestDbs)
+afterAll(dropAllTestDbs, 60_000)
 
 test('bossQueue queues a job with its data, and holds a job until its start time', async () => {
   const db = await createTestDb()

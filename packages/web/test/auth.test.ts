@@ -13,7 +13,7 @@ const realFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = realFetch
 })
-afterAll(dropAllTestDbs)
+afterAll(dropAllTestDbs, 60_000)
 
 const github: GitHubApi = {
   user: async () => ({ id: 42, login: 'Octo-Member' }),

@@ -7,7 +7,7 @@ import { authoriseSession, NOT_A_MEMBER, NOT_A_MEMBER_CODE } from '../lib/author
 import { GitHubTokenError, type GitHubApi } from '../lib/github'
 import { authScope } from '../lib/scope'
 
-afterAll(dropAllTestDbs)
+afterAll(dropAllTestDbs, 60_000)
 
 const gh = (m: 'active' | 'pending' | 'none', user = { id: 42, login: 'Octo-Member' }): GitHubApi => ({
   user: async () => user,

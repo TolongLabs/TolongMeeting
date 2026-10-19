@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { members } from '../db'
 import { createTestDb, dropAllTestDbs, testDbUrl } from '../db/testing'
 
-afterAll(dropAllTestDbs)
+afterAll(dropAllTestDbs, 60_000)
 
 const script = join(import.meta.dir, '..', 'scripts', 'add-member.ts')
 

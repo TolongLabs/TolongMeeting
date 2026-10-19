@@ -6,7 +6,7 @@ import { githubApi, GitHubTokenError, type GitHubApi } from '@tm/web/lib/github'
 import { authScope } from '@tm/web/lib/scope'
 import { checkMemberships } from '../src/org-check'
 
-afterAll(dropAllTestDbs)
+afterAll(dropAllTestDbs, 60_000)
 
 const { auth_session: authSession, members } = schema
 
