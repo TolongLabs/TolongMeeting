@@ -1,0 +1,217 @@
+import { expect, mock, test } from 'bun:test'
+import { once } from 'node:events'
+import { mkdir, mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  formIdFor,
+  newFormRecord,
+  type FormRecord,
+  type FormSource,
+  type ResolvedForm,
+  type SenderRole
+} from '@tm/core'
+import { sampleRecord } from '@tm/core/testing'
+import type { Ping } from '@tm/notify'
+import type { Page } from 'playwright'
+import { startFormDispatcher } from '../src/forms/dispatcher'
+import { loadFormRecords, saveFormRecord } from '../src/forms/store'
+import type { FormContext, FormContextBase } from '../src/forms/types'
+import { testJob } from './forms/job'
+
+const host = { name: 'Dr Example', role: 'host' as SenderRole }
+const participant = { name: 'Classmate', role: 'participant' as SenderRole }
+
+function formFor(name: string, source: FormSource, sender?: { name: string; role: SenderRole }): ResolvedForm {
+  const url = `https://docs.google.com/forms/d/e/${name}/viewform`
+  return {
+    url,
+    finalUrl: url,
+    provider: 'google',
+    source,
+    sender: sender?.name ?? null,
+    senderRole: sender?.role ?? null,
+    seenAt: new Date().toISOString()
+  }
+}
+
+function recFor(name: string, state: FormRecord['state']): FormRecord {
+  const rec = newFormRecord(formFor(name, 'qr'), 'occ-test')
+  return sampleRecord({ ...rec, state, history: [...rec.history, { state, at: rec.seenAt }] })
+}
+
+function fakeBase(dir: string) {
+  const pings: Ping[] = []
+  const events: Record<string, unknown>[] = []
+  const base: FormContextBase = {
+    cfg: testJob(dir),
+    desk: {} as Page,
+    links: { meetingPage: null, signIn: null },
+    emitEvent: async (type, data) => {
+      events.push({ type, ...data })
+    },
+    ping: async (p) => {
+      pings.push(p)
+    },
+    matchLabels: async () => new Map(),
+    waitForSignin: async () => true
+  }
+  return { base, pings, events }
+}
+
+const byName = (records: FormRecord[], name: string) =>
+  records.find((r) => r.formId === formIdFor(formFor(name, 'qr').finalUrl))!
+const tmp = () => mkdtemp(join(tmpdir(), 'tm-disp-'))
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 5))
+
+function deferred<T>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+test('a restart fails unfinished forms once and never hands any loaded form out again', async () => {
+  const dir = await tmp()
+  for (const [n, s] of [
+    ['A', 'submitted'],
+    ['B', 'submitting'],
+    ['C', 'filling']
+  ] as const)
+    await saveFormRecord(dir, recFor(n, s))
+  await mkdir(join(dir, 'forms', formIdFor(formFor('D', 'qr').finalUrl)), { recursive: true }) // no readable record.json
+  const handle = mock(async (_f: ResolvedForm) => recFor('X', 'submitted'))
+  const { base, pings } = fakeBase(dir)
+  const d = await startFormDispatcher(base, handle)
+  const { records } = await loadFormRecords(dir)
+  expect(byName(records, 'B')).toMatchObject({ state: 'failed', reason: 'interrupted_submitting' })
+  expect(byName(records, 'C')).toMatchObject({ state: 'failed', reason: 'interrupted' })
+  expect(byName(records, 'A').state).toBe('submitted')
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you', 'Form needs you'])
+  for (const n of ['A', 'B', 'C', 'D']) d.offer(formFor(n, 'qr'))
+  await d.close()
+  expect(handle).not.toHaveBeenCalled()
+})
+
+test('the same form is handled once', async () => {
+  const handle = mock(async (_f: ResolvedForm) => recFor('F', 'submitted'))
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'qr'))
+  d.offer({ ...formFor('F', 'meeting_chat', host), finalUrl: formFor('F', 'qr').finalUrl + '?usp=sf_link' })
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+})
+
+test('a trusted sighting re-handles a form that ended untrusted', async () => {
+  const handle = mock(async (_f: ResolvedForm, ctx: FormContext) =>
+    recFor('F', ctx.previous ? 'submitted' : 'untrusted')
+  )
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  await settle()
+  d.offer(formFor('F', 'meeting_chat', participant)) // a second untrusted sighting is ignored
+  d.offer(formFor('F', 'qr'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(2)
+  expect(handle.mock.calls[1]![1].previous?.state).toBe('untrusted')
+})
+
+test('a trusted sighting during an untrusted run waits and runs if that run ends untrusted', async () => {
+  const first = deferred<FormRecord>()
+  const handle = mock((_f: ResolvedForm, ctx: FormContext) =>
+    ctx.previous ? Promise.resolve(recFor('F', 'submitted')) : first.promise
+  )
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr'))
+  expect(handle).toHaveBeenCalledTimes(1)
+  first.resolve(recFor('F', 'untrusted'))
+  expect((await d.close()).map((r) => r.state)).toContain('submitted')
+  expect(handle).toHaveBeenCalledTimes(2)
+})
+
+test('a pending trusted sighting is dropped when the untrusted run ends in another state', async () => {
+  const first = deferred<FormRecord>()
+  const handle = mock((_f: ResolvedForm) => first.promise)
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr'))
+  first.resolve(recFor('F', 'not_attendance'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+})
+
+test('close aborts the signal handlers see', async () => {
+  let seen: AbortSignal | null = null
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, async (_f, ctx) => {
+    seen = ctx.signal
+    await once(ctx.signal, 'abort')
+    return recFor('F', 'failed')
+  })
+  d.offer(formFor('F', 'qr'))
+  await d.close()
+  expect(seen!.aborted).toBe(true)
+})
+
+test('an untrusted record from an earlier run can be upgraded, continuing from that record', async () => {
+  const dir = await tmp()
+  await saveFormRecord(dir, recFor('U', 'untrusted'))
+  const handle = mock(async (_f: ResolvedForm, ctx: FormContext) => ({ ...ctx.previous!, state: 'submitted' as const }))
+  const d = await startFormDispatcher(fakeBase(dir).base, handle)
+  d.offer(formFor('U', 'qr'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+  expect(handle.mock.calls[0]![1].previous?.formId).toBe(formIdFor(formFor('U', 'qr').finalUrl))
+})
+
+test('an untrusted record whose history contains submitting is never re-handled', async () => {
+  const dir = await tmp()
+  const rec = recFor('U', 'untrusted')
+  await saveFormRecord(dir, { ...rec, history: [...rec.history, { state: 'submitting', at: rec.seenAt }] })
+  const handle = mock(async (_f: ResolvedForm) => recFor('U', 'submitted'))
+  const d = await startFormDispatcher(fakeBase(dir).base, handle)
+  d.offer(formFor('U', 'qr'))
+  await d.close()
+  expect(handle).not.toHaveBeenCalled()
+})
+
+test('a candidate whose finalUrl is not a URL is reported and never handled', async () => {
+  const handle = mock(async (_f: ResolvedForm) => recFor('F', 'submitted'))
+  const { base, events } = fakeBase(await tmp())
+  const d = await startFormDispatcher(base, handle)
+  d.offer({ ...formFor('F', 'qr'), finalUrl: 'not a url' })
+  await d.close()
+  expect(handle).not.toHaveBeenCalled()
+  expect(events).toEqual([expect.objectContaining({ type: 'error', where: 'form_dispatcher' })])
+})
+
+test('a handler that throws is reported with a redacted message and the form is not handled again', async () => {
+  const { base, events } = fakeBase(await tmp())
+  const handle = mock(async (_f: ResolvedForm): Promise<FormRecord> => {
+    throw new Error('boom for Test Student')
+  })
+  const d = await startFormDispatcher(base, handle)
+  d.offer(formFor('F', 'qr'))
+  await settle()
+  d.offer(formFor('F', 'qr'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+  expect(events).toHaveLength(1)
+  expect(events[0]).toMatchObject({ type: 'error', where: 'form_dispatcher', message: 'boom for [value]' })
+})
+
+test('after a form_tab_not_closed alert later forms are not opened and the member is pinged', async () => {
+  const dir = await tmp()
+  const { base, pings } = fakeBase(dir)
+  const handle = mock(async (f: ResolvedForm, ctx: FormContext) => {
+    await ctx.emitEvent('alert', { kind: 'form_tab_not_closed', formId: formIdFor(f.finalUrl), message: 'stuck' })
+    return recFor('A', 'submitted')
+  })
+  const d = await startFormDispatcher(base, handle)
+  d.offer(formFor('A', 'qr'))
+  await settle()
+  d.offer(formFor('B', 'qr'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+  expect(byName((await loadFormRecords(dir)).records, 'B').state).toBe('failed')
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you'])
+})

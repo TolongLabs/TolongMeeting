@@ -2261,7 +2261,7 @@ git commit -m "feat(worker): retry forms once after sign-in"
 **Files:**
 
 - Create: `packages/worker/src/forms/dispatcher.ts`
-- Test: `packages/worker/src/forms/dispatcher.test.ts`
+- Test: `packages/worker/test/forms-dispatcher.test.ts`
 
 **Interfaces:**
 
@@ -2290,7 +2290,7 @@ Rules:
 - **`close`**: abort `signal`, await every running and pending handler, and return the records.
 - **From the Task 11 review**: the dispatcher must never call `handle` with `previous: null` for a form that already has a `record.json` (`handleForm` would start from `detected` and could submit a second time). A restart maps `submitting` to `interrupted_submitting`. After a `form_tab_not_closed` alert the dispatcher opens no more tabs.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // formFor(name, source, sender?) builds a ResolvedForm for https://docs.google.com/forms/d/e/<name>/viewform;
@@ -2381,22 +2381,22 @@ test('close aborts the signal handlers see', async () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/dispatcher.test.ts`
+Run: `bun test packages/worker/test/forms-dispatcher.test.ts`
 Expected: FAIL with "Cannot find module './dispatcher'".
 
-- [ ] **Step 3: Implement `startFormDispatcher` in `packages/worker/src/forms/dispatcher.ts`**
+- [x] **Step 3: Implement `startFormDispatcher` in `packages/worker/src/forms/dispatcher.ts`**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/dispatcher.test.ts`
+Run: `bun test packages/worker/test/forms-dispatcher.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/dispatcher.ts packages/worker/src/forms/dispatcher.test.ts
+git add packages/worker/src/forms/dispatcher.ts packages/worker/test/forms-dispatcher.test.ts
 git commit -m "feat(worker): dispatch forms once per meeting"
 ```
 
