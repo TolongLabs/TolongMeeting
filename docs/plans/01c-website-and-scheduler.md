@@ -70,20 +70,20 @@ Contents:
 
 **Files:**
 
-- Create: `packages/web/package.json`, `packages/web/tsconfig.json`, `packages/web/drizzle.config.ts`, `packages/web/db/schema.ts`, `packages/web/db/index.ts`, `packages/web/db/testing.ts`, `packages/web/db/migrations/` (generated), `packages/core/src/control.ts`
-- Test: `packages/web/db/schema.test.ts`
+- Create: `packages/web/package.json`, `packages/web/tsconfig.json`, `packages/web/drizzle.config.ts`, `packages/web/db/schema.ts`, `packages/web/db/index.ts`, `packages/web/db/testing.ts`, `packages/web/db/migrate.ts`, `packages/web/db/migrations/` (generated), `packages/core/src/control.ts`, and the package skeletons `packages/scheduler/{package.json,tsconfig.json,src/index.ts}`
+- Test: `packages/web/test/schema.test.ts` (against the shared Postgres on `TEST_DATABASE_URL`)
 
 **Interfaces:**
 
 - Consumes: `OccurrenceState`, `FormState`, `EventType`, `RunLocation`, `EntryType`, `TranscriptionMode`, `FormSource`, `FormProvider`, `TrustReason`, `SenderRole`, `LinkSource`, `JobConfig` from `packages/core` (architecture).
-- Produces: `schema` (tables below); `type Db = PgDatabase<PgQueryResultHKT, typeof schema>`; `getDb(): Db` (one node-postgres pool on `DATABASE_URL`); `createTestDb(): Promise<Db>` (a fresh PGlite database with every migration applied); `seedMember(db: Db, opts?: { githubLogin?: string; role?: 'member' | 'admin'; full?: boolean }): Promise<Seeded>`, where `Seeded = { memberId: string; identityId: string; ids: Record<keyof typeof MEMBER_OWNED, string> }` (`full`, the default, adds one row to every member-owned table; `full: false` adds only an identity, its profile and a tested AI key); `MEMBER_OWNED` (record of every table with `memberId`); `pkOf(table): PgColumn`; `type ArtefactKind = 'recording' | 'summary' | 'transcript' | 'slides' | 'slides_json' | 'slide_image' | 'chat' | 'form_screenshot'`.
+- Produces: `schema` (tables below); `type Db = PgDatabase<NodePgQueryResultHKT, typeof schema>` (the node-postgres result type, so `db.execute` returns `{ rows }`), `closeDb()`; `getDb(): Db` (one node-postgres pool on `DATABASE_URL`); `createTestDb(): Promise<Db>` (a fresh, uniquely named database on `TEST_DATABASE_URL`, a real Postgres, with every migration applied; `dropTestDb(db)` and `dropAllTestDbs()` drop it); `seedMember(db: Db, opts?: { githubLogin?: string; role?: 'member' | 'admin'; full?: boolean }): Promise<Seeded>`, where `Seeded = { memberId: string; identityId: string; ids: Record<keyof typeof MEMBER_OWNED, string> }` (`full`, the default, adds one row to every member-owned table; `full: false` adds only an identity, its profile and a tested AI key); `MEMBER_OWNED` (record of every table with `memberId`); `pkOf(table): PgColumn`; `type ArtefactKind = 'recording' | 'summary' | 'transcript' | 'slides' | 'slides_json' | 'slide_image' | 'chat' | 'form_screenshot'`.
 - Produces (adds to contracts), `packages/core/src/control.ts`: `ACCOUNT_KINDS = ['zoom', 'microsoft', 'google', 'whatsapp', 'discord', 'teams'] as const`, `type AccountKind`, `type AccountStatus = Partial<Record<AccountKind, { verifiedAt: string; signedIn: boolean }>>`; and the table `signin_sessions`.
 
 Schema ("member_id" always means `uuid not null` referencing `members` with `on delete cascade`; every `id uuid` defaults to `gen_random_uuid()`; `created_at` and `updated_at` are `timestamptz not null default now()`):
 
 ```text
 members            id; github_login text not null unique (stored lower-case); github_id bigint unique; auth_user_id text unique; display_name text not null; time_zone text not null default 'Asia/Kuala_Lumpur'; role text not null default 'member' check (member, admin); ntfy_topic text unique; ntfy_token_enc text; created_at
-identities         id; member_id; name text not null; run_location text not null default 'server' check RunLocation; zoom_guest_name text not null; created_at; unique (member_id, name)
+identities         id; member_id; name text not null; run_location text not null default 'server' check RunLocation; zoom_guest_name text not null; org_name text; org_email_domain text; created_at; unique (member_id, name)
 profiles           identity_id uuid pk -> identities cascade; member_id; location text not null default 'server' check (server, local); latest_checkpoint text; checkpoint_at timestamptz; account_status jsonb not null default '{}' (AccountStatus); held_by text; held_since timestamptz
 details            id; member_id; key text not null; value text not null; labels text[] not null default '{}'; position int not null default 0; unique (member_id, key)
 mention_names      id; member_id; name text not null; unique index (member_id, lower(name))
@@ -100,10 +100,10 @@ signin_sessions    id; member_id; identity_id -> identities cascade; mode text n
 
 Secret columns (`members.ntfy_token_enc`, `ai_keys.dashscope_key_enc`, `ai_keys.modelscope_key_enc`, `connections.token_enc`) hold only `sealColumn` output (Task 2).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
-// packages/web/db/schema.test.ts
+// packages/web/test/schema.test.ts (the shipped file also covers each constraint and the foreign-key actions)
 const TABLES = [
   'ai_keys',
   'artefacts',
@@ -171,27 +171,27 @@ test('an unknown occurrence state is rejected', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/web/db/schema.test.ts`
+Run: `bun test packages/web/test/schema.test.ts`
 
-Expected: FAIL with `Cannot find module './testing'`.
+Expected: FAIL with `Cannot find module '../db/testing'`.
 
-- [ ] **Step 3: Implement the schema in `packages/web/db/schema.ts` and generate the migration**
+- [x] **Step 3: Implement the schema in `packages/web/db/schema.ts` and generate the migration**
 
-Write each table with `pgTable`, with check constraints built from runtime lists such as `const OCCURRENCE_STATES = [...] as const satisfies readonly OccurrenceState[]`, plus a compile-time check that `Exclude<OccurrenceState, (typeof OCCURRENCE_STATES)[number]>` is `never` (same for `FormState`, `EventType`, `RunLocation`). Type the jsonb columns with `$type<...>()`. Then run `bunx drizzle-kit generate --config packages/web/drizzle.config.ts --name init`. `createTestDb` uses `drizzle-orm/pglite` and `migrate()` with `migrationsFolder: new URL('./migrations', import.meta.url).pathname`.
+Write each table with `pgTable`, with check constraints built from runtime lists such as `const OCCURRENCE_STATES = [...] as const satisfies readonly OccurrenceState[]`, plus a compile-time check that `Exclude<OccurrenceState, (typeof OCCURRENCE_STATES)[number]>` is `never` (same for `FormState`, `EventType`, `RunLocation`). Type the jsonb columns with `$type<...>()`. Then run `bunx drizzle-kit generate --config packages/web/drizzle.config.ts --name init`. `createTestDb` creates a uniquely named database on `TEST_DATABASE_URL` and runs `runMigrations` (`drizzle-orm/node-postgres/migrator` with `migrationsFolder: new URL('./migrations', import.meta.url).pathname`). Generate with `bun run --cwd packages/web db:generate -- --name init`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/web/db/schema.test.ts && bun run typecheck`
+Run: `TEST_DATABASE_URL=postgres://postgres:tmtest@127.0.0.1:55440/postgres bun test packages/web/test/schema.test.ts && bun run typecheck`
 
-Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
+Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web packages/core/src/control.ts
-git commit -m "feat(db): add schema and migrations"
+git add packages/web packages/scheduler packages/core/src/control.ts packages/core/package.json bun.lock
+git commit -m "feat(web): add database schema"
 ```
 
 ### Task 2: Secret sealing and keys

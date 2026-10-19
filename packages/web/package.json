@@ -1,0 +1,31 @@
+{
+  "name": "@tm/web",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./db": "./db/index.ts",
+    "./db/*": "./db/*.ts",
+    "./lib/*": "./lib/*.ts"
+  },
+  "scripts": {
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "bun db/migrate.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@tm/core": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "next": "16.4.2",
+    "pg": "8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "drizzle-kit": "0.31.11"
+  }
+}

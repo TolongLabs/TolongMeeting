@@ -1,0 +1,15 @@
+{
+  "name": "@tm/scheduler",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@tm/core": "workspace:*",
+    "@tm/web": "workspace:*"
+  }
+}
