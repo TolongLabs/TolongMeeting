@@ -493,7 +493,7 @@ test.skipIf(root)('a failed record write keeps the record that was there before'
     senderRole: 'host',
     seenAt: candidate.seenAt,
     provider: 'google',
-    state: 'resolved',
+    state: 'checking_trust',
     trustReason: null,
     pingedAt: null
   }
