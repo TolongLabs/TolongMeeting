@@ -679,7 +679,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - data: `forms/<formId>/filled_<N>.png`; the detail keys `university_email`, `programme`, `session_date` and `session_start`;
   - pipeline: `attendanceLine`.
 - **01c website and scheduler**:
-  - core: `control.ts` (`ACCOUNT_KIND`, heartbeat and sign-in types, `SpecEnv`), `secrets.ts` (`deriveKey`, `memberKey`, `sealColumn`, `openColumn`), `stripPasscode`, `RepeatRule`, `expandEntry`, `findClashes`, `formatWhen`, `formatDay`;
+  - core: `control.ts` (`ACCOUNT_KINDS` and type `AccountKind`, heartbeat and sign-in types, `SpecEnv`), `secrets.ts` (`deriveKey`, `memberKey`; `sealColumn` and `openColumn` live in `packages/web/db/secrets.ts`), `stripPasscode`, `RepeatRule`, `expandEntry`, `findClashes`, `formatWhen`, `formatDay`;
   - shared: `QUEUES`, `Queue` and `bossQueue` (`packages/web/db/queues.ts`); `pings` (`packages/notify/src/messages.ts`); `Notifier` and `memberNotifier` (`packages/web/db/notifier.ts`); `WORKER_IMAGE`;
   - tables: `signin_sessions` and the Better Auth `auth_*` tables;
   - environment: `TM_PROFILE_KEY_FILE`, `TM_BACKUP_REMOTE`, `RCLONE_CONFIG`, `POSTGRES_PASSWORD`;
