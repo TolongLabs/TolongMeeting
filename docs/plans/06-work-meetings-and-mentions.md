@@ -129,7 +129,7 @@ You extract an inventory from one work meeting. Reply with JSON for the given sc
 ```
 
 - `pickDoNext` takes the action items whose `normaliseName(owner)` equals `normaliseName` of one of `memberNames`, and returns the one with the earliest due date from `chooseDue` (undated last), or null.
-- `renderWorkSummary` writes the design's work template: the title line as 1A's lecture title without a session label; `Do next: <task> (<due text>)` for `pickDoNext(inv, [...cfg.member.mentionNames, cfg.member.displayName])`, else `Do next: nothing assigned to you in this meeting`; `Decisions`, `What was discussed` and `Open questions` with their first 5 items; `Action items` sorted by due date (undated last), first 5, each `<owner>: <task> (<due text>)`, without `<owner>: ` when the owner is null and without the brackets when undated; `More deadlines` with every remaining action item in the same form; `Details: <meetingUrl>`, or 1A's `Details: transcript.md, slides.md and chat.md in <outDir>` when it is null. Due text is 1A's (`due Wed 28 Oct 2026`, `, HH:mm` when timed, `; <note>` from `chooseDue`).
+- `renderWorkSummary` writes the design's work template: the title line as 1A's lecture title without a session label; `Do next: <task> (<due text>)` for `pickDoNext(inv, [...cfg.member.mentionNames, cfg.member.displayName])`, else `Do next: nothing assigned to you in this meeting`; `Decisions`, `What was discussed` and `Open questions` with their first 5 items; `Action items` sorted by due date (undated last), first 5, each `<owner>: <task> (<due text>)`, without `<owner>: ` when the owner is null and without the brackets when undated; `More deadlines` with every remaining action item in the same form; `Details: <meetingUrl>`, or 1A's `Details: the transcript, slides and chat files in <outDir>` when it is null. Due text is 1A's (`due Wed 28 Oct 2026`, `, HH:mm` when timed, `; <note>` from `chooseDue`).
 - `runPipeline` uses `buildWorkInventory` and `renderWorkSummary` when `cfg.entry.type` is `'work'`, with `meetingUrl` `${TM_PUBLIC_URL}/meetings/<occurrenceId>` when that variable is set, else null; lectures are unchanged.
 
 - [ ] **Step 1: Write the failing tests**
@@ -207,7 +207,7 @@ test('7 action items: the 5 most urgent, the rest under More deadlines; empty se
   expect(section(out, 'More deadlines')).toEqual(['1. Task 7 (due Fri 20 Nov 2026)', '2. Task 2'])
   expect(out).not.toContain('Decisions')
   expect(out).not.toContain('Attendance')
-  expect(out.split('\n').at(-2)).toBe('Details: transcript.md, slides.md and chat.md in /o')
+  expect(out.split('\n').at(-2)).toBe('Details: the transcript, slides and chat files in /o')
 })
 
 test("do next is the member's own most urgent item", () => {
