@@ -572,7 +572,16 @@ export async function chatText(
   timeoutMs: number,
   opts?: ChatOptions
 ): Promise<string>
-export function openAsrStream(cfg: AiConfig): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
+export function openAsrStream(cfg: AiConfig, opts?: AsrOptions): AsrStream // send(pcm16le: Buffer), onResult(cb), onError(cb), close()
+export interface AsrOptions {
+  now?: () => number
+  rotateAfterMs?: number
+  forceRotateMs?: number
+  reconnectDelaysMs?: number[] // test seam: one entry per retry; default 1, 2, 4, 8, 16 s
+}
+export class AsrDisconnected extends Error {
+  constructor(cause: Error) // passed to onError after the last retry; `cause` is the last session's error or a close error
+}
 export class AiKeyError extends AiError {
   status: 401 | 402 | 429
 }
