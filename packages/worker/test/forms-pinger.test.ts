@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formIdFor, parseJob, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
@@ -341,7 +341,7 @@ test('a prefilled or direct-submit link pings the plain form, so opening it neve
   expect((await onlyRecord()).formId).toBe(formIdFor(PLAIN_FORM))
 })
 
-test('a restart does not ping a form that already has a directory, valid record or not', async () => {
+test('a restart does not ping a form whose record shows a ping, or cannot be parsed', async () => {
   const other = 'https://docs.google.com/forms/d/e/1FAOther/viewform'
   const first = createFormPinger({ cfg, send, emit, resolve })
   await first.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
@@ -427,4 +427,89 @@ test('a forms directory that cannot be read rejects ready and fails every offer 
   expect(errors).toHaveLength(2)
   expect(errors[0].data).toMatchObject({ where: 'form', formId: null })
   expect(String(errors[0].data.message)).toContain('ENOTDIR')
+})
+
+const root = process.getuid?.() === 0
+const direct = async (c: FormCandidate) => ({ ...c, finalUrl: c.url, provider: 'google' as const })
+const candidate = {
+  url: FORM,
+  source: 'meeting_chat' as const,
+  sender: 'Dr Lecturer',
+  senderRole: 'host' as const,
+  seenAt: '2026-10-21T06:30:00.000Z'
+}
+
+test('a restart pings a form whose directory has no record.json', async () => {
+  await mkdir(join(dataDir, 'forms', formIdFor(PLAIN_FORM)), { recursive: true })
+  const fresh = createFormPinger({ cfg, send, emit, resolve: direct })
+  await fresh.offer(candidate)
+  await fresh.idle()
+
+  expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
+  expect(await onlyRecord()).toMatchObject({ state: 'needs_member' })
+  expect((await onlyRecord()).pingedAt).not.toBeNull()
+})
+
+test.skipIf(root)('a record that exists but cannot be read rejects ready and every offer', async () => {
+  const file = join(dataDir, 'forms', formIdFor(PLAIN_FORM), 'record.json')
+  await mkdir(join(dataDir, 'forms', formIdFor(PLAIN_FORM)), { recursive: true })
+  await writeFile(file, '{}')
+  await chmod(file, 0o000)
+  const p = createFormPinger({ cfg, send, emit, resolve })
+
+  await expect(p.ready).rejects.toThrow('EACCES')
+  await expect(p.offer(candidate)).rejects.toThrow('EACCES')
+  await p.idle()
+  expect(sent).toEqual([])
+})
+
+test.skipIf(root)('a ping record that cannot be written leaves no record.json and sends nothing', async () => {
+  const dir = join(dataDir, 'forms', formIdFor(PLAIN_FORM))
+  await mkdir(dir, { recursive: true })
+  await chmod(dir, 0o555)
+  try {
+    const p = createFormPinger({ cfg, send, emit, resolve })
+    await p.offer(candidate)
+    await p.idle()
+
+    expect(sent).toEqual([])
+    expect(await readdir(dir)).toEqual([])
+    const error = ev.find((e) => e.type === 'error')!
+    expect(error.data).toMatchObject({ where: 'form', state: 'failed' })
+    expect(String(error.data.message)).toContain('EACCES')
+  } finally {
+    await chmod(dir, 0o755)
+  }
+})
+
+test.skipIf(root)('a failed record write keeps the record that was there before', async () => {
+  const id = formIdFor(PLAIN_FORM)
+  const dir = join(dataDir, 'forms', id)
+  const before: FormPingRecord = {
+    formId: id,
+    url: FORM,
+    source: 'meeting_chat',
+    sender: 'Dr Lecturer',
+    senderRole: 'host',
+    seenAt: candidate.seenAt,
+    provider: 'google',
+    state: 'resolved',
+    trustReason: null,
+    pingedAt: null
+  }
+  const beforeText = `${JSON.stringify(before, null, 2)}\n`
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'record.json'), beforeText)
+  await chmod(dir, 0o555)
+  try {
+    const p = createFormPinger({ cfg, send, emit, resolve })
+    await p.offer(candidate)
+    await p.idle()
+
+    expect(sent).toEqual([])
+    expect(await readFile(join(dir, 'record.json'), 'utf8')).toBe(beforeText)
+    expect(await readdir(dir)).toEqual(['record.json'])
+  } finally {
+    await chmod(dir, 0o755)
+  }
 })

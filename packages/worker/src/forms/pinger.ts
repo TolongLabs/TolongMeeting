@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   EventType,
@@ -14,7 +14,7 @@ import type {
 import { canonicalFormUrl, formIdFor, IllegalTransition, localParts, nextFormState } from '@tm/core'
 import { formNotSubmittedPing, formToSubmitPing, linkUncheckedPing, type Ping } from '@tm/notify'
 import { LinkResolveError, normaliseFormUrl, resolveFormLink } from './links'
-import { loadHandledFormIds } from './store'
+import { loadHandledFormIds, writeFileAtomic } from './store'
 import { checkTrust } from './trust'
 
 export interface FormPingerDeps {
@@ -96,8 +96,8 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
   const offered = new Set<string>() // raw URLs seen in flight or done
   const formKeys = new Set<string>() // normalised final URLs: one ping per form
   const tasks = new Set<Promise<void>>()
-  // Forms an earlier run of this occurrence already pinged, or cannot be read: see loadHandledFormIds. A form whose
-  // record shows no ping went out is not here, so a restart pings it.
+  // Forms an earlier run already pinged (or whose record cannot be parsed): see loadHandledFormIds. A form with no
+  // record, or whose record shows no ping went out, is not here, so a restart pings it.
   const handled = new Set<string>()
   const ready = loadHandledFormIds(cfg.dataDir).then((ids) => {
     for (const id of ids) handled.add(id)
@@ -114,7 +114,7 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
   async function writeRecord(rec: FormPingRecord): Promise<void> {
     const dir = join(cfg.dataDir, 'forms', rec.formId)
     await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, 'record.json'), `${JSON.stringify(rec, null, 2)}\n`)
+    await writeFileAtomic(join(dir, 'record.json'), `${JSON.stringify(rec, null, 2)}\n`)
   }
 
   async function commit(rec: FormPingRecord, at: Location): Promise<void> {

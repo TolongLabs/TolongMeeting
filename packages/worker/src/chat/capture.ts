@@ -136,7 +136,7 @@ const stderrEmit = async (type: EventType, data: Record<string, unknown>): Promi
 //   replays it.
 // - On start every row already in the file is queued for `onReplay`, in file order, before the first poll.
 // - Delivery is therefore at-least-once across restarts; the callee must dedupe. The form pinger does: it ignores a
-//   form that already has a forms/<formId>/ directory, and it loads those directories when it is created.
+//   form whose record shows a sent ping (or does not parse), and it loads those records when it is created.
 //
 // Callers: `await sweepNow()` before `stop()`, so the rows the polls missed are written first. A sweep reads the list
 // top to bottom and can append older rows after newer ones, so the file is not sorted; the pipeline sorts it.

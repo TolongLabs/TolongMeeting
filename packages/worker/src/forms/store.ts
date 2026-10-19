@@ -1,5 +1,6 @@
-import { mkdir, open, readdir, readFile, rename } from 'node:fs/promises'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { canonicalFormUrl, FormRecordSchema, type FormRecord } from '@tm/core'
 import { z } from 'zod'
 
@@ -26,6 +27,33 @@ async function formDirIds(dataDir: string): Promise<string[]> {
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
     .sort()
+}
+
+// Replaces the file at `path` with `text`. The text goes to a temp file with a random suffix, is flushed, and is
+// renamed over `path`; then the directory is flushed so the rename survives a crash. A reader sees the old file or the
+// new one, and a failed write leaves the old file in place.
+export async function writeFileAtomic(path: string, text: string): Promise<void> {
+  const temp = `${path}.tmp-${randomUUID()}`
+  try {
+    const handle = await open(temp, 'w')
+    try {
+      await handle.writeFile(text)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, path)
+  } catch (err) {
+    // Best effort: the write error is the one to report, not a failed cleanup of its temp file.
+    await rm(temp, { force: true }).catch(() => {})
+    throw err
+  }
+  const dir = await open(dirname(path), 'r')
+  try {
+    await dir.sync()
+  } finally {
+    await dir.close()
+  }
 }
 
 // Writes the whole record to record.json.tmp, flushes it to disk, then renames it over record.json, so a reader
@@ -63,18 +91,29 @@ export async function loadFormRecords(dataDir: string): Promise<{ records: FormR
   return { records, invalid }
 }
 
-// The form ids an earlier run handled, for FormPinger.ready. A form counts as handled when its record:
-// - is a 1B FormRecord, unless it is a failure with an empty pings log (it failed before any ping went out);
-// - is a 1A FormPingRecord whose pingedAt is set;
-// - is unreadable or matches neither shape. Unknown counts as handled, so a restart never pings a form it cannot read.
-// A form whose record shows no ping went out is not handled, so a restart pings it.
+// The form ids an earlier run handled, for FormPinger.ready. A form counts as handled when a sent ping is recorded:
+// - a 1B FormRecord, unless it is a failure with an empty pings log (it failed before any ping went out);
+// - a 1A FormPingRecord whose pingedAt is set.
+// A record that does not parse, or matches neither shape, also counts as handled: it cannot show whether a ping went
+// out, and a repeated ping is the worse error. A form dir with no record.json was never recorded, so it is not
+// handled and a restart pings it. Any other read error (EACCES, EIO) rejects: a form must not be skipped unseen.
 export async function loadHandledFormIds(dataDir: string): Promise<string[]> {
   const handled: string[] = []
   for (const formId of await formDirIds(dataDir)) {
-    const raw = await readFile(join(formDir(dataDir, formId), 'record.json'), 'utf8').catch(() => null)
-    if (raw === null || isHandled(parseJson(raw))) handled.push(formId)
+    const raw = await readRecordText(dataDir, formId)
+    if (raw !== null && isHandled(parseJson(raw))) handled.push(formId)
   }
   return handled
+}
+
+// The text of a form's record.json, or null when there is no such file.
+async function readRecordText(dataDir: string, formId: string): Promise<string | null> {
+  try {
+    return await readFile(join(formDir(dataDir, formId), 'record.json'), 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw err
+  }
 }
 
 function isHandled(json: unknown): boolean {
