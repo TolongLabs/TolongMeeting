@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto'
-import { link, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
+import { link, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { AiKeyError } from '@tm/ai'
-import { canonicalFormUrl, type JobConfig } from '@tm/core'
+import type { JobConfig } from '@tm/core'
 import { sendPing, summaryFailedPing, summaryReadyPing } from '@tm/notify'
-import { z } from 'zod'
 import { buildChat, loadChat } from './chat'
 import { describeError } from './errors'
 import { scrub } from './scrub'
 import { buildSlides, type Slide } from './slides'
 import { buildTranscript } from './transcript'
+import { attendanceLine } from './summary/attendance'
 import { buildInventory } from './summary/inventory'
 import { summaryFileName } from './summary/name'
 import { renderLectureSummary } from './summary/render'
@@ -24,63 +24,12 @@ export interface PipelineResult {
 const PINGED_MARKER = 'summary-pinged'
 // A run that holds the ping lock longer than this is taken to have died.
 const LOCK_STALE_MS = 10 * 60_000
-const ATTENDANCE_UNREADABLE = 'a form was seen but could not be read; check the meeting page'
-const ATTENDANCE_SEEN = 'a form was seen; check the meeting page'
 const MIN_NAME_LETTERS = 6
-
-// Both record shapes (the 1A pinger's and the 1B FormRecord) carry these; 1B adds the resolved `finalUrl`.
-const FormRecordFile = z.object({
-  state: z.string(),
-  url: z.string(),
-  finalUrl: z.string().optional(),
-  seenAt: z.string().optional()
-})
 
 // Words the live transcript may have misheard: the entry's saved detail values and the capitalised words on the slides.
 function vocabulary(cfg: JobConfig, slides: Slide[]): string[] {
   const words = slides.flatMap((s) => `${s.title}\n${s.text}`.match(/\p{Lu}\p{L}{5,}/gu) ?? [])
   return [...new Set([...Object.values(cfg.entry.formDetails), ...words])].filter((w) => w !== '')
-}
-
-// The text after "Attendance: ". It comes only from the form records, and it is never "not seen" once a form
-// directory exists: a record that cannot be read must not look like no form.
-async function attendanceText(dataDir: string): Promise<string> {
-  const forms = join(dataDir, 'forms')
-  const entries = await readdir(forms, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
-    if (err.code === 'ENOENT') return []
-    throw err
-  })
-  const dirs = entries.filter((e) => e.isDirectory())
-  const waiting: { sortKey: string; url: string }[] = []
-  let unreadable = 0
-  for (const entry of dirs) {
-    const raw = await readFile(join(forms, entry.name, 'record.json'), 'utf8').catch((err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') return null
-      throw err
-    })
-    try {
-      if (raw === null) throw new Error('no record.json')
-      const record = FormRecordFile.parse(JSON.parse(raw))
-      if (record.state !== 'needs_member') continue
-      // The canonical page, so a pre-filled answer in the query never reaches the summary.
-      waiting.push({
-        sortKey: `${record.seenAt ?? ''}|${entry.name}`,
-        url: canonicalFormUrl(record.finalUrl ?? record.url)
-      })
-    } catch {
-      // A torn, foreign or missing record is skipped; only the form's id is reported, never its content.
-      unreadable++
-      console.error(`tm-pipeline: forms/${entry.name}/record.json is unreadable and was skipped`)
-    }
-  }
-  waiting.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
-  if (waiting.length > 0) {
-    const more = waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''
-    const unread = unreadable > 0 ? '; another form could not be read' : ''
-    return `needs you: ${waiting[0]!.url}${more}${unread}`
-  }
-  if (unreadable > 0) return ATTENDANCE_UNREADABLE
-  return dirs.length > 0 ? ATTENDANCE_SEEN : 'not seen'
 }
 
 // Writes the whole file to a temporary name of its own, flushes it, then renames it over the target.
@@ -172,7 +121,7 @@ async function build(cfg: JobConfig): Promise<{ result: PipelineResult; md: stri
     slides,
     chat: await loadChat(cfg)
   })
-  const attendance = cfg.entry.type === 'lecture' ? await attendanceText(cfg.dataDir) : null
+  const attendance = cfg.entry.type === 'lecture' ? await attendanceLine(cfg.dataDir, cfg.entry.timeZone) : null
   const md = renderLectureSummary(inventory, {
     cfg,
     attendance,

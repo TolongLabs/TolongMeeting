@@ -2584,7 +2584,7 @@ git commit -m "feat(worker): submit forms during the meeting"
 
 - Create: `packages/pipeline/src/summary/attendance.ts`
 - Modify: 1A's lecture summary renderer in `packages/pipeline/src/summary/` (the code that fills the template's `Attendance:` line)
-- Test: `packages/pipeline/src/summary/attendance.test.ts`
+- Test: `packages/pipeline/test/summary-attendance.test.ts`
 
 **Interfaces:**
 
@@ -2603,7 +2603,7 @@ The design's template line is `Attendance: <submitted at HH:MM (provider) ✓ | 
 
 With no parts, the line is `not seen`; `quiz` and `not_attendance` records never count. The renderer reads every `forms/*/record.json` with `FormRecordSchema` (skipping unreadable ones) and passes them in, replacing 1A's candidate-based line.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const tz = 'Asia/Kuala_Lumpur'
@@ -2657,14 +2657,14 @@ test('quizzes and non-attendance forms do not count', () => {
 Run: `bun test packages/pipeline/src/summary/attendance.test.ts`
 Expected: FAIL with "Cannot find module './attendance'".
 
-- [ ] **Step 3: Implement `attendanceLine` and switch the renderer to it**
+- [x] **Step 3: Implement `attendanceLine` and switch the renderer to it**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/pipeline && bun run typecheck`
 Expected: PASS, including 1A's summary tests updated to the new line, and the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline/src/summary

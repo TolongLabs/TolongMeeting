@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdir, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { utimes } from 'node:fs/promises'
-import type { ChatMessage, JobConfig } from '@tm/core'
+import type { ChatMessage, FormRecord, JobConfig } from '@tm/core'
+import { sampleRecord } from '@tm/core/testing'
 import sharp from 'sharp'
 import { runPipeline } from '../src/index'
 import type { Inventory } from '../src/summary/inventory'
@@ -71,10 +72,10 @@ afterEach(async () => {
   await removeOccurrence(occ.root)
 })
 
-async function writeForm(formId: string, record: Record<string, unknown>): Promise<void> {
-  const dir = join(occ.dataDir, 'forms', formId)
+async function writeForm(formDir: string, patch: Partial<FormRecord>): Promise<void> {
+  const dir = join(occ.dataDir, 'forms', formDir)
   await mkdir(dir, { recursive: true })
-  await Bun.write(join(dir, 'record.json'), JSON.stringify(record))
+  await Bun.write(join(dir, 'record.json'), JSON.stringify(sampleRecord(patch)))
 }
 
 test('runPipeline writes the four files and pings the summary', async () => {
@@ -90,13 +91,12 @@ test('runPipeline writes the four files and pings the summary', async () => {
   expect(await readdir(join(occ.dataDir, 'out'))).toContain('2026-10-21 2000 Data Mining.md')
 })
 
-test('attendance reads not seen without a form, and needs you with a needs_member form', async () => {
+test('attendance reads not seen without a form, and reads the submitted and needs-you forms with a form', async () => {
   const first = await runPipeline(cfg)
   expect(await Bun.file(first.summaryPath).text()).toContain('\nAttendance: not seen\n')
 
-  await writeForm('a1', { formId: 'a1', url: 'https://forms.gle/old', state: 'submitted' })
+  await writeForm('a1', { state: 'submitted', submittedAt: '2026-10-21T12:40:00.000Z' })
   await writeForm('b2', {
-    formId: 'b2',
     url: 'https://forms.gle/abc?x=1',
     finalUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform?entry.1=Secret',
     state: 'needs_member',
@@ -104,8 +104,21 @@ test('attendance reads not seen without a form, and needs you with a needs_membe
   })
   const second = await runPipeline(cfg)
   const md = await Bun.file(second.summaryPath).text()
-  expect(md).toContain('\nAttendance: needs you: https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform\n')
+  expect(md).toContain(
+    '\nAttendance: submitted at 20:40 (Google Forms) ✓; needs you: https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform\n'
+  )
   expect(md).not.toContain('Secret')
+})
+
+test('a Microsoft form link is written as its canonical page, which the final scrub keeps', async () => {
+  await writeForm('m1', {
+    provider: 'microsoft',
+    finalUrl: 'https://forms.office.com/Pages/ResponsePage.aspx?id=AbC123xyz&r4f=secret',
+    state: 'needs_member'
+  })
+  const md = await Bun.file((await runPipeline(cfg)).summaryPath).text()
+  expect(md).toContain('\nAttendance: needs you: https://forms.office.com/Pages/ResponsePage.aspx?id=AbC123xyz\n')
+  expect(md).not.toContain('secret')
 })
 
 test('a work entry has no attendance line', async () => {
@@ -165,40 +178,15 @@ test('a torn or malformed form record reads as a form that could not be read, ne
   expect(md).not.toContain('not seen')
 
   await Bun.write(join(occ.dataDir, 'forms', 't1', 'record.json'), '')
-  await writeForm('m1', { formId: 'm1', url: 'not a url', state: 'needs_member' })
+  await Bun.write(join(occ.dataDir, 'forms', 'm1', 'record.json'), JSON.stringify({ state: 'needs_member', url: 'x' }))
   expect(await Bun.file((await runPipeline(cfg)).summaryPath).text()).toContain(unreadable)
 
   // A readable form that needs the member comes first, and the record that could not be read is still told.
-  await writeForm('g1', { formId: 'g1', url: 'https://forms.gle/abc', state: 'needs_member' })
+  await writeForm('g1', { url: 'https://forms.gle/abc', finalUrl: 'https://forms.gle/abc', state: 'needs_member' })
   const both = await Bun.file((await runPipeline(cfg)).summaryPath).text()
-  expect(both).toContain('\nAttendance: needs you: https://forms.gle/abc; another form could not be read\n')
-})
-
-test('several forms that need the member show the oldest and a count; other readable forms are not "not seen"', async () => {
-  await writeForm('a1', { formId: 'a1', url: 'https://forms.gle/old', state: 'submitted' })
-  const only = await Bun.file((await runPipeline(cfg)).summaryPath).text()
-  expect(only).toContain('\nAttendance: a form was seen; check the meeting page\n')
-
-  await writeForm('b2', {
-    formId: 'b2',
-    url: 'https://forms.gle/second',
-    state: 'needs_member',
-    seenAt: '2026-10-21T12:20:00Z'
-  })
-  await writeForm('c3', {
-    formId: 'c3',
-    url: 'https://forms.gle/first',
-    state: 'needs_member',
-    seenAt: '2026-10-21T12:10:00Z'
-  })
-  await writeForm('d4', {
-    formId: 'd4',
-    url: 'https://forms.gle/third',
-    state: 'needs_member',
-    seenAt: '2026-10-21T12:30:00Z'
-  })
-  const many = await Bun.file((await runPipeline(cfg)).summaryPath).text()
-  expect(many).toContain('\nAttendance: needs you: https://forms.gle/first (+2 more)\n')
+  expect(both).toContain(
+    '\nAttendance: needs you: https://forms.gle/abc; a form was seen but could not be read; check the meeting page\n'
+  )
 })
 
 test('a model cannot add an attendance line or a link, and no join link or passcode reaches the file or the ping', async () => {
