@@ -898,7 +898,7 @@ git commit -m "feat(worker): add form detection rules"
 **Files:**
 
 - Create: `packages/worker/src/forms/details.ts`, `packages/worker/src/forms/plan.ts`, `packages/worker/test/forms/job.ts` (shared test job)
-- Test: `packages/worker/src/forms/details.test.ts`, `packages/worker/src/forms/plan.test.ts`
+- Test: `packages/worker/test/forms-answers.test.ts` (one file; tests live under `test/`)
 
 **Interfaces:**
 
@@ -957,7 +957,7 @@ export const DERIVED_LABELS = {
 - **Verification**: `verifyFill` is true only when every answer shows in `after` (text equal; option chosen or ticked), every question without an answer is empty, and `sendCopy` is not `true`.
 - **Test job**: entry "Example lecture", start `2026-10-20T20:00:00+08:00`, end `2026-10-20T22:00:00+08:00`, `Asia/Kuala_Lumpur`, `trustedSenders: ['Dr Example']`, `formDetails: { course_code: 'ABC1234', section: '02', lecturer: 'Dr Example' }`; identity organisation `{ name: 'Example University', emailDomain: 'example.edu.my' }` unless patched; details `full_name` "Test Student", `student_id` "A00000000", `university_email` "student@example.edu.my", `programme` "MSc Example", all with `labels: []`; `ai.models.formMatch` "qwen-flash".
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const pool = buildDetailPool(testJob('/tmp/tm'))
@@ -1118,23 +1118,23 @@ test('verifyFill rejects a missing answer, a stray value or a ticked copy box', 
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/worker/src/forms/details.test.ts packages/worker/src/forms/plan.test.ts`
 Expected: FAIL with "Cannot find module './details'" and "Cannot find module './plan'".
 
-- [ ] **Step 3: Implement `details.ts`, `plan.ts` and `test/forms/job.ts` with the pinned values and rules above**
+- [x] **Step 3: Implement `details.ts`, `plan.ts` and `test/forms/job.ts` with the pinned values and rules above**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/worker/src/forms/details.test.ts packages/worker/src/forms/plan.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/details.ts packages/worker/src/forms/plan.ts packages/worker/src/forms/details.test.ts packages/worker/src/forms/plan.test.ts packages/worker/test/forms/job.ts
-git commit -m "feat(worker): plan form answers from details"
+git add packages/worker/src/forms/details.ts packages/worker/src/forms/plan.ts packages/worker/test/forms-answers.test.ts packages/worker/test/forms/job.ts docs/plans/01b-form-submission.md docs/TRD.md
+git commit -m "feat(worker): plan form answers"
 ```
 
 ### Task 7: Model label matching
