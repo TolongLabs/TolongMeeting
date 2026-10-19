@@ -13,13 +13,17 @@
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
-    "@types/node": "^24.0.0"
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
+    "qrcode": "^1.5.4"
   },
   "dependencies": {
     "@tm/core": "workspace:*",
     "@tm/notify": "workspace:*",
     "playwright": "1.64.1",
+    "sharp": "0.35.5",
     "tar": "^7.5.22",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "zxing-wasm": "3.1.6"
   }
 }

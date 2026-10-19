@@ -79,7 +79,7 @@ All designer's calls.
   - **Browser**: Playwright driving pinned full Chrome, run on Node 24 inside the container, because Playwright officially supports Node.
   - **Display and audio**: Xvfb, openbox, PulseAudio.
   - **Capture**: ffmpeg for recording and frames.
-  - **QR decoding**: zxing-cpp (WebAssembly build) and OpenCV's WeChat detector, compared in [spike 3](#early-spikes).
+  - **QR decoding**: zxing-cpp (WebAssembly build) and OpenCV's WeChat detector, compared in [spike 3](#early-spikes). Ruling (supersedes the spike's rule result `qr.decoder=wechat`): `decodeQr` returns the union of three stages, with no first-hit stop: zxing on the full stage frame, zxing on the 2x Lanczos-upscaled shared-screen region (when a region is known), and WeChat on the full frame. WeChat's region pass is dropped, since it added nothing in the spike. WeChat runs in one long-lived Python process per worker (`src/qr/wechat_bridge.py`, newline-delimited JSON on stdin and stdout). There is no zxing-only fallback: if the bridge cannot start or dies, `decodeQr` throws `WechatBridgeError` and the caller (the frame loop, plan 01a Task 18) decides; the next call starts a fresh bridge.
   - **Remote view**: x11vnc clipped to the desk half, served by noVNC.
 - **Docker access**: a restricted Docker socket proxy (for example `tecnativa/docker-socket-proxy` with only the needed endpoints).
 - **Notifications**: self-hosted ntfy.
@@ -636,18 +636,20 @@ pg-boss uses its own schema in the same database. Plan 1C defines the columns.
 
 ## Environment variables
 
-| Variable                                                 | Used by                     | Meaning                                                             |
-| -------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------- |
-| `TM_DATA_ROOT`                                           | worker, pipeline, scheduler | root of occurrence directories                                      |
-| `TM_PROFILE_ROOT`                                        | worker, scheduler           | root of identity profiles (encrypted volume)                        |
-| `TM_MASTER_KEY_FILE`                                     | worker, scheduler, web      | path to the Docker secret holding the 32-byte master key (base64)   |
-| `TM_SELECTORS_DIR`                                       | worker                      | directory of selector maps (default `/app/config/selectors`)        |
-| `TM_IN_IMAGE`                                            | worker                      | `1` inside the worker image; gates the image-only tests             |
-| `TM_PUBLIC_URL`                                          | web, scheduler, pipeline    | the website's base URL, for links in pings                          |
-| `DATABASE_URL`                                           | web, scheduler, pipeline    | Postgres connection string                                          |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_ORG` | web                         | sign-in and organisation check                                      |
-| `DOCKER_PROXY_URL`                                       | scheduler                   | restricted Docker socket proxy, e.g. `http://docker-proxy:2375`     |
-| `NTFY_URL`, `NTFY_ADMIN_TOKEN`                           | web                         | ntfy base URL and the token used to create member topics and tokens |
+| Variable                                                 | Used by                     | Meaning                                                                            |
+| -------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| `TM_DATA_ROOT`                                           | worker, pipeline, scheduler | root of occurrence directories                                                     |
+| `TM_PROFILE_ROOT`                                        | worker, scheduler           | root of identity profiles (encrypted volume)                                       |
+| `TM_MASTER_KEY_FILE`                                     | worker, scheduler, web      | path to the Docker secret holding the 32-byte master key (base64)                  |
+| `TM_SELECTORS_DIR`                                       | worker                      | directory of selector maps (default `/app/config/selectors`)                       |
+| `TM_WECHAT_MODELS_DIR`                                   | worker                      | directory with the four WeChat QR model files (required)                           |
+| `TM_WECHAT_PYTHON`                                       | worker                      | Python with `opencv-contrib-python-headless` for the QR bridge (default `python3`) |
+| `TM_IN_IMAGE`                                            | worker                      | `1` inside the worker image; gates the image-only tests                            |
+| `TM_PUBLIC_URL`                                          | web, scheduler, pipeline    | the website's base URL, for links in pings                                         |
+| `DATABASE_URL`                                           | web, scheduler, pipeline    | Postgres connection string                                                         |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_ORG` | web                         | sign-in and organisation check                                                     |
+| `DOCKER_PROXY_URL`                                       | scheduler                   | restricted Docker socket proxy, e.g. `http://docker-proxy:2375`                    |
+| `NTFY_URL`, `NTFY_ADMIN_TOKEN`                           | web                         | ntfy base URL and the token used to create member topics and tokens                |
 
 ## Plan conventions
 
@@ -670,7 +672,7 @@ The milestone plans were written in parallel against this page. Each marks the s
 - **01a recorder and pings**:
   - core: `parseJob`, `JobError`, `IllegalTransition`, `formatOffset`, `localParts`, `ChatMessage.replyTo`, `JobConfig.identity.formProviders`;
   - ai and notify: `ChatTurn`, `AiError`, `AiTimeoutError`, `AsrResult`, `AsrStream.onError`, `dropOverlap`, `PingError`, `AlertKind` and the ping builders;
-  - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `FormPinger`, `FormPingerDeps`, `FormPingRecord`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`, `adapterFor`, `zoomAdapter`, `DevicesOnError`, `loadSelectors`, `ZoomSelectorsSchema`, `zoomRoot`, `ZOOM_TIMEOUTS`;
+  - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `FormPinger`, `FormPingerDeps`, `FormPingRecord`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`, `QrConfirmer`, `closeQr`, `WechatBridgeError`, `qrFrame` (test helper), `adapterFor`, `zoomAdapter`, `DevicesOnError`, `loadSelectors`, `ZoomSelectorsSchema`, `zoomRoot`, `ZOOM_TIMEOUTS`;
   - pipeline: `Slide`, `InventorySchema`, `summaryFileName`, `LiveLine`, `Gap`, `TranscriptBlock`, `isHallucination`, `paragraphs`, `correctNames`, `buildTranscript`, `orderChat`, `stripInviteLinks`, `buildChat`;
   - data: `recording/attempts.json`, `outcome.json`, `errors/`.
   - image: `tm-worker:dev` and `tolongmeeting/worker:current` (the same build), the entrypoint modes `selfcheck`, `test`, `unit`, `seed --job` and `--job`, PulseAudio `tm_sink` and the muted `tm_mic`, `docker/worker/run-job.sh <job.json> [seed]`, and the `BUN_VERSION` build argument and `TM_IN_IMAGE` variable.

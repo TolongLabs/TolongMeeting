@@ -1243,19 +1243,19 @@ git commit -m "feat(worker): add frames, keyframes and health"
 
 **Files:**
 
-- Create: `packages/worker/src/qr/qr.ts`, `packages/worker/src/qr/confirm.ts`, `packages/worker/test/helpers/qr-frame.ts`
-- Test: `packages/worker/src/qr/qr.test.ts`
+- Create: `packages/worker/src/qr/qr.ts`, `packages/worker/src/qr/confirm.ts`, `packages/worker/src/qr/wechat.ts`, `packages/worker/src/qr/wechat_bridge.py`, `packages/worker/test/helpers/qr-frame.ts`
+- Test: `packages/worker/test/qr.test.ts`
 
 **Interfaces:**
 
 - Consumes: `Rect` from the adapter types; spike 3's report (`spikes/03-qr/REPORT.md`) for the decoder choice.
-- Produces: `decodeQr(png: Buffer, region: Rect | null): Promise<string[]>`.
+- Produces: `decodeQr(png: Buffer, region: Rect | null): Promise<string[]>`, which throws `WechatBridgeError` when the WeChat bridge cannot start or dies (no zxing-only fallback; the caller decides), and `closeQr(): Promise<void>` to stop the bridge.
 - Produces (adds to contracts): `class QrConfirmer { push(texts: string[]): string[] }` (returns texts seen in this frame and the previous one, each once per meeting); test helper `qrFrame(text: string, size: number, at: { x: number; y: number }): Promise<Buffer>` (a QR code drawn crisply on a dark 1920x1080 PNG with the `qrcode` package and `sharp`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
-// packages/worker/src/qr/qr.test.ts
+// packages/worker/test/qr.test.ts
 const region = { x: 0, y: 60, width: 1410, height: 840 }
 test('decodes a large code from the full frame and a small one through the region', async () => {
   expect(await decodeQr(await qrFrame('https://forms.gle/<form-id>', 300, { x: 800, y: 300 }), null)).toEqual([
@@ -1284,24 +1284,24 @@ test('a code counts after two consecutive frames, once', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/worker/src/qr`
-Expected: FAIL with "Cannot find module './qr'".
+Run: `bun test packages/worker/test/qr.test.ts`
+Expected: FAIL with "Cannot find module '../src/qr/qr'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-`decodeQr` decodes the full frame, then (if `region` is given) the region cropped and upscaled 2x with `sharp` (`kernel: 'lanczos3'`), with each decoder spike 3 recommends, and returns unique texts in order of discovery. zxing-cpp runs as `zxing-wasm` (`readBarcodes(imageData, { formats: ['QRCode'], tryHarder: true, maxNumberOfSymbols: 4 })`). If spike 3 recommends OpenCV's WeChat detector too, add `src/qr/wechat.ts`, a client for a long-lived helper `packages/worker/qr/wechat_helper.py` (`cv2.wechat_qrcode_WeChatQRCode`, `opencv-contrib-python-headless` pinned as `OPENCV_VERSION` in `versions.env`) that reads PNG paths on stdin and writes JSON lines, and run the same tests with each decoder alone.
+Controller ruling (also in docs/TRD.md): `decodeQr` returns the distinct texts of the union of three stages, with no first-hit stop: zxing-wasm on the full frame, zxing-wasm on the shared-screen region cropped and upscaled 2x with `sharp` (`kernel: 'lanczos3'`, only when `region` is given), and OpenCV's WeChat detector on the full frame. zxing options are those of spike 3: `formats: ['QRCode']`, `tryHarder`, `tryInvert`, `tryDownscale`, `maxNumberOfSymbols: 8`. WeChat runs in one Python process per worker, `src/qr/wechat_bridge.py` (newline-delimited JSON on stdin and stdout, `cv2.wechat_qrcode_WeChatQRCode`, `opencv-contrib-python-headless` pinned as `OPENCV_VERSION` in `versions.env`), started on first use by `src/qr/wechat.ts`. Environment: `TM_WECHAT_MODELS_DIR` (model directory) and `TM_WECHAT_PYTHON` (default `python3`). If the bridge fails to start or dies, `decodeQr` throws; Task 18 decides what to do. Host tests set both variables to `spikes/03-qr/.venv` and `spikes/03-qr/models`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/worker/src/qr`
+Run: `bun test packages/worker/test/qr.test.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/qr packages/worker/test/helpers docs/TRD.md
+git add packages/worker/src/qr packages/worker/test/qr.test.ts packages/worker/test/helpers packages/worker/package.json bun.lock docs/TRD.md
 git commit -m "feat(worker): add qr decoding and confirmation"
 ```
 
