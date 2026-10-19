@@ -720,7 +720,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - tables: `signin_sessions` and the Better Auth `auth_*` tables;
   - environment: `TM_PROFILE_KEY_FILE`, `TM_BACKUP_REMOTE`, `RCLONE_CONFIG`, `POSTGRES_PASSWORD`;
   - data: `recording/meeting.mp4`, a remux of `meeting.mkv` for the website's player.
-- **01c website and scheduler**: `packages/web/lib/scope.ts` with `createScope(db, memberId): MemberScope`, `scopeForAuthUser(authUserId): Promise<MemberScope | null>` and the types `MemberScope`, `MemberOwnedTable` and `MemberRow`.
+  - member scope: `packages/web/lib/scope.ts` with `createScope(db, memberId): MemberScope`, `scopeForAuthUser(authUserId): Promise<MemberScope | null>`, and the types `MemberScope`, `MemberOwnedTable` and `MemberRow`.
 - **02 link watchers**:
   - core: `normaliseDiscordChannelUrl`, `WatchGate` and its gate functions, `SpecEnv.watchGate`, `StateEventData.link`;
   - worker: `ChatSourceReader`, `runChatWatcher`, `WatcherEnv`, the watcher errors and readers, `watcherFor`, `waitForMeetingLink`;

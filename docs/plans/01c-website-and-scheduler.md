@@ -506,7 +506,7 @@ git commit -m "feat(core): add occurrence state machine"
 **Files:**
 
 - Create: `packages/web/lib/scope.ts`
-- Test: `packages/web/lib/scope.test.ts`, `packages/web/lib/no-direct-db.test.ts`
+- Test: `packages/web/test/scope.test.ts`, `packages/web/test/no-direct-db.test.ts` (under `test/` per COMMON.md)
 
 **Interfaces:**
 
@@ -529,7 +529,7 @@ export interface MemberScope {
 
 Every method adds `member_id = memberId` to its `where`, forces `memberId` on insert and drops `memberId` from an update's `set`. `artefactFile` returns `${TM_DATA_ROOT}/occurrences/<occurrenceId>/<relPath>` only when an `artefacts` row with that member, occurrence and path exists. Later tasks add `authScope` (Task 5) and `adminScope` (Task 11) to this file, both taking `db: Db = getDb()` so routes never call `getDb` themselves, and member-limited helpers to `MemberScope`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/scope.test.ts
@@ -594,26 +594,26 @@ test('only scope.ts, auth.ts and control.ts open the database in packages/web', 
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts`
 
 Expected: FAIL with `Cannot find module './scope'`.
 
-- [ ] **Step 3: Implement `createScope` and `scopeForAuthUser` in `packages/web/lib/scope.ts`**
+- [x] **Step 3: Implement `createScope` and `scopeForAuthUser` in `packages/web/lib/scope.ts`**
 
 Pages and routes import tables from `packages/web/db/schema.ts` for `where` clauses, never `packages/web/db/index.ts`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib/scope.ts packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts
+git add packages/web/lib/scope.ts packages/web/test/scope.test.ts packages/web/test/no-direct-db.test.ts
 git commit -m "feat(web): add member scope"
 ```
 
