@@ -64,6 +64,15 @@ const byName = (records: FormRecord[], name: string) =>
 const tmp = () => mkdtemp(join(tmpdir(), 'tm-disp-'))
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 5))
 
+// Waits until `cond` holds, or fails with a message after 2 s instead of hanging.
+async function waitFor(cond: () => boolean, what: string): Promise<void> {
+  const givenUp = Date.now() + 2000
+  while (!cond()) {
+    if (Date.now() > givenUp) throw new Error(`${what} did not happen within 2 s`)
+    await settle()
+  }
+}
+
 function deferred<T>() {
   let resolve!: (v: T) => void
   const promise = new Promise<T>((r) => (resolve = r))
@@ -125,6 +134,7 @@ test('a trusted sighting during an untrusted run waits and runs if that run ends
   d.offer(formFor('F', 'qr'))
   expect(handle).toHaveBeenCalledTimes(1)
   first.resolve(recFor('F', 'untrusted'))
+  await settle() // the upgrade runs before close: a close that comes first refuses it
   expect((await d.close()).map((r) => r.state)).toContain('submitted')
   expect(handle).toHaveBeenCalledTimes(2)
 })
@@ -297,7 +307,7 @@ test('a ping that fails at runtime is reported, the form settles and the dispatc
   })
   const d = await startFormDispatcher(failingPing(base, 1), handle)
   d.offer(formFor('A', 'qr'))
-  while (!events.some((e) => e.type === 'form')) await settle() // the record is saved before its form event
+  await waitFor(() => events.some((e) => e.type === 'form'), 'the failed form event') // saved before its form event
   expect(byName((await loadFormRecords(dir)).records, 'A')).toMatchObject({ state: 'failed', pings: [] })
   d.offer(formFor('B', 'qr'))
   expect((await d.close()).map((r) => r.state)).toEqual(['failed', 'failed'])
@@ -456,4 +466,73 @@ test('a queued form whose deadline passed before its slot freed fails deadline, 
   const records = await d.close()
   expect(handle).toHaveBeenCalledTimes(MAX_FORMS_IN_FLIGHT)
   expect(byName(records, 'D')).toMatchObject({ state: 'failed', reason: 'deadline' })
+})
+
+// A first run that waits for `release`, then saves and returns an untrusted record, as handleForm does. Any upgrade
+// that reaches the handler throws, so it shows up as a second call and an error event.
+function untrustedFirstRun(dir: string) {
+  const release = deferred<void>()
+  const handle = mock(async (_f: ResolvedForm, ctx: FormContext): Promise<FormRecord> => {
+    if (ctx.previous !== null) throw new Error('an upgrade ran')
+    await release.promise
+    const rec = recFor('F', 'untrusted')
+    await saveFormRecord(dir, rec)
+    return rec
+  })
+  return { handle, release }
+}
+
+test('a pending upgrade still waiting when the meeting closes is not run, stays untrusted and is pinged once', async () => {
+  const dir = await tmp()
+  const { base, pings } = fakeBase(dir)
+  const { handle, release } = untrustedFirstRun(dir)
+  const d = await startFormDispatcher(base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr')) // a trusted sighting while the first run is still open
+  const closing = d.close()
+  release.resolve()
+  const records = await closing
+  expect(handle).toHaveBeenCalledTimes(1)
+  expect(byName(records, 'F')).toMatchObject({ state: 'untrusted' })
+  expect(byName((await loadFormRecords(dir)).records, 'F')).toMatchObject({ state: 'untrusted', pings: [] })
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you'])
+  expect(pings[0]!.message).toContain('the meeting ended before it could be submitted')
+})
+
+test('a pending upgrade whose trusted sighting is 130 s old is not run, stays untrusted and is pinged once', async () => {
+  const dir = await tmp()
+  const { base, pings } = fakeBase(dir)
+  const { handle, release } = untrustedFirstRun(dir)
+  const d = await startFormDispatcher(base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer({ ...formFor('F', 'qr'), seenAt: new Date(Date.now() - 130_000).toISOString() })
+  release.resolve()
+  await waitFor(() => pings.length === 1, 'the expired upgrade ping') // the first run ends, then the sighting is refused
+  const records = await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+  expect(byName(records, 'F')).toMatchObject({ state: 'untrusted' })
+  expect(byName((await loadFormRecords(dir)).records, 'F')).toMatchObject({ state: 'untrusted', pings: [] })
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you'])
+  expect(pings[0]!.message).toContain("it wasn't ready to submit within 2 minutes")
+})
+
+test('a queued upgrade whose deadline passes before its slot frees stays untrusted and is pinged once', async () => {
+  const dir = await tmp()
+  await saveFormRecord(dir, recFor('U', 'untrusted'))
+  const gates = new Map(['A', 'B', 'C'].map((n) => [n, deferred<void>()]))
+  const handle = gatedHandle(gates)
+  const { base, pings } = fakeBase(dir)
+  const d = await startFormDispatcher(base, handle)
+  for (const n of ['A', 'B', 'C']) d.offer(formFor(n, 'qr'))
+  d.offer({ ...formFor('U', 'qr'), seenAt: new Date(Date.now() - 130_000).toISOString() }) // queued behind A, B and C
+  await settle()
+  gates.get('A')!.resolve()
+  await settle() // the upgrade takes A's slot, is expired and is pinged without a handler call
+  for (const n of ['B', 'C']) gates.get(n)!.resolve()
+  const records = await d.close()
+  expect(handle).toHaveBeenCalledTimes(MAX_FORMS_IN_FLIGHT)
+  expect(byName(records, 'U')).toMatchObject({ state: 'untrusted' })
+  expect(byName((await loadFormRecords(dir)).records, 'U')).toMatchObject({ state: 'untrusted', pings: [] })
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you'])
+  expect(pings[0]!.message).toContain("it wasn't ready to submit within 2 minutes")
 })

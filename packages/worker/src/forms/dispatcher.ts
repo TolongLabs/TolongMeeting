@@ -28,7 +28,7 @@ interface Entry {
   running: boolean // queued for a slot or running
   runningTrusted: boolean // whether the candidate now running was trusted
   pending: ResolvedForm | null // a trusted sighting that arrived while an untrusted run was going
-  blockedPinged: boolean // the "tab could not be closed" ping for this form went out
+  blockedPinged: boolean // the ping for a refused or expired upgrade of this form went out (at most one)
   dead: boolean // a handler threw for it: every later sighting is ignored, so it can never be submitted twice
 }
 
@@ -99,13 +99,10 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
     return pinged
   }
 
-  // Fails a record, saves it, emits it and pings the member. Each step is attempted even when an earlier one failed, so
-  // a broken disk still lets the member hear about the form. An untrusted record (a queued upgrade) leaves that state
-  // only through a trusted sighting, as the state machine requires, so it passes through that step first.
+  // Fails a new form, saves it, emits it and pings the member. Each step is attempted even when an earlier one failed,
+  // so a broken disk still lets the member hear about the form.
   async function failRecord(rec: FormRecord, reason: StopReason): Promise<FormRecord> {
-    const at = new Date().toISOString()
-    const from = rec.state === 'untrusted' ? applyFormTrigger(rec, 'trusted_candidate_seen', at) : rec
-    const failed = applyFormTrigger({ ...from, reason }, 'error', at)
+    const failed = applyFormTrigger({ ...rec, reason }, 'error', new Date().toISOString())
     await attempt(failed.formId, () => saveFormRecord(cfg.dataDir, failed))
     await attempt(failed.formId, () => emit('form', formEventData(failed)))
     return pingRecord(failed)
@@ -155,7 +152,7 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
   }
 
   // Runs `f`, then any trusted sighting that arrived meanwhile if the run ended untrusted (unless form tabs got blocked
-  // in the meantime: then that sighting is refused with one ping).
+  // or that sighting has expired in the meantime: then it is refused with one ping).
   async function drive(entry: Entry, f: ResolvedForm, previous: FormRecord | null): Promise<void> {
     let rec = await run(entry, f, previous)
     while (rec !== null && rec.state === 'untrusted' && entry.pending !== null) {
@@ -166,24 +163,33 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
         await refuse(entry, next, rec)
         break
       }
+      const expired = expiredReason(next)
+      if (expired !== null) {
+        await pingUpgrade(entry, rec, expired)
+        break
+      }
       rec = await run(entry, next, rec)
     }
     entry.pending = null
     entry.running = false
   }
 
+  // Tells the member, at most once per form, that an untrusted form stays unopened. The record is not changed, so it
+  // stays `untrusted` and the member can submit it by hand.
+  async function pingUpgrade(entry: Entry, previous: FormRecord, reason: StopReason): Promise<void> {
+    if (entry.blockedPinged) return
+    const failed = { ...previous, state: 'failed' as const, reason }
+    await attempt(failed.formId, async () => {
+      const ping = formPing(failed, pingOptions)
+      if (ping !== null) await base.ping(ping)
+      entry.blockedPinged = true
+    })
+  }
+
   // With form tabs blocked a new form is failed unopened; an untrusted one a trusted sender posted gets a ping only.
   async function refuse(entry: Entry, f: ResolvedForm, previous: FormRecord | null): Promise<void> {
-    if (previous === null) {
-      entry.record = await failRecord(newFormRecord(f, cfg.occurrenceId), BLOCKED_REASON)
-    } else if (!entry.blockedPinged) {
-      const failed = { ...previous, state: 'failed' as const, reason: BLOCKED_REASON }
-      await attempt(failed.formId, async () => {
-        const ping = formPing(failed, pingOptions)
-        if (ping !== null) await base.ping(ping)
-        entry.blockedPinged = true
-      })
-    }
+    if (previous === null) entry.record = await failRecord(newFormRecord(f, cfg.occurrenceId), BLOCKED_REASON)
+    else await pingUpgrade(entry, previous, BLOCKED_REASON)
     entry.running = false
   }
 
@@ -202,9 +208,12 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
     else await new Promise<void>((resolve) => waiting.push(resolve))
     try {
       const expired = expiredReason(f)
-      // An expired form is failed unopened: no tab, no handler call.
-      if (expired !== null) entry.record = await failRecord(previous ?? newFormRecord(f, cfg.occurrenceId), expired)
-      else if (tabsBlocked) await refuse(entry, f, previous)
+      // An expired form is never opened: no tab, no handler call. A new one is failed. An upgrade keeps its untrusted
+      // record, which the member can still submit by hand, and gets one ping.
+      if (expired !== null) {
+        if (previous === null) entry.record = await failRecord(newFormRecord(f, cfg.occurrenceId), expired)
+        else await pingUpgrade(entry, previous, expired)
+      } else if (tabsBlocked) await refuse(entry, f, previous)
       else await drive(entry, f, previous)
     } catch (error) {
       entry.dead = true
