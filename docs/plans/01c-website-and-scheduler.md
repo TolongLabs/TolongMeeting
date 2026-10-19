@@ -1337,7 +1337,7 @@ git commit -m "feat(web): add accounts and details pages"
 **Files:**
 
 - Create: `packages/web/lib/timetable.ts`, `packages/web/lib/queue.ts`, `packages/web/app/timetable/page.tsx`, `packages/web/app/timetable/[id]/page.tsx`, `packages/web/app/timetable/actions.ts`
-- Test: `packages/web/lib/timetable.test.ts`
+- Test: `packages/web/test/timetable.test.ts`
 
 **Interfaces:**
 
@@ -1366,10 +1366,10 @@ For `type: 'work'` the schema empties `trustedSenders`, `formDetails` and `atten
 
 `saveEntry` checks `hasWorkingKey` (else `NoWorkingKeyError`), runs `deps.ensureNtfy()`, checks that the identity is the member's (else a not-found error), writes the entry, calls `scope.syncOccurrences(deps.queue, deps.now)`, then looks for clashes on that identity over the next 14 days. If any involve this entry's occurrences, it sends one `pings.identityClashSaved` (the first clash) and returns all of them for the form to show. `deleteEntry` throws `InUseError('This entry has a meeting in progress.')` while one of its occurrences is in `ACTIVE_STATES`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/lib/timetable.test.ts
+// packages/web/test/timetable.test.ts
 const base = {
   name: 'Data Mining',
   type: 'lecture',
@@ -1441,9 +1441,9 @@ test("an entry with a meeting in progress can't be deleted", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/lib/timetable.test.ts`
+Run: `bun test packages/web/test/timetable.test.ts`
 
 Expected: FAIL with `Cannot find module './timetable'`.
 
@@ -1451,13 +1451,13 @@ Expected: FAIL with `Cannot find module './timetable'`.
 
 The list page shows each entry with its next occurrence (`formatWhen`), its identity and a pause toggle; the edit page is one form over `EntryInputSchema`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/timetable.test.ts && bun run typecheck`
+Run: `bun test packages/web/test/timetable.test.ts && bun run typecheck`
 
-Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
+Expected: PASS, all tests pass; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/timetable* packages/web/lib/queue.ts packages/web/app/timetable
