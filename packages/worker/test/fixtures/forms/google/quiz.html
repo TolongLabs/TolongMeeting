@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Week 5 attendance quiz</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='radio'], [role='checkbox'], [role='option'], [role='listbox'], [role='button'] { cursor: pointer; padding: 4px }
+      [aria-checked='true']::before { content: '\2713 ' }
+    </style>
+  </head>
+  <body>
+    <div role="heading" aria-level="1">Week 5 attendance quiz</div>
+    
+    <div class="form-account">student@example.edu.my <a href="#switch">Switch account</a></div>
+    <div class="page"><div role="listitem"><div role="heading" aria-level="3">Full name</div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Which week is it? <span aria-label="Required question">*</span></div><div class="points">1 point</div><div role="radio" aria-checked="false" data-value="Week 4" tabindex="0"><span>Week 4</span></div><div role="radio" aria-checked="false" data-value="Week 5" tabindex="0"><span>Week 5</span></div></div><div role="listitem"><div role="heading" aria-level="3">Is this a quiz? <span aria-label="Required question">*</span></div><div class="points">1 point</div><div role="radio" aria-checked="false" data-value="Yes" tabindex="0"><span>Yes</span></div><div role="radio" aria-checked="false" data-value="No" tabindex="0"><span>No</span></div></div><div role="button" tabindex="0">Submit</div></div>
+    <div class="copy"><div role="checkbox" aria-checked="false" aria-label="Send me a copy of my responses." tabindex="0"></div> Send me a copy of my responses.</div>
+    <div class="form-footer">This form was created inside of Example University.</div>
+    <script src="fixture.js"></script>
+  </body>
+</html>

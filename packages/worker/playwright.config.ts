@@ -13,7 +13,14 @@ export default defineConfig({
   testMatch: '*.spec.ts',
   projects: [
     // HTML fixtures served by test/support/fixture-server.mjs (all specs outside test/image and test/host).
-    { name: 'fixtures', testIgnore: ['**/image/**', '**/host/**'], use: { baseURL: `http://localhost:${port}` } },
+    {
+      name: 'fixtures',
+      testIgnore: ['**/image/**', '**/host/**', '**/forms-*.spec.ts'],
+      use: { baseURL: `http://localhost:${port}` }
+    },
+    // The form specs open tabs in the desk window and compare CDP window ids. Headless Chromium gives every tab its own
+    // window, so they run headed: `xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts <spec>`.
+    { name: 'forms', testMatch: 'forms-*.spec.ts', use: { headless: false } },
     // Needs the worker image (Xvfb, openbox, Chrome, PulseAudio); the specs skip unless TM_IN_IMAGE=1.
     { name: 'image', testMatch: 'image/*.spec.ts' },
     // Launch proof for a host with Xvfb and Chrome but no openbox; the spec skips unless TM_HOST_LAUNCH=1.

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Attendance</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='radio'], [role='checkbox'], [role='option'], [role='listbox'], [role='button'] { cursor: pointer; padding: 4px }
+      [aria-checked='true']::before { content: '\2713 ' }
+    </style>
+  </head>
+  <body>
+    <div role="heading" aria-level="1">Attendance</div>
+    <div class="form-description">This form was created inside of Example University. student@example.edu.my Switch account</div>
+    
+    <div class="page"><div role="listitem"><div role="heading" aria-level="3">Full name</div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Matric No.</div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Attendance <span aria-label="Required question">*</span></div><div role="radio" aria-checked="false" data-value="Present" tabindex="0"><span>Present</span></div><div role="radio" aria-checked="false" data-value="Absent" tabindex="0"><span>Absent</span></div></div><div role="button" tabindex="0">Submit</div></div>
+    
+    <div class="form-footer">This content is neither created nor endorsed by Google.</div>
+    <script src="fixture.js"></script>
+  </body>
+</html>

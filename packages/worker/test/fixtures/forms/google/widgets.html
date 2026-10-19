@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Widgets</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='radio'], [role='checkbox'], [role='option'], [role='listbox'], [role='button'] { cursor: pointer; padding: 4px }
+      [aria-checked='true']::before { content: '\2713 ' }
+    </style>
+  </head>
+  <body>
+    <div role="heading" aria-level="1">Widgets</div>
+    
+    
+    <div class="page"><div role="listitem"><div role="heading" aria-level="3">Short answer <span aria-label="Required question">*</span></div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Long answer</div><textarea></textarea></div><div role="listitem"><div role="heading" aria-level="3">Pick one <span aria-label="Required question">*</span></div><div role="radio" aria-checked="false" data-value="Present" tabindex="0"><span>Present</span></div><div role="radio" aria-checked="false" data-value="Absent" tabindex="0"><span>Absent</span></div></div><div role="listitem"><div role="heading" aria-level="3">Pick some</div><div role="checkbox" aria-checked="false" data-value="Lecture" tabindex="0"><span>Lecture</span></div><div role="checkbox" aria-checked="false" data-value="Tutorial" tabindex="0"><span>Tutorial</span></div></div><div role="listitem"><div role="heading" aria-level="3">Choose a section <span aria-label="Required question">*</span></div><div role="listbox" tabindex="0" data-value="">Choose</div><div class="options" hidden><div role="option" data-value="">Choose</div><div role="option" data-value="01">01</div><div role="option" data-value="02">02</div><div role="option" data-value="03">03</div></div></div><div role="listitem"><div role="heading" aria-level="3">Date</div><input type="date"></div><div role="button" tabindex="0">Submit</div></div>
+    <div class="copy"><div role="checkbox" aria-checked="false" aria-label="Send me a copy of my responses." tabindex="0"></div> Send me a copy of my responses.</div>
+    
+    <script src="fixture.js"></script>
+  </body>
+</html>

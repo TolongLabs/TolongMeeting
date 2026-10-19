@@ -1,13 +1,16 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Platform } from '@tm/core'
+import type { FormProvider, Platform } from '@tm/core'
 import type { z } from 'zod'
 
-// Reads `<TM_SELECTORS_DIR>/<platform>.json` (default /app/config/selectors) and validates it. A missing file or a
-// map that fails the schema throws: an adapter must not run on selectors it could not check.
-export async function loadSelectors<T>(platform: Platform, schema: z.ZodType<T>): Promise<T> {
-  const dir = process.env.TM_SELECTORS_DIR ?? '/app/config/selectors'
-  const file = join(dir, `${platform}.json`)
+// Reads `<dir>/<name>.json` (`dir` defaults to TM_SELECTORS_DIR, then /app/config/selectors) and validates it. A
+// missing file or a map that fails the schema throws: an adapter must not run on selectors it could not check.
+export async function loadSelectors<T>(
+  name: Platform | `${FormProvider}-forms`,
+  schema: z.ZodType<T>,
+  dir = process.env.TM_SELECTORS_DIR ?? '/app/config/selectors'
+): Promise<T> {
+  const file = join(dir, `${name}.json`)
   const raw = await readFile(file, 'utf8')
   let json: unknown
   try {
