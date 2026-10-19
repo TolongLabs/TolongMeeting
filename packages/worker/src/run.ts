@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
-import { AiKeyError, AsrDisconnected, AsrProtocolError } from '@tm/ai'
+import { AiKeyError } from '@tm/ai'
 import { localParts, type ChatMessage, type EventType, type JobConfig } from '@tm/core'
 import { joinedPing, type Ping } from '@tm/notify'
 import { z } from 'zod'
@@ -138,11 +138,10 @@ class OccurrenceRun {
   private asr: LiveAsr | null = null
   private handler: FrameHandler | null = null
 
-  // Teardown clock (real time, ms since the epoch): the end of the whole budget, and the end of the part the steps
-  // before the final checkpoint may use. Both are unlimited until teardown starts.
-  private teardownEnd = Number.POSITIVE_INFINITY
-  private preEnd = Number.POSITIVE_INFINITY
-  private minSlice = 0
+  // Teardown clock (real time, ms since the epoch). The budget counts from the stop signal (`docker stop` starts its
+  // 60 s at SIGTERM) or from the start of teardown, whichever is first. Unlimited until one of them.
+  private abortAt: number | null = null
+  private teardownStart: number | null = null
   private contextClosed = false
 
   private inMeeting = false
@@ -177,8 +176,12 @@ class OccurrenceRun {
     this.lecture = cfg.entry.type === 'lecture'
     const { signal } = deps
     this.aborted = new Promise<void>((resolve) => {
-      if (signal?.aborted) resolve()
-      signal?.addEventListener('abort', () => resolve(), { once: true })
+      const stop = (): void => {
+        this.abortAt ??= Date.now()
+        resolve()
+      }
+      if (signal?.aborted) stop()
+      else signal?.addEventListener('abort', stop, { once: true })
     })
   }
 
@@ -237,7 +240,11 @@ class OccurrenceRun {
 
   // Waits for a step, or for the abort signal, whichever comes first. A step abandoned by the abort is left running.
   private async abortable<T>(name: string, fn: () => T | Promise<T>): Promise<T | typeof ABORTED> {
-    const run = this.step(name, fn)
+    return this.untilAborted(this.step(name, fn))
+  }
+
+  // Waits for a promise, or for the abort signal. A rejection after the abort is swallowed; one before it is thrown.
+  private async untilAborted<T>(run: Promise<T>): Promise<T | typeof ABORTED> {
     run.catch(() => undefined)
     return Promise.race([run, this.aborted.then((): typeof ABORTED => ABORTED)])
   }
@@ -304,6 +311,26 @@ class OccurrenceRun {
     )
   }
 
+  private get budgetMs(): number {
+    return this.deps.teardownBudgetMs ?? TEARDOWN_BUDGET_MS
+  }
+
+  // The end of the teardown budget (real time). Unlimited until the stop signal or the start of teardown.
+  private get budgetEnd(): number {
+    const starts = [this.abortAt, this.teardownStart].filter((t): t is number => t !== null)
+    return starts.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...starts) + this.budgetMs
+  }
+
+  // The end of the part of the budget that the steps before the final checkpoint may use.
+  private get preEnd(): number {
+    return this.budgetEnd - Math.min(CHECKPOINT_RESERVE_MS, this.budgetMs * 0.3)
+  }
+
+  // The share a pre-checkpoint step always gets, even when the reserve has been used up.
+  private get minSlice(): number {
+    return Math.min(1000, this.budgetMs / 20)
+  }
+
   // Runs one teardown or cleanup action with a time limit and says whether it finished. The limit is the step's own,
   // cut to the time left: a step before the final checkpoint (phase 'pre') may not use the checkpoint's reserve, but
   // always gets a short slice; a later step (phase 'end') may use all that is left. A failure, a timeout or no time
@@ -315,7 +342,7 @@ class OccurrenceRun {
     phase: 'pre' | 'end' = 'pre'
   ): Promise<boolean> {
     const now = Date.now()
-    const endLeft = this.teardownEnd - now
+    const endLeft = this.budgetEnd - now
     const limit = Math.min(ms, phase === 'pre' ? Math.max(this.preEnd - now, this.minSlice) : endLeft, endLeft)
     if (limit <= 0) {
       await this.report(`teardown ${name}`, new Error('skipped: no teardown time left'))
@@ -640,9 +667,7 @@ class OccurrenceRun {
 
   private asrError(error: Error): void {
     if (error instanceof AiKeyError) this.alerter.alert('ai_key', String(error.status))
-    else if (error instanceof AsrDisconnected || error instanceof AsrProtocolError)
-      this.fault('live transcription', error)
-    else void this.report('live transcription', error)
+    else this.fault('live transcription', error)
   }
 
   private openChat(): Promise<ChatCapture> {
@@ -697,7 +722,9 @@ class OccurrenceRun {
     for (;;) {
       if (this.isAborted) return this.terminated()
       if (this.now() >= this.hardStop) return ended('hard_stop')
-      const verdict = await this.tick()
+      // A tick still in flight at the stop signal is abandoned: teardown must not wait for its page calls.
+      const verdict = await this.untilAborted(this.tick())
+      if (verdict === ABORTED) return this.terminated()
       if (verdict) return verdict
       await this.wait(Math.min(TICK_MS, this.hardStop - this.now()))
     }
@@ -782,6 +809,8 @@ class OccurrenceRun {
   // The first drop rejoins; the second stops. A device check that cannot run is not a drop of the meeting, and its
   // alerts say so.
   private async drop(): Promise<Verdict | null> {
+    // A tick abandoned by the stop signal may resume after teardown has begun: it must not start a rejoin then.
+    if (this.isAborted) return this.terminated()
     const why = this.badWhy
     if (this.rejoins >= 1) return this.dropped(why)
     this.rejoins += 1
@@ -814,21 +843,22 @@ class OccurrenceRun {
 
   // --- teardown ---
 
-  // Always runs, inside the stop timeout: 50 s in all, counted from now. Order: chat sweep, leave, chat, frames, live ASR,
-  // forms, recorder, audio, browser, checkpoint timer, final checkpoint, held-back alerts, screen. The checkpoint comes
-  // before the work the pipeline can redo later (joining the segments, `finishRecording`), and the steps before it
-  // leave it a share of the budget. It is skipped only when the browser would not close: a profile that is still open
-  // could be copied half-written. A step that fails or overruns is reported without stopping the later ones.
+  // Always runs, inside the stop timeout: 50 s in all, counted from the stop signal when there is one, else from now.
+  // Order: chat sweep, leave, chat, frames, live ASR, forms, recorder, audio, browser, checkpoint timer, final
+  // checkpoint, held-back alerts, screen. The checkpoint comes before the work the pipeline can redo later (joining the
+  // segments, `finishRecording`), and the steps before it leave it a share of the budget. It is skipped only when the
+  // browser would not close: a profile that is still open could be copied half-written. A step that fails or overruns
+  // is reported without stopping the later ones.
   private async teardown(): Promise<void> {
-    const budget = this.deps.teardownBudgetMs ?? TEARDOWN_BUDGET_MS
-    this.teardownEnd = Date.now() + budget
-    this.preEnd = this.teardownEnd - Math.min(CHECKPOINT_RESERVE_MS, budget * 0.3)
-    this.minSlice = Math.min(1000, budget / 20)
+    this.teardownStart = Date.now()
 
     if (this.inMeeting) {
       const chat = this.chat
       if (chat) await this.bounded('chat.sweepNow', BOUND.sweep, () => chat.sweepNow())
       await this.leave()
+    } else if (this.isAborted) {
+      // A join abandoned by the stop signal may still complete in the page: closing the browser first keeps the bot out.
+      await this.closeBrowser()
     }
     if (this.chat) await this.bounded('chat.stop', BOUND.stopChat, () => this.chat!.stop())
     if (this.frames) await this.bounded('frames.stop', BOUND.stopFrames, () => this.frames!.stop())

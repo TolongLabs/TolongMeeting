@@ -372,6 +372,18 @@ test('the checkpoint is skipped, with an event, only when the browser did not cl
   expect(await errorsAt(lectureCfg, 'teardown checkpointProfile')).toHaveLength(1)
 })
 
+test('a live transcription error that is not a key problem raises component_failed', async () => {
+  const d = fakeDeps({
+    states: ['in_meeting', 'in_meeting', 'ended'],
+    onState: (n) => {
+      if (n === 1) d.hooks.asr.opts!.onError!(new Error('ENOSPC: transcript write failed'))
+    }
+  })
+  await runOccurrence(lectureCfg, d)
+  expect(messages(d)).toContain("The bot's live transcription stopped working. The recording continues.")
+  expect(await errorsAt(lectureCfg, 'live transcription')).toHaveLength(1)
+})
+
 // --- extras never end the meeting ---
 
 test.each([
@@ -442,6 +454,45 @@ test('a corrupt attempts.json falls back to this attempt and says so', async () 
 })
 
 // --- SIGTERM ---
+
+test('SIGTERM during a tick whose page call hangs: teardown still runs, inside the budget from the signal', async () => {
+  const abort = new AbortController()
+  let abortedAt = 0
+  const d = fakeDeps({
+    states: 'always_in_meeting',
+    teardownBudgetMs: 1000,
+    onState: (n) => {
+      if (n !== 2) return
+      abortedAt = Date.now()
+      abort.abort()
+      return hang()
+    }
+  })
+  const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'terminated', reason: 'terminated' })
+  expect(Date.now() - abortedAt).toBeLessThan(1000 + 500)
+  expect(d.calls).toContain('leave')
+  expect(d.calls).toContain('checkpointProfile')
+  expect(await outcomeFile(lectureCfg)).toEqual(o)
+})
+
+test('SIGTERM before the bot is in the meeting closes the browser first, so a late join cannot stay in the call', async () => {
+  const abort = new AbortController()
+  let closedWhenJoinEnded = null as boolean | null
+  const d = fakeDeps({
+    recorderStop: () => new Promise((resolve) => setTimeout(resolve, 300)),
+    onJoin: async () => {
+      abort.abort()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      closedWhenJoinEnded = d.calls.includes('context.close')
+    }
+  })
+  const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(o).toMatchObject({ result: 'failed', endedBy: 'terminated', joinedAt: null })
+  expect(d.calls).not.toContain('leave')
+  expect(closedWhenJoinEnded).toBe(true)
+  expect(d.calls).toContain('checkpointProfile')
+})
 
 test('SIGTERM during a join that hangs ends as terminated, without a leave', async () => {
   const abort = new AbortController()
