@@ -9,11 +9,81 @@
         margin: 0;
         min-height: 100vh;
       }
+      #sharee-container {
+        position: absolute;
+        left: 0;
+        top: 60px;
+        pointer-events: none;
+      }
+      #sharee-container canvas {
+        display: block;
+        background: #ccc;
+      }
       footer {
         position: fixed;
         bottom: 0;
         left: 0;
         right: 0;
+        z-index: 5;
+      }
+      #chat-panel {
+        position: fixed;
+        top: 60px;
+        right: 0;
+        width: 320px;
+        background: #fff;
+        border: 1px solid #000;
+        z-index: 5;
+      }
+      #chat-panel[hidden] {
+        display: none;
+      }
+      .chat-container__chat-list {
+        height: 300px;
+        overflow-y: auto;
+        position: relative;
+      }
+      #chat-rows {
+        position: relative;
+      }
+      .chat-item-container {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 80px;
+        box-sizing: border-box;
+        overflow: hidden;
+        padding: 4px 8px;
+        font: 13px sans-serif;
+      }
+      .chat-item__sender {
+        font-weight: bold;
+      }
+      .chat-item__quote {
+        color: #666;
+        border-left: 2px solid #999;
+        padding-left: 4px;
+      }
+      .notice {
+        position: fixed;
+        left: 20px;
+        z-index: 10;
+        background: #fff;
+        border: 1px solid #000;
+        padding: 12px;
+      }
+      .notice[hidden] {
+        display: none;
+      }
+      #notices {
+        position: fixed;
+        top: 100px;
+        left: 20px;
+        z-index: 10;
+      }
+      #notices .notice {
+        position: static;
+        margin-bottom: 8px;
       }
       #leave-confirm {
         position: fixed;
@@ -22,35 +92,204 @@
         background: #fff;
         border: 1px solid #000;
         padding: 16px;
+        z-index: 10;
       }
     </style>
   </head>
   <body>
     <main>
       <p>Lecture room</p>
+      <div id="sharee-container"><canvas width="1410" height="840"></canvas></div>
     </main>
+    <section id="chat-panel">
+      <div class="chat-container__chat-list"><div id="chat-rows"></div></div>
+      <textarea data-click="chat input" aria-label="Type message here ..."></textarea>
+    </section>
+    <div id="audio-prompt" class="notice" role="dialog" style="top: 10px">
+      <p>Hear the meeting</p>
+      <button type="button" data-click="join audio by computer">Join Audio by Computer</button>
+    </div>
     <div id="leave-confirm" hidden>
       <button type="button" data-click="leave meeting">Leave Meeting</button>
     </div>
+    <div id="notices"></div>
     <footer>
       <button type="button" data-click="audio" aria-label="audio">Audio</button>
       <button type="button" data-click="video" aria-label="Video">Video</button>
       <button type="button" data-click="participants" aria-label="open the participants list pane,[12] particpants">
         12
       </button>
-      <button type="button" data-click="chat" aria-label="open the chat panel">Chat</button>
+      <button id="open-chat" type="button" data-click="chat" aria-label="open the chat panel">Chat</button>
       <button type="button" data-click="share" aria-label="Share">Share</button>
       <button type="button" data-click="react" aria-label="React">React</button>
       <button type="button" data-click="more" aria-label="More meeting control ">More</button>
-      <button type="button" data-click="leave" aria-label="Leave">Leave</button>
+      <button id="leave" type="button" data-click="leave" aria-label="Leave">Leave</button>
     </footer>
     <script>
-      for (const button of document.querySelectorAll('button[data-click]')) {
-        button.addEventListener('click', () => {
-          window.__fixture.click(button.dataset.click)
-          if (button.dataset.click === 'leave') document.getElementById('leave-confirm').hidden = false
-        })
+      const ROW_HEIGHT = 80
+      const params = new URLSearchParams(location.search)
+      const list = document.querySelector('.chat-container__chat-list')
+      const rows = document.getElementById('chat-rows')
+      const panel = document.getElementById('chat-panel')
+      const openChat = document.getElementById('open-chat')
+
+      // `group: true` marks a follow-up message that Zoom renders without sender or time.
+      const seeded = (count) =>
+        Array.from({ length: count }, (_, i) => ({
+          sender: `Student ${i % 7}`,
+          time: `8:${String(10 + (i % 50)).padStart(2, '0')} PM`,
+          text: `Message number ${i}`
+        }))
+      const messages = params.has('seed')
+        ? seeded(Number(params.get('seed')))
+        : [
+            { sender: 'Dr Lecturer (Host)', time: '8:41 PM', text: 'Attendance: https://forms.gle/abc' },
+            { group: true, text: 'Please submit before 9 PM' },
+            {
+              id: 'msg-student-a',
+              sender: 'Student A',
+              time: '8:42 PM',
+              text: 'Is this the right form? https://forms.office.com/r/xyz'
+            },
+            {
+              sender: 'Student C',
+              time: '8:43 PM',
+              quote: 'Attendance: https://forms.gle/abc',
+              text: 'Done, thanks'
+            }
+          ]
+
+      function element(tag, className, text) {
+        const el = document.createElement(tag)
+        el.className = className
+        if (text !== undefined) el.textContent = text
+        return el
       }
+
+      // Plain text with its URLs turned into anchors, the way Zoom shows links.
+      function linked(text) {
+        const box = element('div', 'new-chat-message__text-box')
+        for (const part of text.split(/(https?:\/\/\S+)/)) {
+          if (/^https?:\/\//.test(part)) {
+            const a = document.createElement('a')
+            a.href = part
+            a.textContent = part
+            box.append(a)
+          } else {
+            box.append(part)
+          }
+        }
+        return box
+      }
+
+      function row(index) {
+        const m = messages[index]
+        const el = element('div', 'chat-item-container')
+        if (m.id) el.id = m.id
+        el.style.top = `${index * ROW_HEIGHT}px`
+        if (!m.group) {
+          const info = element('div', 'chat-item__chat-info')
+          info.append(
+            element('span', 'chat-item__sender', m.sender),
+            element('span', 'chat-item__receiver', 'Everyone'),
+            element('span', 'new-chat-item__chat-info-time-stamp', m.time)
+          )
+          el.append(info)
+        }
+        if (m.quote) el.append(element('div', 'chat-item__quote', m.quote))
+        el.append(linked(m.text))
+        return el
+      }
+
+      // A virtualised list: only the rows that intersect the visible part are in the DOM.
+      const rendered = new Map()
+      function render() {
+        if (list.clientHeight === 0) return
+        rows.style.height = `${messages.length * ROW_HEIGHT}px`
+        const first = Math.floor(list.scrollTop / ROW_HEIGHT)
+        const last = Math.min(messages.length - 1, Math.floor((list.scrollTop + list.clientHeight - 1) / ROW_HEIGHT))
+        for (const [index, el] of rendered) {
+          if (index < first || index > last) {
+            el.remove()
+            rendered.delete(index)
+          }
+        }
+        for (let index = first; index <= last; index++) {
+          if (!rendered.has(index)) {
+            const el = row(index)
+            rendered.set(index, el)
+            rows.append(el)
+          }
+        }
+      }
+      list.addEventListener('scroll', render)
+
+      if (params.get('chat') === 'closed') panel.hidden = true
+      render()
+
+      function notice(title, labels) {
+        const el = element('div', 'notice')
+        el.setAttribute('role', 'dialog')
+        el.append(element('p', '', title))
+        for (const [label, hidden] of labels) {
+          const button = element('button', '', label)
+          button.type = 'button'
+          button.dataset.click = label.toLowerCase()
+          button.hidden = hidden
+          el.append(button)
+        }
+        document.getElementById('notices').append(el)
+        return el
+      }
+
+      Object.assign(window.__fixture, {
+        addMessage(m) {
+          messages.push({ ...m })
+          render()
+        },
+        scrollTop(y) {
+          list.scrollTop = y
+          render()
+        },
+        endMeeting() {
+          document.getElementById('leave').remove()
+          notice('This meeting has been ended by host', [['OK']])
+        },
+        remove() {
+          document.getElementById('leave').remove()
+          notice('You have been removed from this meeting', [['OK']])
+        },
+        breakout() {
+          notice('Dr Lecturer invited you to join Breakout Room 1', [['Join'], ['Later']])
+        },
+        // A breakout prompt that also carries an allowlist button: it must still not be accepted.
+        breakoutNotice() {
+          notice('Breakout Room 2 is open', [['OK']])
+        },
+        stopShare() {
+          document.querySelector('#sharee-container canvas')?.remove()
+        },
+        showNotice() {
+          notice('Notice', [['Got it'], ['OK'], ['OK', true]])
+          notice('Permission', [['Allow'], ['Start Video'], ['Join Breakout Room']])
+        }
+      })
+
+      // One delegated listener, so dialogs added later are covered too.
+      document.addEventListener('click', (event) => {
+        const el = event.target.closest('[data-click]')
+        if (!el) return
+        const name = el.dataset.click
+        window.__fixture.click(name === 'join' ? 'breakout join' : name)
+        if (name === 'leave') document.getElementById('leave-confirm').hidden = false
+        if (name === 'chat') {
+          panel.hidden = false
+          openChat.setAttribute('aria-label', 'close the chat panel')
+          render()
+        }
+        if (name === 'join audio by computer') document.getElementById('audio-prompt').remove()
+        if (el.closest('#notices')) el.remove()
+      })
     </script>
   </body>
 </html>

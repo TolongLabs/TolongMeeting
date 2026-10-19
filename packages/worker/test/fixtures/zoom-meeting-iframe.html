@@ -18,6 +18,23 @@
     </style>
   </head>
   <body>
-    <iframe id="webclient" class="pwa-webclient__iframe" src="zoom-meeting-top.html" title="Zoom"></iframe>
+    <iframe id="webclient" class="pwa-webclient__iframe" title="Zoom"></iframe>
+    <script>
+      // The inner page gets this page's query (?seed=60, ?chat=closed), and the page-driving helpers act on it.
+      const frame = document.getElementById('webclient')
+      frame.src = 'zoom-meeting-top.html' + location.search
+      for (const name of [
+        'addMessage',
+        'scrollTop',
+        'endMeeting',
+        'remove',
+        'breakout',
+        'breakoutNotice',
+        'stopShare',
+        'showNotice'
+      ]) {
+        window.__fixture[name] = (...args) => frame.contentWindow.__fixture[name](...args)
+      }
+    </script>
   </body>
 </html>

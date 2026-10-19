@@ -12,7 +12,7 @@ const MAX_DEVICE_PROMPT_CLICKS = 3
 const LEAVE_CONFIRM_MS = 3_000
 
 // Steps are logged by selector name only: page text can hold names, meeting titles and chat.
-function logStep(step: string): void {
+export function logStep(step: string): void {
   console.info(`zoom: ${step}`)
 }
 
@@ -21,11 +21,11 @@ async function bodyText(root: PwFrame): Promise<string> {
 }
 
 // The first match that is on screen: Zoom keeps hidden copies of some controls in the DOM.
-function shown(root: PwFrame, selector: string): Locator {
+export function shown(root: PwFrame, selector: string): Locator {
   return root.locator(selector).filter({ visible: true }).first()
 }
 
-async function visible(root: PwFrame, selector: string): Promise<boolean> {
+export async function visible(root: PwFrame, selector: string): Promise<boolean> {
   return shown(root, selector).isVisible()
 }
 

@@ -1620,7 +1620,7 @@ git commit -m "feat(worker): add zoom join and admission"
 
 - Create: `packages/worker/src/adapters/zoom/meeting.ts`, `packages/worker/src/adapters/zoom/chat.ts`
 - Modify: `packages/worker/src/adapters/zoom/index.ts`, `packages/worker/test/fixtures/zoom-meeting-top.html`
-- Fixture additions to `zoom-meeting-top.html`: a virtualised `.chat-container__chat-list` that renders only the items in view, seeded with messages from `Dr Lecturer (Host)` (with `https://forms.gle/abc`), a grouped follow-up without sender or time, `Student A` (with a `forms.office.com` link and element id `msg-student-a`), and a reply carrying `.chat-item__quote`; `?chat=closed` starts with the panel closed; `?seed=60` seeds 60 messages; `canvas#sharee-container` at `{ x: 0, y: 60, width: 1410, height: 840 }` inside `#sharee-container`; a "Join Audio by Computer" button; `__fixture.addMessage(m)`, `scrollTop(y)`, `endMeeting()` ("This meeting has been ended by host" with OK, Leave removed), `remove()`, `breakout()` ("Dr Lecturer invited you to join Breakout Room 1" with "Join" and "Later"), `stopShare()` and `showNotice()` (one dialog with "Got it" and "OK", a hidden "OK", and another with "Allow", "Start Video" and "Join Breakout Room"); `__fixture.forbiddenClicks` logs any click on audio, video, share, react or chat-input controls.
+- Fixture additions to `zoom-meeting-top.html`: a virtualised `.chat-container__chat-list` that renders only the items in view, seeded with messages from `Dr Lecturer (Host)` (with `https://forms.gle/abc`), a grouped follow-up without sender or time, `Student A` (with a `forms.office.com` link and element id `msg-student-a`), and a reply carrying `.chat-item__quote`; `?chat=closed` starts with the panel closed; `?seed=60` seeds 60 messages; `canvas#sharee-container` at `{ x: 0, y: 60, width: 1410, height: 840 }` inside `#sharee-container`; a "Join Audio by Computer" button; `__fixture.addMessage(m)`, `scrollTop(y)`, `endMeeting()` ("This meeting has been ended by host" with OK, Leave removed), `remove()`, `breakout()` ("Dr Lecturer invited you to join Breakout Room 1" with "Join" and "Later"), `stopShare()`, `breakoutNotice()` (a breakout prompt that also has an "OK", which must not be clicked) and `showNotice()` (one dialog with "Got it" and "OK", a hidden "OK", and another with "Allow", "Start Video" and "Join Breakout Room"); `__fixture.forbiddenClicks` logs any click on audio, video, share, react or chat-input controls.
 - Test: `packages/worker/test/zoom-meeting.spec.ts`
 
 **Interfaces:**
@@ -1628,7 +1628,7 @@ git commit -m "feat(worker): add zoom join and admission"
 - Consumes: Task 13's selectors, `zoomRoot`, `ZOOM_TIMEOUTS`; `extractLinks` from Task 12.
 - Produces: `zoomAdapter.connectOutputAudio`, `ensureLayout`, `readChat`, `sweepChat`, `sharedScreenRegion`, `participantCount`, `meetingState`, `dismissNotices`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/worker/test/zoom-meeting.spec.ts, each test run for root 'top' and 'iframe'
@@ -1698,21 +1698,21 @@ test('layout opens chat; audio joins by computer once', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts zoom-meeting.spec.ts`
 Expected: FAIL with "zoomAdapter.readChat is not a function".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `readChat` installs (once per document; reinstalled if missing) an in-page parser modelled on `reference-scripts/browser/zoom-chat-capture.js`: a `MutationObserver` plus a 3-second timer parse each `chatItem` into `{ key, sender, senderRole, time, seenAt, text, links, replyTo }`, carrying sender and time forward for grouped items; the role comes from `roleLabel` on the sender text, which is then stripped (`participant` when there is no label, `unknown` when there is no sender); `key` is `id:<id>` when the item or an id-bearing ancestor inside the list has one, else `` `${sender}|${time}|${text.slice(0, 200)}` ``; `links` are `extractLinks(text)` plus anchor `href`s; `replyTo` is the key of the latest earlier message whose text starts with the `chatReplyQuote` text. A 1.5-second timer keeps the list scrolled to the bottom. `readChat` returns parsed messages whose keys are not in `cursor.seenKeys` and a new cursor with them added; it never advances anything itself, so the caller adopts the cursor only after a durable write. `sweepChat` stops the bottom timer, scrolls top to bottom in steps of `max(200, clientHeight / 2)` px with 300 ms pauses, restarts the timer in a `finally`, and returns every parsed message. `participantCount` reads `[N]` from the participants button's aria-label, else its digits. `sharedScreenRegion` is the bounding box of `shareSurface` plus the iframe's offset, or null. `meetingState` checks, in order: `ended`, `removed`, `breakout` texts, lobby text, a visible Leave button (`in_meeting`), else `unknown`. `dismissNotices` clicks visible buttons whose trimmed text equals an allowlist entry (case-insensitive) unless their dialog contains the breakout text, and returns the texts clicked. `ensureLayout` clicks `openChat` only if the chat list is not visible. `connectOutputAudio` clicks `joinAudioByComputer` if visible (with the microphone permission denied, Zoom joins computer audio for listening only).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts zoom-meeting.spec.ts`
 Expected: all pass for both roots.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker
