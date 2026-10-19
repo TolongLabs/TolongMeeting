@@ -1838,7 +1838,7 @@ git commit -m "feat(scheduler): add docker socket gate"
 
 - Create: `packages/scheduler/src/docker.ts`, `packages/scheduler/src/locks.ts`, `packages/scheduler/src/job-files.ts`, `packages/scheduler/src/launch.ts`
 - Modify: `packages/web/db/job-config.ts` (`buildEntrySnapshot`, `loadJobConfig`)
-- Test: `packages/scheduler/src/locks.test.ts`, `packages/scheduler/src/job-files.test.ts`, `packages/web/db/job-config.test.ts`, `packages/scheduler/src/launch.test.ts`
+- Test: `packages/scheduler/test/locks.test.ts`, `packages/scheduler/test/job-files.test.ts`, `packages/web/test/job-config.test.ts`, `packages/scheduler/test/launch.test.ts`
 
 **Interfaces:**
 
@@ -1860,7 +1860,7 @@ git commit -m "feat(scheduler): add docker socket gate"
 
 `startAttempt` makes a control token `<attempt>.<32 random bytes, base64url>`, stores its sha256 hex in `control_token_hash`, writes the `JobConfig` (control URL `<publicUrl>/api/control`) and `profileKey(master, identityId)` with `writeJobFiles(jobFileBase(spec), ...)`, creates and starts the container from `containerSpec`, and sets `attempt`, `container_name` and `last_heartbeat_at = now`. If Docker refuses, it applies `fail` with reason `launch_failed`, releases the profile, sends `pings.workerFailed` with `it couldn't start`, and `launchOccurrence` returns `failed`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/scheduler/src/launch.test.ts
@@ -1984,23 +1984,23 @@ test('the entry snapshot carries local start and end times with the offset', asy
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/launch.test.ts packages/scheduler/src/locks.test.ts packages/scheduler/src/job-files.test.ts packages/web/db/job-config.test.ts`
+Run: `bun test packages/scheduler/test/launch.test.ts packages/scheduler/test/locks.test.ts packages/scheduler/test/job-files.test.ts packages/web/test/job-config.test.ts`
 
 Expected: FAIL with `Cannot find module './launch'`.
 
-- [ ] **Step 3: Implement the Docker client, locks, job files, the job-config builders and the launch**
+- [x] **Step 3: Implement the Docker client, locks, job files, the job-config builders and the launch**
 
 `job-files.test.ts` checks the 0600 mode and that `removeJobFiles` deletes both files.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/scheduler/src/launch.test.ts packages/scheduler/src/locks.test.ts packages/scheduler/src/job-files.test.ts packages/web/db/job-config.test.ts`
+Run: `bun test packages/scheduler/test/launch.test.ts packages/scheduler/test/locks.test.ts packages/scheduler/test/job-files.test.ts packages/web/test/job-config.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src packages/web/db/job-config*

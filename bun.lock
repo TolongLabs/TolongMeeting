@@ -60,6 +60,7 @@
       "name": "@tm/scheduler",
       "dependencies": {
         "@tm/core": "workspace:*",
+        "@tm/notify": "workspace:*",
         "@tm/web": "workspace:*",
         "drizzle-orm": "0.45.4",
       },
