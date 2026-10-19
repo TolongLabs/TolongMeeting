@@ -1743,7 +1743,7 @@ git commit -m "feat(worker): add zoom chat and meeting signals"
 **Interfaces:**
 
 - Consumes: `PlatformAdapter.readChat`, `sweepChat` (Task 14); `ChatMessage`, `Stopper`.
-- Produces (adds to contracts): `startChatCapture(page: Page, adapter: PlatformAdapter, file: string, onMessage: (m: ChatMessage) => Promise<void>, opts?: ChatCaptureOptions): Promise<ChatCapture>` with `interface ChatCaptureOptions { pollMs?: number; sweepMs?: number; append?: (file: string, data: string) => Promise<void>; emit?: (type: EventType, data: Record<string, unknown>) => Promise<void> }` (defaults 3,000 and 600,000 ms; `emit` receives `error` events, stderr without it); `interface ChatCapture extends Stopper { sweepNow(): Promise<void> }`.
+- Produces (adds to contracts): `startChatCapture(page: Page, adapter: PlatformAdapter, file: string, onMessage: (m: ChatMessage) => Promise<void>, opts?: ChatCaptureOptions): Promise<ChatCapture>` with `interface ChatCaptureOptions { pollMs?: number; sweepMs?: number; append?: (file: string, data: string) => Promise<void>; emit?: (type: EventType, data: Record<string, unknown>) => Promise<void>; onReplay?: (m: ChatMessage) => Promise<void> | void }` (defaults 3,000 and 600,000 ms; `emit` receives `error` events, stderr without it; `onReplay` gets each row already in the file, in file order, before the first poll); `interface ChatCapture extends Stopper { readonly loaded: readonly ChatMessage[]; sweepNow(): Promise<void> }`.
 
 - [x] **Step 1: Write the failing test**
 
@@ -1808,7 +1808,7 @@ Expected: FAIL with "Cannot find module".
 
 - [x] **Step 3: Implement**
 
-On start, load the keys already in `file` into the cursor. Every `pollMs`, call `readChat`; write all new messages as one JSON-lines append; only after the append resolves adopt the returned cursor and call `onMessage` for each, in order. A failed append keeps the old cursor, logs the error code and retries on the next poll. Every `sweepMs`, and on `sweepNow()`, run `sweepChat` and handle unseen keys the same way. Polls and sweeps never overlap.
+On start, load the rows already in `file` (`loaded`); their keys become the cursor, and each is queued for `onReplay`. Every `pollMs`, call `readChat`; write all new messages as one JSON-lines append; only after the append resolves mark them seen and queue them for `onMessage`. Each tick delivers the queue in order before it reads, and a failed delivery stays at the head and is retried on the next tick, so no row is written twice and none is skipped. A failed append keeps the old cursor, emits the error code and step, and retries on the next poll. Every `sweepMs`, and on `sweepNow()`, run `sweepChat` and handle unseen keys the same way. Polls and sweeps never overlap. Callers `await sweepNow()` before `stop()`. A sweep can append older rows after newer ones, so the file is not sorted (the pipeline sorts it).
 
 - [x] **Step 4: Run test to verify it passes**
 

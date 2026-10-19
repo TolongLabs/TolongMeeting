@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { parseJob, type ChatMessage, type EventType, type FormCandidate, type ResolvedForm } from '@tm/core'
 import { zoomAdapter, type PlatformAdapter } from '../src/adapters'
-import { appendDurably, startChatCapture } from '../src/chat/capture'
+import { appendDurably, startChatCapture, type AppendHandle } from '../src/chat/capture'
 import { createFormPinger, type FormPingerDeps } from '../src/forms/pinger'
 import { formProviderOf } from '../src/forms/links'
 
@@ -235,4 +235,125 @@ test('a torn last line from a crash is cut off and its message read again', asyn
   expect(new Set(await keys()).size).toBe(4)
   expect((await keys())[0]).toBe(kept.key)
   expect(errors()).toEqual([])
+})
+
+// Opens the file for real, but its first write lands `keep` characters and then fails with EIO. `cutBack`, when given,
+// is the error truncate throws.
+const partialWrite =
+  (keep: number, cutBack?: Error) =>
+  async (path: string): Promise<AppendHandle> => {
+    const real = await open(path, 'a')
+    return {
+      stat: () => real.stat(),
+      appendFile: async (data: string) => {
+        await real.appendFile(data.slice(0, keep))
+        throw Object.assign(new Error('EIO: input/output error'), { code: 'EIO' })
+      },
+      sync: () => real.sync(),
+      truncate: async (len: number) => {
+        if (cutBack !== undefined) throw cutBack
+        await real.truncate(len)
+      },
+      close: () => real.close()
+    }
+  }
+
+test('a write that fails after a partial write is cut back to the size before it', async () => {
+  await writeFile(file, 'row one\n')
+  const data = 'row two is longer\n'
+  await expect(appendDurably(file, data, partialWrite(6))).rejects.toMatchObject({ code: 'EIO' })
+  expect(await readFile(file, 'utf8')).toBe('row one\n')
+  await appendDurably(file, data)
+  expect(await readFile(file, 'utf8')).toBe(`row one\n${data}`)
+})
+
+test('when the cut-back also fails, the write error is the one thrown', async () => {
+  await writeFile(file, 'row one\n')
+  const cutBack = Object.assign(new Error('read-only file system'), { code: 'EROFS' })
+  await expect(appendDurably(file, 'row two\n', partialWrite(4, cutBack))).rejects.toMatchObject({ code: 'EIO' })
+  // The partial bytes stay: the next start cuts them off only if they are the last line.
+  expect(await readFile(file, 'utf8')).toBe('row one\nrow ')
+})
+
+test('a delivery that throws is retried on the next tick and delivered once, in order', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  let failed = false
+  const delivered: string[] = []
+  const c = await startChatCapture(
+    page,
+    zoomAdapter,
+    file,
+    async (m) => {
+      if (!failed) {
+        failed = true
+        throw new Error(`cannot show ${m.text}`)
+      }
+      delivered.push(m.key)
+    },
+    { pollMs: 200, emit }
+  )
+  await expect.poll(() => delivered.length).toBe(4)
+  await c.stop()
+  expect(delivered).toEqual(await keys())
+  expect(errors()).toEqual([{ where: 'chat', step: 'deliver', code: null, message: 'delivery failed' }])
+  // The failure's text is chat text and must not reach an event.
+  expect(JSON.stringify(events)).not.toContain('Attendance')
+})
+
+test('a restart replays the rows on disk through onReplay before the first poll, and does not deliver them', async ({
+  page
+}) => {
+  await page.goto('/zoom-meeting-top.html?seed=2')
+  const a = await startChatCapture(page, zoomAdapter, file, async () => {}, { pollMs: 200, emit })
+  await expect.poll(async () => (await keys()).length).toBe(2)
+  await a.stop()
+  const before = await readFile(file, 'utf8')
+
+  await page.reload()
+  const log: string[] = []
+  const replayed: string[] = []
+  const delivered: string[] = []
+  const reading: PlatformAdapter = {
+    ...zoomAdapter,
+    readChat: async (p, cursor) => {
+      log.push('read')
+      return zoomAdapter.readChat(p, cursor)
+    }
+  }
+  const b = await startChatCapture(
+    page,
+    reading,
+    file,
+    async (m) => {
+      delivered.push(m.key)
+    },
+    {
+      pollMs: 200,
+      emit,
+      onReplay: async (m) => {
+        replayed.push(m.key)
+        log.push(`replay ${m.key}`)
+      }
+    }
+  )
+  expect(b.loaded.map((m) => m.key)).toEqual(await keys())
+  await expect.poll(() => log.includes('read')).toBe(true)
+  await b.stop()
+  expect(log.slice(0, 3)).toEqual([`replay ${replayed[0]}`, `replay ${replayed[1]}`, 'read'])
+  expect(replayed).toEqual(await keys())
+  expect(delivered).toEqual([])
+  expect(await readFile(file, 'utf8')).toBe(before)
+  expect(errors()).toEqual([])
+})
+
+test('a row that is not JSON fails the start with a fixed message and no row text', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  await writeFile(file, '{"key":"Student A|8:42\n{"key":"Dr Lecturer"}\n')
+  await expect(startChatCapture(page, zoomAdapter, file, async () => {}, { pollMs: 200, emit })).rejects.toThrow(
+    'chat.jsonl has a row that is not valid JSON'
+  )
+  expect(errors()).toEqual([
+    { where: 'chat', step: 'load', code: null, message: 'chat.jsonl has a row that is not valid JSON' }
+  ])
+  expect(JSON.stringify(events)).not.toContain('Student A')
 })
