@@ -1056,10 +1056,12 @@ git commit -m "feat(web): provision ntfy and ping copy"
 
 ### Task 8: AI keys page
 
+> Non-UI parts only. The page (`app/ai-keys/page.tsx`, its copy and the `'use server'` wrappers that call `requireMember()`) is deferred at the Figma gate. Tests live in `packages/web/test/` (COMMON), not beside the sources.
+
 **Files:**
 
 - Create: `packages/web/db/job-config.ts`, `packages/web/lib/ai-keys.ts`, `packages/web/app/ai-keys/page.tsx`, `packages/web/app/ai-keys/actions.ts`
-- Test: `packages/web/db/job-config.test.ts`, `packages/web/lib/ai-keys.test.ts`
+- Test: `packages/web/test/job-config.test.ts`, `packages/web/test/ai-keys.test.ts`
 
 **Interfaces:**
 
@@ -1088,7 +1090,7 @@ Page copy (exact):
 
 The page never shows a saved key back; it shows "Saved" with the last test time and result, and a "Test again" button.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/db/job-config.test.ts
@@ -1163,7 +1165,7 @@ test('the key is never logged', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/db/job-config.test.ts packages/web/lib/ai-keys.test.ts`
 
@@ -1171,13 +1173,13 @@ Expected: FAIL with `Cannot find module './job-config'`.
 
 - [ ] **Step 3: Implement `aiConfigFor`, the key functions and the page**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/db/job-config.test.ts packages/web/lib/ai-keys.test.ts`
 
 Expected: PASS, `5 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/db/job-config* packages/web/lib/ai-keys* packages/web/app/ai-keys

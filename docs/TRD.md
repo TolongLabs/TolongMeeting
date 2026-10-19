@@ -729,6 +729,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - tables: `signin_sessions` and the Better Auth `auth_*` tables;
   - environment: `TM_PROFILE_KEY_FILE`, `TM_BACKUP_REMOTE`, `RCLONE_CONFIG`, `POSTGRES_PASSWORD`;
   - data: `recording/meeting.mp4`, a remux of `meeting.mkv` for the website's player.
+  - AI keys: `packages/web/db/job-config.ts` (`DEFAULT_MODELS`, `aiConfigFor`, `WORKSPACE_ID_PATTERN`); `packages/web/lib/ai-keys.ts` (`MODELSCOPE_BASE_URL`, `AiKeysInputSchema`, `KeyTestResult`, `KeyTester`, `KeyDeps`, `keyTester`, `saveAiKeys`, `testAiKeys`, `hasWorkingKey`); `packages/web/app/ai-keys/actions.ts` (`saveKeysFor`, `testKeysFor`, plain functions until `requireMember()` lands with Task 5);
   - member scope: `packages/web/lib/scope.ts` with `createScope(db, memberId): MemberScope`, `scopeForAuthUser(authUserId): Promise<MemberScope | null>`, and the types `MemberScope`, `MemberOwnedTable` and `MemberRow` (parenthesises a caller's `where` before adding `member_id = ?`; `updateMe` keeps only `displayName`, `timeZone`, `ntfyTopic` and `ntfyTokenEnc`; `artefactFile` accepts only a UUID occurrence id and returns a path inside `<TM_DATA_ROOT>/occurrences/<id>/`, and the serving route must `realpath`-check it for symlinks).
 - **02 link watchers**:
   - core: `normaliseDiscordChannelUrl`, `WatchGate` and its gate functions, `SpecEnv.watchGate`, `StateEventData.link`;
