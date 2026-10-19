@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, notInArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { ACCOUNT_KINDS, type AccountKind } from '@tm/core/control'
-import { identities, profiles, RUN_LOCATIONS, timetableEntries } from '../db/schema'
+import { safeDbError } from '../db/errors'
+import { identities, OCCURRENCE_STATES, occurrences, profiles, RUN_LOCATIONS, timetableEntries } from '../db/schema'
 import type { MemberScope } from './scope'
 
 export type IdentityRow = typeof identities.$inferSelect
@@ -35,14 +36,35 @@ const ACCOUNT_LABELS: Record<AccountKind, string> = {
 const blankAsAbsent = (value: unknown) => (value === '' ? undefined : value)
 const DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 
+/** C0 and C1 control characters, NUL included. Free text never carries them: Postgres refuses NUL, and they forge log lines. */
+export const CONTROL_CHARACTER = /\p{Cc}/u
+export const NO_CONTROL_MESSAGE = 'Remove control characters such as tabs, line breaks or NUL bytes.'
+export const noControlCharacters = (value: string) => !CONTROL_CHARACTER.test(value)
+
+/** Occurrence states that are finished. Every other state (including any added later) still holds the identity. */
+const FINISHED_STATES: (typeof OCCURRENCE_STATES)[number][] = [
+  'no_link',
+  'denied',
+  'left_by_member',
+  'completed',
+  'skipped_capacity',
+  'skipped_identity_clash',
+  'skipped_pc_offline',
+  'failed',
+  'deleted'
+]
+
 export const IdentityInputSchema = z
   .object({
-    name: z.string().trim().min(1).max(40),
+    name: z.string().trim().min(1).max(40).refine(noControlCharacters, NO_CONTROL_MESSAGE),
     runLocation: z.enum(RUN_LOCATIONS).refine((value) => value === 'server', {
       message: 'Only "Server" is available until run locations are added.'
     }),
-    zoomGuestName: z.string().trim().min(1).max(64),
-    orgName: z.preprocess(blankAsAbsent, z.string().trim().min(1).max(100).optional()),
+    zoomGuestName: z.string().trim().min(1).max(64).refine(noControlCharacters, NO_CONTROL_MESSAGE),
+    orgName: z.preprocess(
+      blankAsAbsent,
+      z.string().trim().min(1).max(100).refine(noControlCharacters, NO_CONTROL_MESSAGE).optional()
+    ),
     orgEmailDomain: z.preprocess(
       blankAsAbsent,
       z
@@ -84,12 +106,16 @@ async function assertNameFree(scope: MemberScope, name: string, exceptId?: strin
 /** Creates an identity for the member and its profile. */
 export async function createIdentity(scope: MemberScope, input: unknown): Promise<IdentityRow> {
   const value = parseInput(input)
-  return scope.transaction(async (s) => {
-    await assertNameFree(s, value.name)
-    const identity = await s.insert(identities, settings(value))
-    await s.insert(profiles, { identityId: identity.id })
-    return identity
-  })
+  try {
+    return await scope.transaction(async (s) => {
+      await assertNameFree(s, value.name)
+      const identity = await s.insert(identities, settings(value))
+      await s.insert(profiles, { identityId: identity.id })
+      return identity
+    })
+  } catch (e) {
+    throw safeDbError(e)
+  }
 }
 
 /** The member's identities, oldest first. */
@@ -101,26 +127,41 @@ export async function listIdentities(scope: MemberScope): Promise<IdentityRow[]>
 /** Replaces an identity's settings. Only the member's own identities can be changed. */
 export async function updateIdentity(scope: MemberScope, id: string, input: unknown): Promise<void> {
   const value = parseInput(input)
-  await scope.transaction(async (s) => {
-    await assertNameFree(s, value.name, id)
-    const changed = await s.update(identities, settings(value), eq(identities.id, id))
-    if (changed === 0) throw new Error('No such identity.')
-  })
+  try {
+    await scope.transaction(async (s) => {
+      await assertNameFree(s, value.name, id)
+      const changed = await s.update(identities, settings(value), eq(identities.id, id))
+      if (changed === 0) throw new Error('No such identity.')
+    })
+  } catch (e) {
+    throw safeDbError(e)
+  }
 }
 
 /**
- * Deletes an identity. Timetable entries that use it block the delete (the `restrict` foreign key is the backstop), and so
- * does a profile that a meeting or sign-in holds.
+ * Deletes an identity. Refused while any of these holds: a timetable entry uses it (the `restrict` foreign key is the
+ * backstop); an occurrence is not finished (every state except `FINISHED_STATES`: a meeting still to start, running,
+ * uploading, transcribing or summarising); or a meeting or sign-in holds its profile. Finished occurrences don't block:
+ * the delete cascades to them, with their recordings and summaries.
  */
 export async function deleteIdentity(scope: MemberScope, id: string): Promise<void> {
-  await scope.transaction(async (s) => {
-    const [profile] = await s.select(profiles, eq(profiles.identityId, id))
-    if (!profile) throw new Error('No such identity.')
-    const [entry] = await s.select(timetableEntries, eq(timetableEntries.identityId, id))
-    if (entry) throw new InUseError('This identity has timetable entries.')
-    if (profile.heldBy !== null) throw new InUseError('This identity is in use by a meeting or a sign-in.')
-    await s.remove(identities, eq(identities.id, id))
-  })
+  try {
+    await scope.transaction(async (s) => {
+      const [profile] = await s.select(profiles, eq(profiles.identityId, id))
+      if (!profile) throw new Error('No such identity.')
+      const [entry] = await s.select(timetableEntries, eq(timetableEntries.identityId, id))
+      if (entry) throw new InUseError('This identity has timetable entries.')
+      const [open] = await s.select(
+        occurrences,
+        and(eq(occurrences.identityId, id), notInArray(occurrences.state, FINISHED_STATES))
+      )
+      if (open) throw new InUseError('This identity has a meeting or sign-in that has not finished.')
+      if (profile.heldBy !== null) throw new InUseError('This identity is in use by a meeting or a sign-in.')
+      await s.remove(identities, eq(identities.id, id))
+    })
+  } catch (e) {
+    throw safeDbError(e)
+  }
 }
 
 /** Each account the identity can use, in `ACCOUNT_KINDS` order. `null` means never verified or never signed in. */

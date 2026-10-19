@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import type { Db } from '../db'
+import { sql } from 'drizzle-orm'
+import { inspect } from 'node:util'
+import { details, type Db } from '../db'
+import { DbError } from '../db/errors'
 import { createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
 import { BUILTIN_DETAILS, DetailsInputSchema, loadDetails, saveDetails } from '../lib/details'
+import { InputError } from '../lib/identities'
 import { createScope, type MemberScope } from '../lib/scope'
+import { expectNotLogged } from './no-log'
 
 let db: Db
 
@@ -34,16 +39,17 @@ test('details and mention names round-trip with label variants', async () => {
     ],
     mentionNames: ['Short Name', 'S0000000']
   })
-  expect(await loadDetails(scope)).toEqual({
-    details: [
-      {
-        key: 'student_id',
-        value: 'S0000000',
-        labels: ['Matric No.', 'No. Matrik']
-      }
-    ],
-    mentionNames: ['Short Name', 'S0000000']
-  })
+  const loaded = await loadDetails(scope)
+  expect(loaded.details).toEqual([
+    {
+      key: 'student_id',
+      value: 'S0000000',
+      labels: ['Matric No.', 'No. Matrik']
+    }
+  ])
+  // Mention names have no position column yet, so they come back in id order: stable, not the typed order.
+  expect([...loaded.mentionNames].sort()).toEqual(['S0000000', 'Short Name'])
+  expect(await loadDetails(scope)).toEqual(loaded)
 })
 
 test('duplicate labels and a malformed university email are refused', () => {
@@ -155,6 +161,88 @@ test('a save refused by validation leaves the saved details as they were', async
     saveDetails(scope, { details: [{ key: 'programme', value: '', labels: [] }], mentionNames: [] })
   ).rejects.toThrow()
   expect((await loadDetails(scope)).details).toEqual([{ key: 'programme', value: 'Law', labels: [] }])
+})
+
+/** The text a logger would print for an error: its message, stack, own properties and cause. */
+function errorText(error: unknown): string {
+  return inspect(error, { showHidden: true, depth: 10 })
+}
+
+/** Resolves once a query is blocked on a row lock, so the test knows the second save has reached its insert. */
+async function untilBlockedOnLock(): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const result = await db.execute(
+      sql`select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`
+    )
+    if (Number(result.rows[0]?.waiting) > 0) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error('The second save never waited on the first')
+}
+
+test('a NUL byte in a saved value is refused and the value is never echoed', async () => {
+  const scope = await bare()
+  let error: unknown
+  await expectNotLogged('Secret', async () => {
+    error = await saveDetails(scope, {
+      details: [{ key: 'programme', value: 'Lo\u0000Secret', labels: [] }],
+      mentionNames: []
+    }).catch((e: unknown) => e)
+  })
+  expect(error).toBeInstanceOf(InputError)
+  expect(errorText(error)).not.toContain('Secret')
+  expect((await loadDetails(scope)).details).toEqual([])
+})
+
+test('control characters are refused in every free-text field', () => {
+  for (const input of [
+    { details: [{ key: 'programme', value: 'Law\nSchool', labels: [] }], mentionNames: [] },
+    { details: [{ key: 'programme', value: 'Law', labels: ['Course\u0001'] }], mentionNames: [] },
+    { details: [], mentionNames: ['Lee\u009f'] }
+  ]) {
+    expect(DetailsInputSchema.safeParse(input).success).toBe(false)
+  }
+})
+
+test('a concurrent duplicate (member, key) save fails with a code only, never the saved values', async () => {
+  const { memberId } = await seedMember(db, { full: false })
+  const scope = createScope(db, memberId)
+  const HELD = 'HeldSecret'
+  const SAVED = 'SavedSecret'
+  let rowInserted!: () => void
+  const inserted = new Promise<void>((resolve) => (rowInserted = resolve))
+  let release!: () => void
+  const released = new Promise<void>((resolve) => (release = resolve))
+  // A transaction on another connection inserts (member, 'programme') and holds it uncommitted.
+  const holder = db.transaction(async (tx) => {
+    await tx.insert(details).values({ memberId, key: 'programme', value: HELD, labels: [], position: 0 })
+    rowInserted()
+    await released
+  })
+  await inserted
+  let error: unknown
+  await expectNotLogged(HELD, () =>
+    expectNotLogged(SAVED, async () => {
+      const saving = saveDetails(scope, {
+        details: [{ key: 'programme', value: SAVED, labels: [] }],
+        mentionNames: []
+      }).then(
+        () => undefined,
+        (e: unknown) => e
+      )
+      try {
+        await untilBlockedOnLock()
+      } finally {
+        release()
+        await holder
+      }
+      error = await saving
+    })
+  )
+  expect(error).toBeInstanceOf(DbError)
+  expect((error as DbError).code).toBe('23505')
+  expect((error as Error).cause).toBeUndefined()
+  for (const secret of [HELD, SAVED]) expect(errorText(error)).not.toContain(secret)
 })
 
 test('one member never sees another member’s details', async () => {

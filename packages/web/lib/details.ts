@@ -1,7 +1,8 @@
 import { isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
+import { safeDbError } from '../db/errors'
 import { details, mentionNames } from '../db/schema'
-import { InputError } from './identities'
+import { InputError, NO_CONTROL_MESSAGE, noControlCharacters } from './identities'
 import type { MemberScope } from './scope'
 
 export const BUILTIN_DETAILS = [
@@ -22,13 +23,13 @@ const MAX_DETAILS = 50
 /** True when no two strings match ignoring case. */
 const uniqueIgnoringCase = (values: string[]) => new Set(values.map((v) => v.toLowerCase())).size === values.length
 
-const LabelSchema = z.string().trim().min(1).max(120)
+const LabelSchema = z.string().trim().min(1).max(120).refine(noControlCharacters, NO_CONTROL_MESSAGE)
 
 const DetailSchema = z.object({
   key: z
     .string()
     .regex(/^[a-z0-9_]{1,40}$/, { message: 'A detail key uses lower-case letters, digits and underscores.' }),
-  value: z.string().trim().min(1).max(200),
+  value: z.string().trim().min(1).max(200).refine(noControlCharacters, NO_CONTROL_MESSAGE),
   labels: z
     .array(LabelSchema)
     .max(10)
@@ -51,27 +52,38 @@ export const DetailsInputSchema = z.object({
       }
     }),
   mentionNames: z
-    .array(z.string().trim().min(1).max(60))
+    .array(z.string().trim().min(1).max(60).refine(noControlCharacters, NO_CONTROL_MESSAGE))
     .max(20)
     .refine(uniqueIgnoringCase, { message: 'Each name you answer to must be different.' })
 })
 
-/** Replaces the member's details and mention names. Saved values are member data: they are never logged. */
+/**
+ * Replaces the member's details and mention names. Saved values are member data: they are never logged, and a database
+ * failure is rethrown through `safeDbError`, which keeps no SQL, parameters or values.
+ */
 export async function saveDetails(scope: MemberScope, input: unknown): Promise<void> {
   const parsed = DetailsInputSchema.safeParse(input)
   if (!parsed.success) throw new InputError(parsed.error.issues[0]!.message)
   const { details: list, mentionNames: names } = parsed.data
-  await scope.transaction(async (s) => {
-    await s.remove(details, isNotNull(details.id))
-    await s.remove(mentionNames, isNotNull(mentionNames.id))
-    for (const [position, detail] of list.entries()) {
-      await s.insert(details, { key: detail.key, value: detail.value, labels: detail.labels, position })
-    }
-    for (const name of names) await s.insert(mentionNames, { name })
-  })
+  try {
+    await scope.transaction(async (s) => {
+      await s.remove(details, isNotNull(details.id))
+      await s.remove(mentionNames, isNotNull(mentionNames.id))
+      for (const [position, detail] of list.entries()) {
+        await s.insert(details, { key: detail.key, value: detail.value, labels: detail.labels, position })
+      }
+      for (const name of names) await s.insert(mentionNames, { name })
+    })
+  } catch (e) {
+    throw safeDbError(e)
+  }
 }
 
-/** The member's saved details in the order they were saved, and their mention names. */
+/**
+ * The member's saved details in the order they were saved, and their mention names. Mention names have no position
+ * column yet, so they come back in id order: stable, but not the order they were typed in. Add a position column to
+ * keep the member's order.
+ */
 export async function loadDetails(scope: MemberScope): Promise<{ details: SavedDetail[]; mentionNames: string[] }> {
   const rows = await scope.select(details)
   const names = await scope.select(mentionNames)
@@ -79,6 +91,6 @@ export async function loadDetails(scope: MemberScope): Promise<{ details: SavedD
     details: rows
       .sort((a, b) => a.position - b.position)
       .map((row) => ({ key: row.key, value: row.value, labels: row.labels })),
-    mentionNames: names.map((row) => row.name)
+    mentionNames: names.sort((a, b) => a.id.localeCompare(b.id)).map((row) => row.name)
   }
 }

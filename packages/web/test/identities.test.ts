@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import { identities, profiles, timetableEntries, type Db } from '../db'
+import { identities, occurrences, profiles, timetableEntries, type Db } from '../db'
 import { createTestDb, dropAllTestDbs, seedMember, withEntry } from '../db/testing'
 import {
   accountStatus,
@@ -12,7 +12,7 @@ import {
   updateIdentity
 } from '../lib/identities'
 import { createScope, type MemberScope } from '../lib/scope'
-import { createIdentityFor, deleteIdentityFor } from '../app/accounts/actions'
+import { createIdentityFor, deleteIdentityFor } from '../lib/action-results'
 
 let db: Db
 
@@ -59,6 +59,17 @@ describe('IdentityInputSchema', () => {
     expect(IdentityInputSchema.safeParse({ ...base, orgName: '', orgEmailDomain: '' }).success).toBe(true)
     expect(IdentityInputSchema.safeParse({ ...base, orgName: 'Uni' }).success).toBe(false)
     expect(IdentityInputSchema.safeParse({ ...base, orgEmailDomain: 'uni.edu.my' }).success).toBe(false)
+  })
+
+  test('free-text identity fields refuse control characters', () => {
+    for (const patch of [
+      { name: 'Wo\u0000rk' },
+      { name: 'Wo\trk' },
+      { zoomGuestName: 'A\u0085' },
+      { orgName: 'Uni\u0007', orgEmailDomain: 'uni.edu' }
+    ]) {
+      expect(IdentityInputSchema.safeParse({ ...WORK, ...patch }).success).toBe(false)
+    }
   })
 
   test('the organisation email domain is a bare lower-cased domain', () => {
@@ -109,6 +120,39 @@ test("an identity in use can't be deleted", async () => {
   await expect(deleteIdentity(scope, identityId)).rejects.toThrow('This identity is in use by a meeting or a sign-in.')
   await expect(deleteIdentity(scope, identityId)).rejects.toBeInstanceOf(InUseError)
   expect(await scope.select(identities, eq(identities.id, identityId))).toHaveLength(1)
+})
+
+/** An occurrence with no timetable entry (its entry was deleted), so only its state can hold the identity. */
+async function addOccurrence(
+  scope: MemberScope,
+  identityId: string,
+  state: 'scheduled' | 'post_processing' | 'completed'
+) {
+  await scope.insert(occurrences, {
+    identityId,
+    entryName: 'Past lecture',
+    entryType: 'lecture',
+    transcription: 'live',
+    scheduledStart: new Date('2026-10-21T06:00:00Z'),
+    scheduledEnd: new Date('2026-10-21T08:00:00Z'),
+    deleteAfter: new Date('2026-11-21T06:00:00Z'),
+    state
+  })
+}
+
+test('an identity with an occurrence that has not finished is kept; a finished one does not block', async () => {
+  for (const state of ['scheduled', 'post_processing'] as const) {
+    const { scope, identityId } = await bare()
+    await addOccurrence(scope, identityId, state)
+    await expect(deleteIdentity(scope, identityId)).rejects.toThrow(
+      'This identity has a meeting or sign-in that has not finished.'
+    )
+    expect(await scope.select(identities, eq(identities.id, identityId))).toHaveLength(1)
+  }
+  const done = await bare()
+  await addOccurrence(done.scope, done.identityId, 'completed')
+  await deleteIdentity(done.scope, done.identityId)
+  expect(await done.scope.select(identities, eq(identities.id, done.identityId))).toHaveLength(0)
 })
 
 test('an identity with timetable entries is refused with a typed error and never cascades', async () => {
