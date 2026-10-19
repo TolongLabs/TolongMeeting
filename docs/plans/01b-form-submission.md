@@ -700,25 +700,29 @@ export interface PagePlan {
 }
 
 // packages/worker/src/forms/rules.ts
-export function normaliseText(s: string): string // NFKC, lower case, each run of characters other than letters and digits becomes one space, trimmed
+export function normaliseText(s: string): string // NFKC, drop \p{Cf} and \p{M}, lower case, each run of characters other than letters and digits becomes one space, trimmed
 export function looksLikeAttendance(page: FormPage, keywords: string[]): boolean
 export function isPointsLine(line: string): boolean
 export function orgRestricted(r: Restriction, org: OrgConfig | null): boolean
 export function confirmsAttendance(option: string): boolean
 ```
 
-Pinned patterns, applied to `normaliseText` output except `POINTS_LINE`, which takes one trimmed line of a question's text:
+Pinned patterns, applied to `normaliseText` output. `POINTS_LINE` is also applied to `normaliseText` output, so `isPointsLine` normalises its one line of a question's text first:
 
 ```ts
 const ATTENDANCE_TERMS = /\b(attendance|kehadiran|hadir|register|sign in sheet)\b/
-const POINTS_LINE =
-  /^\(?\d+(\.\d+)?\s*(point|points|mark|marks|mata|markah)\)?$|^(points|marks|mata|markah)\s*:\s*\d+(\.\d+)?$/i
+const NUMBER = String.raw`\d+(?: \d+)?`
+const UNIT = String.raw`(?:pts?|points?|marks?|mata|markah)`
+const POINTS_LINE = new RegExp(
+  String.raw`^(?:${NUMBER} ${UNIT}|(?:points?|marks?|mata|markah|score) ${NUMBER}(?: (?:of |out of )?${NUMBER})?|total ${NUMBER} ${UNIT})$`
+)
 const CONFIRM_POSITIVE = /\b(present|presence|attend|attending|attended|attendance|hadir|kehadiran)\b/
-const CONFIRM_NEGATIVE = /\b(not|no|absent|tidak|tak|bukan|belum|cannot|unable|never|can t|won t|didn t|don t)\b/
+const CONFIRM_NEGATIVE =
+  /\b(not|no|non|neither|nor|never|absent|unavailable|unable|unattend\w*|cannot|cant|dont|wont|didnt|isnt|wasnt|arent|werent|havent|hasnt|couldnt|wouldnt|tidak|tak|tiada|bukan|belum|takde)\b|\bt\b/
 ```
 
-- `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a non-empty normalised entry keyword. Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
-- `confirmsAttendance`: matches `CONFIRM_POSITIVE` and not `CONFIRM_NEGATIVE`.
+- `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a normalised entry keyword of 3 or more characters as a whole word or phrase (`bm` never matches `submit it`). Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
+- `confirmsAttendance`: matches `CONFIRM_POSITIVE` and not `CONFIRM_NEGATIVE`. `CONFIRM_NEGATIVE` also matches a lone `t`, which is what an apostrophe leaves behind (`can't` -> `can t`, `T/Hadir` -> `t hadir`).
 - `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms' evidence is its organisation-only notice.
 
 - [x] **Step 1: Write the failing tests**
@@ -762,18 +766,65 @@ test('attendance terms in English and Malay, whole words only', () => {
   expect(looksLikeAttendance(page({ description: 'Isi untuk kehadiran' }), [])).toBe(true)
   expect(looksLikeAttendance(page({ title: 'Course registration feedback' }), [])).toBe(false)
   expect(looksLikeAttendance(page({ title: 'ABC1234 check-in' }), ['abc1234 check'])).toBe(true)
+  expect(looksLikeAttendance(page({ title: 'Week 5' }), ['eek'])).toBe(false)
+  expect(looksLikeAttendance(page({ title: 'Submit it' }), ['bm', 'it', 'mit'])).toBe(false)
 })
 
 test('points lines mark a quiz; labels that mention points do not', () => {
-  for (const l of ['1 point', '2 points', '(1 point)', 'Points: 5', '1 mata']) expect(isPointsLine(l)).toBe(true)
-  expect(isPointsLine('Explain 2 points from today')).toBe(false)
+  for (const l of [
+    '1 point',
+    '2 points',
+    '(1 point)',
+    'Points: 5',
+    '1 mata',
+    '1 pt',
+    '2 pts',
+    '[2 marks]',
+    '1 mark *',
+    'Points: 5 / 10',
+    'Score: 5',
+    'Total: 10 points',
+    '1.5 points',
+    '２ points',
+    '（1 point）'
+  ])
+    expect(isPointsLine(l)).toBe(true)
+  for (const l of ['Explain 2 points from today', 'Presentation', 'Presenter: 5 points', 'Points', 'Total: 10 items'])
+    expect(isPointsLine(l)).toBe(false)
 })
 
 test('confirmation options', () => {
   for (const o of ['Present', 'Hadir', 'I confirm I am attending this class', 'Saya hadir', 'Present (late)'])
     expect(confirmsAttendance(o)).toBe(true)
-  for (const o of ['Absent', 'Not present', 'Tidak hadir', "I can't attend", 'Presentation', 'Yes'])
+  for (const o of [
+    'Absent',
+    'Not present',
+    'Tidak hadir',
+    "I can't attend",
+    'Presentation',
+    'Yes',
+    'I cant attend',
+    'I dont attend',
+    'Wont attend',
+    'I didnt attend',
+    "I wasn't present",
+    "Isn't attending",
+    'Isnt attending',
+    "Aren't present",
+    'Non-attending',
+    'Neither present',
+    'Tiada kehadiran',
+    'T/Hadir',
+    'I am unavailable to attend',
+    'Unattended',
+    'tak hadir',
+    'bukan hadir',
+    'belum hadir'
+  ])
     expect(confirmsAttendance(o)).toBe(false)
+  // Soft hyphens, zero-width characters and decomposed accents cannot split a negation.
+  expect(confirmsAttendance('Ti\u00ADdak hadir')).toBe(false)
+  expect(confirmsAttendance('n\u0338ot present')).toBe(false)
 })
 
 test('organisation evidence', () => {

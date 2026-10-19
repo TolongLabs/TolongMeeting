@@ -41,18 +41,42 @@ test('attendance terms in English and Malay, whole words only', () => {
   expect(looksLikeAttendance(page({ description: 'Isi untuk kehadiran' }), [])).toBe(true)
   expect(looksLikeAttendance(page({ title: 'Course registration feedback' }), [])).toBe(false)
   expect(looksLikeAttendance(page({ title: 'ABC1234 check-in' }), ['abc1234 check'])).toBe(true)
+  // Keywords match whole words or phrases of the normalised text, never substrings.
+  expect(looksLikeAttendance(page({ title: 'Week 5' }), ['eek'])).toBe(false)
+  expect(looksLikeAttendance(page({ title: 'Week 5' }), ['week 5'])).toBe(true)
 })
 
-test('only page 1 is judged, and blank entry keywords never match', () => {
+test('only page 1 is judged, and blank or short entry keywords never match', () => {
   expect(() => looksLikeAttendance(page({ index: 2, title: 'Attendance' }), [])).toThrow()
   expect(looksLikeAttendance(page({ title: 'Course feedback' }), ['', '  -- '])).toBe(false)
+  expect(looksLikeAttendance(page({ title: 'Submit it' }), ['bm', 'it', 'mit'])).toBe(false)
 })
 
 test('points lines mark a quiz; labels that mention points do not', () => {
-  for (const l of ['1 point', '2 points', '(1 point)', 'Points: 5', '1 mata', '  2 points  ']) {
+  for (const l of [
+    '1 point',
+    '2 points',
+    '(1 point)',
+    'Points: 5',
+    '1 mata',
+    '  2 points  ',
+    '1 pt',
+    '2 pts',
+    '[2 marks]',
+    '1 mark *',
+    'Points: 5 / 10',
+    'Score: 5',
+    'Total: 10 points',
+    '1.5 points',
+    '２ points',
+    '（1 point）',
+    'Markah: 4'
+  ]) {
     expect(isPointsLine(l)).toBe(true)
   }
-  expect(isPointsLine('Explain 2 points from today')).toBe(false)
+  for (const l of ['Explain 2 points from today', 'Presentation', 'Presenter: 5 points', 'Points', 'Total: 10 items']) {
+    expect(isPointsLine(l)).toBe(false)
+  }
 })
 
 test('normalisation folds width and punctuation, keeps apostrophes as spaces', () => {
@@ -61,10 +85,42 @@ test('normalisation folds width and punctuation, keeps apostrophes as spaces', (
   expect(normaliseText('ＨＡＤＩＲ')).toBe('hadir')
 })
 
+test('normalisation drops format and combining characters before splitting words', () => {
+  expect(normaliseText('Ti­dak hadir')).toBe('tidak hadir')
+  expect(normaliseText('Ti​dak')).toBe('tidak')
+  expect(normaliseText('Presen̈t')).toBe('present')
+  expect(confirmsAttendance('Ti­dak hadir')).toBe(false)
+  expect(confirmsAttendance('n̸ot present')).toBe(false)
+})
+
 test('confirmation options', () => {
   for (const o of ['Present', 'Hadir', 'I confirm I am attending this class', 'Saya hadir', 'Present (late)'])
     expect(confirmsAttendance(o)).toBe(true)
-  for (const o of ['Absent', 'Not present', 'Tidak hadir', "I can't attend", 'Presentation', 'Yes'])
+  for (const o of [
+    'Absent',
+    'Not present',
+    'Tidak hadir',
+    "I can't attend",
+    'Presentation',
+    'Yes',
+    'I cant attend',
+    'I dont attend',
+    'Wont attend',
+    'I didnt attend',
+    "I wasn't present",
+    "Isn't attending",
+    'Isnt attending',
+    "Aren't present",
+    'Non-attending',
+    'Neither present',
+    'Tiada kehadiran',
+    'T/Hadir',
+    'I am unavailable to attend',
+    'Unattended',
+    'tak hadir',
+    'bukan hadir',
+    'belum hadir'
+  ])
     expect(confirmsAttendance(o)).toBe(false)
 })
 
