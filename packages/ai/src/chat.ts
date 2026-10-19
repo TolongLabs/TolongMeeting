@@ -19,6 +19,7 @@ const KEY_STATUSES = [401, 402, 429] as const
 const ERROR_BODY_CHARS = 200
 const RETRY_NOTE = 'Your reply was not valid JSON for the schema. Reply with JSON only.'
 const MALFORMED_REPLY_MESSAGE = 'AI reply had no usable completion text (missing choices or null content)'
+const NOT_JSON_MESSAGE = 'provider reply was not JSON'
 
 const CompletionSchema = z.object({
   choices: z.array(z.object({ message: z.object({ content: z.string() }) })).min(1)
@@ -84,7 +85,12 @@ async function complete(
       const snippet = cfg.apiKey ? body.replaceAll(cfg.apiKey, '[redacted]') : body
       throw httpError(res.status, snippet)
     }
-    raw = await res.json()
+    const text = await res.text()
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      throw new AiError(NOT_JSON_MESSAGE, 502)
+    }
   } catch (e) {
     if (signal.aborted) throw new AiTimeoutError(timeoutMs, { cause: e })
     throw e

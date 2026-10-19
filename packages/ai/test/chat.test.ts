@@ -7,6 +7,7 @@ interface Scripted {
   status: number
   body: unknown
   delayMs: number
+  text?: string
 }
 interface Seen {
   path: string
@@ -25,6 +26,9 @@ function startFake() {
       const next = script.shift()
       if (!next) return new Response('no scripted reply', { status: 599 })
       if (next.delayMs > 0) await Bun.sleep(next.delayMs)
+      if (next.text !== undefined) {
+        return new Response(next.text, { status: next.status, headers: { 'content-type': 'text/plain' } })
+      }
       return Response.json(next.body, { status: next.status })
     }
   })
@@ -54,6 +58,9 @@ function startFake() {
     },
     raw(body: unknown, status = 200) {
       script.push({ status, body, delayMs: 0 })
+    },
+    plain(text: string, status = 200) {
+      script.push({ status, body: null, delayMs: 0, text })
     },
     stop: () => server.stop(true)
   }
@@ -151,6 +158,17 @@ test('a 200 reply without choices raises AiError 502 without the body', async ()
   expect(e.status).toBe(502)
   expect(e.message).not.toContain('sk-test')
   expect(e.message).not.toContain('filtered')
+})
+
+test('a 200 reply whose body is not JSON raises AiError 502 without the body', async () => {
+  fake.plain('oops')
+  const e = await chatText(fake.cfg, 'm', msgs, 5000).catch((x) => x)
+  expect(e).toBeInstanceOf(AiError)
+  expect(e).not.toBeInstanceOf(AiKeyError)
+  expect(e.status).toBe(502)
+  expect(e.message).toBe('provider reply was not JSON')
+  expect(e.message).not.toContain('oops')
+  expect(e.message).not.toContain('sk-test')
 })
 
 test('a 200 reply with null message content raises AiError 502', async () => {
