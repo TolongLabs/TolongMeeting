@@ -70,7 +70,16 @@ test('points lines mark a quiz; labels that mention points do not', () => {
     '1.5 points',
     '２ points',
     '（1 point）',
-    'Markah: 4'
+    'Markah: 4',
+    'Total points: 10',
+    '1 point(s)',
+    '5 out of 10 points',
+    '5 of 10 points',
+    'Poin: 5',
+    '1 poin',
+    'Jumlah markah: 10',
+    'Skor: 5',
+    'pts 5'
   ]) {
     expect(isPointsLine(l)).toBe(true)
   }
@@ -119,7 +128,13 @@ test('confirmation options', () => {
     'Unattended',
     'tak hadir',
     'bukan hadir',
-    'belum hadir'
+    'belum hadir',
+    'Tdk hadir',
+    'Gak hadir',
+    'Ketiadaan kehadiran',
+    'Skipping attendance',
+    'Skip attendance',
+    'Nope attending'
   ])
     expect(confirmsAttendance(o)).toBe(false)
 })

@@ -712,13 +712,14 @@ Pinned patterns, applied to `normaliseText` output. `POINTS_LINE` is also applie
 ```ts
 const ATTENDANCE_TERMS = /\b(attendance|kehadiran|hadir|register|sign in sheet)\b/
 const NUMBER = String.raw`\d+(?: \d+)?`
-const UNIT = String.raw`(?:pts?|points?|marks?|mata|markah)`
+const UNIT = String.raw`(?:pts?|points?|marks?|mata|markah|poin)`
+// "point(s)" normalises to "point s", hence the optional " s" after a unit.
 const POINTS_LINE = new RegExp(
-  String.raw`^(?:${NUMBER} ${UNIT}|(?:points?|marks?|mata|markah|score) ${NUMBER}(?: (?:of |out of )?${NUMBER})?|total ${NUMBER} ${UNIT})$`
+  String.raw`^(?:${NUMBER} ${UNIT}(?: s)?|${NUMBER} (?:out )?of ${NUMBER} ${UNIT}(?: s)?|(?:${UNIT}|score|skor|jumlah markah) ${NUMBER}(?: (?:(?:out )?of )?${NUMBER})?|total ${NUMBER} ${UNIT}|total ${UNIT} ${NUMBER})$`
 )
 const CONFIRM_POSITIVE = /\b(present|presence|attend|attending|attended|attendance|hadir|kehadiran)\b/
 const CONFIRM_NEGATIVE =
-  /\b(not|no|non|neither|nor|never|absent|unavailable|unable|unattend\w*|cannot|cant|dont|wont|didnt|isnt|wasnt|arent|werent|havent|hasnt|couldnt|wouldnt|tidak|tak|tiada|bukan|belum|takde)\b|\bt\b/
+  /\b(not|no|non|neither|nor|never|absent|unavailable|unable|unattend\w*|cannot|cant|dont|wont|didnt|isnt|wasnt|arent|werent|havent|hasnt|couldnt|wouldnt|tidak|tak|tiada|bukan|belum|takde|tdk|gak|ketiadaan|skip|skipping|nope)\b|\bt\b/
 ```
 
 - `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a normalised entry keyword of 3 or more characters as a whole word or phrase (`bm` never matches `submit it`). Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
