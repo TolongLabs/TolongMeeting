@@ -16,7 +16,8 @@ export interface FixtureServer {
     sendCopy: boolean
   }[]
   signedOut: Set<string> // fixture names whose form URL redirects to the provider's sign-in page
-  submitResult: Map<string, 'confirmation' | 'already-responded'>
+  // What formResponse serves: the provider's pages, or (to test an unconfirmed submit) the form again or a captcha
+  submitResult: Map<string, 'confirmation' | 'already-responded' | 'still-form' | 'captcha'>
   delayMs: Map<string, number> // delay before serving a fixture
   onFormLoad: ((fixture: string, count: number) => void) | null
 }
@@ -74,10 +75,13 @@ export async function routeFormFixtures(context: BrowserContext): Promise<Fixtur
       >
       fx.submissions.push({ fixture: name, answers, sendCopy })
       const result = fx.submitResult.get(name) ?? 'confirmation'
-      return fulfil(
-        route,
-        html(await fixtureFile('google', result === 'confirmation' ? 'confirmation.html' : 'already-responded.html'))
-      )
+      const served = {
+        confirmation: 'confirmation.html',
+        'already-responded': 'already-responded.html',
+        'still-form': 'widgets.html',
+        captcha: 'captcha.html'
+      }[result]
+      return fulfil(route, html(await fixtureFile('google', served)))
     }
     if (fx.signedOut.has(name)) {
       const location = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(googleUrl(name))}`

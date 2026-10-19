@@ -10,23 +10,46 @@ const POLL_MS = 100
 const CLOSE_TIMEOUT_MS = 2_000
 const EMAIL = /[^\s@<>()[\]",;:]+@[^\s@<>()[\]",;:]+\.[^\s@<>()[\]",;:]*[^\s@<>()[\]",;:.]/
 
+export type FormStepCode =
+  | 'next_failed' // Next was not clicked, or no new page opened
+  | 'submit_failed' // Submit was NOT clicked, or the form refused it with a validation error: nothing was sent
+  | 'submit_unconfirmed' // Submit WAS clicked and the outcome is unknown: the response may have been recorded
+  | 'dropdown_failed' // a dropdown's options never showed, or the list stayed open
+  | 'not_a_form' // the page is not a form page on a form host (sign-in, captcha, status page, other site)
+
 export class FormStepError extends Error {
   constructor(
-    readonly code: 'next_failed' | 'submit_failed',
-    message: string
+    readonly code: FormStepCode,
+    message: string,
+    cause?: unknown
   ) {
-    super(message)
+    super(message, cause === undefined ? undefined : { cause })
     this.name = 'FormStepError'
   }
 }
 
+export interface DriverTimeouts {
+  stepMs: number // each click, a dropdown's options showing, and Next showing a new page
+  submitMs: number // after the Submit click, waiting for the provider's response page
+}
+
+export const DEFAULT_TIMEOUTS: DriverTimeouts = { stepMs: NEXT_TIMEOUT_MS, submitMs: SUBMIT_TIMEOUT_MS }
+
 export interface FormDriver {
   readonly provider: FormProvider
   pageKind(page: Page): Promise<PageKind>
+  // readPage, fill, next and submit first check that the page is a form on a form host; otherwise FormStepError('not_a_form')
   readPage(page: Page, index: number): Promise<FormPage>
   fill(page: Page, form: FormPage, answers: Answer[]): Promise<void> // also unticks "send me a copy"
-  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error or after 10 s
-  submit(page: Page): Promise<void> // FormStepError('submit_failed') on a validation error; else resolves when pageKind is no longer 'form' or after 15 s
+  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error, a blocked click or after 10 s
+  /**
+   * Resolves only when the provider's response page shows (pageKind 'confirmation' or 'already_answered').
+   * FormStepError('submit_failed'): Submit was not clicked, or the form refused it with a validation error; nothing was sent.
+   * FormStepError('submit_unconfirmed'): Submit WAS clicked and the outcome is unknown (still on the form after 15 s, a
+   * captcha, sign-in or unknown page, or a failed read). The caller MUST treat this as maybe-submitted: record the form
+   * as handled, never retry or call submit again, and ping the member to check.
+   */
+  submit(page: Page): Promise<void>
 }
 
 interface RawQuestion {
@@ -94,17 +117,6 @@ function extractQuestions(elements: Element[], s: QuestionSelectors): RawQuestio
   })
 }
 
-// Runs in the page: the text of each element, by the same rule as an option inside a question.
-function extractTexts(elements: Element[], attrs: string[]): string[] {
-  return elements.map((el) => {
-    for (const attr of attrs) {
-      const value = (el.getAttribute(attr) ?? '').replace(/\s+/g, ' ').trim()
-      if (value !== '') return value
-    }
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
-  })
-}
-
 // Runs in the page: the text and ticked state of each option element.
 function extractStates(elements: Element[], attrs: string[]): { text: string; checked: boolean }[] {
   const texts = elements.map((el) => {
@@ -142,7 +154,16 @@ function stripLabel(raw: RawQuestion): string {
   return label
 }
 
-export function createDriver(provider: FormProvider, map: FormSelectors): FormDriver {
+const isTimeout = (error: unknown) => error instanceof Error && error.name === 'TimeoutError'
+// A read that raced a navigation: the page is moving, so the poll tries again.
+const isNavigating = (error: unknown) => /Execution context was destroyed|detached/i.test(String(error))
+
+export function createDriver(
+  provider: FormProvider,
+  map: FormSelectors,
+  timeouts: Partial<DriverTimeouts> = {}
+): FormDriver {
+  const { stepMs, submitMs } = { ...DEFAULT_TIMEOUTS, ...timeouts }
   const placeholders = new Set(map.listboxPlaceholders.map(normaliseText))
   const visible = (page: Page, selector: string) => page.locator(selector).filter({ visible: true })
   const questions = (page: Page) => visible(page, map.question)
@@ -182,12 +203,24 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
     return 'unknown'
   }
 
-  async function dropdownOptions(page: Page, question: Locator): Promise<string[]> {
-    await question.locator(map.listbox).first().click()
+  // Opens the question's listbox and waits for its options to show: a popup may render after the click.
+  async function openDropdown(page: Page, question: Locator, label: string): Promise<Locator> {
     const options = visible(page, map.listboxOption)
-    const found = (await options.evaluateAll(extractTexts, map.optionTextAttrs)).filter(
-      (text) => text !== '' && !placeholders.has(normaliseText(text))
-    )
+    try {
+      await question.locator(map.listbox).first().click({ timeout: stepMs })
+      await options.first().waitFor({ state: 'visible', timeout: stepMs })
+    } catch (error) {
+      if (!isTimeout(error)) throw error
+      throw new FormStepError('dropdown_failed', `the options of "${label}" did not show`, error)
+    }
+    return options
+  }
+
+  async function dropdownOptions(page: Page, question: Locator, label: string): Promise<string[]> {
+    const options = await openDropdown(page, question, label)
+    const found = (await options.evaluateAll(extractStates, map.optionTextAttrs))
+      .map((state) => state.text)
+      .filter((text) => text !== '' && !placeholders.has(normaliseText(text)))
     await closeDropdown(page)
     return found
   }
@@ -196,7 +229,7 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
     await page.keyboard.press('Escape')
     const deadline = Date.now() + CLOSE_TIMEOUT_MS
     while ((await visible(page, map.listboxOption).count()) > 0) {
-      if (Date.now() > deadline) throw new Error('a dropdown stayed open after Escape')
+      if (Date.now() > deadline) throw new FormStepError('dropdown_failed', 'a dropdown stayed open after Escape')
       await sleep(POLL_MS)
     }
   }
@@ -222,7 +255,14 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
     return { organisation, signedInAs, orgOnly }
   }
 
+  // The driver never types or clicks on a sign-in page, a captcha, a status page or another site.
+  async function assertForm(page: Page): Promise<void> {
+    const kind = await pageKind(page)
+    if (kind !== 'form') throw new FormStepError('not_a_form', `the page is not a form (${kind}) at ${page.url()}`)
+  }
+
   async function readPage(page: Page, index: number): Promise<FormPage> {
+    await assertForm(page)
     const raws = await questions(page).evaluateAll(extractQuestions, selectors)
     const list: FormQuestion[] = []
     for (const [n, raw] of raws.entries()) {
@@ -235,7 +275,7 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
         value = chosen.length > 0 ? chosen : null
       } else if (raw.kind === 'dropdown') {
         value = raw.triggerText === '' || placeholders.has(normaliseText(raw.triggerText)) ? null : raw.triggerText
-        options = await dropdownOptions(page, questions(page).nth(n))
+        options = await dropdownOptions(page, questions(page).nth(n), stripLabel(raw))
       }
       list.push({
         id: `p${index}q${n}`,
@@ -267,8 +307,10 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
     if (question === undefined) throw new Error(`no question ${answer.questionId} on page ${form.index}`)
     const position = Number(/q(\d+)$/.exec(question.id)?.[1])
     const element = questions(page).nth(position)
-    const [live] = await element.locator(map.label).evaluateAll((els) => els.map((el) => (el as HTMLElement).innerText))
-    if (live === undefined || !live.includes(question.label)) {
+    // The same reading as readPage: the stripped label must equal the planned one, and an empty label never matches.
+    const [live] = await element.evaluateAll(extractQuestions, selectors)
+    const liveLabel = live === undefined ? '' : stripLabel(live)
+    if (liveLabel === '' || liveLabel !== question.label || live!.kind !== question.type) {
       throw new Error(`question ${question.id} is not "${question.label}" on the page: the form changed under the fill`)
     }
     if (answer.kind === 'text') {
@@ -282,11 +324,12 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
       return
     }
     if (question.type === 'dropdown') {
-      await element.locator(map.listbox).first().click()
-      const options = visible(page, map.listboxOption)
-      const index = (await options.evaluateAll(extractTexts, map.optionTextAttrs)).indexOf(answer.option)
+      const options = await openDropdown(page, element, question.label)
+      const index = (await options.evaluateAll(extractStates, map.optionTextAttrs)).findIndex(
+        (state) => state.text === answer.option
+      )
       if (index < 0) throw new Error(`question ${question.id} has no option "${answer.option}"`)
-      await options.nth(index).click()
+      await options.nth(index).click({ timeout: stepMs })
       return
     }
     if (question.type !== 'radio' && question.type !== 'checkbox') {
@@ -311,12 +354,13 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
   }
 
   async function fill(page: Page, form: FormPage, answers: Answer[]): Promise<void> {
+    await assertForm(page)
     for (const answer of answers) await fillAnswer(page, form, answer)
     await untickCopy(page)
   }
 
-  const hasError = async (page: Page) =>
-    (await visible(page, map.validationError).filter({ hasText: /\S/ }).count()) > 0
+  // Visible alerts with a message; a validation error shows as one more than before the click.
+  const alertCount = (page: Page) => visible(page, map.validationError).filter({ hasText: /\S/ }).count()
 
   // The labels on show: the validation message sits inside a question, so only labels say the page changed.
   const labels = async (page: Page) =>
@@ -326,33 +370,73 @@ export function createDriver(provider: FormProvider, map: FormSelectors): FormDr
         .evaluateAll((els) => els.map((el) => (el as HTMLElement).innerText))
     ).join('\n')
 
-  async function click(page: Page, selector: string, code: FormStepError['code'], what: string): Promise<void> {
-    const button = visible(page, selector)
-    if ((await button.count()) === 0) throw new FormStepError(code, `no ${what} button on the page`)
-    await button.first().click()
+  async function button(page: Page, selector: string, code: 'next_failed' | 'submit_failed', what: string) {
+    const found = visible(page, selector)
+    if ((await found.count()) === 0) throw new FormStepError(code, `no ${what} button on the page`)
+    return found.first()
   }
 
   async function next(page: Page): Promise<void> {
+    await assertForm(page)
     const before = await labels(page)
-    await click(page, map.nextButton, 'next_failed', 'Next')
-    const deadline = Date.now() + NEXT_TIMEOUT_MS
+    const alertsBefore = await alertCount(page)
+    const target = await button(page, map.nextButton, 'next_failed', 'Next')
+    try {
+      await target.click({ timeout: stepMs })
+    } catch (error) {
+      if (!isTimeout(error)) throw error
+      throw new FormStepError('next_failed', 'the Next button could not be clicked', error)
+    }
+    const deadline = Date.now() + stepMs
     while (Date.now() < deadline) {
-      const now = await labels(page)
-      if (now !== '' && now !== before) return
-      if (await hasError(page)) throw new FormStepError('next_failed', 'the form shows a validation error')
+      try {
+        const now = await labels(page)
+        if (now !== '' && now !== before) return
+        if ((await alertCount(page)) > alertsBefore) {
+          throw new FormStepError('next_failed', 'the form shows a validation error')
+        }
+      } catch (error) {
+        if (!isNavigating(error)) throw error
+      }
       await sleep(POLL_MS)
     }
-    throw new FormStepError('next_failed', `no new page after ${NEXT_TIMEOUT_MS / 1000} s`)
+    throw new FormStepError('next_failed', `no new page after ${stepMs / 1000} s`)
   }
 
   async function submit(page: Page): Promise<void> {
-    await click(page, map.submitButton, 'submit_failed', 'Submit')
-    const deadline = Date.now() + SUBMIT_TIMEOUT_MS
+    await assertForm(page)
+    const alertsBefore = await alertCount(page)
+    const target = await button(page, map.submitButton, 'submit_failed', 'Submit')
+    // A trial click runs every check but the click, so a button that cannot be clicked fails here with nothing sent.
+    try {
+      await target.click({ timeout: stepMs, trial: true })
+    } catch (error) {
+      if (!isTimeout(error)) throw error
+      throw new FormStepError('submit_failed', 'the Submit button could not be clicked', error)
+    }
+    // From here on the response may be on its way: every failure is "unconfirmed", never "failed".
+    try {
+      await target.click({ timeout: stepMs })
+    } catch (error) {
+      throw new FormStepError('submit_unconfirmed', 'the Submit click did not finish cleanly', error)
+    }
+    const deadline = Date.now() + submitMs
+    let last: PageKind | 'reading' = 'reading'
     while (Date.now() < deadline) {
-      if ((await pageKind(page)) !== 'form') return
-      if (await hasError(page)) throw new FormStepError('submit_failed', 'the form shows a validation error')
+      try {
+        last = await pageKind(page)
+        if (last === 'confirmation' || last === 'already_answered') return
+        if (last === 'form' && (await alertCount(page)) > alertsBefore) {
+          throw new FormStepError('submit_failed', 'the form shows a validation error')
+        }
+      } catch (error) {
+        if (error instanceof FormStepError) throw error
+        if (!isNavigating(error))
+          throw new FormStepError('submit_unconfirmed', 'reading the page after Submit failed', error)
+      }
       await sleep(POLL_MS)
     }
+    throw new FormStepError('submit_unconfirmed', `no response page ${submitMs / 1000} s after Submit (last: ${last})`)
   }
 
   return { provider, pageKind, readPage, fill, next, submit }

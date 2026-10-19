@@ -75,7 +75,11 @@ document.addEventListener('click', (event) => {
     target.setAttribute('aria-checked', String(!ticked(target)))
   } else if (role === 'listbox') {
     closeLists()
-    questionOf(target).querySelector('.options').hidden = false
+    const options = questionOf(target).querySelector('.options')
+    // "#options-delay=300" makes the popup render that many ms after the click, as a real dropdown can.
+    const delay = Number(/options-delay=(\d+)/.exec(location.hash)?.[1] ?? 0)
+    if (delay > 0) setTimeout(() => (options.hidden = false), delay)
+    else options.hidden = false
   } else if (role === 'option') {
     const listbox = questionOf(target).querySelector("div[role='listbox']")
     listbox.textContent = target.textContent.trim()
@@ -95,5 +99,12 @@ document.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeLists()
 })
+
+// "#overlay" covers the whole page, as a cookie banner or dialog can, so no button can be clicked.
+if (location.hash.includes('overlay')) {
+  const cover = document.createElement('div')
+  cover.style.cssText = 'position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.4)'
+  document.body.append(cover)
+}
 
 if (location.hash === '#copy-on') document.querySelector(COPY)?.setAttribute('aria-checked', 'true')

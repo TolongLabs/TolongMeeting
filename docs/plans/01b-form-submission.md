@@ -1332,17 +1332,31 @@ export async function loadFormSelectors(
 ): Promise<FormSelectors> // google-forms.json | microsoft-forms.json
 // drivers/driver.ts
 export class FormStepError extends Error {
-  code: 'next_failed' | 'submit_failed'
+  code:
+    | 'next_failed'
+    | 'submit_failed' // Submit not clicked, or refused by a validation error: nothing was sent
+    | 'submit_unconfirmed' // Submit WAS clicked, outcome unknown: maybe submitted
+    | 'dropdown_failed' // a dropdown's options never showed
+    | 'not_a_form' // the page is not a form page on a form host
 }
 export interface FormDriver {
   readonly provider: FormProvider
   pageKind(page: Page): Promise<PageKind>
   readPage(page: Page, index: number): Promise<FormPage>
   fill(page: Page, form: FormPage, answers: Answer[]): Promise<void> // also unticks "send me a copy"
-  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error or after 10 s
-  submit(page: Page): Promise<void> // FormStepError('submit_failed') on a validation error; else resolves when pageKind is no longer 'form' or after 15 s
+  // readPage, fill, next and submit first check pageKind is 'form' on a formHosts host: else FormStepError('not_a_form')
+  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error, a blocked click or after 10 s
+  // Resolves only on the provider's response page (pageKind 'confirmation' or 'already_answered'). 'submit_failed' when Submit
+  // was not clicked or a validation error refused it. 'submit_unconfirmed' once Submit was clicked and nothing confirms it
+  // (still on the form after 15 s, captcha, sign-in, unknown page, failed read): the caller MUST treat it as maybe-submitted,
+  // record the form handled, never retry, and ping the member.
+  submit(page: Page): Promise<void>
 }
-export function createDriver(provider: FormProvider, map: FormSelectors): FormDriver
+export function createDriver(
+  provider: FormProvider,
+  map: FormSelectors,
+  timeouts?: { stepMs?: number; submitMs?: number } // defaults 10 s and 15 s; tests shorten them
+): FormDriver
 // drivers/index.ts
 export async function driverFor(provider: FormProvider): Promise<FormDriver> // loads the map once per provider and caches the driver
 // test/forms/route.ts
@@ -1354,7 +1368,7 @@ export interface FixtureServer {
     sendCopy: boolean
   }[]
   signedOut: Set<string> // fixture names whose form URL redirects to the provider's sign-in page
-  submitResult: Map<string, 'confirmation' | 'already-responded'>
+  submitResult: Map<string, 'confirmation' | 'already-responded' | 'still-form' | 'captcha'> // still-form and captcha test an unconfirmed submit
   delayMs: Map<string, number> // delay before serving a fixture
   onFormLoad: ((fixture: string, count: number) => void) | null
 }
@@ -1445,7 +1459,8 @@ Driver rules the tests rely on:
 
 - **`pageKind`**, first match wins: the URL's host is not in `formHosts`, so `signin`; a `captcha` element, so `captcha`; at least one `question` element, so `form`; then the page text contains a `texts` entry, giving `signin`, `already_answered`, `confirmation`, `closed` or `no_access`, in that order; otherwise `unknown`. Page texts are only consulted when no questions show, so form content can't fake a status page.
 - **`readPage`**: the type comes from the first input kind found inside the question; `unsupported` wins. The label is the `label` text minus the required marker's text and any points line. `quiz` is true when any line of a question's text passes `isPointsLine`. `signedInAs` is the first email address inside `accountLine`, `organisation` is the `orgFooterPattern` capture inside `orgFooter`, and `orgOnly` is true when an `orgOnlyTexts` entry is inside `orgOnlyNotice`; all three come only from those elements.
-- **`fill`**: types text with `locator.fill`, clicks a radio or checkbox option only if it isn't already chosen, opens the listbox and clicks the `listboxOption` whose text equals the option, and clicks `sendCopy` if it is ticked.
+- **`fill`**: types text with `locator.fill`, clicks a radio or checkbox option only if it isn't already chosen, opens the listbox, waits for the first `listboxOption` to show (`dropdown_failed` after the step timeout) and clicks the one whose text equals the option, and clicks `sendCopy` if it is ticked. Before each answer it re-reads the question and requires its stripped label to equal the planned one exactly (an empty label never matches).
+- **`next` and `submit`**: clicks carry an explicit timeout; a Next click that times out is `next_failed`. Submit is trial-clicked first (a timeout there is `submit_failed`, nothing sent); once the real click has happened every failure is `submit_unconfirmed`. A validation error is an alert count above the count before the click.
 
 Google fixtures (`packages/worker/test/fixtures/forms/google/`). Every page uses the map's DOM and loads `fixture.js`, which: toggles `aria-checked` on radio (exclusive within its question) and checkbox clicks; opens the listbox on click and sets its text from the clicked option; on Next or Submit puts a `div[role='alert']` "This is a required question." under each empty required question and stops; on Next shows the next `.page`; on Submit posts the field `answers`, a JSON `{ answers: { <label>: string | string[] }, sendCopy: boolean }` of the answered questions, to `formResponse` beside `viewform`.
 

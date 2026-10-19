@@ -174,7 +174,46 @@ for (const c of CASES)
       }
       fx.signedOut.add('attendance')
       await page.goto(c.url('attendance'))
+      await page.waitForURL(/accounts\.google\.com/)
       expect(await driver.pageKind(page)).toBe('signin')
+    })
+
+    test('a dropdown whose popup renders late is still read and chosen', async ({ page }) => {
+      await page.goto(c.url('widgets') + '#options-delay=300')
+      const form = await driver.readPage(page, 1)
+      expect(form.questions[4]!.options).toEqual(['01', '02', '03'])
+      await driver.fill(page, form, [choose('p1q4', '03')])
+      expect((await driver.readPage(page, 1)).questions[4]!.value).toBe('03')
+    })
+
+    test('next() on a Submit-only page and submit() on a Next-only page throw and send nothing', async ({ page }) => {
+      await page.goto(c.url('widgets'))
+      await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
+      await page.goto(c.url('attendance'))
+      await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_failed' })
+      expect(fx.submissions).toHaveLength(0)
+    })
+
+    test('no action runs on a captcha, a sign-in page or another site', async ({ page }) => {
+      await page.goto(c.url('attendance'))
+      const form = await driver.readPage(page, 1)
+      await page.goto(c.url('captcha'))
+      for (const act of [
+        () => driver.readPage(page, 1),
+        () => driver.fill(page, form, [text('p1q0', 'x')]),
+        () => driver.next(page),
+        () => driver.submit(page)
+      ]) {
+        await expect(act()).rejects.toMatchObject({ code: 'not_a_form' })
+      }
+      expect(await page.locator('input').first().inputValue()).toBe('')
+      fx.signedOut.add('attendance')
+      await page.goto(c.url('attendance'))
+      await page.waitForURL(/accounts\.google\.com/)
+      await expect(driver.next(page)).rejects.toMatchObject({ code: 'not_a_form' })
+      await page.goto('about:blank')
+      await expect(driver.readPage(page, 1)).rejects.toMatchObject({ code: 'not_a_form' })
+      expect(fx.submissions).toHaveLength(0)
     })
 
     test('reads organisation evidence from the provider elements only', async ({ page }) => {
@@ -256,5 +295,61 @@ test.describe('google selector map', () => {
   test('a page that is not http(s) is unknown, not a sign-in step', async ({ page }) => {
     await page.goto('about:blank')
     expect(await (await driverFor('google')).pageKind(page)).toBe('unknown')
+  })
+})
+
+// The short timeouts make the failure paths fast; the defaults are 10 s a step and 15 s for Submit.
+test.describe('typed failures', () => {
+  let fx: FixtureServer
+  let driver: FormDriver
+  test.beforeEach(async ({ context }) => {
+    fx = await routeFormFixtures(context)
+    driver = createDriver('google', await loadFormSelectors('google'), { stepMs: 700, submitMs: 1500 })
+  })
+
+  const widgetAnswers = [text('p1q0', 'abc'), choose('p1q2', 'Present'), choose('p1q4', '01')]
+
+  test('a dropdown whose options never show fails with dropdown_failed, in readPage and in fill', async ({ page }) => {
+    await page.goto(googleUrl('widgets'))
+    const form = await driver.readPage(page, 1)
+    await page.evaluate(() => (location.hash = '#options-delay=4000'))
+    await expect(driver.readPage(page, 1)).rejects.toMatchObject({ code: 'dropdown_failed' })
+    await expect(driver.fill(page, form, [choose('p1q4', '01')])).rejects.toMatchObject({ code: 'dropdown_failed' })
+  })
+
+  test('a Next button under an overlay fails with next_failed', async ({ page }) => {
+    await page.goto(googleUrl('attendance') + '#overlay')
+    await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
+  })
+
+  test('a Submit button under an overlay fails with submit_failed and sends nothing', async ({ page }) => {
+    await page.goto(googleUrl('widgets') + '#overlay')
+    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_failed' })
+    expect(fx.submissions).toHaveLength(0)
+  })
+
+  for (const [name, result] of [
+    ['still on the form', 'still-form'],
+    ['on a captcha', 'captcha']
+  ] as const)
+    test(`a submit that ends ${name} is submit_unconfirmed`, async ({ page }) => {
+      fx.submitResult.set('widgets', result)
+      await page.goto(googleUrl('widgets'))
+      await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+      await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+      expect(fx.submissions).toHaveLength(1)
+    })
+
+  test('a stale alert does not fail a Next that moves on', async ({ page }) => {
+    await page.goto(googleUrl('attendance'))
+    await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
+    await driver.fill(page, await driver.readPage(page, 1), [
+      text('p1q0', 'Test Student'),
+      text('p1q1', 'A00000000'),
+      text('p1q2', 'ABC1234'),
+      choose('p1q3', '02')
+    ])
+    await driver.next(page)
+    expect((await driver.readPage(page, 2)).questions[0]!.label).toBe('Attendance')
   })
 })
