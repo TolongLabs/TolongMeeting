@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerWebSocket } from 'bun'
@@ -270,10 +270,11 @@ test('an audio failure is reported once and closes the ASR stream', async () => 
 })
 
 test('a failed write is reported through onError', async () => {
-  // A directory is not writable as the output file, so every append fails.
+  const sub = join(dir, 'transcript')
   const audio = fakeAudio()
   const errs: Error[] = []
-  const live = await startLiveAsr(audio, asr.cfg, dir, { onError: (e) => errs.push(e) })
+  const live = await startLiveAsr(audio, asr.cfg, join(sub, 'live.jsonl'), { onError: (e) => errs.push(e) })
+  await rm(sub, { recursive: true }) // the directory goes away after start, so the next append fails
   audio.push(SECOND)
   await until(() => asr.appendedBytes() === 32_000)
   asr.emit({ type: 'input_audio_buffer.speech_started', audio_start_ms: 0 })
@@ -281,5 +282,26 @@ test('a failed write is reported through onError', async () => {
   asr.emit({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'lost' })
   await until(() => errs.length === 1)
   await live.stop()
-  expect(errs[0]).toMatchObject({ code: 'EISDIR' })
+  expect(errs[0]).toMatchObject({ code: 'ENOENT' })
+})
+
+test('a transcript path that is a directory fails at start', async () => {
+  await expect(startLiveAsr(fakeAudio(), asr.cfg, dir)).rejects.toMatchObject({ code: 'EISDIR' })
+})
+
+test('a line a crash left half written is cut off before new results are appended', async () => {
+  const out = join(dir, 'live.jsonl')
+  await writeFile(out, '{"startMs":0,"endMs":1000,"text":"kept"}\n{"startMs":1000,"endMs":20')
+  const audio = fakeAudio()
+  const live = await startLiveAsr(audio, asr.cfg, out, { baseMs: 5000 })
+  audio.push(SECOND)
+  await until(() => asr.appendedBytes() === 32_000)
+  asr.emit({ type: 'input_audio_buffer.speech_started', audio_start_ms: 100 })
+  asr.emit({ type: 'input_audio_buffer.speech_stopped', audio_end_ms: 900 })
+  asr.emit({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'after restart' })
+  await live.stop()
+  expect(await linesOf(out)).toEqual([
+    { startMs: 0, endMs: 1000, text: 'kept' },
+    { startMs: 5100, endMs: 5900, text: 'after restart' }
+  ])
 })

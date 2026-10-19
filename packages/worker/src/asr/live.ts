@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, truncate } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { AiKeyError, AsrDisconnected, openAsrStream, type AiConfig } from '@tm/ai'
 import type { AudioSource } from '../audio/source'
@@ -21,6 +21,20 @@ const stderrError = (e: Error): void => {
   console.error(`live transcription: ${e.message}`)
 }
 
+// A crash can leave the last line half written. That write was never acknowledged, so it is cut off before new lines
+// are appended, and the file stays one JSON object per line.
+async function cutTornLine(file: string): Promise<void> {
+  let bytes: Buffer
+  try {
+    bytes = await readFile(file)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw e
+  }
+  if (bytes.length === 0 || bytes[bytes.length - 1] === 0x0a) return
+  await truncate(file, bytes.lastIndexOf(0x0a) + 1)
+}
+
 // Streams the audio source to the ASR service and appends each final result to `out` (one JSON line, recording-relative
 // offsets). A failure of the transcription never stops the audio capture or the recording: it is reported and the
 // feed to ASR is cut. Each line is fsynced before the next one is written.
@@ -34,6 +48,7 @@ export async function startLiveAsr(
   const onError = opts.onError ?? stderrError
   const open = opts.open ?? openAsrStream
   await mkdir(dirname(out), { recursive: true })
+  await cutTornLine(out)
 
   const stream = open(ai)
   let finished = false // ASR is lost, or the audio failed: no more audio goes to ASR
