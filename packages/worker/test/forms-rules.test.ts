@@ -103,7 +103,16 @@ test('normalisation drops format and combining characters before splitting words
 })
 
 test('confirmation options', () => {
-  for (const o of ['Present', 'Hadir', 'I confirm I am attending this class', 'Saya hadir', 'Present (late)'])
+  for (const o of [
+    'Present',
+    'Hadir',
+    'I confirm I am attending this class',
+    'Saya hadir',
+    'Present (late)',
+    'Present, online',
+    'Hadir online',
+    'Attending in person'
+  ])
     expect(confirmsAttendance(o)).toBe(true)
   for (const o of [
     'Absent',
@@ -134,7 +143,15 @@ test('confirmation options', () => {
     'Ketiadaan kehadiran',
     'Skipping attendance',
     'Skip attendance',
-    'Nope attending'
+    'Nope attending',
+    // Unknown words, letters, group labels and room numbers are not confirmation vocabulary.
+    'Tk hadir',
+    'Ga hadir',
+    'X hadir',
+    'Present - Section T',
+    'Hadir - Kumpulan B',
+    'Present (Room No. 3)',
+    'Presentation done'
   ])
     expect(confirmsAttendance(o)).toBe(false)
 })

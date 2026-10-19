@@ -717,13 +717,14 @@ const UNIT = String.raw`(?:pts?|points?|marks?|mata|markah|poin)`
 const POINTS_LINE = new RegExp(
   String.raw`^(?:${NUMBER} ${UNIT}(?: s)?|${NUMBER} (?:out )?of ${NUMBER} ${UNIT}(?: s)?|(?:${UNIT}|score|skor|jumlah markah) ${NUMBER}(?: (?:(?:out )?of )?${NUMBER})?|total ${NUMBER} ${UNIT}|total ${UNIT} ${NUMBER})$`
 )
-const CONFIRM_POSITIVE = /\b(present|presence|attend|attending|attended|attendance|hadir|kehadiran)\b/
+const CONFIRM_POSITIVE = /\b(present|hadir|attend|attending|attended|attendance|here)\b/
 const CONFIRM_NEGATIVE =
   /\b(not|no|non|neither|nor|never|absent|unavailable|unable|unattend\w*|cannot|cant|dont|wont|didnt|isnt|wasnt|arent|werent|havent|hasnt|couldnt|wouldnt|tidak|tak|tiada|bukan|belum|takde|tdk|gak|ketiadaan|skip|skipping|nope)\b|\bt\b/
+// CONFIRM_VOCABULARY: a Set of the words listed in the confirmsAttendance bullet below.
 ```
 
 - `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a normalised entry keyword of 3 or more characters as a whole word or phrase (`bm` never matches `submit it`). Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
-- `confirmsAttendance`: matches `CONFIRM_POSITIVE` and not `CONFIRM_NEGATIVE`. `CONFIRM_NEGATIVE` also matches a lone `t`, which is what an apostrophe leaves behind (`can't` -> `can t`, `T/Hadir` -> `t hadir`).
+- `confirmsAttendance`: true only when the option matches `CONFIRM_POSITIVE`, does not match `CONFIRM_NEGATIVE`, and every word of it is in `CONFIRM_VOCABULARY`: present, presence, hadir, attend, attending, attended, attendance, here, i, im, m, am, is, me, my, confirm, confirmed, confirming, that, this, the, class, lecture, session, today, kelas, kuliah, saya, ya, yes, yep, online, in, person, physically, physical, late, lewat, on, time, and, mark, marked, as, sudah, telah, dah. Any other word (`tk`, `ga`, `x`, a name, a group or section label, a room number) means not a confirmation, so the member is pinged. `CONFIRM_NEGATIVE` also matches a lone `t`, which is what an apostrophe leaves behind (`can't` -> `can t`, `T/Hadir` -> `t hadir`).
 - `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms' evidence is its organisation-only notice.
 
 - [x] **Step 1: Write the failing tests**
@@ -795,7 +796,16 @@ test('points lines mark a quiz; labels that mention points do not', () => {
 })
 
 test('confirmation options', () => {
-  for (const o of ['Present', 'Hadir', 'I confirm I am attending this class', 'Saya hadir', 'Present (late)'])
+  for (const o of [
+    'Present',
+    'Hadir',
+    'I confirm I am attending this class',
+    'Saya hadir',
+    'Present (late)',
+    'Present, online',
+    'Hadir online',
+    'Attending in person'
+  ])
     expect(confirmsAttendance(o)).toBe(true)
   for (const o of [
     'Absent',
@@ -820,7 +830,14 @@ test('confirmation options', () => {
     'Unattended',
     'tak hadir',
     'bukan hadir',
-    'belum hadir'
+    'belum hadir',
+    'Tk hadir',
+    'Ga hadir',
+    'X hadir',
+    'Present - Section T',
+    'Hadir - Kumpulan B',
+    'Present (Room No. 3)',
+    'Presentation done'
   ])
     expect(confirmsAttendance(o)).toBe(false)
   // Soft hyphens, zero-width characters and decomposed accents cannot split a negation.
