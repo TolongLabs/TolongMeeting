@@ -38,7 +38,7 @@ mkdir -p "$data_dir" "$profile_dir"
 # The file lives in $TM_PROFILE_ROOT/.machine-ids/, a tree no container mounts: a worker can write its own profile
 # directory, so a machine-id file there could be swapped for a symlink that the next launch would bind-mount.
 # Recreate it unless it is a regular file with one link. Written to a temp file and renamed, so a crash never leaves a
-# half-written id (mv -f also replaces a symlink itself, never what it points at).
+# half-written id (mv -fT replaces a symlink itself, never what it points at, and fails on a directory).
 machine_id_dir="$TM_PROFILE_ROOT/.machine-ids"
 machine_id_file="$machine_id_dir/$id"
 mkdir -p -m 755 "$machine_id_dir"
@@ -46,7 +46,7 @@ if [ -L "$machine_id_file" ] || [ ! -f "$machine_id_file" ] || [ "$(stat -c %h -
   tmp=$(mktemp "$machine_id_dir/.tmp.XXXXXX")
   printf '%s\n' "$(printf %s "$id" | sha256sum | cut -c1-32)" >"$tmp"
   chmod 644 "$tmp"
-  mv -f -- "$tmp" "$machine_id_file"
+  mv -fT -- "$tmp" "$machine_id_file"
 fi
 
 # --stop-timeout 60: docker stop sends SIGTERM and waits this long for the worker to finalise the recording and
