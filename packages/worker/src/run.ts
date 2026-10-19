@@ -478,7 +478,10 @@ class OccurrenceRun {
       const dispatcher = await deps.startFormDispatcher(base)
       this.forms = dispatcher
       // Started after the stop signal (the setup abandoned it): nothing will use it, and teardown may be past its step.
-      if (this.isAborted) await dispatcher.close()
+      if (this.isAborted) {
+        this.formsClosed = true
+        await dispatcher.close()
+      }
     })
   }
 

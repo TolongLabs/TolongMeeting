@@ -1,7 +1,15 @@
 import { test, expect } from 'bun:test'
 import type { ResolvedForm } from '@tm/core'
 import type { Ping } from '../src/index'
-import { joinedPing, alertPing, summaryReadyPing, summaryFailedPing, linkUncheckedPing, pings } from '../src/index'
+import {
+  joinedPing,
+  alertPing,
+  summaryReadyPing,
+  summaryFailedPing,
+  linkUncheckedPing,
+  formNotFilledPing,
+  pings
+} from '../src/index'
 
 const resolvedQr: ResolvedForm = {
   url: 'https://forms.gle/abc',
@@ -94,6 +102,21 @@ test('a link from the shared screen is worded as a QR code, not a sender', () =>
     priority: 'high',
     actions: [{ label: 'Open link', url: resolvedQr.url }]
   })
+})
+
+test('a form the bot did not fill names who shared it and opens the form', () => {
+  expect(formNotFilledPing('Data Mining', resolvedChat, '20:44', resolvedChat.finalUrl)).toEqual({
+    title: 'Form seen, not filled: Data Mining',
+    message: 'Student A shared a form at 20:44. The bot did not fill it. Open it yourself.',
+    priority: 'high',
+    actions: [{ label: 'Open form', url: resolvedChat.finalUrl }]
+  })
+  expect(
+    formNotFilledPing('Data Mining', { ...resolvedChat, sender: null }, '20:45', resolvedChat.finalUrl).message
+  ).toBe('Someone shared a form at 20:45. The bot did not fill it. Open it yourself.')
+  expect(formNotFilledPing('Data Mining', resolvedQr, '20:46', resolvedQr.url).message).toBe(
+    'A QR code on the shared screen pointed to a form at 20:46. The bot did not fill it. Open it yourself.'
+  )
 })
 
 test('a summary that fits is sent whole', () => {

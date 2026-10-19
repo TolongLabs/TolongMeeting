@@ -333,8 +333,8 @@ test('a dispatcher that cannot start is pinged, and every form link still reache
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({ result: 'completed' })
   expect(messages(d).filter((m) => !m.startsWith('In the meeting'))).toEqual([
     "The bot's form submission stopped working. The recording continues.",
-    "Dr Lee shared a link at 20:01 that couldn't be checked within 5 seconds. It may be a form.",
-    "Classmate shared a link at 20:01 that couldn't be checked within 5 seconds. It may be a form."
+    'Dr Lee shared a form at 20:01. The bot did not fill it. Open it yourself.',
+    'Classmate shared a form at 20:01. The bot did not fill it. Open it yourself.'
   ])
   expect(await errorsAt(lectureCfg, 'form submission')).toHaveLength(1)
   expect(
@@ -753,9 +753,27 @@ test('a link that resolves after the dispatcher closed is pinged by its canonica
   })
   await runOccurrence(lectureCfg, d)
   expect(d.forms!.offers).toEqual([])
-  const unchecked = d.pings.filter((p) => p.title.startsWith('Link seen, not checked'))
-  expect(unchecked.map((p) => p.actions?.map((a) => a.url))).toEqual([[GOOGLE('x')]])
+  const notFilled = d.pings.filter((p) => p.title.startsWith('Form seen, not filled'))
+  expect(notFilled.map((p) => p.actions?.map((a) => a.url))).toEqual([[GOOGLE('x')]])
   expect(await errorsAt(lectureCfg, 'teardown forms.intake')).toHaveLength(1)
+})
+
+test('a dispatcher that starts after the stop signal is closed by the forms step, after teardown', async () => {
+  const abort = new AbortController()
+  const startGate = gated()
+  const d = fakeDeps({ states: 'always_in_meeting' })
+  const start = d.startFormDispatcher
+  d.startFormDispatcher = async (base) => {
+    abort.abort() // the stop signal arrives while the dispatcher is still starting
+    await startGate.promise
+    return start(base)
+  }
+  await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(d.calls).not.toContain('forms.close') // teardown ran with no dispatcher to close
+  startGate.release()
+  await settle()
+  expect(d.calls).toContain('forms.close')
+  expect(d.calls.indexOf('forms.close')).toBeGreaterThan(d.calls.indexOf('startFormDispatcher'))
 })
 
 test('a form link ping that cannot be sent raises the form_ping_failed alert', async () => {
@@ -770,7 +788,7 @@ test('a form link ping that cannot be sent raises the form_ping_failed alert', a
   })
   const send = d.sendPing
   d.sendPing = async (cfg, ping) => {
-    if (ping.title.startsWith('Link seen')) throw new Error('ntfy down')
+    if (ping.title.startsWith('Form seen')) throw new Error('ntfy down')
     await send(cfg, ping)
   }
   await runOccurrence(lectureCfg, d)

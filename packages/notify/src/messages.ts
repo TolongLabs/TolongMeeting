@@ -48,6 +48,20 @@ export function linkUncheckedPing(entry: string, c: FormCandidate, hhmm: string)
   }
 }
 
+// A form the bot saw but did not fill (no dispatcher took it): the member opens it themselves.
+export function formNotFilledPing(entry: string, c: FormCandidate, hhmm: string, url: string): Ping {
+  const message =
+    c.source === 'qr'
+      ? `A QR code on the shared screen pointed to a form at ${hhmm}. The bot did not fill it. Open it yourself.`
+      : `${c.sender ?? 'Someone'} shared a form at ${hhmm}. The bot did not fill it. Open it yourself.`
+  return {
+    title: `Form seen, not filled: ${entry}`,
+    message,
+    priority: 'high',
+    actions: [{ label: 'Open form', url }]
+  }
+}
+
 export function alertPing(entry: string, kind: AlertKind, detail?: string): Ping {
   return { title: `Alert: ${entry}`, message: alertMessage(kind, detail), priority: 'high' }
 }

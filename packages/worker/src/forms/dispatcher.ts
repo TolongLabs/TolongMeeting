@@ -111,7 +111,7 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
   const loaded = await loadFormRecords(cfg.dataDir)
   for (const formId of loaded.invalid) {
     handledInvalid.add(formId)
-    await emitError(formId, new Error('the form record is missing or invalid, so the form counts as handled'))
+    await emitError(formId, new Error('the form record is invalid, so the form counts as handled'))
   }
   for (const rec of loaded.records) {
     let record = rec

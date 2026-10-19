@@ -128,13 +128,18 @@ test('with no dispatcher every resolved form reaches the member, trusted or not,
   const trusted = harness({ dispatcher: null })
   await onFormCandidate(cand, trusted.deps)
   expect(trusted.events.map(([, d]) => [d.outcome, d.reason])).toEqual([['unresolved', 'dispatcher_unavailable']])
-  expect(trusted.pings.map((p) => p.title)).toEqual(['Link seen, not checked: Example lecture'])
+  expect(trusted.pings.map((p) => [p.title, p.message])).toEqual([
+    [
+      'Form seen, not filled: Example lecture',
+      'Dr Example shared a form at 20:41. The bot did not fill it. Open it yourself.'
+    ]
+  ])
 
   const untrusted = harness({ dispatcher: null })
   await onFormCandidate({ ...cand, sender: 'Classmate', senderRole: 'participant' }, untrusted.deps)
   expect(untrusted.events).toHaveLength(1)
-  expect(untrusted.pings.map((p) => [p.title, p.message.startsWith('Classmate')])).toEqual([
-    ['Link seen, not checked: Example lecture', true]
+  expect(untrusted.pings.map((p) => [p.title, p.message.startsWith('Classmate shared a form')])).toEqual([
+    ['Form seen, not filled: Example lecture', true]
   ])
 })
 
