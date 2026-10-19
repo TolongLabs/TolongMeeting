@@ -289,7 +289,7 @@ git commit -m "feat(core): add types, job schema, form machine"
 
 - Create: `packages/notify/src/ntfy.ts`, `packages/notify/src/messages.ts`
 - Modify: `packages/notify/src/index.ts`, `packages/notify/package.json` (depends on `@tm/core`)
-- Test: `packages/notify/src/ntfy.test.ts`, `packages/notify/src/messages.test.ts`
+- Test: `packages/notify/test/ntfy.test.ts`, `packages/notify/test/messages.test.ts`
 
 **Interfaces:**
 
@@ -297,7 +297,7 @@ git commit -m "feat(core): add types, job schema, form machine"
 - Produces: `sendPing(cfg: NtfyConfig, ping: Ping): Promise<void>`, `Ping`, `PingAction`, re-exported `NtfyConfig`.
 - Produces (adds to contracts): `class PingError extends Error { status: number | null }`; `type AlertKind = 'black_frames' | 'frozen_silent' | 'dropped' | 'rejoin_failed' | 'removed' | 'breakout' | 'lobby_denied' | 'not_admitted' | 'join_failed' | 'zoom_signin' | 'devices_on' | 'no_audio' | 'signin_forms' | 'ai_key' | 'recording_gap'`; builders `joinedPing`, `formToSubmitPing`, `formNotSubmittedPing`, `linkUncheckedPing`, `alertPing`, `summaryReadyPing`, `summaryFailedPing` with the signatures below.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/notify/src/ntfy.test.ts: a Bun.serve fake records each request
@@ -376,12 +376,12 @@ test('ping copy', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/notify`
 Expected: FAIL with "Cannot find module './ntfy'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `sendPing`: without `attachPath`, `POST ${cfg.url}` with JSON `{ topic, title, message, priority, actions? }` where `priority` is 4 for `'high'` and 3 for `'default'` and each action is `{ action: 'view', label, url, clear: false }`. With `attachPath`, `PUT ${cfg.url}/${topic}` with the file as body and headers `Title`, `Message`, `Priority`, `Actions` (`view, <label>, <url>` joined by `; `), `Filename`; any non-ASCII header value is sent as `=?UTF-8?B?<base64>?=`. Header `Authorization: Bearer <token>`; 10-second timeout per request; network errors and 5xx retried after 1 s and 2 s; 4xx throws at once. Never log the token or the message. `messages.ts` copy (exact):
 
@@ -414,12 +414,12 @@ summaryReadyPing(entry, md, attachPath?)
 summaryFailedPing(entry, status)  title "Summary failed: <entry>"; message "Your AI key was rejected (<status>). Everything is kept; run tm-pipeline again after fixing the key."; high
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/notify`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/notify docs/plans/architecture.md
