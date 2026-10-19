@@ -1,0 +1,6 @@
+load-module module-native-protocol-unix socket=/tmp/pulse/native auth-anonymous=1
+load-module module-null-sink sink_name=tm_sink sink_properties=device.description=tm_sink
+load-module module-null-source source_name=tm_mic
+set-default-sink tm_sink
+set-default-source tm_mic
+set-source-mute tm_mic 1
