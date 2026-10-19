@@ -1337,7 +1337,7 @@ git commit -m "feat(web): add accounts and details pages"
 **Files:**
 
 - Create: `packages/web/lib/timetable.ts`, `packages/web/lib/queue.ts`, `packages/web/app/timetable/page.tsx`, `packages/web/app/timetable/[id]/page.tsx`, `packages/web/app/timetable/actions.ts`
-- Test: `packages/web/test/timetable.test.ts` (tests live in `test/`, COMMON.md)
+- Test: `packages/web/lib/timetable.test.ts`
 
 **Interfaces:**
 
@@ -1366,10 +1366,10 @@ For `type: 'work'` the schema empties `trustedSenders`, `formDetails` and `atten
 
 `saveEntry` checks `hasWorkingKey` (else `NoWorkingKeyError`), runs `deps.ensureNtfy()`, checks that the identity is the member's (else a not-found error), writes the entry, calls `scope.syncOccurrences(deps.queue, deps.now)`, then looks for clashes on that identity over the next 14 days. If any involve this entry's occurrences, it sends one `pings.identityClashSaved` (the first clash) and returns all of them for the form to show. `deleteEntry` throws `InUseError('This entry has a meeting in progress.')` while one of its occurrences is in `ACTIVE_STATES`.
 
-- [x] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/test/timetable.test.ts
+// packages/web/lib/timetable.test.ts
 const base = {
   name: 'Data Mining',
   type: 'lecture',
@@ -1441,9 +1441,9 @@ test("an entry with a meeting in progress can't be deleted", async () => {
 })
 ```
 
-- [x] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/test/timetable.test.ts`
+Run: `bun test packages/web/lib/timetable.test.ts`
 
 Expected: FAIL with `Cannot find module './timetable'`.
 
@@ -1451,13 +1451,13 @@ Expected: FAIL with `Cannot find module './timetable'`.
 
 The list page shows each entry with its next occurrence (`formatWhen`), its identity and a pause toggle; the edit page is one form over `EntryInputSchema`.
 
-- [x] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/test/timetable.test.ts && bun run typecheck`
+Run: `bun test packages/web/lib/timetable.test.ts && bun run typecheck`
 
-Expected: PASS, `13 pass, 0 fail`; typecheck exits 0.
+Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
 
-- [x] **Step 5: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/timetable* packages/web/lib/queue.ts packages/web/app/timetable
@@ -1470,7 +1470,7 @@ git commit -m "feat(web): add timetable page"
 
 - Create: `packages/web/lib/home.ts`, `packages/web/lib/admin.ts`, `packages/web/app/layout.tsx`, `packages/web/app/page.tsx`, `packages/web/app/admin/page.tsx`, `packages/web/app/admin/actions.ts`
 - Modify: `packages/web/lib/scope.ts` (`adminScope`)
-- Test: `packages/web/lib/home.test.ts`, `packages/web/lib/admin.test.ts`
+- Test: `packages/web/test/home.test.ts`, `packages/web/test/admin.test.ts` (tests live in `test/`, COMMON.md)
 
 **Interfaces:**
 
@@ -1482,7 +1482,7 @@ git commit -m "feat(web): add timetable page"
 
 `removeMember` throws `MemberBusyError` while one of the member's occurrences is in `ACTIVE_STATES` or a sign-in session isn't ended, and `LastAdminError` for the last admin (so does `setRole` when it would demote the last admin). Otherwise it deletes the member's ntfy user (`ntfyUsername`), then the member row, which cascades to all their rows; their files on disk go in the next retention run (Task 20 removes directories without a database row). The admin page lists members with exactly the columns of `listMembers` and has add, role and remove controls; it never reads member-owned tables.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/home.test.ts
@@ -1536,7 +1536,7 @@ test("the last admin can't be removed or demoted", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/home.test.ts packages/web/lib/admin.test.ts`
 
@@ -1544,7 +1544,7 @@ Expected: FAIL with `Cannot find module './home'`.
 
 - [ ] **Step 3: Implement `homeData`, `adminScope`, the layout and the two pages**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/home.test.ts packages/web/lib/admin.test.ts && bun run typecheck`
 

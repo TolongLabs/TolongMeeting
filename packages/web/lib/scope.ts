@@ -1,12 +1,25 @@
 import { resolve, sep } from 'node:path'
 import { symmetricDecrypt } from 'better-auth/crypto'
-import { and, eq, isNull, notExists, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, ne, notExists, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
+import { ACTIVE_STATES } from '@tm/core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
 import type { Queue } from '../db/queues'
-import { artefacts, auth_account, auth_session, auth_user, MEMBER_OWNED, members, pkOf } from '../db/schema'
+import {
+  artefacts,
+  auth_account,
+  auth_session,
+  auth_user,
+  MEMBER_OWNED,
+  members,
+  occurrences,
+  pkOf,
+  signinSessions,
+  type MemberRole
+} from '../db/schema'
 import { authSecret } from './auth-secret'
+import { ntfyUsername, NtfyAdminError, type NtfyAdmin } from './ntfy-admin'
 
 /** Every table with a `memberId` column. */
 export type MemberOwnedTable = (typeof MEMBER_OWNED)[keyof typeof MEMBER_OWNED]
@@ -243,4 +256,114 @@ export async function addMember(input: NewMember, db: Db = getDb()): Promise<{ i
     })
     .returning({ id: members.id })
   return row!
+}
+
+/** Refusal: the member has a meeting in progress or a sign-in that hasn't ended. The message is safe to show. */
+export class MemberBusyError extends Error {
+  constructor() {
+    super('This member has a meeting or a sign-in in progress.')
+    this.name = 'MemberBusyError'
+  }
+}
+
+/** Refusal: the change would leave no admin. The message is safe to show. */
+export class LastAdminError extends Error {
+  constructor() {
+    super('The last admin cannot be removed or made a member.')
+    this.name = 'LastAdminError'
+  }
+}
+
+export interface AdminMember {
+  id: string
+  githubLogin: string
+  displayName: string
+  role: MemberRole
+  timeZone: string
+  createdAt: Date
+}
+
+/**
+ * What an admin may do. It reads and writes only the `members` row (login, name, zone, role) and the operational state
+ * that decides whether a member can be removed. It never reads member-owned content: no meeting names, links,
+ * transcripts, summaries, forms, details or keys. `test/admin.test.ts` proves no seeded content reaches its results.
+ */
+export interface AdminScope {
+  listMembers(): Promise<AdminMember[]>
+  addMember(input: { githubLogin: string; displayName: string; timeZone: string; role: MemberRole }): Promise<string>
+  setRole(id: string, role: MemberRole): Promise<void>
+  /**
+   * Removes the member's ntfy user, then the member row (which cascades to their rows), then their Better Auth user (so
+   * their GitHub token goes too). A missing ntfy user (404) counts as already removed. Any other ntfy failure throws and
+   * leaves the member in place, so the call can be retried.
+   */
+  removeMember(id: string, ntfy: NtfyAdmin): Promise<void>
+}
+
+/**
+ * The admin's scope, over the database. Admins are checked by `requireAdmin()` from the member row's role. Every change
+ * runs in a transaction that locks the admin rows first, so two admins can't demote or remove each other at once.
+ */
+export function adminScope(db: Db = getDb()): AdminScope {
+  const lockAdmins = (tx: Db) =>
+    tx.select({ id: members.id }).from(members).where(eq(members.role, 'admin')).for('update')
+
+  return {
+    async listMembers() {
+      return db
+        .select({
+          id: members.id,
+          githubLogin: members.githubLogin,
+          displayName: members.displayName,
+          role: members.role,
+          timeZone: members.timeZone,
+          createdAt: members.createdAt
+        })
+        .from(members)
+        .orderBy(asc(members.createdAt))
+    },
+
+    async addMember(input) {
+      return (await addMember(input, db)).id
+    },
+
+    async setRole(id, role) {
+      await db.transaction(async (tx) => {
+        const admins = await lockAdmins(tx)
+        if (role === 'member' && admins.length === 1 && admins[0]!.id === id) throw new LastAdminError()
+        await tx.update(members).set({ role }).where(eq(members.id, id))
+      })
+    },
+
+    async removeMember(id, ntfy) {
+      await db.transaction(async (tx) => {
+        const admins = await lockAdmins(tx)
+        const [member] = await tx
+          .select({ role: members.role, authUserId: members.authUserId })
+          .from(members)
+          .where(eq(members.id, id))
+          .for('update')
+        if (!member) throw new Error(`No member ${id}`)
+        if (member.role === 'admin' && admins.length === 1) throw new LastAdminError()
+
+        const active = await tx.$count(
+          occurrences,
+          and(eq(occurrences.memberId, id), inArray(occurrences.state, [...ACTIVE_STATES]))
+        )
+        const sessions = await tx.$count(
+          signinSessions,
+          and(eq(signinSessions.memberId, id), ne(signinSessions.state, 'ended'))
+        )
+        if (active > 0 || sessions > 0) throw new MemberBusyError()
+
+        try {
+          await ntfy.deleteUser(ntfyUsername(id))
+        } catch (err) {
+          if (!(err instanceof NtfyAdminError && err.status === 404)) throw err
+        }
+        await tx.delete(members).where(eq(members.id, id))
+        if (member.authUserId) await tx.delete(auth_user).where(eq(auth_user.id, member.authUserId))
+      })
+    }
+  }
 }
