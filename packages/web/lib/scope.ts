@@ -1,4 +1,5 @@
-import { and, eq, type SQL } from 'drizzle-orm'
+import { resolve, sep } from 'node:path'
+import { and, eq, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { getDb, type Db } from '../db/index'
 import { artefacts, MEMBER_OWNED, members, pkOf } from '../db/schema'
@@ -25,8 +26,12 @@ export interface MemberScope {
 
 function ownedBy(table: MemberOwnedTable, memberId: string, where?: SQL): SQL {
   const mine = eq(table.memberId, memberId)
-  return where ? and(mine, where)! : mine
+  // The caller's `where` is parenthesised so a bare `or` (`a or b`) can't escape the member filter.
+  return where ? and(mine, sql`(${where})`)! : mine
 }
+
+const ME_KEYS = ['displayName', 'timeZone', 'ntfyTopic', 'ntfyTokenEnc'] as const
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function withoutMemberId<T extends object>(values: T): Omit<T, 'memberId'> {
   const copy: Record<string, unknown> = { ...(values as Record<string, unknown>) }
@@ -45,7 +50,11 @@ export function createScope(db: Db, memberId: string): MemberScope {
     },
 
     async updateMe(set) {
-      await db.update(members).set(set).where(eq(members.id, memberId))
+      // A runtime whitelist: a caller that casts past the type can't set `role`, `githubLogin` or any other column.
+      const allowed: Partial<MemberRow> = {}
+      for (const key of ME_KEYS) if (set[key] !== undefined) Object.assign(allowed, { [key]: set[key] })
+      if (Object.keys(allowed).length === 0) return
+      await db.update(members).set(allowed).where(eq(members.id, memberId))
     },
 
     async select(table, where) {
@@ -86,16 +95,21 @@ export function createScope(db: Db, memberId: string): MemberScope {
     },
 
     async artefactFile(occurrenceId, relPath) {
+      if (!UUID.test(occurrenceId)) return null
+      const root = process.env.TM_DATA_ROOT
+      if (!root) throw new Error('TM_DATA_ROOT is not set')
+      const dir = resolve(root, 'occurrences', occurrenceId)
+      const file = resolve(dir, relPath)
+      // Lexical containment only. The serving route must also `realpath` the file and check it is still inside `dir`,
+      // because a symlink inside the occurrence directory passes this check.
+      if (!file.startsWith(dir + sep)) return null
       const [row] = await db
         .select({ id: artefacts.id })
         .from(artefacts)
         .where(
           and(eq(artefacts.memberId, memberId), eq(artefacts.occurrenceId, occurrenceId), eq(artefacts.path, relPath))
         )
-      if (!row) return null
-      const root = process.env.TM_DATA_ROOT
-      if (!root) throw new Error('TM_DATA_ROOT is not set')
-      return `${root}/occurrences/${occurrenceId}/${relPath}`
+      return row ? file : null
     }
   }
 }

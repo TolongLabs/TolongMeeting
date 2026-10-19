@@ -527,12 +527,14 @@ export interface MemberScope {
 }
 ```
 
-Every method adds `member_id = memberId` to its `where`, forces `memberId` on insert and drops `memberId` from an update's `set`. `artefactFile` returns `${TM_DATA_ROOT}/occurrences/<occurrenceId>/<relPath>` only when an `artefacts` row with that member, occurrence and path exists. Later tasks add `authScope` (Task 5) and `adminScope` (Task 11) to this file, both taking `db: Db = getDb()` so routes never call `getDb` themselves, and member-limited helpers to `MemberScope`.
+Every method adds `member_id = memberId` to its `where` (the caller's `where` is wrapped as `(where)` first, so a bare `or` can't escape the filter), forces `memberId` on insert and drops `memberId` from an update's `set`. `updateMe` keeps only its four keys at runtime. `artefactFile` returns `<resolved TM_DATA_ROOT>/occurrences/<occurrenceId>/<relPath>` only when `occurrenceId` is a UUID, the resolved path is inside that occurrence directory and an `artefacts` row with that member, occurrence and path exists; otherwise `null`. The serving route must also `realpath` the file, because a symlink passes the lexical check.
+
+Isolation also holds in the database: every member-owned child references its parent with a composite `(parent_id, member_id)` foreign key (parents `identities`, `timetable_entries` and `occurrences` carry `unique (id, member_id)`), so inserting or updating a child with another member's parent fails even through raw `db`. The `no-direct-db` guard matches the db module with or without an extension, dynamic `import(` and `require(`, raw drivers (`drizzle-orm/node-postgres`, `postgres-js`, `bun-sql`, `pg`, `postgres`, `Bun.sql`), and scans `.ts/.tsx/.js/.mjs/.cjs` in every directory of `packages/web` except `db/`, `test/` and `lib/scope.ts`, `lib/auth.ts`, `lib/control.ts`. Later tasks add `authScope` (Task 5) and `adminScope` (Task 11) to this file, both taking `db: Db = getDb()` so routes never call `getDb` themselves, and member-limited helpers to `MemberScope`.
 
 - [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/lib/scope.test.ts
+// packages/web/test/scope.test.ts
 for (const [name, table] of Object.entries(MEMBER_OWNED)) {
   test(`${name}: one member can't read or delete another member's rows`, async () => {
     const db = await createTestDb()
@@ -581,7 +583,7 @@ test("artefact files resolve only for the owner's registered paths", async () =>
 ```
 
 ```ts
-// packages/web/lib/no-direct-db.test.ts
+// packages/web/test/no-direct-db.test.ts
 test('only scope.ts, auth.ts and control.ts open the database in packages/web', async () => {
   const files = await Array.fromAsync(new Bun.Glob('{app,lib}/**/*.{ts,tsx}').scan({ cwd: 'packages/web' }))
   const offenders: string[] = []
@@ -596,7 +598,7 @@ test('only scope.ts, auth.ts and control.ts open the database in packages/web', 
 
 - [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts`
+Run: `bun test packages/web/test/scope.test.ts packages/web/test/no-direct-db.test.ts`
 
 Expected: FAIL with `Cannot find module './scope'`.
 
@@ -606,7 +608,7 @@ Pages and routes import tables from `packages/web/db/schema.ts` for `where` clau
 
 - [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts`
+Run: `bun test packages/web/test/scope.test.ts packages/web/test/no-direct-db.test.ts`
 
 Expected: PASS, `0 fail`.
 
@@ -1661,7 +1663,7 @@ The design asks the proxy to block privileged mode, other images and other mount
 **Interfaces:**
 
 - Produces (adds to contracts): `type SpecEnv = { dataRoot: string; profileRoot: string; publicUrl: string; ntfyUrl: string }` in `packages/core/src/control.ts` (shared by the scheduler, `packages/web/db` and the pipeline); `WORKER_IMAGE = 'tolongmeeting/worker:current'`; `WORKER_NETWORK = 'tm-workers'`; `CADDY_WORKER_IP = '172.30.0.2'`; `containerSpec(p: SpecParams): CreateBody`, where `SpecParams = { kind: 'worker'; occurrenceId: string; attempt: number; identityId: string; env: SpecEnv } | { kind: 'signin'; sessionId: string; identityId: string; env: SpecEnv }`; `containerName(p: SpecParams): string` (`tm-worker-<occurrenceId>-a<attempt>` or `tm-signin-<sessionId>`); `jobFileBase(p: SpecParams): string` (`<profileRoot>/<identityId>/job/<containerName>`).
-- Produces: `validateRequest(r: { method: string; path: string; body: unknown }, cfg: { dataRoot: string; profileRoot: string }): { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect'; id?: string } | { ok: false; reason: string }`; `main.ts` serves `:2375` with `Bun.serve`, forwards allowed requests to `/var/run/docker.sock` (`fetch(..., { unix })`), and before `start`, `stop` or `inspect` inspects the target itself and refuses any container whose `tm.role` label isn't `worker` or `signin`.
+- Produces: `validateRequest(r: { method: string; path: string; body: unknown }, cfg: GateConfig /* = SpecEnv */): { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect'; id?: string } | { ok: false; reason: string }`; `main.ts` serves `:2375` through `serveGate` (`Bun.serve` with `maxRequestBodySize` 65536, `development` false and an error handler that answers a bare 502 when Docker is unreachable or inspect JSON is bad), forwards allowed requests to `/var/run/docker.sock` (`fetch(..., { unix })`), and before `start`, `stop` or `inspect` inspects the target itself and refuses any container unless `tm.role` is `worker` or `signin`, `Config.Image` is `WORKER_IMAGE`, `HostConfig.Privileged` is not true and its name matches the role's name pattern; it then acts on the full id and sends no client body. The gate reads `TM_DATA_ROOT`, `TM_PROFILE_ROOT`, `TM_PUBLIC_URL` and `NTFY_URL`.
 
 The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs only as noted after it):
 
@@ -1683,7 +1685,8 @@ The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs 
   "HostConfig": {
     "Binds": [
       "<dataRoot>/occurrences/<occurrenceId>:<dataRoot>/occurrences/<occurrenceId>",
-      "<profileRoot>/<identityId>:<profileRoot>/<identityId>"
+      "<profileRoot>/<identityId>:<profileRoot>/<identityId>",
+      "<profileRoot>/.machine-ids/<identityId>:/etc/machine-id:ro"
     ],
     "ShmSize": 2147483648,
     "NetworkMode": "tm-workers",
@@ -1697,9 +1700,9 @@ The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs 
 }
 ```
 
-The sign-in body uses `"Cmd": ["--signin", "<profileRoot>/<identityId>/job/<name>.json"]`, labels `tm.role: signin` and `tm.session`, no `TM_DATA_ROOT` and only the profile bind, with `Memory` 2147483648 and `NanoCpus` 1000000000. Binds keep host paths inside the container, so `JobConfig.dataDir` and `profileDir` are the host paths (`<dataRoot>/occurrences/<occurrenceId>` and `<profileRoot>/<identityId>/work`), as in architecture's layout. `Memory` and `NanoCpus` follow spike 6's report.
+The machine-id file sits in `<profileRoot>/.machine-ids/`, a tree no container mounts, so a compromised container can't plant a symlink there for the next launch to bind-mount; Task 14's launcher must `lstat` it before every create and require a regular file with link count 1, else recreate it (temp file in that directory, `chmod 644`, `mv -f`; directory mode 755). The sign-in body uses `"Cmd": ["--signin", "<profileRoot>/<identityId>/job/<name>.json"]`, labels `tm.role: signin` and `tm.session`, no `TM_DATA_ROOT` and only the profile bind, with `Memory` 2147483648 and `NanoCpus` 1000000000. Binds keep host paths inside the container, so `JobConfig.dataDir` and `profileDir` are the host paths (`<dataRoot>/occurrences/<occurrenceId>` and `<profileRoot>/<identityId>/work`), as in architecture's layout. `Memory` and `NanoCpus` follow spike 6's report.
 
-Gate rules: paths may carry a `/v1.NN` prefix. Allowed: `GET /_ping`; `POST /containers/create?name=<name>`; `POST /containers/<id>/start`; `POST /containers/<id>/stop` (optional `?t=N`); `GET /containers/<id>/json`. Anything else gets 403 with `endpoint not allowed`. A create body must have only the keys `Image`, `Cmd`, `Env`, `Labels`, `HostConfig`; `Image` equal to `WORKER_IMAGE`; a role label of `worker` or `signin` that agrees with the name pattern and with `Cmd[0]`; `Cmd[1]` under `<profileRoot>/<uuid>/job/`; `Env` names only from the four above; `HostConfig` keys only from the body above, with `Binds` exactly the role's binds (source equals target, uuids only, no options), `NetworkMode` `tm-workers`, `ShmSize` 2147483648, `Dns` as above, every `ExtraHosts` entry ending `:172.30.0.2`, and `Sysctls` exactly the IPv6 one.
+Gate rules: paths may carry a `/v1.41` to `/v1.51` prefix (any other version is refused). Allowed: `GET /_ping`; `POST /containers/create?name=<name>`; `POST /containers/<id>/start`; `POST /containers/<id>/stop` (optional `?t=N`); `GET /containers/<id>/json`. Anything else gets 403 with `endpoint not allowed`. A create body must have only the keys `Image`, `Cmd`, `Env`, `Labels`, `HostConfig`; `Image` equal to `WORKER_IMAGE`; a role label of `worker` or `signin` that agrees with the name pattern and with `Cmd[0]`; `Cmd[1]` under `<profileRoot>/<uuid>/job/`; `Env` names only from the four above; `HostConfig` keys only from the body above, with `Binds` exactly the role's binds (source equals target, uuids only, no options), `NetworkMode` `tm-workers`, `ShmSize` 2147483648, `Dns` as above, and `Sysctls` exactly the IPv6 one. The gate rebuilds the whole body from its own `GateConfig` (roots, `publicUrl`, `ntfyUrl`) and the name, and the request must equal it: `TM_PUBLIC_URL`, `ExtraHosts` and every other value are not free.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -3144,7 +3147,7 @@ services:
     networks: [app]
   docker-proxy:
     build: { context: .., dockerfile: docker/app/Dockerfile, target: gate }
-    environment: [TM_DATA_ROOT, TM_PROFILE_ROOT]
+    environment: [TM_DATA_ROOT, TM_PROFILE_ROOT, TM_PUBLIC_URL, NTFY_URL]
     volumes: ['/var/run/docker.sock:/var/run/docker.sock']
     networks: [gate]
   worker:

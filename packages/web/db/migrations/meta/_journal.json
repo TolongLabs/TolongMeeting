@@ -15,6 +15,13 @@
       "when": 1792444881689,
       "tag": "0001_occurrence_resume_and_knocks",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792445482017,
+      "tag": "0002_member_owned_children",
+      "breakpoints": true
     }
   ]
 }

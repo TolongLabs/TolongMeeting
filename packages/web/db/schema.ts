@@ -4,6 +4,7 @@ import {
   bigserial,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -151,6 +152,20 @@ const updatedAt = () =>
     .defaultNow()
     .$onUpdate(() => new Date())
 
+/**
+ * A composite foreign key `(child, member_id) -> parent(id, member_id)`: a child row can only point at a parent owned by
+ * the same member, so member isolation holds in the database and not only in the scope. The parent table needs a unique
+ * constraint on `(id, member_id)`. Cascade is the default action, like the single-column keys it replaces.
+ */
+function ownedFk(
+  name: string,
+  columns: [AnyPgColumn, AnyPgColumn],
+  foreignColumns: [AnyPgColumn, AnyPgColumn],
+  onDelete: 'cascade' | 'restrict' | 'set null' = 'cascade'
+) {
+  return foreignKey({ name, columns, foreignColumns }).onDelete(onDelete)
+}
+
 // Replaced by core's RepeatRule when the occurrence expansion lands (plan 01c Task 6); the shapes are the same.
 export type RepeatRuleJson =
   { kind: 'once'; date: string } | { kind: 'weekly'; days: (1 | 2 | 3 | 4 | 5 | 6 | 7)[]; from: string }
@@ -189,6 +204,7 @@ export const identities = pgTable(
   },
   (t) => [
     unique('identities_member_id_name_unique').on(t.memberId, t.name),
+    unique('identities_id_member_id_unique').on(t.id, t.memberId),
     check('identities_run_location_check', oneOf(t.runLocation, RUN_LOCATIONS))
   ]
 )
@@ -196,9 +212,7 @@ export const identities = pgTable(
 export const profiles = pgTable(
   'profiles',
   {
-    identityId: uuid('identity_id')
-      .primaryKey()
-      .references(() => identities.id, { onDelete: 'cascade' }),
+    identityId: uuid('identity_id').primaryKey(),
     memberId: memberId(),
     location: text('location').$type<'server' | 'local'>().notNull().default('server'),
     latestCheckpoint: text('latest_checkpoint'),
@@ -207,7 +221,10 @@ export const profiles = pgTable(
     heldBy: text('held_by'),
     heldSince: timestamptz('held_since')
   },
-  (t) => [check('profiles_location_check', oneOf(t.location, PROFILE_LOCATIONS))]
+  (t) => [
+    ownedFk('profiles_identity_id_identities_id_fk', [t.identityId, t.memberId], [identities.id, identities.memberId]),
+    check('profiles_location_check', oneOf(t.location, PROFILE_LOCATIONS))
+  ]
 )
 
 export const details = pgTable(
@@ -241,9 +258,7 @@ export const timetableEntries = pgTable(
   {
     id: id(),
     memberId: memberId(),
-    identityId: uuid('identity_id')
-      .notNull()
-      .references(() => identities.id, { onDelete: 'restrict' }),
+    identityId: uuid('identity_id').notNull(),
     name: text('name').notNull(),
     type: text('type').$type<EntryType>().notNull(),
     repeat: jsonb('repeat').$type<RepeatRuleJson>().notNull(),
@@ -265,6 +280,15 @@ export const timetableEntries = pgTable(
     updatedAt: updatedAt()
   },
   (t) => [
+    ownedFk(
+      'timetable_entries_identity_id_identities_id_fk',
+      [t.identityId, t.memberId],
+      [identities.id, identities.memberId],
+      'restrict'
+    ),
+    unique('timetable_entries_id_member_id_unique').on(t.id, t.memberId),
+    index('timetable_entries_member_id_idx').on(t.memberId),
+    index('timetable_entries_identity_id_idx').on(t.identityId),
     check('timetable_entries_type_check', oneOf(t.type, ENTRY_TYPES)),
     check('timetable_entries_transcription_check', oneOf(t.transcription, TRANSCRIPTION_MODES))
   ]
@@ -275,10 +299,8 @@ export const occurrences = pgTable(
   {
     id: id(),
     memberId: memberId(),
-    entryId: uuid('entry_id').references(() => timetableEntries.id, { onDelete: 'set null' }),
-    identityId: uuid('identity_id')
-      .notNull()
-      .references(() => identities.id, { onDelete: 'cascade' }),
+    entryId: uuid('entry_id'),
+    identityId: uuid('identity_id').notNull(),
     entryName: text('entry_name').notNull(),
     entryType: text('entry_type').$type<EntryType>().notNull(),
     transcription: text('transcription').$type<TranscriptionMode>().notNull(),
@@ -309,8 +331,24 @@ export const occurrences = pgTable(
     createdAt: createdAt()
   },
   (t) => [
+    // Postgres needs `on delete set null (entry_id)` here, so the migration hand-edits the generated statement: a plain
+    // `set null` would also null `member_id`.
+    ownedFk(
+      'occurrences_entry_id_timetable_entries_id_fk',
+      [t.entryId, t.memberId],
+      [timetableEntries.id, timetableEntries.memberId],
+      'set null'
+    ),
+    ownedFk(
+      'occurrences_identity_id_identities_id_fk',
+      [t.identityId, t.memberId],
+      [identities.id, identities.memberId]
+    ),
+    unique('occurrences_id_member_id_unique').on(t.id, t.memberId),
     unique('occurrences_entry_id_scheduled_start_unique').on(t.entryId, t.scheduledStart),
     index('occurrences_state_idx').on(t.state),
+    index('occurrences_state_scheduled_start_idx').on(t.state, t.scheduledStart),
+    index('occurrences_member_id_scheduled_start_idx').on(t.memberId, t.scheduledStart),
     index('occurrences_identity_id_scheduled_start_idx').on(t.identityId, t.scheduledStart),
     index('occurrences_delete_after_idx').on(t.deleteAfter),
     check('occurrences_state_check', oneOf(t.state, OCCURRENCE_STATES)),
@@ -322,9 +360,7 @@ export const events = pgTable(
   'events',
   {
     id: bigserial('id', { mode: 'number' }).primaryKey(),
-    occurrenceId: uuid('occurrence_id')
-      .notNull()
-      .references(() => occurrences.id, { onDelete: 'cascade' }),
+    occurrenceId: uuid('occurrence_id').notNull(),
     memberId: memberId(),
     attempt: integer('attempt').notNull(),
     at: timestamptz('at').notNull(),
@@ -333,6 +369,12 @@ export const events = pgTable(
     dataHash: text('data_hash').notNull()
   },
   (t) => [
+    ownedFk(
+      'events_occurrence_id_occurrences_id_fk',
+      [t.occurrenceId, t.memberId],
+      [occurrences.id, occurrences.memberId]
+    ),
+    index('events_member_id_idx').on(t.memberId),
     unique('events_occurrence_id_attempt_at_type_data_hash_unique').on(
       t.occurrenceId,
       t.attempt,
@@ -348,9 +390,7 @@ export const forms = pgTable(
   'forms',
   {
     id: id(),
-    occurrenceId: uuid('occurrence_id')
-      .notNull()
-      .references(() => occurrences.id, { onDelete: 'cascade' }),
+    occurrenceId: uuid('occurrence_id').notNull(),
     memberId: memberId(),
     formKey: text('form_key').notNull(),
     url: text('url').notNull(),
@@ -371,6 +411,12 @@ export const forms = pgTable(
     updatedAt: updatedAt()
   },
   (t) => [
+    ownedFk(
+      'forms_occurrence_id_occurrences_id_fk',
+      [t.occurrenceId, t.memberId],
+      [occurrences.id, occurrences.memberId]
+    ),
+    index('forms_member_id_idx').on(t.memberId),
     unique('forms_occurrence_id_form_key_unique').on(t.occurrenceId, t.formKey),
     check('forms_source_check', oneOf(t.source, FORM_SOURCES)),
     check('forms_state_check', oneOf(t.state, FORM_STATES))
@@ -381,9 +427,7 @@ export const artefacts = pgTable(
   'artefacts',
   {
     id: id(),
-    occurrenceId: uuid('occurrence_id')
-      .notNull()
-      .references(() => occurrences.id, { onDelete: 'cascade' }),
+    occurrenceId: uuid('occurrence_id').notNull(),
     memberId: memberId(),
     kind: text('kind').$type<ArtefactKind>().notNull(),
     path: text('path').notNull(), // relative to the occurrence directory
@@ -391,6 +435,12 @@ export const artefacts = pgTable(
     createdAt: createdAt()
   },
   (t) => [
+    ownedFk(
+      'artefacts_occurrence_id_occurrences_id_fk',
+      [t.occurrenceId, t.memberId],
+      [occurrences.id, occurrences.memberId]
+    ),
+    index('artefacts_member_id_idx').on(t.memberId),
     unique('artefacts_occurrence_id_path_unique').on(t.occurrenceId, t.path),
     check('artefacts_kind_check', oneOf(t.kind, ARTEFACT_KINDS))
   ]
@@ -427,26 +477,28 @@ export const connections = pgTable(
   ]
 )
 
-export const deviceTokens = pgTable('device_tokens', {
-  id: id(),
-  memberId: memberId(),
-  name: text('name').notNull(),
-  tokenHash: text('token_hash').notNull().unique(),
-  createdAt: createdAt(),
-  lastUsedAt: timestamptz('last_used_at'),
-  revokedAt: timestamptz('revoked_at')
-})
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: id(),
+    memberId: memberId(),
+    name: text('name').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: createdAt(),
+    lastUsedAt: timestamptz('last_used_at'),
+    revokedAt: timestamptz('revoked_at')
+  },
+  (t) => [index('device_tokens_member_id_idx').on(t.memberId)]
+)
 
 export const signinSessions = pgTable(
   'signin_sessions',
   {
     id: id(),
     memberId: memberId(),
-    identityId: uuid('identity_id')
-      .notNull()
-      .references(() => identities.id, { onDelete: 'cascade' }),
+    identityId: uuid('identity_id').notNull(),
     mode: text('mode').$type<'worker' | 'container'>().notNull(),
-    occurrenceId: uuid('occurrence_id').references(() => occurrences.id, { onDelete: 'set null' }),
+    occurrenceId: uuid('occurrence_id'),
     upstream: text('upstream'),
     controlTokenHash: text('control_token_hash'),
     state: text('state').$type<'starting' | 'ready' | 'ended'>().notNull().default('starting'),
@@ -457,6 +509,21 @@ export const signinSessions = pgTable(
     endReason: text('end_reason')
   },
   (t) => [
+    ownedFk(
+      'signin_sessions_identity_id_identities_id_fk',
+      [t.identityId, t.memberId],
+      [identities.id, identities.memberId]
+    ),
+    // Hand-edited to `on delete set null (occurrence_id)` in the migration, like occurrences.entry_id.
+    ownedFk(
+      'signin_sessions_occurrence_id_occurrences_id_fk',
+      [t.occurrenceId, t.memberId],
+      [occurrences.id, occurrences.memberId],
+      'set null'
+    ),
+    index('signin_sessions_member_id_idx').on(t.memberId),
+    index('signin_sessions_identity_id_idx').on(t.identityId),
+    index('signin_sessions_occurrence_id_idx').on(t.occurrenceId),
     check('signin_sessions_mode_check', oneOf(t.mode, SIGNIN_MODES)),
     check('signin_sessions_state_check', oneOf(t.state, SIGNIN_STATES))
   ]
