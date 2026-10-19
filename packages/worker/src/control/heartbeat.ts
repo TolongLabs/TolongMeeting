@@ -12,9 +12,22 @@ import type { Stopper } from '../types'
 const INTERVAL_MS = 5_000
 const TIMEOUT_MS = 4_000
 const BACKOFF_FIRST_MS = 1_000
-const BACKOFF_MAX_MS = 30_000
+const BACKOFF_MAX_MS = 10_000
+/** A reply body larger than this is refused unread (a real reply is a few hundred bytes). */
+const MAX_REPLY_BYTES = 64 * 1024
 /** Most heartbeats one `flush` sends: 500 events each, so this is far more than an outbox ever holds. */
 const MAX_FLUSH_BEATS = 40
+
+/**
+ * The wait before the next heartbeat after `failures` failures in a row: 1 s, doubling to the cap. The cap (10 s) stays
+ * well under the monitor's 30 s window, so one good heartbeat gets through between two checks of an outage that ends.
+ */
+export function backoffDelayMs(
+  failures: number,
+  backoff = { firstMs: BACKOFF_FIRST_MS, maxMs: BACKOFF_MAX_MS }
+): number {
+  return Math.min(backoff.maxMs, backoff.firstMs * 2 ** (failures - 1))
+}
 
 export interface HeartbeatOptions {
   intervalMs?: number
@@ -53,7 +66,8 @@ export function heartbeatUrl(base: string): string {
 
 const NOOP: HeartbeatLoop = { stop: async () => undefined, flush: async () => true }
 
-type Beat = 'ok' | 'failed' | 'stopped'
+/** `retry`: the next heartbeat goes at once (a 400 that is being narrowed down); `failed` waits, with backoff. */
+type Beat = 'ok' | 'failed' | 'retry' | 'stopped'
 
 /**
  * Posts `getStatus()` to `<control.url>/heartbeat` every 5 s with `Authorization: Bearer <control.token>`, one request at
@@ -130,8 +144,10 @@ export function startHeartbeat(
         problem('heartbeat refused as invalid (400) even without events')
       } else if (events.length > 1) {
         batchLimit = Math.ceil(events.length / 2)
+        return 'retry'
       } else if (events.length === 1) {
         probing = true
+        return 'retry'
       } else {
         problem('heartbeat refused as invalid (400)')
       }
@@ -164,9 +180,24 @@ export function startHeartbeat(
     return 'ok'
   }
 
+  // The reply body as JSON, or null when it is too big (read no further than the cap) or is not JSON.
   async function readJson(response: Response): Promise<unknown> {
+    const reader = response.body?.getReader()
+    if (reader === undefined) return null
+    const chunks: Uint8Array[] = []
+    let size = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > MAX_REPLY_BYTES) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
     try {
-      return await response.json()
+      return JSON.parse(Buffer.concat(chunks).toString('utf8'))
     } catch (error) {
       if (error instanceof SyntaxError) return null
       throw error
@@ -191,9 +222,10 @@ export function startHeartbeat(
   // One beat now, and the next after the interval (or the backoff, after a failure).
   function cycle(): void {
     void beat().then((result) => {
-      failures = result === 'failed' ? failures + 1 : 0
+      if (result === 'failed') failures += 1
+      else if (result !== 'retry') failures = 0
       if (stopped) return
-      const delay = failures === 0 ? intervalMs : Math.min(backoff.maxMs, backoff.firstMs * 2 ** (failures - 1))
+      const delay = result === 'retry' ? 0 : failures === 0 ? intervalMs : backoffDelayMs(failures, backoff)
       timer = setTimeout(cycle, delay)
       timer.unref()
     })
@@ -211,6 +243,7 @@ export function startHeartbeat(
     async flush() {
       for (let i = 0; i < MAX_FLUSH_BEATS; i++) {
         const result = await beat()
+        if (result === 'retry') continue
         if (result !== 'ok') return false
         if (getStatus().events.length === 0) return true
       }

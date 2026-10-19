@@ -1,11 +1,9 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
 import { AiKeyError } from '@tm/ai'
 import {
-  AccountCheckDataSchema,
   localParts,
-  StateEventDataSchema,
   triggerFor,
   type AccountCheckData,
   type ChatMessage,
@@ -29,6 +27,7 @@ import { startHeartbeat, type HeartbeatLoop } from './control/heartbeat'
 import { LinkOverride } from './control/link-override'
 import { siteLinks } from './control/links'
 import { EventOutbox } from './control/outbox'
+import { acknowledgedState, rememberState } from './control/resume'
 import { createEventLog, type EventLog } from './events'
 import { makeFormContextBase } from './forms/context'
 import type { FormDispatcher } from './forms/dispatcher'
@@ -71,6 +70,14 @@ const TEARDOWN_BUDGET_MS = 50_000
 const CHECKPOINT_RESERVE_MS = 15_000
 /** With a control channel, the last part of the budget belongs to the final heartbeat: no step before it may use it. */
 const FINAL_HEARTBEAT_RESERVE_MS = 5_000
+// The 50 s add up as: steps before the checkpoint 30 s (budget x 0.6), then the checkpoint, the held-back alerts, the
+// screen and the join of the segments share 15 s (the checkpoint's own window), then the final heartbeat 4 s and
+// stopping the heartbeat 1 s (the 5 s reserve), and the outbox file write after that in whatever is left. The
+// reserves are cut to a share of the budget when the budget is small (tests).
+/** The most of the budget that the two reserves together may take from the steps before the checkpoint. */
+const RESERVE_SHARE = 0.4
+/** The share of the final heartbeat's reserve that stopping the heartbeat keeps when the heartbeat itself overruns. */
+const STOP_SHARE = 0.2
 /** A meeting with no link is given up this long after its start (PRD LINK-4). */
 const NO_LINK_AFTER_START_MS = 30 * MINUTE
 
@@ -91,8 +98,9 @@ const BOUND = {
   stopCheckpoints: 5_000,
   checkpoint: 120_000,
   alerts: 5_000,
-  finalHeartbeat: 5_000,
-  stopHeartbeat: 3_000,
+  finalHeartbeat: 4_000,
+  stopHeartbeat: 1_000,
+  settleOutbox: 2_000,
   stopScreen: 5_000,
   join: 300_000
 }
@@ -125,6 +133,25 @@ class StepFailed extends Error {
   }
 }
 
+// The states of a meeting that goes to the end, in order.
+const PATH: OccurrenceState[] = [
+  'starting',
+  'verifying_accounts',
+  'watching_for_link',
+  'joining',
+  'in_meeting',
+  'leaving',
+  'uploading'
+]
+
+const OutcomeSchema = z.object({
+  result: z.enum(['completed', 'denied', 'not_admitted', 'failed']),
+  endedBy: z.enum(['page', 'removed', 'hard_stop', 'dropped', 'terminated', 'member_left', 'stopped']).nullable(),
+  reason: z.string().nullable(),
+  joinedAt: z.string().nullable(),
+  endedAt: z.string()
+}) satisfies z.ZodType<OccurrenceOutcome>
+
 const AttemptsSchema = z.array(z.looseObject({ startedAt: z.string() }))
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -151,6 +178,8 @@ class OccurrenceRun {
   private readonly hardStop: number
   private readonly lecture: boolean
   private readonly links: SiteLinks | null
+  /** Why the website links could not be built (a bad `TM_PUBLIC_URL`): reported once the run has started. */
+  private readonly linksError: unknown = null
   private readonly linkOverride: LinkOverride
   private readonly wake: () => void
 
@@ -162,6 +191,8 @@ class OccurrenceRun {
   private recording = false
   private endRequest: EndRequest | null = null
   private verdict: Verdict | null = null
+  /** An earlier attempt already ended the meeting: this one only reports and finishes the recording. */
+  private resumed = false
 
   private profile: ProfileSetup | null = null
   private screen: Screen | null = null
@@ -213,7 +244,14 @@ class OccurrenceRun {
     private readonly cfg: JobConfig,
     private readonly deps: RunDeps
   ) {
-    this.links = siteLinks(cfg)
+    // Links are an extra: a bad `TM_PUBLIC_URL` leaves the pings without them and is reported (see `run`).
+    let links: SiteLinks | null = null
+    try {
+      links = siteLinks(cfg)
+    } catch (error) {
+      this.linksError = error
+    }
+    this.links = links
     this.events = createEventLog(join(cfg.dataDir, 'events.jsonl'), cfg.occurrenceId, cfg.attempt, (e) =>
       this.outbox?.push(e)
     )
@@ -255,6 +293,9 @@ class OccurrenceRun {
     let verdict: Verdict
     try {
       await this.startControl()
+      if (this.linksError !== null) this.fault('site links', this.linksError)
+      const earlier = await this.endedEarlier()
+      if (earlier !== null) return await this.finishEarlier(earlier)
       verdict = await this.main()
     } catch (error) {
       verdict = await this.runFailed(error)
@@ -266,11 +307,61 @@ class OccurrenceRun {
       joinedAt: this.joinedAt?.toISOString() ?? null,
       endedAt: this.deps.now().toISOString()
     }
-    await writeFileAtomic(join(dataDir, 'outcome.json'), `${JSON.stringify(outcome, null, 2)}\n`)
-    // The pipeline can join the segments later, so this is the one step that may be skipped for lack of time.
+    // A replaced worker leaves the outcome and the recording to the attempt that replaced it.
+    if (!this.superseded) {
+      await writeFileAtomic(join(dataDir, 'outcome.json'), `${JSON.stringify(outcome, null, 2)}\n`)
+      // The pipeline can join the segments later, so this is the one step that may be skipped for lack of time.
+      await this.finishRecording()
+    }
+    await this.finalReport(verdict)
+    return outcome
+  }
+
+  private get superseded(): boolean {
+    return this.endRequest === 'superseded'
+  }
+
+  // The outcome an earlier attempt wrote when the meeting itself ended; null when there is none. An attempt that was
+  // only cut short (SIGTERM, replaced) did not end the meeting: the bot goes back in.
+  private async endedEarlier(): Promise<OccurrenceOutcome | null> {
+    if (this.cfg.attempt === 1) return null
+    let text: string
+    try {
+      text = await readFile(join(this.cfg.dataDir, 'outcome.json'), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+    const outcome = OutcomeSchema.parse(JSON.parse(text))
+    return outcome.endedBy === 'terminated' ? null : outcome
+  }
+
+  // The meeting is over, so the bot does not join again. The first heartbeat already carries the acknowledged state;
+  // the states after it are reported now, the recording is joined if it is not yet, and the hand-over is reported.
+  private async finishEarlier(outcome: OccurrenceOutcome): Promise<OccurrenceOutcome> {
+    const verdict: Verdict = { result: outcome.result, endedBy: outcome.endedBy, reason: outcome.reason }
+    this.resumed = true
+    this.verdict = verdict
+    this.joinedAt = outcome.joinedAt === null ? null : new Date(outcome.joinedAt)
+    this.teardownStart = Date.now()
+    if (this.handsOver) await this.walkTo('uploading')
+    else if (verdict.endedBy === 'member_left') {
+      await this.walkTo('in_meeting')
+      await this.setState('left_by_member')
+    } else if (verdict.result === 'denied') {
+      await this.walkTo('joining')
+      await this.setState('in_lobby')
+    } else if (verdict.reason === 'no_link') await this.walkTo('watching_for_link')
     await this.finishRecording()
     await this.finalReport(verdict)
     return outcome
+  }
+
+  // Reports each state from the one after the current state up to `target`, on the way a meeting goes. A step the
+  // server has no edge for is skipped by `setState`.
+  private async walkTo(target: OccurrenceState): Promise<void> {
+    const from = PATH.indexOf(this.state)
+    for (const next of PATH.slice(from + 1, PATH.indexOf(target) + 1)) await this.setState(next)
   }
 
   // --- the control channel ---
@@ -280,9 +371,18 @@ class OccurrenceRun {
   private async startControl(): Promise<void> {
     const { cfg } = this
     if (cfg.control === null) return
-    if (cfg.attempt > 1) this.state = (await this.optional('previous state', () => this.lastState())) ?? 'starting'
-    await this.optional('control channel', async () => {
-      const outbox = await EventOutbox.open(join(cfg.dataDir, 'outbox'), cfg.attempt)
+    const dir = join(cfg.dataDir, 'outbox')
+    if (cfg.attempt > 1) {
+      // The first heartbeat of a restarted worker reports the state the server acknowledged, not where the log ended.
+      const acknowledged = await this.optional('previous state', async () => {
+        const state = await acknowledgedState(dir, cfg.attempt, join(cfg.dataDir, 'events.jsonl'))
+        await rememberState(dir, cfg.attempt, state)
+        return state
+      })
+      this.state = acknowledged ?? 'starting'
+    }
+    const opened = await this.optional('control channel', async () => {
+      const outbox = await EventOutbox.open(dir, cfg.attempt)
       this.heartbeat = startHeartbeat(
         cfg,
         () => this.status(),
@@ -300,26 +400,12 @@ class OccurrenceRun {
       )
       // Events are queued only once the heartbeat exists, so a failed start leaves no outbox to fill.
       this.outbox = outbox
+      return outbox
     })
-  }
-
-  // The state an earlier attempt of this occurrence last reported, from its event log.
-  private async lastState(): Promise<OccurrenceState | null> {
-    let text: string
-    try {
-      text = await readFile(join(this.cfg.dataDir, 'events.jsonl'), 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
+    if (opened !== null && opened.damaged.length > 0) {
+      const names = opened.damaged.join(', ')
+      this.fault('event outbox', new Error(`a damaged file was set aside as ${names}; its readable start was kept`))
     }
-    let last: OccurrenceState | null = null
-    for (const line of text.split('\n')) {
-      if (line === '') continue
-      const event = z.object({ type: z.string(), data: z.unknown() }).parse(JSON.parse(line))
-      const change = event.type === 'state' ? StateEventDataSchema.safeParse(event.data) : null
-      if (change?.success) last = change.data.state
-    }
-    return last
   }
 
   private status(): Heartbeat {
@@ -384,28 +470,23 @@ class OccurrenceRun {
   private async finalReport(verdict: Verdict): Promise<void> {
     const beat = this.heartbeat
     if (beat === null) return
-    if (this.endRequest !== 'superseded') {
+    if (!this.superseded) {
       const state = this.finalState(verdict)
       if (state !== null) await this.setState(state)
+      // The phase 'beat' leaves the next step a share of the reserve even when the server never answers.
       await this.bounded(
         'final heartbeat',
         BOUND.finalHeartbeat,
         async () => {
           if (!(await beat.flush())) throw new Error('the server did not take it; the events stay in the outbox')
         },
-        'final'
+        'beat'
       )
     }
-    // The outbox file is written last: the acknowledgement of the final heartbeat is on disk before the worker exits.
-    await this.bounded(
-      'heartbeat.stop',
-      BOUND.stopHeartbeat,
-      async () => {
-        await beat.stop()
-        await this.outbox!.settled()
-      },
-      'final'
-    )
+    await this.bounded('heartbeat.stop', BOUND.stopHeartbeat, () => beat.stop(), 'final')
+    // The outbox file is written last, in a step of its own: the acknowledgement of the final heartbeat is on disk
+    // before the worker exits, and a slow write cannot cost the heartbeat or its stop their time.
+    await this.bounded('outbox.settled', BOUND.settleOutbox, () => this.outbox!.settled(), 'final')
   }
 
   // Whether the recording goes on to the pipeline: the bot joined, and the run did not end by SIGTERM or a leave.
@@ -546,7 +627,7 @@ class OccurrenceRun {
 
   // The end of the part of the budget that the steps before the final checkpoint may use.
   private get preEnd(): number {
-    return this.budgetEnd - Math.min(CHECKPOINT_RESERVE_MS + this.finalReserve, this.budgetMs * 0.3)
+    return this.budgetEnd - Math.min(CHECKPOINT_RESERVE_MS + this.finalReserve, this.budgetMs * RESERVE_SHARE)
   }
 
   // The part of the budget kept for the final heartbeat; none without a control channel.
@@ -562,18 +643,18 @@ class OccurrenceRun {
   // Runs one teardown or cleanup action with a time limit and says whether it finished. The limit is the step's own,
   // cut to the time left: a step before the final checkpoint (phase 'pre') may not use the checkpoint's reserve, but
   // always gets a short slice; a later step (phase 'end') may use all that is left but the final heartbeat's reserve,
-  // which only the last step (phase 'final') may use. A failure, a timeout or no time
-  // left is reported; it never throws.
+  // which only the last steps (phases 'beat' and 'final') may use; 'beat' keeps a share of it for the 'final' ones. A
+  // failure, a timeout or no time left is reported; it never throws.
   private async bounded(
     name: string,
     ms: number,
     fn: () => Promise<unknown>,
-    phase: 'pre' | 'end' | 'final' = 'pre'
+    phase: 'pre' | 'end' | 'beat' | 'final' = 'pre'
   ): Promise<boolean> {
     const now = Date.now()
     const endLeft = this.budgetEnd - now
-    const share =
-      phase === 'pre' ? Math.max(this.preEnd - now, this.minSlice) : endLeft - (phase === 'end' ? this.finalReserve : 0)
+    const kept = phase === 'end' ? this.finalReserve : phase === 'beat' ? this.finalReserve * STOP_SHARE : 0
+    const share = phase === 'pre' ? Math.max(this.preEnd - now, this.minSlice) : endLeft - kept
     const limit = Math.min(ms, share, endLeft)
     if (limit <= 0) {
       await this.report(`teardown ${name}`, new Error('skipped: no teardown time left'))
@@ -1196,7 +1277,8 @@ class OccurrenceRun {
     if (this.audio) await this.bounded('audio.stop', BOUND.stopAudio, () => this.audio!.stop())
     await this.closeBrowser()
     if (this.checkpoints) await this.bounded('checkpoints.stop', BOUND.stopCheckpoints, () => this.checkpoints!.stop())
-    if (this.context && this.profile) {
+    // A replaced worker takes no checkpoint: the attempt that replaced it owns the profile.
+    if (this.context && this.profile && !this.superseded) {
       const { checkpointsDir, key } = this.profile
       if (this.contextClosed) {
         await this.bounded(
@@ -1213,9 +1295,22 @@ class OccurrenceRun {
     if (this.screen) await this.bounded('screen.stop', BOUND.stopScreen, () => this.screen!.stop(), 'end')
   }
 
+  private async joined(): Promise<boolean> {
+    try {
+      await access(join(this.cfg.dataDir, 'recording', 'meeting.mkv'))
+      return true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+      throw error
+    }
+  }
+
   // Joins the recording's segments into the final file. The pipeline can do this later if the run has no time left.
   private async finishRecording(): Promise<void> {
-    if (!this.recorder) return
+    // An earlier attempt may have joined the segments already.
+    if (this.resumed) {
+      if (this.joinedAt === null || (await this.joined())) return
+    } else if (!this.recorder) return
     await this.bounded(
       'joinRecording',
       BOUND.join,

@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ControlCommand, Heartbeat, JobConfig, MeetingEvent, OccurrenceState } from '@tm/core'
-import { runOccurrence } from '../src/run'
+import {
+  ACTIVE_STATES,
+  StateEventDataSchema,
+  triggerFor,
+  type ControlCommand,
+  type Heartbeat,
+  type JobConfig,
+  type MeetingEvent,
+  type OccurrenceState
+} from '@tm/core'
+import { runOccurrence, type OccurrenceOutcome } from '../src/run'
 import { fakeDeps, makeCfg, type FakeDeps, type FakeOptions } from './helpers/fake-deps'
 
 let base: JobConfig
@@ -61,6 +70,65 @@ function control(answer: (body: Heartbeat, n: number) => Reply = () => ({})) {
       .filter((e) => e.type === 'state' && 'state' in e.data)
       .map((e) => e.data.state as OccurrenceState)
   return { seen, events, states, url: `http://127.0.0.1:${server.port}/api/control` }
+}
+
+// The server's rule for a worker's state changes (web/lib/control.ts): from `restarting` only `resume:<resume_state>`
+// is taken; elsewhere a worker moves along the machine's edges, but never to a state it does not own.
+const CANNOT_ENTER = new Set<OccurrenceState>([
+  'deleted',
+  'completed',
+  'post_processing',
+  'waiting_for_pc',
+  'restarting',
+  'skipped_capacity',
+  'skipped_identity_clash',
+  'skipped_pc_offline'
+])
+const MOVES_FROM = new Set<OccurrenceState>([...ACTIVE_STATES, 'uploading'])
+
+// A control server that applies each heartbeat's state changes the way the real one does, so a restarted worker that
+// reports the wrong state stays in `restarting`.
+function stateful(start: OccurrenceState, resumeState: OccurrenceState) {
+  const model = { state: start, illegal: [] as string[] }
+  const moveTo = (next: OccurrenceState): void => {
+    if (next === model.state) return
+    const trigger = triggerFor(model.state, next)
+    const resumes = model.state === 'restarting' && trigger === `resume:${resumeState}`
+    const allowed =
+      resumes || (MOVES_FROM.has(model.state) && !CANNOT_ENTER.has(next) && !trigger?.startsWith('resume:'))
+    if (trigger === null || !allowed) model.illegal.push(`${model.state} -> ${next}`)
+    else model.state = next
+  }
+  const c = control((body) => {
+    for (const e of body.events) {
+      const change = e.type === 'state' ? StateEventDataSchema.safeParse(e.data) : null
+      if (change?.success) moveTo(change.data.state)
+    }
+    moveTo(body.state)
+    return {}
+  })
+  return { ...c, model }
+}
+
+const line = (e: MeetingEvent): string => `${JSON.stringify(e)}\n`
+const stateEvent = (n: number, state: string, attempt = 1): MeetingEvent => ({
+  occurrenceId: 'occ-1',
+  attempt,
+  at: `2026-10-21T12:00:${String(n).padStart(2, '0')}.000Z`,
+  type: 'state',
+  data: { state }
+})
+const errorEvent = (n: number): MeetingEvent => ({
+  ...stateEvent(n, 'x'),
+  type: 'error',
+  data: { where: 'earlier', n }
+})
+
+// What attempt 1 left behind: its event log, and the events the server never got.
+async function leftBehind(cfg: JobConfig, log: MeetingEvent[], unsent: MeetingEvent[]): Promise<void> {
+  await mkdir(join(cfg.dataDir, 'outbox'), { recursive: true })
+  await writeFile(join(cfg.dataDir, 'events.jsonl'), log.map(line).join(''))
+  await writeFile(join(cfg.dataDir, 'outbox', 'attempt_1.jsonl'), unsent.map(line).join(''))
 }
 
 const withControl = (url: string, extra: Partial<JobConfig> = {}): JobConfig => ({
@@ -171,12 +239,17 @@ test('a stop before the join fails the run and reports failed', async () => {
   expect(c.seen.at(-1)).toMatchObject({ state: 'failed' })
 })
 
-test('410 stops the worker through the normal teardown and reports nothing more', async () => {
+test('410 leaves the meeting and closes the browser, but leaves the checkpoint, outcome and recording to the new attempt', async () => {
   const c = control((b) => ({ status: b.state === 'in_meeting' ? 410 : undefined }))
   const d = fake({ states: 'always_in_meeting' })
-  const o = await runOccurrence(withControl(c.url), d)
+  const cfg = withControl(c.url)
+  const o = await runOccurrence(cfg, d)
   expect(o).toMatchObject({ endedBy: 'terminated', reason: 'superseded' })
-  expect(d.calls).toContain('joinRecording')
+  expect(d.calls).toContain('leave')
+  expect(d.calls).toContain('context.close')
+  expect(d.calls).not.toContain('checkpointProfile')
+  expect(d.calls).not.toContain('joinRecording')
+  await expect(readFile(join(cfg.dataDir, 'outcome.json'), 'utf8')).rejects.toThrow()
   expect(c.states()).not.toContain('transcribing')
   expect(c.states()).not.toContain('leaving')
   expect(c.seen.every((b) => b.state !== 'transcribing')).toBe(true)
@@ -245,14 +318,130 @@ test('events stay on disk when the server is down, and the next attempt delivers
   const c = control()
   const again = withControl(c.url, { attempt: 2 })
   const e = fake({ states: ['ended'] })
-  await runOccurrence(again, e)
-  // The restarted worker reports where the first one stopped, and sends the first one's events before its own.
-  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'transcribing' })
+  const second = await runOccurrence(again, e)
+  // The server never heard of the first attempt, so the restarted worker starts from `starting`; the meeting is over,
+  // so it does not join again, and it sends the first one's events before its own.
+  expect(second).toEqual(o)
+  expect(e.calls).not.toContain('join')
+  expect(e.calls).not.toContain('launchBrowser')
+  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'starting' })
   const sent = c.events()
   expect(sent[0]!.attempt).toBe(1)
   expect(sent.some((x) => x.attempt === 2)).toBe(true)
   expect(sent.filter((x) => x.attempt === 1 && x.type === 'state' && 'state' in x.data)).toEqual([])
+  expect(c.states().at(-1)).toBe('transcribing')
   expect(await outboxText(again, 2)).toBe('')
+})
+
+test('a restarted worker reports the state the server acknowledged, though the log is ahead of it', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  // The server applied up to `joining` before the crash; the log goes on to `in_meeting`, which it never got.
+  const log = [
+    stateEvent(1, 'verifying_accounts'),
+    stateEvent(2, 'watching_for_link'),
+    stateEvent(3, 'joining'),
+    stateEvent(4, 'in_meeting')
+  ]
+  await leftBehind(cfg, log, [log[3]!, errorEvent(5)])
+  const c = stateful('restarting', 'joining')
+  const d = fake({ states: ['in_meeting', 'ended'] })
+  const o = await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'page' })
+  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'joining' })
+  expect(c.model.illegal).toEqual([])
+  expect(c.model.state).toBe('transcribing')
+  // The earlier attempt's error event still arrives; its state change does not.
+  expect(c.events().some((e) => e.attempt === 1 && e.type === 'error')).toBe(true)
+  expect(c.events().some((e) => e.attempt === 1 && e.type === 'state')).toBe(false)
+})
+
+test('a restart after the meeting ended reports the acknowledged state, then hands over without joining again', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  const log = [
+    stateEvent(1, 'verifying_accounts'),
+    stateEvent(2, 'watching_for_link'),
+    stateEvent(3, 'joining'),
+    stateEvent(4, 'in_meeting'),
+    stateEvent(5, 'leaving'),
+    stateEvent(6, 'uploading'),
+    stateEvent(7, 'transcribing')
+  ]
+  // The server has `in_meeting`; the rest was not sent, and the first attempt wrote its outcome before it died.
+  await leftBehind(cfg, log, log.slice(4))
+  const joinedAt = '2026-10-21T12:00:04.000Z'
+  const earlier: OccurrenceOutcome = {
+    result: 'completed',
+    endedBy: 'page',
+    reason: null,
+    joinedAt,
+    endedAt: '2026-10-21T13:00:00.000Z'
+  }
+  await writeFile(join(cfg.dataDir, 'outcome.json'), JSON.stringify(earlier))
+  const c = stateful('restarting', 'in_meeting')
+  const d = fake({ states: 'always_in_meeting' })
+  const o = await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(o).toEqual(earlier)
+  expect(d.calls).not.toContain('launchBrowser')
+  expect(d.calls).not.toContain('join')
+  expect(d.calls).toContain('joinRecording')
+  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'in_meeting' })
+  expect(c.states()).toEqual(['leaving', 'uploading', 'transcribing'])
+  expect(c.model.illegal).toEqual([])
+  expect(c.model.state).toBe('transcribing')
+  expect(c.seen.at(-1)).toMatchObject({ state: 'transcribing' })
+})
+
+test('a cut-short earlier attempt (SIGTERM) does not end the meeting: the restarted worker joins again', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  await leftBehind(cfg, [stateEvent(1, 'verifying_accounts')], [])
+  await writeFile(
+    join(cfg.dataDir, 'outcome.json'),
+    JSON.stringify({
+      result: 'completed',
+      endedBy: 'terminated',
+      reason: 'terminated',
+      joinedAt: null,
+      endedAt: '2026-10-21T12:30:00.000Z'
+    })
+  )
+  const c = stateful('restarting', 'verifying_accounts')
+  const d = fake({ states: ['ended'] })
+  const o = await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(o).toMatchObject({ endedBy: 'page' })
+  expect(d.calls).toContain('join')
+  expect(c.model.state).toBe('transcribing')
+})
+
+test('a damaged outbox file is set aside with one error event and one ping, and the control channel still starts', async () => {
+  const c = control()
+  const cfg = withControl(c.url)
+  const kept = errorEvent(1)
+  await mkdir(join(cfg.dataDir, 'outbox'), { recursive: true })
+  await writeFile(join(cfg.dataDir, 'outbox', 'attempt_1.jsonl'), `${line(kept)}{"occurrenceId":"occ-1","at\n`)
+  const d = fake({ states: ['ended'] })
+  const o = await runOccurrence(cfg, d)
+  expect(o.result).toBe('completed')
+  expect(await readdir(join(cfg.dataDir, 'outbox'))).toContain('attempt_1.jsonl.damaged')
+  expect(c.events()).toContainEqual(kept)
+  expect(c.seen.at(-1)).toMatchObject({ state: 'transcribing' })
+  const errors = (await logged(cfg)).filter((e) => e.type === 'error' && e.data.where === 'event outbox')
+  expect(errors).toHaveLength(1)
+  expect(d.pings.filter((p) => p.message.includes('event outbox'))).toHaveLength(1)
+})
+
+test('a bad TM_PUBLIC_URL costs the pings their links, not the run', async () => {
+  process.env.TM_PUBLIC_URL = 'http://not-https.example.com'
+  const c = control()
+  const cfg = withControl(c.url)
+  const d = fake({ states: ['ended'], signedOut: ['google'] })
+  const o = await runOccurrence(cfg, d)
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'page' })
+  expect(d.pings.length).toBeGreaterThan(0)
+  expect(d.pings.every((p) => p.actions === undefined || p.actions.length === 0)).toBe(true)
+  expect(d.pings.some((p) => p.message.includes('site links'))).toBe(true)
+  const errors = (await logged(cfg)).filter((e) => e.type === 'error' && e.data.where === 'site links')
+  expect(errors).toHaveLength(1)
+  expect(c.seen.at(-1)).toMatchObject({ state: 'transcribing' })
 })
 
 test('a final heartbeat the server never answers is cut off inside the teardown budget', async () => {
@@ -266,6 +455,22 @@ test('a final heartbeat the server never answers is cut off inside the teardown 
   expect((await logged(cfg)).some((e) => e.type === 'error' && e.data.where === 'teardown final heartbeat')).toBe(true)
   expect(await outboxText(cfg)).toContain('transcribing')
 })
+
+test('a final heartbeat that uses its whole window still leaves the heartbeat its stop step', async () => {
+  const c = control((b) => ({ hang: b.state === 'transcribing' }))
+  // The checkpoint hangs too, so it takes all the time it is given and the heartbeat only has its reserve.
+  const d = fake({ states: ['ended'], teardownBudgetMs: 2000, checkpoint: () => new Promise<void>(() => {}) })
+  const cfg = withControl(c.url)
+  const started = Date.now()
+  await runOccurrence(cfg, d)
+  expect(Date.now() - started).toBeLessThan(4000)
+  const where = (await logged(cfg)).filter((e) => e.type === 'error').map((e) => e.data.where)
+  expect(where).toContain('teardown final heartbeat')
+  // Neither the stop step nor the outbox write was skipped for lack of time.
+  expect(where).not.toContain('teardown heartbeat.stop')
+  expect(where).not.toContain('teardown outbox.settled')
+  expect(where).toContain('teardown checkpointProfile')
+}, 10_000)
 
 test('without a control channel nothing is queued and no outbox is made', async () => {
   const d = fake({ states: ['ended'] })
