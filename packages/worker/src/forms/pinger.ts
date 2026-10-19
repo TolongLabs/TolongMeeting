@@ -76,6 +76,21 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+// Reporting must never reject a task: idle() would rethrow it. A report that cannot be emitted goes to stderr,
+// with only host, path and the message.
+async function emitOrStderr(
+  emit: FormPingerDeps['emit'],
+  type: EventType,
+  data: Record<string, unknown>,
+  at: { host: string | null; path: string | null }
+): Promise<void> {
+  try {
+    await emit(type, data)
+  } catch (err) {
+    console.error(`form pinger: ${type} not emitted for host=${at.host} path=${at.path}: ${messageOf(err)}`)
+  }
+}
+
 export function createFormPinger(deps: FormPingerDeps): FormPinger {
   const { cfg, send, emit } = deps
   const resolve = deps.resolve ?? resolveFormLink
@@ -123,6 +138,7 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
     let formId: string | null = null
     let claimedKey: string | null = null
     let rec: FormPingRecord | null = null
+    let pinged = false // the ping's send resolved; the record write can fail after this without undoing it
     try {
       // Text that is not a URL (arbitrary QR content) is not a form, so it is ignored rather than failed.
       if (!URL.canParse(c.url)) {
@@ -173,9 +189,11 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       const decision = checkTrust(form, cfg.entry.trustedSenders)
       if (decision.reason !== null) {
         await send(formToSubmitPing(cfg.entry.name, form, decision.reason, clockOf(c.seenAt)))
+        pinged = true
         state = nextFormState(state, 'manual_only')
       } else {
         await send(formNotSubmittedPing(cfg.entry.name, form, clockOf(c.seenAt)))
+        pinged = true
         state = nextFormState(state, 'untrusted')
       }
       rec = { ...rec, state, trustReason: decision.reason, pingedAt: now().toISOString() }
@@ -183,11 +201,12 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
     } catch (err) {
       const ended: FormState = canFail(state) ? nextFormState(state, 'fail') : state
       const failed = ended === 'failed'
-      if (failed) {
-        // The form was not pinged, so a later sighting of it (or of this raw URL) must be handled again.
-        offered.delete(c.url)
-        if (claimedKey !== null) formKeys.delete(claimedKey)
-      }
+      // A claimed form whose ping never went out is released whatever state it stopped in. Such a claim always
+      // sits in checking_trust, which has a 'fail' edge, so `ended` is 'failed' for it too.
+      const unpinged = claimedKey !== null && !pinged
+      // Not pinged, so a later sighting of this form or raw URL must be handled again.
+      if (failed || unpinged) offered.delete(c.url)
+      if (claimedKey !== null && !pinged) formKeys.delete(claimedKey)
 
       let recordMessage: string | null = null
       if (rec !== null) {
@@ -199,9 +218,14 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       }
 
       const at = location ?? { host: null, path: null }
-      await emit('error', { where: 'form', formId, state: ended, ...at, message: messageOf(err), recordMessage })
-      if (failed) {
-        await emit('alert', { kind: 'form_ping_failed', formId, ...at })
+      await emitOrStderr(
+        emit,
+        'error',
+        { where: 'form', formId, state: ended, ...at, message: messageOf(err), recordMessage },
+        at
+      )
+      if (failed || unpinged) {
+        await emitOrStderr(emit, 'alert', { kind: 'form_ping_failed', formId, ...at }, at)
       }
     }
   }

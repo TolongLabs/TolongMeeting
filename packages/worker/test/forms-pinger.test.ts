@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseJob, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
@@ -273,4 +273,54 @@ test('ping times are wall-clock in the entry time zone, not the container zone',
   await p.idle()
 
   expect(sent[0].message).toContain('was seen at 14:30.')
+})
+
+test('an emit that throws for error and alert events never rejects the task', async () => {
+  const failing = async (): Promise<void> => {
+    throw new Error('ntfy responded 500')
+  }
+  const brokenLog: typeof emit = async (type, data) => {
+    if (type === 'error' || type === 'alert') throw new Error('event log full')
+    ev.push({ type, data })
+  }
+  const errors = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const p = createFormPinger({ cfg, send: failing, emit: brokenLog, resolve })
+    await p.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+    await expect(p.idle()).resolves.toBeUndefined()
+
+    expect(await onlyRecord()).toMatchObject({ state: 'failed', pingedAt: null })
+    const lines = errors.mock.calls.map((args) => String(args[0]))
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('error not emitted for host=docs.google.com path=/forms/d/e/1FAIpQ/viewform')
+    expect(lines[0]).toContain('event log full')
+    expect(lines[1]).toContain('alert not emitted for host=docs.google.com')
+    expect(lines[1]).toContain('event log full')
+    expect(lines.join('\n')).not.toContain('usp=')
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test('a record write that fails right after resolution releases the form', async () => {
+  // A plain file where the forms directory belongs makes every record write fail, for real.
+  const blocker = join(dataDir, 'forms')
+  await writeFile(blocker, 'in the way')
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  await p.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.idle()
+
+  expect(sent).toEqual([])
+  expect(ev.find((e) => e.type === 'error')!.data).toMatchObject({ where: 'form', state: 'failed' })
+  expect(ev.filter((e) => e.type === 'alert').map((e) => e.data)).toEqual([
+    expect.objectContaining({ kind: 'form_ping_failed', host: 'docs.google.com' })
+  ])
+
+  // The disk recovers: the same raw URL, sent again, is checked and pinged.
+  await rm(blocker)
+  await p.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.idle()
+
+  expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
+  expect(await onlyRecord()).toMatchObject({ state: 'needs_member' })
 })
