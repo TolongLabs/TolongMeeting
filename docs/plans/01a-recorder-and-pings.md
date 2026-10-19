@@ -440,7 +440,7 @@ git commit -m "feat(notify): add ntfy client and ping copy"
 - Produces: `chatJson<T>(cfg, model, messages, schema, timeoutMs, opts?)`, `chatText(cfg, model, messages, timeoutMs, opts?)`, `AiKeyError`.
 - Produces (adds to contracts): `type ChatPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }`; `interface ChatTurn { role: 'system' | 'user' | 'assistant'; content: string | ChatPart[] }`; the optional last parameter `opts?: { thinking?: boolean }` on both chat functions; `class AiError extends Error { status: number }`; `class AiTimeoutError extends Error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ````ts
 // packages/ai/src/chat.test.ts: a Bun.serve fake at cfg.baseUrl answers /chat/completions
@@ -483,21 +483,21 @@ test('thinking: true is passed through', async () => {
 })
 ````
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/ai/src/chat.test.ts`
 Expected: FAIL with "Cannot find module './chat'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `POST ${cfg.baseUrl}/chat/completions` with `{ model, messages, stream: false, enable_thinking: opts?.thinking ?? false }` (plus `response_format: { type: 'json_object' }` in `chatJson`), `AbortSignal.timeout(timeoutMs)`. `chatJson` takes `choices[0].message.content`, strips a surrounding code fence, `JSON.parse`, `schema.parse`; on a parse or validation failure it retries once with an extra user turn "Your reply was not valid JSON for the schema. Reply with JSON only."; a second failure throws `AiError(422)`. Error bodies are cut to 200 characters and never include the request headers.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/ai/src/chat.test.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/ai docs/plans/architecture.md

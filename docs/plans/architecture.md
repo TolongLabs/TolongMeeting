@@ -324,11 +324,18 @@ export async function chatJson<T>(
   model: string,
   messages: ChatTurn[],
   schema: z.ZodType<T>,
-  timeoutMs: number
+  timeoutMs: number,
+  opts?: ChatOptions
 ): Promise<T>
-export async function chatText(cfg: AiConfig, model: string, messages: ChatTurn[], timeoutMs: number): Promise<string>
+export async function chatText(
+  cfg: AiConfig,
+  model: string,
+  messages: ChatTurn[],
+  timeoutMs: number,
+  opts?: ChatOptions
+): Promise<string>
 export function openAsrStream(cfg: AiConfig): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
-export class AiKeyError extends Error {
+export class AiKeyError extends AiError {
   status: 401 | 402 | 429
 }
 ```

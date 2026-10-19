@@ -15,6 +15,10 @@
     },
     "packages/ai": {
       "name": "@tm/ai",
+      "dependencies": {
+        "@tm/core": "workspace:*",
+        "zod": "^4.6.7",
+      },
     },
     "packages/core": {
       "name": "@tm/core",
@@ -24,12 +28,18 @@
     },
     "packages/notify": {
       "name": "@tm/notify",
+      "dependencies": {
+        "@tm/core": "workspace:*",
+      },
     },
     "packages/pipeline": {
       "name": "@tm/pipeline",
     },
     "packages/worker": {
       "name": "@tm/worker",
+      "dependencies": {
+        "@tm/core": "workspace:*",
+      },
       "devDependencies": {
         "@types/node": "^24.0.0",
       },
