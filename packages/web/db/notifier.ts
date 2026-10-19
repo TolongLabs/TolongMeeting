@@ -5,9 +5,26 @@ import { getDb, type Db } from './index'
 import { members } from './schema'
 import { loadMasterKey, openColumn } from './secrets'
 
-/** Sends a member's pings. It never throws: a ping that fails is logged by name and dropped (plan 01c, C19). */
+export class NoSuchMemberError extends Error {
+  constructor() {
+    super('no such member')
+    this.name = 'NoSuchMemberError'
+  }
+}
+
+export class NoNtfyTopicError extends Error {
+  constructor() {
+    super('member has no ntfy topic')
+    this.name = 'NoNtfyTopicError'
+  }
+}
+
+/**
+ * Sends a member's pings. It never throws: a ping that fails is logged by name and dropped (plan 01c, C19). It resolves
+ * `true` only when the send resolved, so a caller can say whether the ping went out.
+ */
 export interface Notifier {
-  notify(memberId: string, ping: Ping): Promise<void>
+  notify(memberId: string, ping: Ping): Promise<boolean>
 }
 
 export type NtfySend = (cfg: NtfyConfig, ping: Ping) => Promise<void>
@@ -21,13 +38,15 @@ export function memberNotifier(db: Db, master: Buffer, ntfyUrl: string, send: Nt
           .select({ topic: members.ntfyTopic, tokenEnc: members.ntfyTokenEnc })
           .from(members)
           .where(eq(members.id, memberId))
-        if (!row) throw new Error('no such member')
-        if (!row.topic || !row.tokenEnc) throw new Error('member has no ntfy topic')
+        if (!row) throw new NoSuchMemberError()
+        if (!row.topic || !row.tokenEnc) throw new NoNtfyTopicError()
         const token = openColumn(master, memberId, 'members.ntfy_token', row.tokenEnc)
         await send({ url: ntfyUrl, topic: row.topic, token }, ping)
+        return true
       } catch (e) {
         // Only the error's name is logged: a message can carry the ntfy URL or the token.
         console.error(`ping failed: ${ping.title} (${e instanceof Error ? e.name : 'unknown'})`)
+        return false
       }
     }
   }
@@ -44,7 +63,8 @@ export function appNotifier(): Notifier {
 export class FakeNotifier implements Notifier {
   readonly sent: { memberId: string; ping: Ping }[] = []
 
-  async notify(memberId: string, ping: Ping): Promise<void> {
+  async notify(memberId: string, ping: Ping): Promise<boolean> {
     this.sent.push({ memberId, ping })
+    return true
   }
 }

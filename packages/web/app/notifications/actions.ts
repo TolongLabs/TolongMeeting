@@ -1,5 +1,6 @@
 'use server'
 
+import { getDb } from '../../db/index'
 import { appNotifier } from '../../db/notifier'
 import { loadMasterKey } from '../../db/secrets'
 import { ensureNtfy, ntfyAdminFromEnv, sendTestPing } from '../../lib/ntfy-admin'
@@ -11,11 +12,11 @@ import { requireMember } from '../../lib/session'
 /** Creates the member's ntfy user, topic and token on first use, and returns the topic. */
 export async function ensureNtfyAction(): Promise<{ topic: string }> {
   const scope = await requireMember()
-  return ensureNtfy(scope, ntfyAdminFromEnv(), loadMasterKey())
+  return ensureNtfy(getDb(), scope, ntfyAdminFromEnv(), loadMasterKey())
 }
 
-/** Sends the member's test ping to their topic. */
-export async function sendTestPingAction(): Promise<void> {
+/** Sends the member's test ping to their topic. `ok` is false when the ping did not go out (the reason is logged). */
+export async function sendTestPingAction(): Promise<{ ok: boolean }> {
   const scope = await requireMember()
-  await sendTestPing(scope, appNotifier())
+  return { ok: await sendTestPing(scope, appNotifier()) }
 }
