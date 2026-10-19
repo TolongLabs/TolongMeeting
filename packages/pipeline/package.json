@@ -12,7 +12,10 @@
     "@tm/ai": "workspace:*",
     "@tm/core": "workspace:*",
     "@tm/notify": "workspace:*",
+    "@tm/web": "workspace:*",
+    "drizzle-orm": "0.45.4",
     "linkify-it": "^6.1.0",
+    "pg-boss": "^12.38.0",
     "sharp": "0.35.5",
     "tlds": "^1.261.0",
     "zod": "^4.6.7"

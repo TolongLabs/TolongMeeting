@@ -2796,7 +2796,7 @@ git commit -m "feat: add remote sign-in through noVNC"
 
 - Create: `packages/pipeline/src/consumer.ts`, `packages/pipeline/src/consumer-main.ts`, `packages/pipeline/src/remux.ts`, `packages/web/db/artefacts.ts`
 - Modify: `packages/scheduler/src/monitor.ts` (register artefacts when a container of a terminal occurrence is gone)
-- Test: `packages/pipeline/src/consumer.test.ts`, `packages/pipeline/src/remux.test.ts`, `packages/web/db/artefacts.test.ts`
+- Test: `packages/pipeline/test/consumer.test.ts`, `packages/pipeline/test/remux.test.ts`, `packages/web/test/artefacts.test.ts`, `packages/scheduler/test/monitor.test.ts`
 
 **Interfaces:**
 
@@ -2821,7 +2821,7 @@ forms/<formId>/filled.png, confirmation.png    form_screenshot
 
 The monitor (Task 15) calls `registerArtefacts` when it clears the container of an occurrence in `no_link`, `denied`, `left_by_member` or `failed`, so their recordings and form screenshots show on the meeting page.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/pipeline/src/consumer.test.ts
@@ -2921,25 +2921,25 @@ test('the recording is copied into a fast-start MP4', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/pipeline/src/consumer.test.ts packages/pipeline/src/remux.test.ts packages/web/db/artefacts.test.ts`
+Run: `bun test packages/pipeline/test/consumer.test.ts packages/pipeline/test/remux.test.ts packages/web/test/artefacts.test.ts`
 
 Expected: FAIL with `Cannot find module './consumer'`.
 
-- [ ] **Step 3: Implement the consumer, the remux, `registerArtefacts`, the consumer entry point and the monitor change**
+- [x] **Step 3: Implement the consumer, the remux, `registerArtefacts`, the consumer entry point and the monitor change**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/pipeline/src packages/web/db/artefacts.test.ts packages/scheduler/src/monitor.test.ts`
+Run: `bun test packages/pipeline packages/web/test/artefacts.test.ts packages/scheduler/test/monitor.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/pipeline/src packages/web/db/artefacts* packages/scheduler/src/monitor.ts
-git commit -m "feat(pipeline): consume pipeline jobs"
+git add packages/pipeline packages/web/db/artefacts.ts packages/web/test/artefacts.test.ts packages/scheduler
+git commit -m "feat(pipeline): run the pipeline from the queue"
 ```
 
 ### Task 20: Retention and backups

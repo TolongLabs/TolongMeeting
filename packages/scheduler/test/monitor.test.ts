@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'b
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import type { OccurrenceState } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { events, occurrences, profiles, schema } from '@tm/web/db'
+import { artefacts, events, occurrences, profiles, schema } from '@tm/web/db'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { sealColumn } from '@tm/web/db/secrets'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
@@ -556,6 +556,31 @@ describe('finished containers', () => {
     const f = await monitorFixture({ state: 'transcribing' })
     expect((await monitorTick(f.deps, now)).released).toEqual([])
     expect(await f.heldBy()).toBe(`occ:${f.id}`)
+  })
+
+  test.each(['no_link', 'denied', 'left_by_member', 'failed'] as const)(
+    'a %s occurrence gets its recording and form screenshots registered when the container is gone',
+    async (state) => {
+      const f = await monitorFixture({ state, containerGone: true })
+      const dir = `${f.env.dataRoot}/occurrences/${f.id}`
+      await mkdir(`${dir}/recording`, { recursive: true })
+      await mkdir(`${dir}/forms/a1b2c3d4e5f60718`, { recursive: true })
+      await writeFile(`${dir}/recording/meeting.mp4`, 'mp4')
+      await writeFile(`${dir}/forms/a1b2c3d4e5f60718/filled.png`, 'png')
+      await writeFile(`${dir}/chat.jsonl`, '{}')
+      expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+      const rows = await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))
+      expect(rows.map((r) => r.path).sort()).toEqual(['forms/a1b2c3d4e5f60718/filled.png', 'recording/meeting.mp4'])
+    }
+  )
+
+  test('an occurrence in the pipeline states leaves artefacts to the pipeline', async () => {
+    const f = await monitorFixture({ state: 'transcribing', containerGone: true })
+    const dir = `${f.env.dataRoot}/occurrences/${f.id}`
+    await mkdir(`${dir}/recording`, { recursive: true })
+    await writeFile(`${dir}/recording/meeting.mp4`, 'mp4')
+    await monitorTick(f.deps, now)
+    expect(await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))).toEqual([])
   })
 
   test('an occurrence without checkpoints on disk is still released', async () => {

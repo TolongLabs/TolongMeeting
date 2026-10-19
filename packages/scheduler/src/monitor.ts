@@ -3,6 +3,7 @@ import { ACTIVE_STATES, IllegalTransition, WORKER_STATES, type OccurrenceState }
 import { pings, type WorkerFailureReason } from '@tm/notify'
 import { and, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm'
 import { events, occurrences, profiles } from '@tm/web/db'
+import { registerArtefacts } from '@tm/web/db/artefacts'
 import { applyTrigger, hashEventData } from '@tm/web/db/transitions'
 import { jobFileBase, resolveEnv } from './container-spec'
 import { DockerError, type DockerClient } from './docker'
@@ -426,9 +427,13 @@ async function removeLaunchFiles(deps: LaunchDeps, row: OccurrenceRow, now: Date
   if (beat || now.getTime() - info.mtimeMs >= JOB_FILES_MAX_AGE_MS) await removeJobFiles(base)
 }
 
+/** The end states a meeting can reach without the pipeline: their recording and form screenshots are registered here. */
+const WITHOUT_PIPELINE: ReadonlySet<OccurrenceState> = new Set(['no_link', 'denied', 'left_by_member', 'failed'])
+
 /**
  * An occurrence that is no longer active but still names a container: once Docker says the container is gone, forget
- * it, give the profile back and record the newest checkpoint.
+ * it, give the profile back and record the newest checkpoint. The files of an occurrence that ends without the
+ * pipeline are registered as artefacts, so they show on the meeting page.
  */
 async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
   const { db } = deps
@@ -454,6 +459,9 @@ async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
           .update(profiles)
           .set({ latestCheckpoint: path, checkpointAt: info.mtime })
           .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
+    }
+    if (WITHOUT_PIPELINE.has(row.state)) {
+      await registerArtefacts(db, row, `${deps.env.dataRoot}/occurrences/${row.id}`)
     }
     await db
       .update(occurrences)
