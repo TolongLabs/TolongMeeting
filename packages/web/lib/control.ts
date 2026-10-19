@@ -7,6 +7,7 @@ import {
   StateEventDataSchema,
   canonicalFormUrl,
   isFormPageUrl,
+  isPlainHttpsUrl,
   triggerFor,
   type ControlCommand,
   type Heartbeat,
@@ -70,7 +71,10 @@ const WORKER_CANNOT_ENTER: ReadonlySet<OccurrenceState> = new Set<OccurrenceStat
   'completed',
   'post_processing',
   'waiting_for_pc',
-  'restarting'
+  'restarting',
+  'skipped_capacity',
+  'skipped_identity_clash',
+  'skipped_pc_offline'
 ])
 
 /**
@@ -126,7 +130,7 @@ const FormEventSchema = z.object({
 
 /** The URL without its query, or null when it isn't an https provider form page (a stored link is later shown to the member). */
 function canonicalFormPage(url: string): string | null {
-  if (!URL.canParse(url) || new URL(url).protocol !== 'https:') return null
+  if (!isPlainHttpsUrl(url)) return null
   const canonical = canonicalFormUrl(url)
   return isFormPageUrl(canonical) ? canonical : null
 }
@@ -142,12 +146,16 @@ async function upsertForm(
   const parsed = FormEventSchema.safeParse(data)
   if (!parsed.success) return
   const f = parsed.data
-  const url = canonicalFormPage(f.url)
+  // The posted link may be a short link (forms.gle), so it only has to be a plain https URL: it is stored canonical when
+  // it is a form page and as given otherwise. The page it led to (`finalUrl`) must be a provider form page.
   const finalUrl = f.finalUrl === null ? null : canonicalFormPage(f.finalUrl)
-  if (url === null || (f.finalUrl !== null && finalUrl === null)) return
+  const refused = !isPlainHttpsUrl(f.url) || (f.finalUrl !== null && finalUrl === null)
   // The times in the data are the worker's word, so they get the same window as an event's `at`.
-  for (const t of [f.seenAt, f.submittedAt])
-    if (t !== null && !(Date.parse(t) >= range.from && Date.parse(t) <= range.to)) return
+  const outside = [f.seenAt, f.submittedAt].some(
+    (t) => t !== null && !(Date.parse(t) >= range.from && Date.parse(t) <= range.to)
+  )
+  if (refused || outside) return logError({ reason: 'form_not_upserted', formId: f.formId })
+  const url = canonicalFormPage(f.url) ?? f.url
   const [counted] = await tx.select({ n: count() }).from(forms).where(eq(forms.occurrenceId, row.id))
   if (counted!.n >= MAX_FORMS_PER_OCCURRENCE) {
     const [known] = await tx
@@ -304,13 +312,11 @@ async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, h
     if (next === current) return
     const trigger = triggerFor(current, next)
     // A worker may report progress. The server owns restarts, deletion and everything after the upload.
-    if (
-      trigger === null ||
-      !WORKER_MOVES_FROM.has(current) ||
-      WORKER_CANNOT_ENTER.has(next) ||
-      trigger.startsWith('resume:')
-    )
-      return logIllegal(current, next)
+    // The one exception: the restarted attempt reports the state it resumes (`applyTrigger` accepts only `resume_state`).
+    const resumes = current === 'restarting' && trigger === `resume:${row.resumeState}`
+    const allowed =
+      resumes || (WORKER_MOVES_FROM.has(current) && !WORKER_CANNOT_ENTER.has(next) && !trigger?.startsWith('resume:'))
+    if (trigger === null || !allowed) return logIllegal(current, next)
     let result: Awaited<ReturnType<typeof applyTrigger>>
     try {
       result = await applyTrigger(tx, row.id, trigger, { recordEvent: false })

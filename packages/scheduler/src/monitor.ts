@@ -46,8 +46,9 @@ const isWorkerState = (s: OccurrenceState): boolean => (WORKER_STATES as Readonl
 const meetingUrl = (deps: LaunchDeps, row: OccurrenceRow): string =>
   `${resolveEnv(deps.env).publicUrl}/meetings/${row.id}`
 
-// Per scheduler process. A restart of the scheduler restarts these clocks, so the ceilings below are then reached at
-// most one ceiling later; nothing is lost, because the occurrence itself stays active and is looked at again.
+// Per scheduler process. A quiet worker's clock starts 30 seconds after its last heartbeat, which the database keeps, so
+// a scheduler restart does not delay the ping or the failure, and an `error` event marks the ping as sent. (A worker past
+// its hard stop has no such anchor: its clock restarts with the scheduler, which is then one ceiling late at most.)
 const unreachable = new Map<string, { since: number; pinged: boolean }>()
 const lastLogged = new Map<string, number>()
 
@@ -247,9 +248,9 @@ const hasOverrun = (row: OccurrenceRow, now: Date): boolean =>
 
 /**
  * Called when a worker that needs attention (quiet for 30 seconds, or past its hard stop) can't be dealt with because
- * Docker can't be asked or won't stop it. The first call starts the clock; 5 minutes later the member gets one ping, and
- * 15 minutes later the occurrence fails with `worker_unreachable`. The container name and the profile are kept, so
- * `releaseFinished` frees the profile only once Docker says the container is gone. A worker that comes back is sent
+ * Docker can't be asked or won't stop it. The clock starts 30 seconds after the last heartbeat (at the first call for a
+ * worker past its hard stop); 5 minutes later the member gets one ping, and 15 minutes later the occurrence fails with
+ * `worker_unreachable`. The container name and the profile are kept, so `releaseFinished` frees the profile only once Docker says the container is gone. A worker that comes back is sent
  * `stop` in its next reply.
  */
 async function noteUnreachable(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'failed' | null> {
@@ -259,7 +260,8 @@ async function noteUnreachable(deps: LaunchDeps, row: OccurrenceRow, now: Date):
   const t = now.getTime()
   let entry = unreachable.get(key)
   if (entry === undefined) {
-    entry = { since: t, pinged: false }
+    const since = stale && row.lastHeartbeatAt !== null ? row.lastHeartbeatAt.getTime() + HEARTBEAT_TIMEOUT_MS : t
+    entry = { since, pinged: false }
     unreachable.set(key, entry)
   }
   const age = t - entry.since
@@ -288,13 +290,29 @@ async function noteUnreachable(deps: LaunchDeps, row: OccurrenceRow, now: Date):
     unreachable.delete(key)
     await deps.notifier.notify(
       row.memberId,
-      pings.workerFailed({ entry: row.entryName, reason: "it couldn't be reached", meetingUrl: url })
+      pings.workerFailed({ entry: row.entryName, reason: 'worker_unreachable', meetingUrl: url })
     )
     return 'failed'
   }
   if (age >= UNREACHABLE_PING_MS && !entry.pinged) {
-    await deps.notifier.notify(row.memberId, pings.workerUnchecked({ entry: row.entryName, meetingUrl: url }))
     entry.pinged = true
+    // The event row (same time, same data) is the once-marker, so a scheduler restart does not ping again.
+    const data = { reason: 'worker_unchecked_pinged' }
+    const marked = await deps.db
+      .insert(events)
+      .values({
+        occurrenceId: row.id,
+        memberId: row.memberId,
+        attempt: row.attempt,
+        at: new Date(entry.since + UNREACHABLE_PING_MS),
+        type: 'error',
+        data,
+        dataHash: hashEventData(data)
+      })
+      .onConflictDoNothing()
+      .returning({ id: events.id })
+    if (marked.length > 0)
+      await deps.notifier.notify(row.memberId, pings.workerUnchecked({ entry: row.entryName, meetingUrl: url }))
   }
   return null
 }

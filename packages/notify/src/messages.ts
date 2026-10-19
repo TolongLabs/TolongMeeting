@@ -85,7 +85,7 @@ export function summaryFailedPing(entry: string, status: number): Ping {
 }
 
 export type WorkerFailureReason =
-  'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop' | "it couldn't be reached"
+  'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop' | 'worker_unreachable'
 
 // The member-facing pings of plan 01c. Each wording is fixed here; callers pass only the values that fill it in.
 export const pings = {
@@ -142,7 +142,10 @@ export const pings = {
   workerFailed(p: { entry: string; reason: WorkerFailureReason; meetingUrl: string }): Ping {
     return {
       title: `Failed: ${p.entry}`,
-      message: `The bot stopped and won't retry (${p.reason}). Anything it recorded is on the meeting page.`,
+      message:
+        p.reason === 'worker_unreachable'
+          ? `The bot for ${p.entry} couldn't be reached, so the meeting was marked failed.`
+          : `The bot stopped and won't retry (${p.reason}). Anything it recorded is on the meeting page.`,
       priority: 'high',
       actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
     }
@@ -150,9 +153,8 @@ export const pings = {
 
   workerUnchecked(p: { entry: string; meetingUrl: string }): Ping {
     return {
-      title: `Can't check: ${p.entry}`,
-      message:
-        "TolongMeeting can't check your meeting worker: it has stopped reporting and the server can't ask Docker about it. It may still be running.",
+      title: `Can't check your meeting bot: ${p.entry}`,
+      message: `TolongMeeting can't check on the bot for ${p.entry} right now. It will keep trying; open the meeting page to see what it recorded.`,
       priority: 'high',
       actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
     }

@@ -4,6 +4,7 @@ import type { EventType, MeetingEvent, OccurrenceState } from '@tm/core'
 import { and, eq } from 'drizzle-orm'
 import { events, forms, occurrences, profiles } from '../db'
 import { QUEUES } from '../db/queues'
+import { applyTrigger } from '../db/transitions'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
 import {
   MAX_BODY_BYTES,
@@ -472,6 +473,7 @@ describe('side effects of events', () => {
       {
         formId: 'f5',
         url: 'https://example.com/forms/d/e/x/viewform',
+        finalUrl: 'https://example.com/forms/d/e/x/viewform',
         source: 'qr',
         state: 'detected',
         seenAt: '2026-10-21T04:30:00Z'
@@ -503,8 +505,38 @@ describe('side effects of events', () => {
       )
     )
     expect(res).toMatchObject({ status: 200, body: { ackedEvents: shapes.length } })
-    expect(await f.eventCount()).toBe(shapes.length)
+    // A well-formed form that is refused leaves one error event; data that isn't a form at all leaves none.
+    expect(await f.eventCount()).toBe(shapes.length + 3)
     expect(await f.forms()).toEqual([])
+    expect(
+      (await f.events())
+        .filter((e) => e.type === 'error')
+        .map((e) => e.data)
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    ).toEqual([
+      { reason: 'form_not_upserted', formId: 'f3' },
+      { reason: 'form_not_upserted', formId: 'f5' },
+      { reason: 'form_not_upserted', formId: 'f6' }
+    ])
+  })
+
+  test('a short link is stored as posted when the page it led to is a form page', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    const data = {
+      formId: 'f7',
+      url: 'https://forms.gle/AbCd?x=1',
+      finalUrl: 'https://docs.google.com/forms/d/e/x/viewform?usp=sf_link',
+      provider: 'google',
+      source: 'meeting_chat',
+      state: 'detected',
+      seenAt: '2026-10-21T04:30:00Z'
+    }
+    await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'in_meeting', [ev(f.id, 'form', data)]))
+    expect(await f.form('f7')).toMatchObject({
+      url: 'https://forms.gle/AbCd?x=1',
+      finalUrl: 'https://docs.google.com/forms/d/e/x/viewform'
+    })
+    expect((await f.events()).filter((e) => e.type === 'error')).toEqual([])
   })
 })
 
@@ -536,15 +568,58 @@ describe('worker-reported moves', () => {
     }
   }, 30_000)
 
-  test('a worker cannot resume a restarting occurrence or crash its own', async () => {
-    const f = await controlFixture({ state: 'restarting' })
-    await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'in_meeting'))
-    expect((await f.occurrence()).state).toBe('restarting')
-    expect(await errors(f)).toEqual([{ reason: 'illegal_transition', from: 'restarting', to: 'in_meeting' }])
+  test('a worker cannot crash its own occurrence or skip a start-up outcome', async () => {
     const g = await controlFixture({ state: 'in_meeting' })
     await handleHeartbeat(g.deps, 'Bearer 1.abc', beat(g.id, 'restarting'))
     expect((await g.occurrence()).state).toBe('in_meeting')
     expect(await errors(g)).toEqual([{ reason: 'illegal_transition', from: 'in_meeting', to: 'restarting' }])
+    // `starting` has a trigger to each of these; the server alone decides them.
+    const h = await controlFixture({ state: 'starting' })
+    for (const to of ['skipped_capacity', 'skipped_identity_clash', 'skipped_pc_offline'] as const)
+      await handleHeartbeat(h.deps, 'Bearer 1.abc', beat(h.id, to))
+    expect((await h.occurrence()).state).toBe('starting')
+    expect(await errors(h)).toHaveLength(3)
+  })
+
+  describe('a restarted attempt', () => {
+    // The scheduler crashed attempt 1 and started attempt 2 (a new token); the row waits in `restarting`.
+    async function restarted(from: OccurrenceState) {
+      const f = await controlFixture({ state: from })
+      await applyTrigger(f.db, f.id, 'crash')
+      await f.db
+        .update(occurrences)
+        .set({ attempt: 2, controlTokenHash: sha256hex('2.def') })
+        .where(eq(occurrences.id, f.id))
+      return f
+    }
+    const errorsOf = async (f: Awaited<ReturnType<typeof controlFixture>>) =>
+      (await f.events()).filter((e) => e.type === 'error').map((e) => e.data)
+
+    test('leaves restarting when its heartbeat reports the state it resumes', async () => {
+      const f = await restarted('in_meeting')
+      expect(await f.occurrence()).toMatchObject({ state: 'restarting', resumeState: 'in_meeting', restarts: 1 })
+      const res = await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'in_meeting', [], { attempt: 2 }))
+      expect(res).toMatchObject({ status: 200 })
+      expect(await f.occurrence()).toMatchObject({ state: 'in_meeting', resumeState: null, restarts: 1 })
+      expect(await errorsOf(f)).toEqual([])
+    })
+
+    test('resumes through a state event as well', async () => {
+      const f = await restarted('in_lobby')
+      const e = { ...ev(f.id, 'state', { state: 'in_lobby' }), attempt: 2 }
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'in_lobby', [e], { attempt: 2 }))
+      expect(await f.occurrence()).toMatchObject({ state: 'in_lobby', resumeState: null })
+    })
+
+    test('is refused any other state, and the old attempt is refused outright', async () => {
+      const f = await restarted('in_meeting')
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'in_lobby', [], { attempt: 2 }))
+      expect(await f.occurrence()).toMatchObject({ state: 'restarting', resumeState: 'in_meeting' })
+      expect(await errorsOf(f)).toEqual([{ reason: 'illegal_transition', from: 'restarting', to: 'in_lobby' }])
+      const old = await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'in_meeting'))
+      expect(old).toMatchObject({ status: 410, body: { commands: ['stop'] } })
+      expect(await f.occurrence()).toMatchObject({ state: 'restarting', resumeState: 'in_meeting' })
+    })
   })
 
   test('nothing moves an occurrence that is past the worker: transcribing, post_processing, failed and the rest', async () => {
@@ -623,7 +698,11 @@ describe('event times', () => {
       ])
     )
     expect(res.status).toBe(200)
-    expect(await f.eventCount()).toBe(2)
+    expect((await f.events()).map((e) => e.type)).toEqual(['form', 'form', 'error', 'error'])
+    expect((await f.events()).flatMap((e) => (e.type === 'error' ? [e.data] : []))).toEqual([
+      { reason: 'form_not_upserted', formId: 'f1' },
+      { reason: 'form_not_upserted', formId: 'f2' }
+    ])
     expect(await f.forms()).toEqual([])
   })
 })

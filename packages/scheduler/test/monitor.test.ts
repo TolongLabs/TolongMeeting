@@ -324,25 +324,28 @@ describe('a worker that cannot be checked', () => {
     return f
   }
 
+  // The worker's last heartbeat is 60 s before `now`, so its clock started 30 s before `now`.
+  const ANCHOR_MS = 30_000
+
   test('unknown Docker: one ping after 5 minutes, a failure after 15 that keeps the profile held', async () => {
     const f = await silentWorker()
     f.docker.inspect = async () => {
       throw unreachable()
     }
-    for (const ms of [0, 60_000, UNREACHABLE_PING_MS - 5_000]) {
+    for (const ms of [0, 60_000, UNREACHABLE_PING_MS - ANCHOR_MS - 5_000]) {
       expect(await monitorTick(f.deps, at(ms))).toEqual({ restarted: [], failed: [], released: [] })
     }
     expect(f.notifier.sent).toEqual([])
 
-    await monitorTick(f.deps, at(UNREACHABLE_PING_MS))
-    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS - ANCHOR_MS))
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining"])
     // The ping is sent once, however many passes follow.
     await monitorTick(f.deps, at(UNREACHABLE_PING_MS + 5_000))
-    await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS - 5_000))
+    await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS - ANCHOR_MS - 5_000))
     expect(titles(f)).toHaveLength(1)
     expect((await f.occurrence()).state).toBe('in_meeting')
 
-    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS))).failed).toEqual([f.id])
+    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS - ANCHOR_MS))).failed).toEqual([f.id])
     expect(await f.occurrence()).toMatchObject({
       state: 'failed',
       stateReason: 'worker_unreachable',
@@ -350,8 +353,10 @@ describe('a worker that cannot be checked', () => {
       pendingCommands: ['stop']
     })
     expect(await f.heldBy()).toBe(`occ:${f.id}`)
-    expect(titles(f)).toEqual(["Can't check: Data Mining", 'Failed: Data Mining'])
-    expect(f.notifier.sent[1]!.ping.message).toContain("it couldn't be reached")
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining", 'Failed: Data Mining'])
+    expect(f.notifier.sent[1]!.ping.message).toBe(
+      "The bot for Data Mining couldn't be reached, so the meeting was marked failed."
+    )
     // Nothing changed in Docker, and later passes neither fail nor ping again.
     expect(f.docker.stopped).toEqual([])
     expect(f.docker.created).toEqual([])
@@ -378,11 +383,11 @@ describe('a worker that cannot be checked', () => {
     // The failed stop hands the claim back, so the worker stays stale and the next pass tries again.
     expect((await f.occurrence()).lastHeartbeatAt).toEqual(new Date(now.getTime() - 60_000))
     await monitorTick(f.deps, at(UNREACHABLE_PING_MS))
-    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining"])
     expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS))).failed).toEqual([f.id])
     expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'worker_unreachable' })
     expect(await f.heldBy()).toBe(`occ:${f.id}`)
-    expect(titles(f)).toEqual(["Can't check: Data Mining", 'Failed: Data Mining'])
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining", 'Failed: Data Mining'])
     expect(f.docker.created).toEqual([])
   })
 
@@ -402,7 +407,7 @@ describe('a worker that cannot be checked', () => {
     }
     await tick(0)
     await tick(UNREACHABLE_PING_MS)
-    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining"])
     expect((await tick(UNREACHABLE_FAIL_MS)).failed).toEqual([f.id])
     expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'worker_unreachable' })
     expect(await f.heldBy()).toBe(`occ:${f.id}`)
@@ -425,8 +430,26 @@ describe('a worker that cannot be checked', () => {
     await monitorTick(f.deps, at(8 * 60_000 + 60_000))
     expect(f.notifier.sent).toEqual([])
     await monitorTick(f.deps, at(8 * 60_000 + UNREACHABLE_PING_MS))
-    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining"])
     expect((await f.occurrence()).state).toBe('in_meeting')
+  })
+
+  test('a scheduler that lost its clocks neither waits another 5 minutes nor pings twice', async () => {
+    const f = await silentWorker()
+    f.docker.inspect = async () => {
+      throw unreachable()
+    }
+    // The first pass this process makes comes 6 minutes after the last heartbeat: the ping is already due.
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS))
+    expect(titles(f)).toEqual(["Can't check your meeting bot: Data Mining"])
+    // A restart forgets the clocks (here: a pass that sees the occurrence inactive drops them).
+    await f.db.update(occurrences).set({ state: 'transcribing' }).where(eq(occurrences.id, f.id))
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS + 5_000))
+    await f.db.update(occurrences).set({ state: 'in_meeting' }).where(eq(occurrences.id, f.id))
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS + 10_000))
+    expect(titles(f)).toHaveLength(1)
+    // The failure is still due 15 minutes after the last heartbeat plus 30 seconds.
+    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS - ANCHOR_MS))).failed).toEqual([f.id])
   })
 
   test('a Docker problem is logged at most once a minute per occurrence', async () => {
