@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zoom meeting on web</title>
+    <script src="fixture.js"></script>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+      footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+      #leave-confirm {
+        position: fixed;
+        top: 40%;
+        left: 40%;
+        background: #fff;
+        border: 1px solid #000;
+        padding: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>Lecture room</p>
+    </main>
+    <div id="leave-confirm" hidden>
+      <button type="button" data-click="leave meeting">Leave Meeting</button>
+    </div>
+    <footer>
+      <button type="button" data-click="audio" aria-label="audio">Audio</button>
+      <button type="button" data-click="video" aria-label="Video">Video</button>
+      <button type="button" data-click="participants" aria-label="open the participants list pane,[12] particpants">
+        12
+      </button>
+      <button type="button" data-click="chat" aria-label="open the chat panel">Chat</button>
+      <button type="button" data-click="share" aria-label="Share">Share</button>
+      <button type="button" data-click="react" aria-label="React">React</button>
+      <button type="button" data-click="more" aria-label="More meeting control ">More</button>
+      <button type="button" data-click="leave" aria-label="Leave">Leave</button>
+    </footer>
+    <script>
+      for (const button of document.querySelectorAll('button[data-click]')) {
+        button.addEventListener('click', () => {
+          window.__fixture.click(button.dataset.click)
+          if (button.dataset.click === 'leave') document.getElementById('leave-confirm').hidden = false
+        })
+      }
+    </script>
+  </body>
+</html>

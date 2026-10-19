@@ -1455,7 +1455,8 @@ git commit -m "feat(worker): add form link resolution and trust"
   - `zoom-meeting-top.html`: the in-meeting toolbar (buttons with aria-labels `audio`, `Video`, `open the participants list pane,[12] particpants`, `open the chat panel`, `Share`, `React`, `More meeting control `, `Leave`), and a "Leave Meeting" confirmation shown after Leave. Task 14 extends it.
   - `zoom-meeting-iframe.html`: an `iframe#webclient` filling the page with `zoom-meeting-top.html` inside, same origin.
   - `zoom-devices-on.html`: the toolbar with aria-labels `mute my microphone` and `stop my video`.
-- Test: `packages/worker/src/adapters/zoom/link.test.ts`, `packages/worker/test/zoom-join.spec.ts`
+- Test: `packages/worker/test/zoom-link.test.ts`, `packages/worker/test/zoom-join.spec.ts`
+- Also created: `packages/worker/src/adapters/zoom/selectors.ts` (`ZoomSelectorsSchema`, `zoomSelectors()`), `packages/worker/playwright.config.ts`, `packages/worker/test/support/fixture-server.mjs`, `packages/worker/test/fixtures/fixture.js` (state shared across fixture pages) and `bunfig.toml` (`bun test` skips `*.spec.ts`).
 
 **Interfaces:**
 
@@ -1463,10 +1464,10 @@ git commit -m "feat(worker): add form link resolution and trust"
 - Produces: `packages/worker/src/adapters/types.ts` verbatim from the architecture; `adapterFor(url: string): PlatformAdapter | null`; `zoomAdapter: PlatformAdapter` with `normaliseLink`, `join`, `waitUntilAdmitted`, `assertDevicesOff` and `leave` here (the rest in Task 14).
 - Produces (adds to contracts): `class DevicesOnError extends Error { labels: string[] }`; `loadSelectors<T>(platform: Platform, schema: z.ZodType<T>): Promise<T>` (reads `${TM_SELECTORS_DIR ?? '/app/config/selectors'}/<platform>.json`); `ZoomSelectorsSchema`; `zoomRoot(page: Page): Promise<PwFrame>` (Playwright's `Frame`, imported as `PwFrame` so it doesn't clash with the worker's `Frame`; the `iframe#webclient` frame if it has a document, else the main frame, resolved on every call); `ZOOM_TIMEOUTS = { join: 60_000, step: 10_000, audio: 15_000 }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/adapters/zoom/link.test.ts (Review Focus: Zoom link variants)
+// packages/worker/test/zoom-link.test.ts (Review Focus: Zoom link variants)
 test('every Zoom link becomes the web-client join URL or null', () => {
   const n = zoomAdapter.normaliseLink
   expect(n('https://us06web.zoom.us/j/00000000000?pwd=PWD')).toBe('https://us06web.zoom.us/wc/join/00000000000?pwd=PWD')
@@ -1549,12 +1550,12 @@ test('devices on fail loudly; leave confirms', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/adapters/zoom/link.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts zoom-join.spec.ts`
+Run: `bun test packages/worker/test/zoom-link.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts zoom-join.spec.ts`
 Expected: FAIL with "Cannot find module" in both.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `config/selectors/zoom.json` (starting values from the session record; spike 2's DOM notes replace any that differ):
 
@@ -1598,12 +1599,12 @@ Expected: FAIL with "Cannot find module" in both.
 
 `normaliseLink` unwraps, requires `https:` and a host equal to `zoom.us` or ending `.zoom.us`, drops the fragment, rewrites `/j/<id>` to `/wc/join/<id>` keeping the query, keeps `/wc/join/<id>` and `/wc/<id>/join`, and returns null otherwise. `join(page, { guestName })` polls the root every 500 ms until `ZOOM_TIMEOUTS.join`: sign-in text gives `signin_required` with `new URL(page.url()).hostname`; busy text gives `account_busy`; the device prompt is clicked, at most 3 times; an empty name input gets `guestName` (null gives `failed: name_required`), then the DOM value is read back and must equal it before Join is clicked; a visible Leave button gives `in_meeting`; lobby text gives `lobby`; the timeout gives `failed: prejoin_timeout`. `waitUntilAdmitted` polls every 2 s: Leave visible gives `admitted`; denied text, or ended text (the meeting ended before admission), gives `lobby_denied`; the deadline gives `lobby_expired`. `assertDevicesOff` reads the aria-labels of `audioButton` and `videoButton` and throws `DevicesOnError` with every label matching `devicesOnLabel`. `leave` clicks Leave, then `leaveConfirm` within 3 s. Every step logs only selector names, never page text.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/adapters/zoom/link.test.ts && bunx playwright test -c packages/worker/playwright.config.ts zoom-join.spec.ts`
+Run: `bun test packages/worker/test/zoom-link.test.ts && bunx playwright test -c packages/worker/playwright.config.ts zoom-join.spec.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors packages/worker docs/TRD.md

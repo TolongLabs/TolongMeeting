@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zoom meeting on web</title>
+    <script src="fixture.js"></script>
+  </head>
+  <body>
+    <main>
+      <p>Lecture room</p>
+    </main>
+    <footer>
+      <button type="button" data-click="audio" aria-label="mute my microphone">Mute</button>
+      <button type="button" data-click="video" aria-label="stop my video">Stop Video</button>
+      <button type="button" data-click="leave" aria-label="Leave">Leave</button>
+    </footer>
+    <script>
+      for (const button of document.querySelectorAll('button[data-click]')) {
+        button.addEventListener('click', () => window.__fixture.click(button.dataset.click))
+      }
+    </script>
+  </body>
+</html>

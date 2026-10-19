@@ -1,0 +1,3 @@
+[test]
+# *.spec.ts files are Playwright Test specs (bunx playwright test -c packages/worker/playwright.config.ts).
+pathIgnorePatterns = ["**/*.spec.ts"]

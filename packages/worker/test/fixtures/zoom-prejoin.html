@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zoom meeting on web</title>
+    <script src="fixture.js"></script>
+  </head>
+  <body>
+    <h1>Zoom meeting on web</h1>
+    <div id="devices1">
+      <p>Do you want people to see and hear you in the meeting?</p>
+      <button type="button" id="continue1">Continue without microphone and camera</button>
+    </div>
+    <div id="devices2" hidden>
+      <p>Do you want people to hear you in the meeting?</p>
+      <button type="button" id="continue2">Continue without microphone and camera</button>
+    </div>
+    <div id="name-step" hidden>
+      <input id="input-for-name" type="text" placeholder="Your Name" />
+      <button type="button" id="join" disabled>Join</button>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search)
+      const pages = {
+        'meeting-top': 'zoom-meeting-top.html',
+        'meeting-iframe': 'zoom-meeting-iframe.html',
+        lobby: 'zoom-lobby.html'
+      }
+      const input = document.getElementById('input-for-name')
+      const join = document.getElementById('join')
+      if (params.get('signedin') === '1') input.value = 'Signed In User'
+      join.disabled = input.value.trim() === ''
+      input.addEventListener('input', () => {
+        window.__fixture.typeName(input.value)
+        join.disabled = input.value.trim() === ''
+      })
+      document.getElementById('continue1').addEventListener('click', () => {
+        window.__fixture.click('continue')
+        document.getElementById('devices1').hidden = true
+        document.getElementById('devices2').hidden = false
+      })
+      document.getElementById('continue2').addEventListener('click', () => {
+        window.__fixture.click('continue')
+        document.getElementById('devices2').hidden = true
+        document.getElementById('name-step').hidden = false
+      })
+      join.addEventListener('click', () => {
+        window.__fixture.click('join')
+        location.href = pages[params.get('then')]
+      })
+    </script>
+  </body>
+</html>

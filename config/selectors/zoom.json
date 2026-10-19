@@ -1,0 +1,35 @@
+{
+  "rootIframe": "iframe#webclient",
+  "selectors": {
+    "continueWithoutDevices": "text=/^continue without microphone and camera$/i",
+    "nameInput": "input#input-for-name",
+    "joinButton": "button:text-matches('^join$', 'i')",
+    "leaveButton": "button[aria-label='Leave']",
+    "leaveConfirm": "button:text-matches('leave meeting', 'i')",
+    "audioButton": "footer button[aria-label^='audio' i], footer button[aria-label*='microphone' i], footer button[aria-label^='join audio' i]",
+    "videoButton": "footer button[aria-label^='video' i], footer button[aria-label*='video' i]",
+    "joinAudioByComputer": "button:text-matches('join audio by computer', 'i')",
+    "openChat": "button[aria-label='open the chat panel']",
+    "participantsButton": "button[aria-label^='open the participants list pane']",
+    "chatList": ".chat-container__chat-list",
+    "chatItem": ".chat-item-container",
+    "chatSender": ".chat-item__sender",
+    "chatReceiver": ".chat-item__receiver",
+    "chatTime": ".new-chat-item__chat-info-time-stamp",
+    "chatText": ".new-chat-message__text-box, .new-chat-message__content, .chat-item__chat-msg-container",
+    "chatReplyQuote": ".chat-item__quote",
+    "shareSurface": "#sharee-container canvas, .sharee-container__canvas"
+  },
+  "texts": {
+    "signInRequired": "sign in to join|authorized attendees only",
+    "accountBusy": "already in (another|a) meeting",
+    "lobby": "host will let you in soon|waiting room",
+    "lobbyDenied": "removed from the waiting room|host has removed you",
+    "ended": "meeting has been ended|this meeting has ended|host has ended this meeting",
+    "removed": "you have been removed from this meeting",
+    "breakout": "breakout room",
+    "roleLabel": "\\s*\\((host|co-host)\\)\\s*$",
+    "devicesOnLabel": "^(mute my microphone|mute|stop my video|stop video)"
+  },
+  "noticeAllowlist": ["OK", "Got it"]
+}
