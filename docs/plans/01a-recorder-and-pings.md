@@ -1955,7 +1955,7 @@ git commit -m "feat(worker): ping form links to the member"
 **Files:**
 
 - Create: `packages/worker/src/asr/live.ts`
-- Test: `packages/worker/src/asr/live.test.ts`
+- Test: `packages/worker/test/asr-live.test.ts`
 
 **Interfaces:**
 
@@ -1963,7 +1963,7 @@ git commit -m "feat(worker): ping form links to the member"
 - Produces: `startLiveAsr(audio: AudioSource, ai: AiConfig, out: string, opts?: LiveAsrOptions): Promise<LiveAsr>` (`out` is `<dataDir>/transcript/live.jsonl`).
 - Produces (adds to contracts): `interface LiveAsr { stop(): Promise<void> }`; `interface LiveAsrOptions { baseMs?: number; onError?: (e: Error) => void; open?: typeof openAsrStream }` (`baseMs` is the audio source's start minus the first recording start, so `live.jsonl` offsets are recording-relative).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/worker/src/asr/live.test.ts (fakeAudio emits chunks on demand; fakeOpen returns a scriptable AsrStream)
@@ -1998,24 +1998,24 @@ test('a rejected key is reported once and stops sending audio', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/worker/src/asr`
+Run: `bun test packages/worker/test/asr-live.test.ts`
 Expected: FAIL with "Cannot find module './live'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Subscribe to `audio.onChunk` and forward each chunk to the stream; append each result to `out` as one JSON line with `baseMs` added to both offsets, as it arrives. The first `AiKeyError` unsubscribes from the audio, closes the stream and calls `onError` once; later errors are ignored; any other error is passed to `onError` and audio keeps flowing (the stream reconnects itself). `stop()` unsubscribes, then awaits `close()` so final results are written.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/worker/src/asr`
-Expected: 2 pass.
+Run: `TMPDIR=/home/user/.cache/tm-tmp bun test packages/worker/test/asr-live.test.ts packages/ai`
+Expected: all pass (7 worker tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/asr docs/TRD.md
+git add packages/worker/src/asr packages/worker/test/asr-live.test.ts docs/TRD.md
 git commit -m "feat(worker): write live transcript lines"
 ```
 
