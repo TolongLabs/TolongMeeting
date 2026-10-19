@@ -12,7 +12,8 @@ export interface FrameLoop extends Stopper {
   /**
    * Called once if the loop cannot go on: ffmpeg died or `onFrame` threw (or returned a rejected promise). No more
    * frames are delivered after this, and `stop()` rejects with the same error. If the loop has already failed, `cb`
-   * is called at once with the stored error.
+   * is called at once with the stored error. A listener that throws is logged to stderr and the others still run.
+   * Never called after `stop()` has resolved.
    */
   onFatal(cb: (error: Error) => void): void
 }
@@ -74,6 +75,8 @@ class PngSplitter {
   }
 }
 
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
 // Resolves when `p` settles or after `ms`, whichever comes first. Never rejects: the caller reads `failure` itself.
 function settleWithin(p: Promise<void>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -123,13 +126,20 @@ export function startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<vo
   const exited = new Promise<void>((resolve) => child.once('close', () => resolve()))
 
   let stopping = false
+  let stopped = false
   let failure: Error | null = null
   const fatalListeners: ((error: Error) => void)[] = []
   const fail = (error: Error) => {
-    if (failure !== null) return
+    if (failure !== null || stopped) return
     failure = error
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
-    for (const cb of fatalListeners) cb(error)
+    for (const cb of fatalListeners) {
+      try {
+        cb(error)
+      } catch (listenerError) {
+        console.error(`frame loop: a fatal listener threw: ${errorText(listenerError)}`)
+      }
+    }
   }
   child.once('error', (e) => fail(new Error(`cannot start ffmpeg: ${e.message}`)))
   child.once('close', (code, signal) => {
@@ -173,6 +183,7 @@ export function startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<vo
       await exited
       clearTimeout(timer)
       if (running !== null) await settleWithin(running, ONFRAME_STOP_MS)
+      stopped = true
       if (failure !== null) throw failure
     }
   }

@@ -19,15 +19,17 @@ export interface AudioSource {
   onChunk(cb: (pcm16le: Buffer) => void | Promise<void>): () => void
   /**
    * Called once if the source fails: parec or ffmpeg died, or a subscriber threw. If it has already failed, `cb` is
-   * called at once with the stored error. The runner must wire this to an alert: a fault must not depend on someone
+   * called at once with the stored error. A listener that throws is logged to stderr and the others still run. Never
+   * called after `stop()` has resolved. The runner must wire this to an alert: a fault must not depend on someone
    * calling `levelDb`.
    */
   onFatal(cb: (error: Error) => void): void
   /**
-   * RMS level in dBFS of the last `windowMs` (at most 10 s) of audio; -120 for digital silence. Throws a RangeError for
-   * a window with no whole sample, and throws the source's error once it has failed.
+   * RMS level in dBFS of the last `windowMs` (at most 10 s) of audio; -120 for digital silence. Returns null when the
+   * source has failed (its `onFatal` reports the fault) or when fewer samples than the window exist yet. Throws a
+   * RangeError for a window with no whole sample, or longer than 10 s.
    */
-  levelDb(windowMs: number): number
+  levelDb(windowMs: number): number | null
   /** Stops the capture process. Rejects if it died before that, or if a subscriber threw. */
   stop(): Promise<void>
 }
@@ -72,6 +74,8 @@ function command(options: AudioSourceOptions): { bin: string; args: string[] } {
   }
 }
 
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
 export function levelOf(pcm: Buffer): number {
   const samples = Math.floor(pcm.length / 2)
   if (samples === 0) throw new RangeError('no samples to measure')
@@ -95,13 +99,20 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
   const exited = new Promise<void>((resolve) => child.once('close', () => resolve()))
 
   let stopping = false
+  let stopped = false
   let failure: Error | null = null
   const fatalListeners: ((error: Error) => void)[] = []
   const fail = (error: Error) => {
-    if (failure !== null) return
+    if (failure !== null || stopped) return
     failure = error
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
-    for (const cb of fatalListeners) cb(error)
+    for (const cb of fatalListeners) {
+      try {
+        cb(error)
+      } catch (listenerError) {
+        console.error(`audio source: a fatal listener threw: ${errorText(listenerError)}`)
+      }
+    }
   }
   child.once('error', (e) => fail(new Error(`cannot start ${bin}: ${e.message}`)))
   child.once('close', (code, signal) => {
@@ -188,8 +199,8 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
           `levelDb window must hold at least one sample (${1000 / SAMPLE_RATE} ms), got ${windowMs} ms`
         )
       if (windowMs > KEEP_MS) throw new RangeError(`levelDb window must be at most ${KEEP_MS} ms, got ${windowMs} ms`)
-      if (failure !== null) throw failure
       const want = samples * 2
+      if (failure !== null || keptBytes < want) return null
       const parts: Buffer[] = []
       let have = 0
       for (let i = kept.length - 1; i >= 0 && have < want; i--) {
@@ -202,6 +213,7 @@ export async function startAudioSource(options: AudioSourceOptions = {}): Promis
     },
     async stop() {
       await kill()
+      stopped = true
       if (failure !== null) throw failure
     }
   }

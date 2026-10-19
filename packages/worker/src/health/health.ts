@@ -8,8 +8,9 @@ export interface HealthSample {
   /** Mean difference from the previous frame, 0 to 255. */
   diffPrev: number
   /**
-   * Sink level over the last second, in dBFS, or `null` when the audio source has failed (its `onFatal` reports the
-   * fault). A null level is an unknown level: it never counts as silent, and it never throws here.
+   * Sink level over the last second, in dBFS, passed straight from `AudioSource.levelDb(1000)`. It is `null` when the
+   * source has failed (its `onFatal` reports the fault) or has not yet heard a second of audio. A null level is an
+   * unknown level: it never counts as silent, and it never throws here.
    */
   levelDb: number | null
   /** Participant count from the adapter, or `null` when it cannot be read. */
