@@ -32,7 +32,7 @@ case "$data_dir" in
 esac
 case "/$data_dir/" in */../*) echo "dataDir must not contain .." >&2; exit 1 ;; esac
 profile_dir="$TM_PROFILE_ROOT/$id"
-mkdir -p "$data_dir" "$profile_dir"
+(umask 022 && mkdir -p "$data_dir" "$profile_dir") # the scheduler refuses group-writable profile dirs
 
 # A fixed machine id per identity keeps the browser fingerprint stable across runs.
 # The file lives in $TM_PROFILE_ROOT/.machine-ids/, a tree no container mounts: a worker can write its own profile
