@@ -9,15 +9,16 @@ export interface LiveLine {
   text: string
 }
 
+// ms is null when the attempt that crashed before its stop was recorded, so the gap's length is unknown.
 export interface Gap {
   atMs: number
-  ms: number
+  ms: number | null
 }
 
 export type TranscriptBlock =
   | { kind: 'para'; atMs: number; text: string }
   | { kind: 'silence'; atMs: number; ms: number }
-  | { kind: 'gap'; atMs: number; ms: number }
+  | { kind: 'gap'; atMs: number; ms: number | null }
 
 interface Attempt {
   attempt: number
@@ -40,17 +41,34 @@ export function isHallucination(text: string): boolean {
   return [...core].length <= 1 || HALLUCINATIONS.has(core)
 }
 
+// Silence in [from, to] that is not inside a recording gap. Null when an unknown-length gap ends inside the
+// pause: its start is unknown, so the silence cannot be measured.
+function silenceMs(from: number, to: number, gaps: Gap[]): number | null {
+  let silent = to - from
+  for (const gap of gaps) {
+    if (gap.ms === null) {
+      if (gap.atMs > from && gap.atMs <= to) return null
+      continue
+    }
+    silent -= Math.max(0, Math.min(gap.atMs, to) - Math.max(gap.atMs - gap.ms, from))
+  }
+  return silent
+}
+
 export function paragraphs(lines: LiveLine[], gaps: Gap[]): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = []
   let para: { atMs: number; endMs: number; text: string } | null = null
-  for (const line of lines) {
+  // ASR rows can overlap or arrive out of order, so pauses are measured between rows in start order.
+  const ordered = [...lines].sort((a, b) => a.startMs - b.startMs)
+  for (const line of ordered) {
     const text = line.text.trim()
     if (isHallucination(text)) continue
     if (para !== null) {
       const pause = line.startMs - para.endMs
-      if (pause >= SILENCE_MS) {
+      const silent = silenceMs(para.endMs, line.startMs, gaps)
+      if (silent !== null && silent >= SILENCE_MS) {
         blocks.push({ kind: 'para', atMs: para.atMs, text: para.text })
-        blocks.push({ kind: 'silence', atMs: para.endMs, ms: pause })
+        blocks.push({ kind: 'silence', atMs: para.endMs, ms: silent })
         para = null
       } else if (pause >= PAUSE_MS || para.text.length >= PARAGRAPH_CHARS) {
         blocks.push({ kind: 'para', atMs: para.atMs, text: para.text })
@@ -60,7 +78,7 @@ export function paragraphs(lines: LiveLine[], gaps: Gap[]): TranscriptBlock[] {
     para =
       para === null
         ? { atMs: line.startMs, endMs: line.endMs, text }
-        : { atMs: para.atMs, endMs: line.endMs, text: `${para.text} ${text}` }
+        : { atMs: para.atMs, endMs: Math.max(para.endMs, line.endMs), text: `${para.text} ${text}` }
   }
   if (para !== null) blocks.push({ kind: 'para', atMs: para.atMs, text: para.text })
   for (const gap of gaps) blocks.push({ kind: 'gap', atMs: gap.atMs, ms: gap.ms })
@@ -102,6 +120,7 @@ function timeOf(iso: string, where: string): number {
 }
 
 // Gaps sit between consecutive attempts. The time origin is the first attempt's start.
+// An earlier attempt with no stoppedAt crashed; its gap ends at the next attempt's start but its length is unknown.
 function gapsFrom(attempts: Attempt[]): Gap[] {
   const sorted = [...attempts].sort((a, b) => a.attempt - b.attempt)
   if (sorted.length === 0) return []
@@ -110,10 +129,11 @@ function gapsFrom(attempts: Attempt[]): Gap[] {
   for (let k = 1; k < sorted.length; k++) {
     const previous = sorted[k - 1]
     const current = sorted[k]
-    if (previous.stoppedAt === null) {
-      throw new Error(`recording/attempts.json: attempt ${previous.attempt} has no stoppedAt`)
-    }
     const start = timeOf(current.startedAt, 'recording/attempts.json')
+    if (previous.stoppedAt === null) {
+      gaps.push({ atMs: start - origin, ms: null })
+      continue
+    }
     const ms = start - timeOf(previous.stoppedAt, 'recording/attempts.json')
     if (ms > 0) gaps.push({ atMs: start - origin, ms })
   }
@@ -126,6 +146,10 @@ function minutesText(ms: number): string {
   return minutes === 1 ? '1 minute' : `${minutes} minutes`
 }
 
+function gapText(ms: number | null): string {
+  return ms === null ? 'Recording gap (length unknown)' : `Recording gap of ${minutesText(ms)}`
+}
+
 function renderBlock(block: TranscriptBlock, vocab: string[]): string {
   switch (block.kind) {
     case 'para':
@@ -133,7 +157,7 @@ function renderBlock(block: TranscriptBlock, vocab: string[]): string {
     case 'silence':
       return `_[${formatOffset(block.atMs)}] No speech for ${minutesText(block.ms)}._`
     case 'gap':
-      return `_[${formatOffset(block.atMs)}] Recording gap of ${minutesText(block.ms)}._`
+      return `_[${formatOffset(block.atMs)}] ${gapText(block.ms)}._`
   }
 }
 

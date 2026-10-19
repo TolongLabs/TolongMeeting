@@ -15,13 +15,25 @@ interface Span {
   end: number
 }
 
+type Kind = 'case' | 'inflection' | 'near'
+
+interface Candidate {
+  term: Term
+  kind: Kind
+  distance: number
+}
+
 interface Match {
   term: Term
+  kind: Kind
   heard: string
   start: number
   end: number
   words: number
 }
+
+const KIND_RANK: Record<Kind, number> = { case: 0, inflection: 1, near: 2 }
+const INFLECTION_SUFFIXES = ['s', 'es', 'ed', "'s"]
 
 const LEADING_PUNCTUATION = /^[^\p{L}\p{N}]+/u
 const TRAILING_PUNCTUATION = /[^\p{L}\p{N}]+$/u
@@ -100,16 +112,41 @@ function comparable(text: string): string {
     .trim()
 }
 
-function closestTerm(heard: string, terms: Term[], words: number): { term: Term } | null {
+// Case-only differences and whitespace differences are not mishearings.
+function folded(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+// True when one form is the other plus a trailing inflection suffix, such as "algorithms" for "Algorithm".
+function differsByInflection(a: string, b: string): boolean {
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a]
+  return short !== long && INFLECTION_SUFFIXES.some((suffix) => long === short + suffix)
+}
+
+function classify(heard: string, term: Term): Candidate | null {
+  const heardFolded = folded(heard)
+  const termFolded = folded(term.text)
+  if (heardFolded === termFolded) return { term, kind: 'case', distance: 0 }
+  if (differsByInflection(heardFolded, termFolded)) return { term, kind: 'inflection', distance: 1 }
   const lower = comparable(heard)
-  let best: { term: Term; distance: number } | null = null
+  const target = comparable(term.text)
+  if (Math.abs(target.length - lower.length) > maxDistance(term)) return null
+  const distance = damerauLevenshtein(lower, target)
+  if (distance > maxDistance(term)) return null
+  return { term, kind: 'near', distance }
+}
+
+function beats(a: Candidate, b: Candidate): boolean {
+  if (KIND_RANK[a.kind] !== KIND_RANK[b.kind]) return KIND_RANK[a.kind] < KIND_RANK[b.kind]
+  return a.distance < b.distance
+}
+
+function closestTerm(heard: string, terms: Term[], words: number): Candidate | null {
+  let best: Candidate | null = null
   for (const term of terms) {
     if (term.words !== words) continue
-    const target = comparable(term.text)
-    if (Math.abs(target.length - lower.length) > maxDistance(term)) continue
-    const distance = damerauLevenshtein(lower, target)
-    if (distance > maxDistance(term)) continue
-    if (best === null || distance < best.distance) best = { term, distance }
+    const candidate = classify(heard, term)
+    if (candidate !== null && (best === null || beats(candidate, best))) best = candidate
   }
   return best
 }
@@ -123,7 +160,7 @@ function matchAt(text: string, spans: Span[], i: number, terms: Term[], maxWords
     if (end <= start) continue
     const heard = text.slice(start, end).split(/\s+/).join(' ')
     const closest = closestTerm(heard, terms, words)
-    if (closest !== null) return { term: closest.term, heard, start, end, words }
+    if (closest !== null) return { term: closest.term, kind: closest.kind, heard, start, end, words }
   }
   return null
 }
@@ -142,8 +179,13 @@ export function correctNames(text: string, vocab: string[]): string {
       i++
       continue
     }
-    if (match.heard !== match.term.text) {
+    // A near miss gets a note. A case-only difference takes the term's casing silently.
+    // An inflection of the term stays as heard, with no note.
+    if (match.kind === 'near') {
       pieces.push(text.slice(cursor, match.start), `${match.term.text} _(as heard: "${match.heard}")_`)
+      cursor = match.end
+    } else if (match.kind === 'case') {
+      pieces.push(text.slice(cursor, match.start), match.term.text)
       cursor = match.end
     }
     i += match.words
