@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun 1.x, TypeScript (strict), zod, Node 24, Playwright and Playwright Test, Google Chrome (pinned), Xvfb, openbox, PulseAudio, ffmpeg, x11vnc (profile seeding), sharp, zxing-wasm, `ws`, `tar`, self-hosted ntfy, DashScope (OpenAI-compatible chat and `qwen3-asr-flash-realtime` WebSocket).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`
+**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`
 
 Contents:
 
@@ -40,7 +40,7 @@ Contents:
 
 ## Global Constraints
 
-- Names, paths, types, functions and environment variables are exactly those in `docs/plans/architecture.md`; anything new is listed in a task's Interfaces block as "adds to contracts" and added to `architecture.md` in that task's commit.
+- Names, paths, types, functions and environment variables are exactly those in `docs/TRD.md`; anything new is listed in a task's Interfaces block as "adds to contracts" and added to `TRD.md` in that task's commit.
 - Runtimes: Bun 1.x for everything except the worker, which runs on Node 24 and is built with `bun build --target=node`.
 - TypeScript strict everywhere; zod validates the job file, every model JSON reply and every selector map.
 - Spike outputs this plan reads: spike 2 (`docker/worker/versions.env`, Chrome flags, desk-muting method, Zoom DOM texts), spike 3 (QR decoder choice), spike 5 (ASR event names and model), spike 6 (ffmpeg preset), spike 8 (summary attachments). If a spike report contradicts this plan, fix the plan in the same commit as the code.
@@ -69,7 +69,7 @@ Contents:
 
 ### Task 1: Monorepo scaffold and tooling
 
-> **Done differently**: the workspace setup was copied from `TolongLabs/sdp-hack` instead (see [architecture](architecture.md#tooling-and-conventions)): `tsconfig.json`, `.prettierrc.json`, `commitlint.config.mjs`, scripts `lint` and `lint:fix` in place of `format`, and the `test/core-pure.test.ts` guardrail in place of `scripts/repo.test.ts`. The package skeletons, `.env.example`, `scripts/build-worker-image.sh` and the `build:worker`, `image:worker`, `tm-worker` and `tm-pipeline` scripts are as below.
+> **Done differently**: the workspace setup was copied from `TolongLabs/sdp-hack` instead (see [architecture](../TRD.md#tooling-and-conventions)): `tsconfig.json`, `.prettierrc.json`, `commitlint.config.mjs`, scripts `lint` and `lint:fix` in place of `format`, and the `test/core-pure.test.ts` guardrail in place of `scripts/repo.test.ts`. The package skeletons, `.env.example`, `scripts/build-worker-image.sh` and the `build:worker`, `image:worker`, `tm-worker` and `tm-pipeline` scripts are as below.
 
 **Files:**
 
@@ -279,7 +279,7 @@ Expected: all pass.
 - [x] **Step 5: Commit**
 
 ```bash
-git add packages/core docs/plans/architecture.md
+git add packages/core docs/TRD.md
 git commit -m "feat(core): add types, job schema, form machine"
 ```
 
@@ -409,7 +409,7 @@ alertPing(entry, kind, detail?)   title "Alert: <entry>"; high; message by kind:
   signin_forms   "The <detail> forms sign-in has expired. Form links will still be pinged to you."
   ai_key         "Your AI key was rejected (<detail>). Recording continues; the summary needs a working key."
   recording_gap  "The recorder restarted; <detail> seconds are missing from the recording."
-summaryReadyPing(entry, md, attachPath?)
+summaryReadyPing(entry, md)  (no attachment: spike 8 set `ntfy.attachSummary=false`)
                                   title "Summary ready: <entry>"; message md cut to 3,900 bytes plus "\n(truncated)" when cut; default
 summaryFailedPing(entry, status)  title "Summary failed: <entry>"; message "Your AI key was rejected (<status>). Everything is kept; run tm-pipeline again after fixing the key."; high
 ```
@@ -422,7 +422,7 @@ Expected: all pass.
 - [x] **Step 5: Commit**
 
 ```bash
-git add packages/notify docs/plans/architecture.md
+git add packages/notify docs/TRD.md
 git commit -m "feat(notify): add ntfy client and ping copy"
 ```
 
@@ -500,7 +500,7 @@ Expected: all pass.
 - [x] **Step 5: Commit**
 
 ```bash
-git add packages/ai docs/plans/architecture.md
+git add packages/ai docs/TRD.md
 git commit -m "feat(ai): add chat client with key errors"
 ```
 
@@ -656,7 +656,7 @@ Expected: all pass.
 - [x] **Step 5: Commit**
 
 ```bash
-git add packages/ai docs/plans/architecture.md
+git add packages/ai docs/TRD.md
 git commit -m "feat(ai): add realtime asr stream with rotation"
 ```
 
@@ -761,7 +761,7 @@ Expected: last line `SELFCHECK OK`. Without `--shm-size=2g` it prints "shm below
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docker/worker packages/worker/package.json bun.lock docs/plans/architecture.md
+git add docker/worker packages/worker/package.json bun.lock docs/TRD.md
 git commit -m "feat(worker): add pinned worker image"
 ```
 
@@ -860,7 +860,7 @@ Expected: 1 pass, then `1 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker docs/plans/architecture.md
+git add packages/worker docs/TRD.md
 git commit -m "feat(worker): add screen split and chrome launch"
 ```
 
@@ -950,7 +950,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/profile docs/plans/architecture.md
+git add packages/worker/src/profile docs/TRD.md
 git commit -m "feat(worker): add encrypted profile checkpoints"
 ```
 
@@ -1088,7 +1088,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/recorder docs/plans/architecture.md
+git add packages/worker/src/recorder docs/TRD.md
 git commit -m "feat(worker): add segment recorder and joiner"
 ```
 
@@ -1232,7 +1232,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/image.ts packages/core/src/image.test.ts packages/worker/src docs/plans/architecture.md
+git add packages/core/src/image.ts packages/core/src/image.test.ts packages/worker/src docs/TRD.md
 git commit -m "feat(worker): add frames, keyframes and health"
 ```
 
@@ -1298,7 +1298,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/qr packages/worker/test/helpers docs/plans/architecture.md
+git add packages/worker/src/qr packages/worker/test/helpers docs/TRD.md
 git commit -m "feat(worker): add qr decoding and confirmation"
 ```
 
@@ -1315,7 +1315,7 @@ git commit -m "feat(worker): add qr decoding and confirmation"
 - Produces: `resolveFormLink(c: FormCandidate, opts?: ResolveOptions): Promise<ResolvedForm | null>` (null: the final URL is not a form); `checkTrust(f: Pick<ResolvedForm, 'source' | 'sender' | 'senderRole'>, trustedSenders: string[]): { trusted: boolean; reason: TrustReason | null }` (accepts any `ResolvedForm`, as in the contract, and also a bare candidate).
 - Produces (adds to contracts): `interface ResolveOptions { fetch?: typeof fetch; timeoutMs?: number; maxRedirects?: number }` (defaults 5,000 and 5); `class LinkResolveError extends Error { reason: 'timeout' | 'network' | 'too_many_redirects' }`; `extractLinks(text: string): string[]`; `unwrapLink(url: string): string`; `formProviderOf(url: string): FormProvider | null`; `normaliseFormUrl(url: string): string` (the per-meeting duplicate key).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/forms/links.test.ts (fakeFetch maps URLs to responses and records each call)
@@ -1420,24 +1420,24 @@ test('pre-open trust rules', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/forms`
 Expected: FAIL with "Cannot find module './links'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `unwrapLink` repeats up to 3 times: hosts ending `.safelinks.protection.outlook.com` yield their `url` parameter; `www.google.com/url` and `google.com/url` yield `q`, else `url`. `resolveFormLink` unwraps, then loops: stop with the current URL when its host is `docs.google.com` with a path starting `/forms/`, or `forms.office.com`, or `forms.microsoft.com`; otherwise `fetch(url, { method: 'GET', redirect: 'manual', credentials: 'omit', signal })` with one `AbortSignal.timeout(timeoutMs)` for the whole chain, cancel the body, follow `Location` (resolved against the current URL, then unwrapped) on 301, 302, 303, 307 or 308, at most `maxRedirects` times; a final URL that `formProviderOf` rejects gives `null`. `normaliseFormUrl`: Google `/forms/d/e/<id>/...` and `/forms/d/<id>/...` keep only that prefix; Microsoft `ResponsePage.aspx?id=<id>` becomes `https://forms.office.com/id/<id>`, `/r/<code>` drops its query, and `forms.microsoft.com` is written as `forms.office.com`. `checkTrust`: `qr` is `qr_on_screen`; in `meeting_chat`, role `host` or `co_host` gives that reason; in any chat, a sender whose normalised name (lowercase, whitespace collapsed, trailing parenthesised suffixes removed) equals a normalised trusted sender gives `trusted_sender`; anything else is untrusted.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/forms`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms docs/plans/architecture.md
+git add packages/worker/src/forms docs/TRD.md
 git commit -m "feat(worker): add form link resolution and trust"
 ```
 
@@ -1605,7 +1605,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add config/selectors packages/worker docs/plans/architecture.md
+git add config/selectors packages/worker docs/TRD.md
 git commit -m "feat(worker): add zoom join and admission"
 ```
 
@@ -1799,7 +1799,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker docs/plans/architecture.md
+git add packages/worker docs/TRD.md
 git commit -m "feat(worker): add durable chat capture"
 ```
 
@@ -1927,7 +1927,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker docs/plans/architecture.md
+git add packages/worker docs/TRD.md
 git commit -m "feat(worker): ping form links to the member"
 ```
 
@@ -1996,7 +1996,7 @@ Expected: 2 pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/asr docs/plans/architecture.md
+git add packages/worker/src/asr docs/TRD.md
 git commit -m "feat(worker): write live transcript lines"
 ```
 
@@ -2232,7 +2232,7 @@ Expected: all pass; `packages/worker/dist/cli.js` exists.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/worker docs/plans/architecture.md
+git add packages/worker docs/TRD.md
 git commit -m "feat(worker): add occurrence run and tm-worker cli"
 ```
 
@@ -2435,7 +2435,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/pipeline docs/plans/architecture.md
+git add packages/pipeline docs/TRD.md
 git commit -m "feat(pipeline): curate and read slides"
 ```
 
@@ -2450,7 +2450,7 @@ git commit -m "feat(pipeline): curate and read slides"
 
 - Consumes: Tasks 19 and 20 builders; `chatJson`, `AiKeyError` (Task 4); `sendPing`, `summaryReadyPing`, `summaryFailedPing` (Task 3); `forms/<formId>/record.json` (Task 16, read with a local schema `{ state: string; url: string }`).
 - Produces: `runPipeline(cfg: JobConfig): Promise<PipelineResult>`; CLI `tm-pipeline --job <path>` with exit codes 0, 1 (other error), 2 (`AiKeyError`), 64 (usage), 65 (invalid job).
-- Produces (adds to contracts): `InventorySchema`, `type Inventory` and `type InventoryItem = Inventory['items'][number]` (below); `type AttendanceInfo = { kind: 'not_seen' } | { kind: 'needs_you'; url: string }`; `chooseDue(item: InventoryItem): { due: string | null; note: string | null }`; `buildInventory(cfg: JobConfig, src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] }): Promise<Inventory>`; `renderLectureSummary(inv: Inventory, ctx: { cfg: JobConfig; attendance: AttendanceInfo | null; outDir: string }): string` (`attendance` null leaves the line out, for work entries until plan 06); `summaryFileName(cfg: JobConfig): string`; `ATTACH_SUMMARY: boolean` (set from spike 8's recommendation).
+- Produces (adds to contracts): `InventorySchema`, `type Inventory` and `type InventoryItem = Inventory['items'][number]` (below); `type AttendanceInfo = { kind: 'not_seen' } | { kind: 'needs_you'; url: string }`; `chooseDue(item: InventoryItem): { due: string | null; note: string | null }`; `buildInventory(cfg: JobConfig, src: { transcriptMd: string; slides: Slide[]; chat: ChatMessage[] }): Promise<Inventory>`; `renderLectureSummary(inv: Inventory, ctx: { cfg: JobConfig; attendance: AttendanceInfo | null; outDir: string }): string` (`attendance` null leaves the line out, for work entries until plan 06); `summaryFileName(cfg: JobConfig): string`; (`ATTACH_SUMMARY` is dropped: spike 8 set `ntfy.attachSummary=false`.)
 
 ```ts
 const Source = z.enum(['slide', 'lecturer_chat', 'speech'])
@@ -2614,7 +2614,7 @@ You extract an inventory from one lecture. Reply with JSON for the given schema 
 - Keep names as written on the slides. Do not add a preamble, a recap or advice.
 ```
 
-`chooseDue` takes the value from the highest-ranked source with a non-null date (slide, then lecturer chat, then speech) and notes every other differing date as `slide says`, `chat says` or `heard as`, plus the date, joined by `; `. `renderLectureSummary` follows the design's lecture template: the title line (`, <sessionLabel>` only when present; weekday, date and times from `localParts` in the entry's time zone); `Do next:` the earliest-due deadline or task (with its due text), else `nextAction`, else `nothing to do from this session`; the attendance line; `To do` (deadlines and tasks by due date, undated last, first 5); `What was covered` (first 5); `Announcements` (announcements then links, first 5); `More deadlines` (every remaining deadline and task, and any overflowing announcement with a date, uncapped); `Details: transcript.md, slides.md and chat.md in <outDir>`. Due text is `due <Ddd D Mon YYYY>` plus `, HH:mm` when timed, then `; <note>` when there is one. Empty sections are left out; sections are separated by one blank line. `summaryFileName`: `<localParts.date> <localParts.hhmm> <name>.md`, with each of `/ \ : * ? " < > |` replaced by `-`, whitespace collapsed and the name cut to 120 characters. `runPipeline`: `mkdir out`; `buildSlides`; vocabulary = `entry.formDetails` values plus capitalised words of at least 6 letters in slide text; `buildTranscript` (when `live.jsonl` is missing the transcript says `_No live transcript for this meeting._`); `buildChat`; `buildInventory`; render to `out/<summaryFileName>`; attendance is `needs_you` with the first `needs_member` record's URL, else `not_seen`; `sendPing(cfg.ntfy, summaryReadyPing(entry.name, md, ATTACH_SUMMARY ? summaryPath : undefined))`. An `AiKeyError` anywhere sends `summaryFailedPing(entry.name, status)` and is rethrown. `cli.ts` mirrors the worker CLI's argument and error handling.
+`chooseDue` takes the value from the highest-ranked source with a non-null date (slide, then lecturer chat, then speech) and notes every other differing date as `slide says`, `chat says` or `heard as`, plus the date, joined by `; `. `renderLectureSummary` follows the design's lecture template: the title line (`, <sessionLabel>` only when present; weekday, date and times from `localParts` in the entry's time zone); `Do next:` the earliest-due deadline or task (with its due text), else `nextAction`, else `nothing to do from this session`; the attendance line; `To do` (deadlines and tasks by due date, undated last, first 5); `What was covered` (first 5); `Announcements` (announcements then links, first 5); `More deadlines` (every remaining deadline and task, and any overflowing announcement with a date, uncapped); `Details: transcript.md, slides.md and chat.md in <outDir>`. Due text is `due <Ddd D Mon YYYY>` plus `, HH:mm` when timed, then `; <note>` when there is one. Empty sections are left out; sections are separated by one blank line. `summaryFileName`: `<localParts.date> <localParts.hhmm> <name>.md`, with each of `/ \ : * ? " < > |` replaced by `-`, whitespace collapsed and the name cut to 120 characters. `runPipeline`: `mkdir out`; `buildSlides`; vocabulary = `entry.formDetails` values plus capitalised words of at least 6 letters in slide text; `buildTranscript` (when `live.jsonl` is missing the transcript says `_No live transcript for this meeting._`); `buildChat`; `buildInventory`; render to `out/<summaryFileName>`; attendance is `needs_you` with the first `needs_member` record's URL, else `not_seen`; `sendPing(cfg.ntfy, summaryReadyPing(entry.name, md))`; the ping has no `attachPath` (spike 8: ntfy serves attachments to anyone with the URL). An `AiKeyError` anywhere sends `summaryFailedPing(entry.name, status)` and is rethrown. `cli.ts` mirrors the worker CLI's argument and error handling.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2624,7 +2624,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/pipeline docs/plans/architecture.md
+git add packages/pipeline docs/TRD.md
 git commit -m "feat(pipeline): add lecture summary and cli"
 ```
 
