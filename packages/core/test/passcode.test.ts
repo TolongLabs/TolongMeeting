@@ -21,3 +21,17 @@ test('pwd and passcode are stripped on any host, p only on the Teams hosts', () 
   expect(stripPasscode('https://teams.live.com/meet/1?p=1&x=2')).toBe('https://teams.live.com/meet/1?x=2')
   expect(stripPasscode('https://notteams.microsoft.com/x?p=1')).toBe('https://notteams.microsoft.com/x?p=1')
 })
+
+test('parameter names match in any case', () => {
+  expect(stripPasscode('https://example.zoom.us/j/1?PWD=abc')).toBe('https://example.zoom.us/j/1')
+  expect(stripPasscode('https://example.com/x?PassCode=1&keep=2')).toBe('https://example.com/x?keep=2')
+  expect(stripPasscode('https://teams.microsoft.com/meet/1?P=abc&x=2')).toBe('https://teams.microsoft.com/meet/1?x=2')
+  expect(stripPasscode('https://example.com/x?P=1')).toBe('https://example.com/x?P=1')
+})
+
+test('the rest of the query keeps its original encoding', () => {
+  expect(stripPasscode('https://example.zoom.us/j/1?topic=a%20b+c&pwd=abc&tz=Asia%2FKuala_Lumpur#frag')).toBe(
+    'https://example.zoom.us/j/1?topic=a%20b+c&tz=Asia%2FKuala_Lumpur#frag'
+  )
+  expect(stripPasscode('https://example.zoom.us/j/1?a=%20&b=%zz')).toBe('https://example.zoom.us/j/1?a=%20&b=%zz')
+})

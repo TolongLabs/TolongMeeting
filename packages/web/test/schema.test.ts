@@ -1,7 +1,8 @@
+import { readdirSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { eq, getTableName, sql } from 'drizzle-orm'
 import { closeDb, getDb, MEMBER_OWNED, pkOf, schema, type Db } from '../db'
-import { runMigrations } from '../db/migrate'
+import { migrationsFolder, runMigrations } from '../db/migrate'
 import { createTestDb, dropAllTestDbs, dropTestDb, seedMember, testDbUrl } from '../db/testing'
 
 const { aiKeys, artefacts, connections, details, deviceTokens, events, forms, identities, members } = schema
@@ -80,13 +81,14 @@ describe('migrations', () => {
 
   test('applying them to an empty database works, and applying them again changes nothing', async () => {
     const fresh = await createTestDb()
+    const migrationCount = readdirSync(migrationsFolder).filter((f) => f.endsWith('.sql')).length
     const applied = async () =>
       (await fresh.execute(sql`select count(*)::int as n from drizzle.__drizzle_migrations`)).rows[0]!.n
-    expect(await applied()).toBe(1)
+    expect(await applied()).toBe(migrationCount)
     const a = await seedMember(fresh)
     await runMigrations(fresh)
     await runMigrations(fresh)
-    expect(await applied()).toBe(1)
+    expect(await applied()).toBe(migrationCount)
     expect(await fresh.$count(members, eq(members.id, a.memberId))).toBe(1)
     await dropTestDb(fresh)
   })

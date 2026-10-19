@@ -315,7 +315,7 @@ git commit -m "feat(core): seal secrets with HKDF keys"
 - Consumes: `OccurrenceState` (architecture); `IllegalTransition` (1A, exported from `packages/core` beside `nextFormState`); `Db`, `schema` (Task 1).
 - Produces, `packages/core/src/occurrence-machine.ts`: `type WorkerState = 'starting' | 'verifying_accounts' | 'waiting_for_signin' | 'watching_for_link' | 'joining' | 'in_lobby' | 'in_meeting' | 'leaving' | 'uploading'`; `type OccurrenceTrigger` (below); `WORKER_STATES: ReadonlySet<WorkerState>`; `ACTIVE_STATES` (`WORKER_STATES` plus `restarting`: the states that hold an identity and a server slot); `nextOccurrenceState(from: OccurrenceState, event: OccurrenceTrigger): OccurrenceState` (throws `IllegalTransition`); `triggerFor(from: OccurrenceState, to: OccurrenceState): OccurrenceTrigger | null`.
 - Produces (adds to contracts): `stripPasscode(url: string): string` in `packages/core/src/passcode.ts`.
-- Produces, `packages/web/db/transitions.ts`: `applyTrigger(db: Db, occurrenceId: string, trigger: OccurrenceTrigger, opts?: { reason?: string; recordEvent?: boolean }): Promise<{ from: OccurrenceState; to: OccurrenceState }>`. It locks the row (`for update`), writes the new state and `state_reason`, and records a `state` event `{ from, to, trigger, reason }` unless `recordEvent` is false. On entering any state outside `ACTIVE_STATES` and `scheduled` it applies `stripPasscode` to `link_used`, `pasted_link` and `entry_snapshot.link.url`. An illegal trigger throws and writes nothing.
+- Produces, `packages/web/db/transitions.ts`: `applyTrigger(db: Db, occurrenceId: string, trigger: OccurrenceTrigger, opts?: { reason?: string; recordEvent?: boolean }): Promise<{ from: OccurrenceState; to: OccurrenceState; restarts: number; knocks: number }>` (the counts are the post-trigger values, so the caller can `fail` after 3 restarts and stop knocking after 2). It locks the row (`for update`), writes the new state and `state_reason`, and records a `state` event `{ from, to, trigger, reason }` unless `recordEvent` is false. Migration `0001_occurrence_resume_and_knocks` adds `occurrences.resume_state` (nullable `OccurrenceState`) and `occurrences.knocks` (int, default 0). In the same locked transaction, `crash` stores the pre-crash state in `resume_state` and adds 1 to `restarts` (a crash while already `restarting` also adds 1, keeps `resume_state` and records no state event); `resume:<s>` throws `IllegalTransition` unless `s` equals `resume_state`, then clears it; `knock_again` adds 1 to `knocks` and records no state event. On entering any state outside `ACTIVE_STATES` and `scheduled` it applies `stripPasscode` to `link_used`, `pasted_link` and `entry_snapshot.link.url`. An illegal trigger throws and writes nothing.
 
 ```ts
 export type OccurrenceTrigger =
@@ -368,7 +368,7 @@ all but deleted, failed                     fail -> failed
 all outside ACTIVE_STATES, except deleted   delete -> deleted
 ```
 
-`stripPasscode` removes the query parameters `pwd` and `passcode` on any host, and `p` on `teams.microsoft.com`, `*.teams.microsoft.com` and `teams.live.com`; it returns `''` for a string that doesn't parse as a URL.
+`stripPasscode` removes the query parameters `pwd` and `passcode` on any host, and `p` on `teams.microsoft.com`, `*.teams.microsoft.com` and `teams.live.com`; it returns `''` for a string that doesn't parse as a URL. Names match in any case, and only the matching pairs are cut from the raw query string, so the rest keeps its encoding.
 
 - [x] **Step 1: Write the failing tests**
 

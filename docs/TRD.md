@@ -116,8 +116,8 @@ scheduled -> starting -> verifying_accounts -> watching_for_link -> joining -> i
 Side exits:
   verifying_accounts  -> waiting_for_signin -> verifying_accounts      (member signs in)
   watching_for_link   -> no_link                                       (30 minutes after start)
-  in_lobby            -> denied | in_lobby (knock again, at most 2)
-  any running state   -> restarting -> previous state                  (up to 3 times)
+  in_lobby            -> denied | in_lobby (knock again, at most 2; `occurrences.knocks`)
+  any running state   -> restarting -> previous state                  (up to 3 times; `occurrences.restarts`, `resume_state`)
   any running state   -> left_by_member                                (leave_now or take_over)
   starting            -> skipped_capacity | skipped_identity_clash | skipped_pc_offline
   transcribing        -> waiting_for_pc                                (native mode)
@@ -661,7 +661,7 @@ Milestone 1C. Postgres with Drizzle ORM and drizzle-kit migrations in `packages/
 - `ai_keys`, `connections`, `device_tokens`;
 - `signin_sessions`.
 
-pg-boss uses its own schema in the same database. Plan 1C defines the columns; the Drizzle schema (`packages/web/db/schema.ts`) is the source of truth and drizzle-kit generates `packages/web/db/migrations/`, applied by `runMigrations(db)` (`packages/web/db/migrate.ts`, also `bun run --cwd packages/web db:migrate`). `identities` also holds the nullable `org_name` and `org_email_domain` that `JobConfig.identity.organisation` is built from.
+pg-boss uses its own schema in the same database. Plan 1C defines the columns; the Drizzle schema (`packages/web/db/schema.ts`) is the source of truth and drizzle-kit generates `packages/web/db/migrations/`, applied by `runMigrations(db)` (`packages/web/db/migrate.ts`, also `bun run --cwd packages/web db:migrate`). `occurrences` also holds three state-machine columns: `restarts` and `knocks` (integers, default 0) and `resume_state` (nullable `OccurrenceState`). `applyTrigger(db, occurrenceId, trigger, opts?)` (`packages/web/db/transitions.ts`) returns `Promise<{ from, to, restarts, knocks }>`, the counts being the post-trigger values. In one locked transaction, `crash` stores the pre-crash state in `resume_state` and adds 1 to `restarts` (also when already `restarting`, with no extra state event); `resume:<s>` is rejected with `IllegalTransition` unless `s` equals `resume_state`, then clears it; `knock_again` adds 1 to `knocks` with no state event. The caller fails the occurrence when `restarts` passes 3 and stops knocking when `knocks` passes 2. `identities` also holds the nullable `org_name` and `org_email_domain` that `JobConfig.identity.organisation` is built from.
 
 Tests run against a real Postgres, not PGlite: `createTestDb()` (`packages/web/db/testing.ts`) creates a uniquely named database on `TEST_DATABASE_URL`, applies every migration and returns a `Db`; tests drop it with `dropTestDb(db)` or `dropAllTestDbs()` in `afterAll`. `seedMember(db, opts?)` is in the same file.
 

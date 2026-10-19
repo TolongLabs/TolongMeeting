@@ -290,6 +290,8 @@ export const occurrences = pgTable(
     stateReason: text('state_reason'),
     attempt: integer('attempt').notNull().default(0),
     restarts: integer('restarts').notNull().default(0),
+    knocks: integer('knocks').notNull().default(0),
+    resumeState: text('resume_state').$type<OccurrenceState>(),
     entrySnapshot: jsonb('entry_snapshot').$type<JobConfig['entry']>(),
     linkUsed: text('link_used'),
     pastedLink: text('pasted_link'),
@@ -311,7 +313,8 @@ export const occurrences = pgTable(
     index('occurrences_state_idx').on(t.state),
     index('occurrences_identity_id_scheduled_start_idx').on(t.identityId, t.scheduledStart),
     index('occurrences_delete_after_idx').on(t.deleteAfter),
-    check('occurrences_state_check', oneOf(t.state, OCCURRENCE_STATES))
+    check('occurrences_state_check', oneOf(t.state, OCCURRENCE_STATES)),
+    check('occurrences_resume_state_check', oneOf(t.resumeState, OCCURRENCE_STATES))
   ]
 )
 
