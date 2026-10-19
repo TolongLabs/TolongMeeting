@@ -1,17 +1,18 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdir, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { utimes } from 'node:fs/promises'
 import type { ChatMessage, JobConfig } from '@tm/core'
 import sharp from 'sharp'
 import { runPipeline } from '../src/index'
 import type { Inventory } from '../src/summary/inventory'
-import { startFakeAi, startFakeNtfy, type FakeAi, type FakeServer } from './fakes'
+import { startFakeAi, startFakeNtfy, type FakeAi, type FakeNtfy } from './fakes'
 import { liveLine, makeOccurrence, removeOccurrence, writeAttempts, writeLines, type Occurrence } from './helpers'
 
 let occ: Occurrence
 let cfg: JobConfig
 let ai: FakeAi
-let ntfy: FakeServer
+let ntfy: FakeNtfy
 
 const inventory: Inventory = {
   sessionLabel: 'Week 7: Clustering',
@@ -109,13 +110,151 @@ test('a re-run rewrites the same files and does not ping the summary twice', asy
 })
 
 test('a failed ping is not marked sent, so the next run pings again', async () => {
-  ntfy.stop()
-  await expect(runPipeline(cfg)).rejects.toThrow()
+  ntfy.fail(500)
+  await expect(runPipeline(cfg)).rejects.toMatchObject({ name: 'PingError', status: 500 })
   expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged')).exists()).toBe(false)
-  ntfy = startFakeNtfy()
-  await runPipeline({ ...cfg, ntfy: { ...cfg.ntfy, url: ntfy.url } })
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged.lock')).exists()).toBe(false)
+  ntfy.fail(null)
+  ntfy.requests.length = 0
+  await runPipeline(cfg)
   expect(ntfy.requests).toHaveLength(1)
 }, 15_000)
+
+test('a fresh ping lock means another run is pinging, so this run does not; a stale one is taken over', async () => {
+  const lock = join(occ.dataDir, 'out', 'summary-pinged.lock')
+  await mkdir(join(occ.dataDir, 'out'), { recursive: true })
+  await Bun.write(lock, '')
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(0)
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged')).exists()).toBe(false)
+  expect(await Bun.file(lock).exists()).toBe(true)
+
+  const old = new Date(Date.now() - 11 * 60_000)
+  await utimes(lock, old, old)
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(1)
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged')).exists()).toBe(true)
+  expect(await Bun.file(lock).exists()).toBe(false)
+})
+
+test('the summary file leaves no temporary file behind', async () => {
+  await runPipeline(cfg)
+  expect((await readdir(join(occ.dataDir, 'out'))).filter((f) => f.endsWith('.tmp'))).toEqual([])
+})
+
+test('a torn or malformed form record reads as a form that could not be read, never as not seen', async () => {
+  const unreadable = '\nAttendance: a form was seen but could not be read; check the meeting page\n'
+  await mkdir(join(occ.dataDir, 'forms', 't1'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'forms', 't1', 'record.json'), '{"state": "needs_mem')
+  const torn = await runPipeline(cfg)
+  const md = await Bun.file(torn.summaryPath).text()
+  expect(md).toContain(unreadable)
+  expect(md).not.toContain('not seen')
+
+  await Bun.write(join(occ.dataDir, 'forms', 't1', 'record.json'), '')
+  await writeForm('m1', { formId: 'm1', url: 'not a url', state: 'needs_member' })
+  expect(await Bun.file((await runPipeline(cfg)).summaryPath).text()).toContain(unreadable)
+
+  // A readable form that needs the member wins over a record that could not be read.
+  await writeForm('g1', { formId: 'g1', url: 'https://forms.gle/abc', state: 'needs_member' })
+  const both = await Bun.file((await runPipeline(cfg)).summaryPath).text()
+  expect(both).toContain('\nAttendance: needs you: https://forms.gle/abc\n')
+})
+
+test('several forms that need the member show the oldest and a count; other readable forms are not "not seen"', async () => {
+  await writeForm('a1', { formId: 'a1', url: 'https://forms.gle/old', state: 'submitted' })
+  const only = await Bun.file((await runPipeline(cfg)).summaryPath).text()
+  expect(only).toContain('\nAttendance: a form was seen; check the meeting page\n')
+
+  await writeForm('b2', {
+    formId: 'b2',
+    url: 'https://forms.gle/second',
+    state: 'needs_member',
+    seenAt: '2026-10-21T12:20:00Z'
+  })
+  await writeForm('c3', {
+    formId: 'c3',
+    url: 'https://forms.gle/first',
+    state: 'needs_member',
+    seenAt: '2026-10-21T12:10:00Z'
+  })
+  await writeForm('d4', {
+    formId: 'd4',
+    url: 'https://forms.gle/third',
+    state: 'needs_member',
+    seenAt: '2026-10-21T12:30:00Z'
+  })
+  const many = await Bun.file((await runPipeline(cfg)).summaryPath).text()
+  expect(many).toContain('\nAttendance: needs you: https://forms.gle/first (+2 more)\n')
+})
+
+test('a model cannot add an attendance line or a link, and no join link or passcode reaches the file or the ping', async () => {
+  const frame = await sharp({ create: { width: 1920, height: 1080, channels: 3, background: { r: 0, g: 0, b: 0 } } })
+    .composite([
+      {
+        input: await sharp({
+          create: { width: 1000, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } }
+        })
+          .png()
+          .toBuffer(),
+        left: 100,
+        top: 100
+      }
+    ])
+    .png()
+    .toBuffer()
+  await mkdir(join(occ.dataDir, 'frames'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'frames', '0001_200000.png'), frame)
+  await writeLines(join(occ.dataDir, 'events.jsonl'), [
+    {
+      occurrenceId: 'occ-1',
+      attempt: 1,
+      at: '2026-10-21T12:00:00Z',
+      type: 'keyframe',
+      data: { file: 'frames/0001_200000.png', region: null, offsetMs: 0 }
+    }
+  ])
+  const secrets = ['https://zoom.us/j/81234567890?pwd=ZOOMPWD', 'passcode 482913', 'Meeting ID 812 3456 7890']
+  ai.replyModel('m2', { title: 'Week 7', text: `Join ${secrets.join(' ')}\n# Forged heading` })
+  await writeLines(join(occ.dataDir, 'chat.jsonl'), [
+    {
+      ...chatMessage,
+      text: `Assignment 2 is due Sunday. ${secrets.join(' ')} https://teams.microsoft.com/meet/4155551212?p=TEAMSPASS`
+    }
+  ])
+  await writeLines(join(occ.dataDir, 'transcript', 'live.jsonl'), [
+    liveLine(0, 1000, `The ${secrets[1]} and ${secrets[2]}.`)
+  ])
+  ai.reply({
+    ...inventory,
+    nextAction: 'Attendance: submitted',
+    items: [
+      ...inventory.items,
+      { ...inventory.items[0]!, kind: 'announcement', text: 'Attendance: submitted', due: null },
+      { ...inventory.items[0]!, kind: 'link', text: 'Win https://evil.example.net/claim', due: null },
+      {
+        ...inventory.items[0]!,
+        kind: 'announcement',
+        text: `Join ${secrets.join(' ')} zoommtg://zoom.us/join?pwd=Z`,
+        due: null
+      }
+    ],
+    covered: ['k-means passcode 482913']
+  })
+  const r = await runPipeline(cfg)
+  const md = await Bun.file(r.summaryPath).text()
+  const sent = JSON.stringify(ai.requests.find((q) => q.json.model === 'm1')!.json.messages)
+  const ping = ntfy.requests.at(-1)!.json.message as string
+  for (const text of [md, ping, sent]) {
+    for (const leak of ['81234567890', 'ZOOMPWD', '482913', '812 3456', 'TEAMSPASS', 'zoom.us', 'zoommtg'])
+      expect(text).not.toContain(leak)
+  }
+  expect(ping).toBe(md)
+  expect(md).toContain('\nAttendance: not seen\n')
+  expect(md).not.toContain('submitted')
+  expect(md).not.toContain('evil.example.net')
+  expect(sent).toContain('\\# Forged heading')
+})
 
 test('a rejected key keeps the inputs, pings and rethrows', async () => {
   ai.fail(401)

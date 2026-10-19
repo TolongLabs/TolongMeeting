@@ -143,6 +143,18 @@ test('meeting links never reach the summary', () => {
   expect(out).not.toContain('zoom.us')
 })
 
+test('passcodes and meeting IDs in any item never reach the summary', () => {
+  const inv: Inventory = {
+    sessionLabel: 'Week 7 passcode 482913',
+    nextAction: 'Join teams.microsoft.com/meet/4155551212?p=TEAMSPASS',
+    items: [item({ text: 'Class moves online, Meeting ID: 812 3456 7890, password: hunter2secret' })],
+    covered: ['Pasted: zoommtg://zoom.us/join?confno=81234567890&pwd=ZOOMMTG']
+  }
+  const out = renderLectureSummary(inv, { cfg, attendance: null, outDir: '/o' })
+  for (const leak of ['482913', 'TEAMSPASS', '812 3456', 'hunter2secret', 'ZOOMMTG', '81234567890'])
+    expect(out).not.toContain(leak)
+})
+
 test('source priority: slide over lecturer chat over speech', () => {
   expect(
     chooseDue(

@@ -1,5 +1,6 @@
 import { AiKeyError } from '@tm/ai'
 import { JobError, parseJob } from '@tm/core'
+import { describeError } from './errors'
 import { runPipeline } from './pipeline'
 
 const USAGE = 'usage: tm-pipeline --job <path>'
@@ -35,7 +36,7 @@ export async function main(argv: string[]): Promise<number> {
       console.error(`tm-pipeline: the AI key was rejected (${e.status}). Fix the key and run again.`)
       return 2
     }
-    console.error(`tm-pipeline: ${e instanceof Error ? e.message : String(e)}`)
+    console.error(`tm-pipeline: ${describeError(e)}`)
     return 1
   }
 }

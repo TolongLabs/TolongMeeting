@@ -30,3 +30,9 @@ test('the date is the local date when the UTC date differs', () => {
     '2026-10-22 0730 '
   )
 })
+
+test('a name that is empty once cleaned falls back to "meeting"', () => {
+  expect(summaryFileName(entryAt({ name: '' }))).toBe('2026-10-21 2000 meeting.md')
+  expect(summaryFileName(entryAt({ name: ' / ' }))).toBe('2026-10-21 2000 -.md')
+  expect(summaryFileName(entryAt({ name: '  \t ' }))).toBe('2026-10-21 2000 meeting.md')
+})

@@ -1,10 +1,13 @@
-import { mkdir, open, readdir, readFile, rename } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AiKeyError } from '@tm/ai'
 import { canonicalFormUrl, type JobConfig } from '@tm/core'
 import { sendPing, summaryFailedPing, summaryReadyPing } from '@tm/notify'
 import { z } from 'zod'
 import { buildChat, loadChat } from './chat'
+import { describeError } from './errors'
+import { scrub } from './scrub'
 import { buildSlides, type Slide } from './slides'
 import { buildTranscript } from './transcript'
 import { buildInventory } from './summary/inventory'
@@ -19,6 +22,10 @@ export interface PipelineResult {
 }
 
 const PINGED_MARKER = 'summary-pinged'
+// A run that holds the ping lock longer than this is taken to have died.
+const LOCK_STALE_MS = 10 * 60_000
+const ATTENDANCE_UNREADABLE = 'a form was seen but could not be read; check the meeting page'
+const ATTENDANCE_SEEN = 'a form was seen; check the meeting page'
 const MIN_NAME_LETTERS = 6
 
 // Both record shapes (the 1A pinger's and the 1B FormRecord) carry these; 1B adds the resolved `finalUrl`.
@@ -35,50 +42,83 @@ function vocabulary(cfg: JobConfig, slides: Slide[]): string[] {
   return [...new Set([...Object.values(cfg.entry.formDetails), ...words])].filter((w) => w !== '')
 }
 
-// The text after "Attendance: ". A form the bot left for the member to submit is the only thing it knows about.
+// The text after "Attendance: ". It comes only from the form records, and it is never "not seen" once a form
+// directory exists: a record that cannot be read must not look like no form.
 async function attendanceText(dataDir: string): Promise<string> {
   const forms = join(dataDir, 'forms')
   const entries = await readdir(forms, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
     if (err.code === 'ENOENT') return []
     throw err
   })
+  const dirs = entries.filter((e) => e.isDirectory())
   const waiting: { sortKey: string; url: string }[] = []
-  for (const entry of entries.filter((e) => e.isDirectory())) {
+  let unreadable = 0
+  for (const entry of dirs) {
     const raw = await readFile(join(forms, entry.name, 'record.json'), 'utf8').catch((err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') return null
       throw err
     })
-    if (raw === null) continue
-    let record: z.infer<typeof FormRecordFile>
     try {
-      record = FormRecordFile.parse(JSON.parse(raw))
+      if (raw === null) throw new Error('no record.json')
+      const record = FormRecordFile.parse(JSON.parse(raw))
+      if (record.state !== 'needs_member') continue
+      // The canonical page, so a pre-filled answer in the query never reaches the summary.
+      waiting.push({
+        sortKey: `${record.seenAt ?? ''}|${entry.name}`,
+        url: canonicalFormUrl(record.finalUrl ?? record.url)
+      })
     } catch {
-      // A torn or foreign record is skipped; only the form's id is reported, never its content.
+      // A torn, foreign or missing record is skipped; only the form's id is reported, never its content.
+      unreadable++
       console.error(`tm-pipeline: forms/${entry.name}/record.json is unreadable and was skipped`)
-      continue
     }
-    if (record.state !== 'needs_member') continue
-    // The canonical page, so a pre-filled answer in the query never reaches the summary.
-    waiting.push({
-      sortKey: `${record.seenAt ?? ''}|${entry.name}`,
-      url: canonicalFormUrl(record.finalUrl ?? record.url)
-    })
   }
   waiting.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
-  return waiting.length > 0 ? `needs you: ${waiting[0]!.url}` : 'not seen'
+  if (waiting.length > 0) {
+    const more = waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''
+    return `needs you: ${waiting[0]!.url}${more}`
+  }
+  if (unreadable > 0) return ATTENDANCE_UNREADABLE
+  return dirs.length > 0 ? ATTENDANCE_SEEN : 'not seen'
 }
 
-// Writes the whole file to a temporary name, flushes it, then renames it over the target.
+// Writes the whole file to a temporary name of its own, flushes it, then renames it over the target.
 async function writeAtomic(path: string, text: string): Promise<void> {
-  const temp = `${path}.tmp`
-  const handle = await open(temp, 'w')
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
-    await handle.writeFile(text)
-    await handle.sync()
-  } finally {
-    await handle.close()
+    const handle = await open(temp, 'w')
+    try {
+      await handle.writeFile(text)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, path)
+  } catch (err) {
+    await rm(temp, { force: true })
+    throw err
   }
-  await rename(temp, path)
+}
+
+// Takes the lock beside the marker, or says another run holds it. A lock older than LOCK_STALE_MS is taken over.
+async function claimLock(lock: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await (await open(lock, 'wx')).close()
+      return true
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+    const held = await stat(lock).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return null
+      throw err
+    })
+    if (held !== null) {
+      if (Date.now() - held.mtimeMs < LOCK_STALE_MS) return false
+      await rm(lock, { force: true })
+    }
+  }
+  return false
 }
 
 async function build(cfg: JobConfig): Promise<{ result: PipelineResult; md: string }> {
@@ -99,9 +139,11 @@ async function build(cfg: JobConfig): Promise<{ result: PipelineResult; md: stri
     outDir,
     unreadSlides: slides.filter((s) => s.failed === true).map((s) => s.n)
   })
+  // The last gate: whatever the model or a record put in the text, no join link or passcode is written or pinged.
+  const safe = scrub(md)
   const summaryPath = join(outDir, summaryFileName(cfg))
-  await writeAtomic(summaryPath, md)
-  return { result: { summaryPath, transcriptPath, slidesPath, chatPath }, md }
+  await writeAtomic(summaryPath, safe)
+  return { result: { summaryPath, transcriptPath, slidesPath, chatPath }, md: safe }
 }
 
 /**
@@ -118,15 +160,26 @@ export async function runPipeline(cfg: JobConfig, opts?: { pingOnKeyError?: bool
     if (e instanceof AiKeyError && pingOnKeyError) {
       // The key error is what the caller needs; a failed ping is logged beside it, not instead of it.
       await sendPing(cfg.ntfy, summaryFailedPing(cfg.entry.name, e.status)).catch((pingError: unknown) => {
-        console.error(`tm-pipeline: the summary-failed ping was not sent: ${String(pingError)}`)
+        console.error(`tm-pipeline: the summary-failed ping was not sent: ${describeError(pingError)}`)
       })
     }
     throw e
   }
   const marker = join(cfg.dataDir, 'out', PINGED_MARKER)
-  if (!(await Bun.file(marker).exists())) {
-    await sendPing(cfg.ntfy, summaryReadyPing(cfg.entry.name, built.md))
-    await writeAtomic(marker, `${new Date().toISOString()}\n`)
+  if (await Bun.file(marker).exists()) return built.result
+  // Two runs at once must not both ping: one takes the lock, pings, writes the marker, then lets go.
+  const lock = `${marker}.lock`
+  if (!(await claimLock(lock))) {
+    console.error('tm-pipeline: another run is sending the summary ping; this run did not')
+    return built.result
+  }
+  try {
+    if (!(await Bun.file(marker).exists())) {
+      await sendPing(cfg.ntfy, summaryReadyPing(cfg.entry.name, built.md))
+      await writeAtomic(marker, `${new Date().toISOString()}\n`)
+    }
+  } finally {
+    await rm(lock, { force: true })
   }
   return built.result
 }

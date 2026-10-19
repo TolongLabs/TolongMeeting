@@ -1,18 +1,13 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ChatMessage, JobConfig } from '@tm/core'
+import { scrub } from './scrub'
 
 const DEDUP_TEXT_CHARS = 200
-const MEETING_LINK_REMOVED = '[meeting link removed]'
-const INVITE_LINKS: RegExp[] = [
-  /https?:\/\/(?:[\w-]+\.)*zoom\.us\/(?:j|wc|my|s)\/\S*[^\s.,;:!?)\]'"<>]/gi,
-  /https?:\/\/teams\.microsoft\.com\/l\/meetup-join\/\S*[^\s.,;:!?)\]'"<>]/gi,
-  /https?:\/\/teams\.live\.com\/meet\/\S*[^\s.,;:!?)\]'"<>]/gi,
-  /https?:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\S*[^\s.,;:!?)\]'"<>])?/gi
-]
 
+// Meeting links, passcodes and meeting IDs are cut (see scrub).
 export function stripInviteLinks(text: string): string {
-  return INVITE_LINKS.reduce((acc, pattern) => acc.replace(pattern, MEETING_LINK_REMOVED), text)
+  return scrub(text)
 }
 
 function seenMs(message: ChatMessage): number {

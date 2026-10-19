@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { startFakeAi, startFakeNtfy, type FakeAi, type FakeServer } from './fakes'
+import { startFakeAi, startFakeNtfy, type FakeAi, type FakeNtfy } from './fakes'
 import { liveLine, makeOccurrence, removeOccurrence, writeAttempts, writeLines, type Occurrence } from './helpers'
 
 const CLI = join(import.meta.dir, '../src/cli.ts')
 
 let occ: Occurrence
 let ai: FakeAi
-let ntfy: FakeServer
+let ntfy: FakeNtfy
 beforeAll(async () => {
   occ = await makeOccurrence()
   ai = startFakeAi()
@@ -74,3 +75,28 @@ test('exit 0 on success, 2 on a rejected key, 1 on any other error', async () =>
   ai.fail(500)
   expect((await run('--job', path)).exitCode).toBe(1)
 })
+
+test('a failed ping prints the error name and status, never the ntfy URL or token', async () => {
+  ai.reply({ sessionLabel: null, nextAction: null, items: [], covered: [] })
+  const secretNtfy = { url: ntfy.url, topic: 'topic', token: 'tok-secret-123' }
+  const marker = join(occ.dataDir, 'out', 'summary-pinged')
+  await rm(marker, { force: true })
+  ntfy.fail(500)
+  const down = await run('--job', await jobFile('down.json', { ...job(), ntfy: secretNtfy }))
+  expect(down.exitCode).toBe(1)
+  expect(down.stderr).toContain('PingError (ntfy answered 500)')
+  ntfy.fail(null)
+  await rm(marker, { force: true })
+  // Nothing listens on port 1: the fetch error behind the ping error names the URL.
+  const gone = await run(
+    '--job',
+    await jobFile('gone.json', { ...job(), dataDir: occ.dataDir, ntfy: { ...secretNtfy, url: 'http://127.0.0.1:1' } })
+  )
+  expect(gone.exitCode).toBe(1)
+  expect(gone.stderr).toContain('PingError')
+  for (const text of [down.stderr, gone.stderr]) {
+    expect(text).not.toContain('tok-secret-123')
+    expect(text).not.toContain('127.0.0.1')
+    expect(text).not.toContain(ntfy.url)
+  }
+}, 30_000)

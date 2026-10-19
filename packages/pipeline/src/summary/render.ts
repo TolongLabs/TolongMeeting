@@ -1,5 +1,5 @@
 import { localParts, type JobConfig } from '@tm/core'
-import { stripInviteLinks } from '../chat'
+import { scrub } from '../scrub'
 import type { Inventory, InventoryItem } from './inventory'
 
 type Source = InventoryItem['source']
@@ -37,9 +37,9 @@ export function chooseDue(item: InventoryItem): { due: string | null; note: stri
   return { due: best.due, note: notes.length === 0 ? null : [...new Set(notes)].join('; ') }
 }
 
-// Meeting links never reach the summary, whatever the model copied into an item.
+// Join links and passcodes never reach the summary, whatever the model copied into an item.
 function clean(text: string): string {
-  return stripInviteLinks(text).replace(/\s+/g, ' ').trim()
+  return scrub(text).replace(/\s+/g, ' ').trim()
 }
 
 function itemLine(item: InventoryItem): string {
