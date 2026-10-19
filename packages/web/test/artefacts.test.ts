@@ -73,8 +73,8 @@ describe('registerArtefacts', () => {
       `forms/${FORM}/record.json`,
       'forms/not-a-form-id/filled.png'
     ])
-    expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(9)
-    expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(9)
+    expect(await registerArtefacts(f.db, f.occ, f.dir, { recording: true })).toBe(9)
+    expect(await registerArtefacts(f.db, f.occ, f.dir, { recording: true })).toBe(9)
     expect(await f.kinds()).toEqual({
       chat: 1,
       form_screenshot: 2,
@@ -88,11 +88,17 @@ describe('registerArtefacts', () => {
     expect((await f.rows()).every((r) => r.bytes === 10 && r.memberId === f.occ.memberId)).toBe(true)
   })
 
+  test('the recording is left out unless the caller has checked it', async () => {
+    const f = await artefactFixture(['recording/meeting.mp4', 'out/chat.md'])
+    expect(await registerArtefacts(f.db, f.occ, f.dir, { recording: false })).toBe(1)
+    expect((await f.rows()).map((r) => r.kind)).toEqual(['chat'])
+  })
+
   test('a second call updates the size of a file that grew', async () => {
     const f = await artefactFixture(['out/transcript.md'])
-    await registerArtefacts(f.db, f.occ, f.dir)
+    await registerArtefacts(f.db, f.occ, f.dir, { recording: true })
     await writeFile(`${f.dir}/out/transcript.md`, 'y'.repeat(25))
-    await registerArtefacts(f.db, f.occ, f.dir)
+    await registerArtefacts(f.db, f.occ, f.dir, { recording: true })
     expect((await f.rows()).map((r) => r.bytes)).toEqual([25])
   })
 
@@ -109,7 +115,7 @@ describe('registerArtefacts', () => {
     await symlink(`${outside}/slides`, `${f.dir}/slides`)
     await mkdir(`${f.dir}/recording`)
     await symlink(`${f.dir}/out/chat.md`, `${f.dir}/recording/meeting.mp4`)
-    expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(1)
+    expect(await registerArtefacts(f.db, f.occ, f.dir, { recording: true })).toBe(1)
     expect((await f.rows()).map((r) => r.path)).toEqual(['out/chat.md'])
   })
 
@@ -118,26 +124,26 @@ describe('registerArtefacts', () => {
     await mkdir(`${f.dir}/out/transcript.md`, { recursive: true })
     await mkdir(`${f.dir}/recording`)
     Bun.spawnSync(['mkfifo', `${f.dir}/recording/meeting.mp4`])
-    expect(await registerArtefacts(f.db, f.occ, f.dir)).toBe(0)
+    expect(await registerArtefacts(f.db, f.occ, f.dir, { recording: true })).toBe(0)
   })
 
   test('a directory that is itself a symlink to a real directory registers its real files', async () => {
     const f = await artefactFixture(['out/transcript.md'])
     const link = `${f.dir}-link`
     await symlink(f.dir, link)
-    expect(await registerArtefacts(f.db, f.occ, link)).toBe(1)
+    expect(await registerArtefacts(f.db, f.occ, link, { recording: true })).toBe(1)
   })
 
   test('a directory that does not exist registers nothing', async () => {
     const f = await artefactFixture([])
-    expect(await registerArtefacts(f.db, f.occ, `${tmp}/missing`)).toBe(0)
+    expect(await registerArtefacts(f.db, f.occ, `${tmp}/missing`, { recording: true })).toBe(0)
   })
 
   test('rows of another occurrence are not touched', async () => {
     const f = await artefactFixture(['out/chat.md'])
-    await registerArtefacts(f.db, f.occ, f.dir)
+    await registerArtefacts(f.db, f.occ, f.dir, { recording: true })
     const other = await db2(f)
-    expect(await registerArtefacts(f.db, other, f.dir)).toBe(1)
+    expect(await registerArtefacts(f.db, other, f.dir, { recording: true })).toBe(1)
     expect(
       await f.db
         .select()

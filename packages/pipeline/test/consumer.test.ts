@@ -1,9 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { AiKeyError } from '@tm/ai'
 import type { JobConfig, OccurrenceState } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { artefacts, occurrences, schema } from '@tm/web/db'
+import { artefacts, events, occurrences, schema } from '@tm/web/db'
 import { buildEntrySnapshot } from '@tm/web/db/job-config'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { sealColumn } from '@tm/web/db/secrets'
@@ -100,6 +100,7 @@ async function pipelineFixture(o: Options) {
     memberId,
     runCfgs: [] as JobConfig[],
     remuxed: [] as string[],
+    order: [] as string[],
     runs: 0,
     deps: undefined as unknown as PipelineDeps,
     occurrence: async () => (await db.select().from(occurrences).where(eq(occurrences.id, id)))[0]!
@@ -111,6 +112,7 @@ async function pipelineFixture(o: Options) {
     env,
     run: async (cfg): Promise<PipelineResult> => {
       f.runs++
+      f.order.push('run')
       f.runCfgs.push(cfg)
       await o.during?.(cfg.dataDir)
       const fail = fails.shift()
@@ -119,6 +121,8 @@ async function pipelineFixture(o: Options) {
     },
     remux: async (dir) => {
       f.remuxed.push(dir)
+      f.order.push('remux')
+      return true
     }
   }
   return f
@@ -140,6 +144,7 @@ describe('handlePipelineJob', () => {
     expect(f.runCfgs[0]!.control).toBeNull()
     expect(f.runCfgs[0]!.ai.apiKey).toBe('sk-dash-secret')
     expect(f.remuxed).toEqual([dir])
+    expect(f.order).toEqual(['remux', 'run'])
     expect(await f.occurrence()).toMatchObject({ state: 'completed', stateReason: null })
     const rows = await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))
     expect(rows.map((r) => [r.kind, r.path])).toEqual([['transcript', 'out/transcript.md']])
@@ -164,7 +169,7 @@ describe('handlePipelineJob', () => {
     expect(await handlePipelineJob(f.deps, f.id)).toBe('key_error')
     expect(await f.occurrence()).toMatchObject({ state: 'post_processing', stateReason: 'ai_key_error' })
     expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Summary needs your key: Data Mining'])
-    expect(f.remuxed).toEqual([])
+    expect(f.remuxed).toHaveLength(1)
     expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
     expect(await f.occurrence()).toMatchObject({ state: 'completed', stateReason: null })
     expect(f.notifier.sent).toHaveLength(1)
@@ -201,13 +206,92 @@ describe('handlePipelineJob', () => {
     expect(f.notifier.sent).toHaveLength(1)
   })
 
-  test('a failing remux fails the occurrence', async () => {
-    const f = await pipelineFixture({ state: 'transcribing', transcription: 'live' })
+  test('a failing remux does not fail the meeting: the summary is made, the failure is an event, no player', async () => {
+    const f = await pipelineFixture({
+      state: 'transcribing',
+      transcription: 'live',
+      during: async (dir) => {
+        await mkdir(`${dir}/recording`, { recursive: true })
+        await writeFile(`${dir}/recording/meeting.mp4`, 'half a file')
+      }
+    })
     f.deps.remux = async () => {
-      throw new Error('ffmpeg failed')
+      f.order.push('remux')
+      throw new Error('ffmpeg failed: broken')
+    }
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+      expect(logged.mock.calls.some((c) => String(c[0]).includes('REMUX FAILED'))).toBe(true)
+    } finally {
+      logged.mockRestore()
+    }
+    expect(f.order).toEqual(['remux', 'run'])
+    expect((await f.occurrence()).state).toBe('completed')
+    const errors = (await f.db.select().from(events).where(eq(events.occurrenceId, f.id))).filter(
+      (e) => e.type === 'error'
+    )
+    expect(errors.map((e) => e.data)).toEqual([{ reason: 'remux_failed', message: 'ffmpeg failed: broken' }])
+    expect(await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))).toEqual([])
+    expect(f.notifier.sent).toEqual([])
+  })
+
+  test('the recording is registered when the remux says it is in place, also when the summary fails', async () => {
+    const f = await pipelineFixture({
+      state: 'transcribing',
+      transcription: 'live',
+      runFails: [new Error('disk full')]
+    })
+    f.deps.remux = async (dir) => {
+      await mkdir(`${dir}/recording`, { recursive: true })
+      await writeFile(`${dir}/recording/meeting.mp4`, 'mp4')
+      return true
     }
     expect(await handlePipelineJob(f.deps, f.id)).toBe('failed')
+    const rows = await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))
+    expect(rows.map((r) => r.kind)).toEqual(['recording'])
+  })
+
+  test('a ping that throws leaves the occurrence unfailed, and the retry pings', async () => {
+    const f = await pipelineFixture({
+      state: 'transcribing',
+      transcription: 'live',
+      runFails: [new Error('disk full')]
+    })
+    const notify = f.notifier.notify.bind(f.notifier)
+    let calls = 0
+    f.notifier.notify = async (memberId, ping) => {
+      if (calls++ === 0) throw new Error('ntfy down')
+      return notify(memberId, ping)
+    }
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(handlePipelineJob(f.deps, f.id)).rejects.toThrow('ntfy down')
+      expect((await f.occurrence()).state).toBe('post_processing')
+      f.deps.run = async () => {
+        throw new Error('disk full')
+      }
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('failed')
+    } finally {
+      logged.mockRestore()
+    }
+    expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Summary failed: Data Mining'])
     expect((await f.occurrence()).state).toBe('failed')
+  })
+
+  test('an expired job stops without a verdict: no failure, no ping, the state stays for the retry', async () => {
+    const abort = new AbortController()
+    const f = await pipelineFixture({
+      state: 'transcribing',
+      transcription: 'live',
+      during: async () => {
+        abort.abort(new Error('job expired'))
+      }
+    })
+    await expect(handlePipelineJob(f.deps, f.id, abort.signal)).rejects.toThrow('job expired')
+    expect(await f.occurrence()).toMatchObject({ state: 'post_processing', stateReason: null })
+    expect(f.notifier.sent).toEqual([])
+    expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
   })
 
   test.each<[OccurrenceState, string | undefined]>([
@@ -231,7 +315,7 @@ describe('handlePipelineJob', () => {
     expect(await handlePipelineJob(f.deps, '00000000-0000-4000-8000-000000000000')).toBe('stale')
   })
 
-  test('two jobs for one occurrence never run at once', async () => {
+  test('a second job for an occurrence that is running throws, so the queue retries it later', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => (release = resolve))
     let started!: () => void
@@ -246,7 +330,7 @@ describe('handlePipelineJob', () => {
     })
     const first = handlePipelineJob(f.deps, f.id)
     await running
-    expect(await handlePipelineJob(f.deps, f.id)).toBe('stale')
+    await expect(handlePipelineJob(f.deps, f.id)).rejects.toThrow('another job is running it')
     release()
     expect(await first).toBe('completed')
     expect(f.runs).toBe(1)

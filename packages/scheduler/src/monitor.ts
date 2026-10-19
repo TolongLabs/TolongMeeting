@@ -429,11 +429,46 @@ async function removeLaunchFiles(deps: LaunchDeps, row: OccurrenceRow, now: Date
 
 /** The end states a meeting can reach without the pipeline: their recording and form screenshots are registered here. */
 const WITHOUT_PIPELINE: ReadonlySet<OccurrenceState> = new Set(['no_link', 'denied', 'left_by_member', 'failed'])
+/** One remux may take this long; a recording is copied, not re-encoded, so a long lecture still takes minutes at most. */
+const REMUX_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * Makes the MP4 of a meeting that ended without the pipeline (bounded by `REMUX_TIMEOUT_MS`), then registers its files.
+ * A remux that fails is logged and recorded as the `remux_failed` event; the other files are registered anyway, and the
+ * meeting page has no player.
+ */
+async function registerFinished(deps: LaunchDeps, row: OccurrenceRow): Promise<void> {
+  const dir = `${deps.env.dataRoot}/occurrences/${row.id}`
+  let recording = false
+  if (deps.remux !== undefined) {
+    try {
+      recording = await deps.remux(dir, AbortSignal.timeout(REMUX_TIMEOUT_MS))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      console.error(`monitor: ${row.id}: REMUX FAILED, the meeting page will have no player: ${message}`)
+      const data = { reason: 'remux_failed', message }
+      await deps.db
+        .insert(events)
+        .values({
+          occurrenceId: row.id,
+          memberId: row.memberId,
+          attempt: row.attempt,
+          at: new Date(),
+          type: 'error',
+          data,
+          dataHash: hashEventData(data)
+        })
+        .onConflictDoNothing()
+    }
+  }
+  await registerArtefacts(deps.db, row, dir, { recording })
+}
 
 /**
  * An occurrence that is no longer active but still names a container: once Docker says the container is gone, forget
- * it, give the profile back and record the newest checkpoint. The files of an occurrence that ends without the
- * pipeline are registered as artefacts, so they show on the meeting page.
+ * it, give the profile back and record the newest checkpoint. The recording of an occurrence that ends without the
+ * pipeline is remuxed, and its files are registered as artefacts, so they show on the meeting page. A row that throws is
+ * logged and left as it was (its container name is still set), and the next pass tries it again; the other rows go on.
  */
 async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
   const { db } = deps
@@ -443,32 +478,39 @@ async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
     .where(and(notInArray(occurrences.state, [...ACTIVE_STATES]), isNotNull(occurrences.containerName)))
   const released: string[] = []
   for (const row of rows) {
-    if ((await containerView(deps.docker, row.containerName, { id: row.id, now })) !== 'gone') continue
-    // The checkpoint is recorded first: if this pass dies half way, the container name is still set and the next pass
-    // does it again.
-    const newest = (await checkpointFiles(deps.env.profileRoot, row.identityId)).at(-1)
-    if (newest !== undefined) {
-      const path = `${deps.env.profileRoot}/${row.identityId}/checkpoints/${newest}`
-      // A pruner may remove the file between the listing and here: then there is nothing to record.
-      const info = await stat(path).catch((e: NodeJS.ErrnoException) => {
-        if (e.code === 'ENOENT') return null
-        throw e
-      })
-      if (info !== null)
-        await db
-          .update(profiles)
-          .set({ latestCheckpoint: path, checkpointAt: info.mtime })
-          .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
+    try {
+      if (await releaseOne(deps, row, now)) released.push(row.id)
+    } catch (e) {
+      console.error(`monitor: ${row.id}: not released, will retry: ${e instanceof Error ? e.message : String(e)}`)
     }
-    if (WITHOUT_PIPELINE.has(row.state)) {
-      await registerArtefacts(db, row, `${deps.env.dataRoot}/occurrences/${row.id}`)
-    }
-    await db
-      .update(occurrences)
-      .set({ containerName: null })
-      .where(and(eq(occurrences.id, row.id), eq(occurrences.containerName, row.containerName!)))
-    await releaseProfile(db, row.identityId, `occ:${row.id}`)
-    released.push(row.id)
   }
   return released
+}
+
+async function releaseOne(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<boolean> {
+  const { db } = deps
+  if ((await containerView(deps.docker, row.containerName, { id: row.id, now })) !== 'gone') return false
+  // The checkpoint is recorded first: if this pass dies half way, the container name is still set and the next pass
+  // does it again.
+  const newest = (await checkpointFiles(deps.env.profileRoot, row.identityId)).at(-1)
+  if (newest !== undefined) {
+    const path = `${deps.env.profileRoot}/${row.identityId}/checkpoints/${newest}`
+    // A pruner may remove the file between the listing and here: then there is nothing to record.
+    const info = await stat(path).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null
+      throw e
+    })
+    if (info !== null)
+      await db
+        .update(profiles)
+        .set({ latestCheckpoint: path, checkpointAt: info.mtime })
+        .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
+  }
+  if (WITHOUT_PIPELINE.has(row.state)) await registerFinished(deps, row)
+  await db
+    .update(occurrences)
+    .set({ containerName: null })
+    .where(and(eq(occurrences.id, row.id), eq(occurrences.containerName, row.containerName!)))
+  await releaseProfile(db, row.identityId, `occ:${row.id}`)
+  return true
 }

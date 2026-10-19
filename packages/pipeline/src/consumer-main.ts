@@ -17,7 +17,8 @@ const PIPELINE_QUEUE = { expireInSeconds: 2 * 3600, retryLimit: 3, retryDelay: 6
 /**
  * Starts the one worker of the `pipeline` queue: `localConcurrency: 1`, so only one heavy job runs at a time. The job
  * carries only the occurrence id; the member's keys are read from the database inside `handlePipelineJob`. A bad job
- * body or an error thrown by the handler fails the job, and pg-boss retries it.
+ * body or an error thrown by the handler fails the job, and pg-boss retries it. The job's abort signal (it expired) is
+ * passed down, so an expired handler stops instead of racing its retry.
  */
 export async function workPipeline(boss: PgBoss, deps: PipelineDeps): Promise<void> {
   await boss.createQueue(QUEUES.pipeline)
@@ -25,7 +26,7 @@ export async function workPipeline(boss: PgBoss, deps: PipelineDeps): Promise<vo
   await boss.work(QUEUES.pipeline, { localConcurrency: 1 }, async (jobs) => {
     for (const job of jobs) {
       const { occurrenceId } = JobData.parse(job.data)
-      console.log(`pipeline: ${occurrenceId}: ${await handlePipelineJob(deps, occurrenceId)}`)
+      console.log(`pipeline: ${occurrenceId}: ${await handlePipelineJob(deps, occurrenceId, job.signal)}`)
     }
   })
 }
@@ -55,7 +56,7 @@ if (import.meta.main) {
     env,
     notifier: memberNotifier(db, master, env.ntfyUrl),
     // The consumer sends the key-problem ping itself, so the pipeline does not.
-    run: (cfg) => runPipeline(cfg, { pingOnKeyError: false }),
+    run: (cfg, signal) => runPipeline(cfg, { pingOnKeyError: false, signal }),
     remux: remuxRecording
   })
   console.log('pipeline consumer running')

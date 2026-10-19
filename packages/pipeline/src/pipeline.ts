@@ -110,12 +110,15 @@ async function claimLock(lock: string): Promise<boolean> {
   return false
 }
 
-async function build(cfg: JobConfig): Promise<{ result: PipelineResult; md: string }> {
+async function build(cfg: JobConfig, signal?: AbortSignal): Promise<{ result: PipelineResult; md: string }> {
   const outDir = join(cfg.dataDir, 'out')
   await mkdir(outDir, { recursive: true })
   const { slides, mdPath: slidesPath } = await buildSlides(cfg)
+  signal?.throwIfAborted()
   const transcriptPath = await buildTranscript(cfg, vocabulary(cfg, slides))
+  signal?.throwIfAborted()
   const chatPath = await buildChat(cfg)
+  signal?.throwIfAborted()
   const inventory = await buildInventory(cfg, {
     transcriptMd: await Bun.file(transcriptPath).text(),
     slides,
@@ -140,11 +143,14 @@ async function build(cfg: JobConfig): Promise<{ result: PipelineResult; md: stri
  * a marker file written after the ping succeeds stops a re-run from pinging again. A rejected AI key sends the
  * "summary failed" ping (unless `pingOnKeyError` is false) and rethrows; the inputs stay untouched either way.
  */
-export async function runPipeline(cfg: JobConfig, opts?: { pingOnKeyError?: boolean }): Promise<PipelineResult> {
+export async function runPipeline(
+  cfg: JobConfig,
+  opts?: { pingOnKeyError?: boolean; signal?: AbortSignal }
+): Promise<PipelineResult> {
   const pingOnKeyError = opts?.pingOnKeyError ?? true
   let built: { result: PipelineResult; md: string }
   try {
-    built = await build(cfg)
+    built = await build(cfg, opts?.signal)
   } catch (e) {
     if (e instanceof AiKeyError && pingOnKeyError) {
       // The key error is what the caller needs; a failed ping is logged beside it, not instead of it.

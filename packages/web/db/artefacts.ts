@@ -45,8 +45,10 @@ async function regularFile(root: string, rel: string): Promise<{ bytes: number }
   return { bytes: info.size }
 }
 
-async function scan(root: string): Promise<Found[]> {
-  const candidates: { path: string; kind: ArtefactKind }[] = [{ path: 'recording/meeting.mp4', kind: 'recording' }]
+async function scan(root: string, withRecording: boolean): Promise<Found[]> {
+  const candidates: { path: string; kind: ArtefactKind }[] = withRecording
+    ? [{ path: 'recording/meeting.mp4', kind: 'recording' }]
+    : []
   for (const name of await names(root, 'out')) {
     if (name in OUT_FILES) candidates.push({ path: `out/${name}`, kind: OUT_FILES[name]! })
     else if (SUMMARY_NAME.test(name)) candidates.push({ path: `out/${name}`, kind: 'summary' })
@@ -72,11 +74,19 @@ async function scan(root: string): Promise<Found[]> {
  * the data layout names are looked at, and only real regular files inside the directory count (see `regularFile`);
  * everything else is ignored. Idempotent: a row is keyed by `(occurrence_id, path)`, and a second call updates its size.
  * A directory that does not exist (a worker that never started) records nothing.
+ *
+ * `recording` says that the caller has just checked `recording/meeting.mp4` (a remux that passed its duration check):
+ * only then is it recorded. A half-written or planted `.mp4` is a regular file too, so the file system alone cannot say.
  */
-export async function registerArtefacts(db: Db, occ: { id: string; memberId: string }, dir: string): Promise<number> {
+export async function registerArtefacts(
+  db: Db,
+  occ: { id: string; memberId: string },
+  dir: string,
+  opts: { recording: boolean }
+): Promise<number> {
   const root = await realpath(dir).catch(noEntry)
   if (root === null) return 0
-  const found = await scan(root)
+  const found = await scan(root, opts.recording)
   if (found.length === 0) return 0
   await db
     .insert(artefacts)

@@ -559,20 +559,78 @@ describe('finished containers', () => {
   })
 
   test.each(['no_link', 'denied', 'left_by_member', 'failed'] as const)(
-    'a %s occurrence gets its recording and form screenshots registered when the container is gone',
+    'a %s occurrence gets its recording remuxed and its files registered when the container is gone',
     async (state) => {
       const f = await monitorFixture({ state, containerGone: true })
       const dir = `${f.env.dataRoot}/occurrences/${f.id}`
+      const remuxed: string[] = []
+      f.deps.remux = async (d) => {
+        remuxed.push(d)
+        return true
+      }
       await mkdir(`${dir}/recording`, { recursive: true })
       await mkdir(`${dir}/forms/a1b2c3d4e5f60718`, { recursive: true })
       await writeFile(`${dir}/recording/meeting.mp4`, 'mp4')
       await writeFile(`${dir}/forms/a1b2c3d4e5f60718/filled.png`, 'png')
       await writeFile(`${dir}/chat.jsonl`, '{}')
       expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+      expect(remuxed).toEqual([dir])
       const rows = await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))
       expect(rows.map((r) => r.path).sort()).toEqual(['forms/a1b2c3d4e5f60718/filled.png', 'recording/meeting.mp4'])
     }
   )
+
+  test('a recording that did not remux is not registered, the failure is an error event and the rest goes on', async () => {
+    const f = await monitorFixture({ state: 'denied', containerGone: true })
+    const dir = `${f.env.dataRoot}/occurrences/${f.id}`
+    f.deps.remux = async () => {
+      throw new Error('ffmpeg failed: broken')
+    }
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    await mkdir(`${dir}/recording`, { recursive: true })
+    await mkdir(`${dir}/forms/a1b2c3d4e5f60718`, { recursive: true })
+    await writeFile(`${dir}/recording/meeting.mp4`, 'half a file')
+    await writeFile(`${dir}/forms/a1b2c3d4e5f60718/filled.png`, 'png')
+    try {
+      expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+      expect(logged.mock.calls.some((c) => String(c[0]).includes('REMUX FAILED'))).toBe(true)
+    } finally {
+      logged.mockRestore()
+    }
+    const rows = await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))
+    expect(rows.map((r) => r.path)).toEqual(['forms/a1b2c3d4e5f60718/filled.png'])
+    const errors = await f.db.select().from(events).where(eq(events.occurrenceId, f.id))
+    expect(errors.filter((e) => e.type === 'error').map((e) => e.data.reason)).toEqual(['remux_failed'])
+  })
+
+  test('a row that throws while it is released is logged and the next row is still released', async () => {
+    const f = await monitorFixture({ state: 'denied', containerGone: true })
+    const first = await f.occurrence()
+    const { id: _id, ...copy } = first
+    const [second] = await f.db
+      .insert(occurrences)
+      .values({
+        ...copy,
+        scheduledStart: new Date(first.scheduledStart.getTime() + 24 * HOUR),
+        scheduledEnd: new Date(first.scheduledEnd.getTime() + 24 * HOUR),
+        containerName: 'tm-worker-second-a1'
+      })
+      .returning()
+    f.docker.inspectResults.set('tm-worker-second-a1', null)
+    const inspect = f.docker.inspect.bind(f.docker)
+    f.docker.inspect = async (id) => {
+      if (id === first.containerName) throw new Error('boom')
+      return inspect(id)
+    }
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect((await monitorTick(f.deps, now)).released).toEqual([second!.id])
+      expect(logged.mock.calls.some((c) => String(c[0]).includes(f.id) && String(c[0]).includes('boom'))).toBe(true)
+    } finally {
+      logged.mockRestore()
+    }
+    expect((await f.occurrence()).containerName).not.toBeNull()
+  })
 
   test('an occurrence in the pipeline states leaves artefacts to the pipeline', async () => {
     const f = await monitorFixture({ state: 'transcribing', containerGone: true })
