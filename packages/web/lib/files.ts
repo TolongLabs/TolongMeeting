@@ -168,6 +168,11 @@ export async function serveFile(file: OpenedFile, range: string | null, signal?:
     // The stream owns the handle from here and closes it when it ends or is destroyed.
     const stream = handle.createReadStream({ start, end })
     signal?.addEventListener('abort', () => stream.destroy(), { once: true })
+    // An abort during the awaits above fired before the listener existed.
+    if (signal?.aborted) {
+      stream.destroy()
+      return notFound()
+    }
     return new Response(Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>, { status, headers })
   } catch (e) {
     await handle.close().catch(() => undefined)
