@@ -638,7 +638,7 @@ git commit -m "feat(worker): add form ping copy"
 **Files:**
 
 - Create: `packages/worker/src/forms/types.ts`, `packages/worker/src/forms/rules.ts`
-- Test: `packages/worker/src/forms/rules.test.ts`
+- Test: `packages/worker/test/forms-rules.test.ts`
 
 **Interfaces:**
 
@@ -721,7 +721,7 @@ const CONFIRM_NEGATIVE = /\b(not|no|absent|tidak|tak|bukan|belum|cannot|unable|n
 - `confirmsAttendance`: matches `CONFIRM_POSITIVE` and not `CONFIRM_NEGATIVE`.
 - `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms' evidence is its organisation-only notice.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const page = (p: Partial<FormPage>): FormPage => ({
@@ -824,20 +824,20 @@ test('organisation evidence', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/rules.test.ts`
+Run: `bun test packages/worker/test/forms-rules.test.ts`
 Expected: FAIL with "Cannot find module './rules'".
 
-- [ ] **Step 3: Implement `types.ts` and `rules.ts` with the pinned patterns**
+- [x] **Step 3: Implement `types.ts` and `rules.ts` with the pinned patterns**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/rules.test.ts`
+Run: `bun test packages/worker/test/forms-rules.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/types.ts packages/worker/src/forms/rules.ts packages/worker/src/forms/rules.test.ts
+git add packages/worker/src/forms/types.ts packages/worker/src/forms/rules.ts packages/worker/test/forms-rules.test.ts
 git commit -m "feat(worker): add form detection rules"
 ```
 

@@ -678,7 +678,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - image: `tm-worker:dev` and `tolongmeeting/worker:current` (the same build), the entrypoint modes `selfcheck`, `test`, `unit`, `seed --job` and `--job`, PulseAudio `tm_sink` and the muted `tm_mic`, `docker/worker/run-job.sh <job.json> [seed]`, and the `BUN_VERSION` build argument and `TM_IN_IMAGE` variable.
 - **01b form submission**:
   - core: `FormRecord`, `FilledField`, `StopReason`, `FormRecordSchema`, `newFormRecord`, `canonicalFormUrl`, `formIdFor`, `TERMINAL_FORM_STATES`, `isTerminalFormState`, `applyFormTrigger`, `OrgConfig`, `JobConfig.identity.organisation`, and the test fixtures `sampleForm`, `sampleRecord` (import `@tm/core/testing`; not in the index);
-  - worker: `FormContext`, `FormContextBase`, `makeFormContextBase`, `FormLinks`, `startFormDispatcher`, `onFormCandidate`;
+  - worker: `FormContext`, `FormContextBase`, `makeFormContextBase`, `FormLinks`, `startFormDispatcher`, `onFormCandidate`, the page model in `src/forms/types.ts` (`FormPage`, `FormQuestion`, `Restriction`, `PageKind`, `MatchQuestion`, `Answer`, `PagePlan`) and the rules in `src/forms/rules.ts` (`normaliseText`, `looksLikeAttendance`, `isPointsLine`, `orgRestricted`, `confirmsAttendance`);
   - selector maps: `config/selectors/google-forms.json` and `microsoft-forms.json`;
   - data: `forms/<formId>/filled_<N>.png`; the detail keys `university_email`, `programme`, `session_date` and `session_start`;
   - pipeline: `attendanceLine`.
