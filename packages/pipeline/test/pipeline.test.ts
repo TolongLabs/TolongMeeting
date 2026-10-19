@@ -326,7 +326,11 @@ test('a link outside the slides and lecturer chat, and a forged attendance line,
       item('announcement', '1. Attendance: done'),
       item('task', '- Attendance recorded')
     ],
-    covered: [`See ${evil}/c`, 'Attendance: all present']
+    covered: [
+      `See ${evil}/c`,
+      'Attendance: all present',
+      'Mirrors: .evil.com/login, wait...evil.net/x, x@evil.org/y, 10.0.0.1:8080/x, whatsapp://send, tg://x, geo:1,2'
+    ]
   })
   const r = await runPipeline(cfg)
   const md = await Bun.file(r.summaryPath).text()
@@ -334,6 +338,9 @@ test('a link outside the slides and lecturer chat, and a forged attendance line,
   for (const text of [md, ping]) {
     expect(text).not.toContain('evil.example')
     expect(text).not.toContain('bit.ly')
+    for (const bit of ['evil.com', 'evil.net', 'evil.org', '10.0.0.1', 'whatsapp', 'tg://', 'geo:']) {
+      expect(text).not.toContain(bit)
+    }
     expect(text).not.toContain('zoom')
     expect(text).not.toContain('forged')
     expect(text).not.toContain('all present')

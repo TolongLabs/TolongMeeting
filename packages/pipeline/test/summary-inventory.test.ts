@@ -282,7 +282,21 @@ const DISGUISED_LINKS = [
   '\uff48\uff54\uff54\uff50\uff53://evil.example/x',
   'hxxps://evil.example/x',
   'example.com/r?u=https%3A%2F%2Fzoom.us%2Fj%2F1',
-  'https://example.com/x?pwd%3Dabc'
+  'https://example.com/x?pwd%3Dabc',
+  '.evil.com/login',
+  '-evil.com/login',
+  '@evil.com/login',
+  'wait...evil.com/login',
+  'a_b.evil.com/login',
+  'x@evil.com/login',
+  'user:pass@evil.com/x',
+  '1.2.3.4/login',
+  '10.0.0.1:8080/x',
+  'whatsapp://send?text=hi',
+  'tg://resolve?domain=x',
+  'market://details?id=x',
+  'geo:3.14,101.68',
+  'magnet:?xt=urn:btih:abc'
 ]
 
 test('a bare host, an odd scheme or a disguised link is removed from every rendered model string', async () => {
@@ -293,7 +307,7 @@ test('a bare host, an odd scheme or a disguised link is removed from every rende
         [
           item({ kind: 'announcement', text: `Go to ${leak} now` }),
           item({ kind: 'link', text: leak }),
-          item({ kind: 'task', text: 'Read notes.pdf, version 1.2.3 and real.example/slides' }),
+          item({ kind: 'task', text: 'Read notes.pdf, version 1.2.3 and real.edu/slides' }),
           item({
             kind: 'announcement',
             text: 'Details',
@@ -305,14 +319,14 @@ test('a bare host, an odd scheme or a disguised link is removed from every rende
     )
     const inv = await buildInventory(config(), {
       transcriptMd: '',
-      slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Slides: real.example/slides' }],
+      slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Slides: real.edu/slides' }],
       chat: []
     })
     const gone = /\[(?:meeting )?link removed\]/
     expect(
       inv.items.map((i) => i.text),
       leak
-    ).toEqual([expect.stringMatching(gone), 'Read notes.pdf, version 1.2.3 and real.example/slides', 'Details'])
+    ).toEqual([expect.stringMatching(gone), 'Read notes.pdf, version 1.2.3 and real.edu/slides', 'Details'])
     expect(inv.items[2]!.conflicts[0]!.text, leak).toMatch(gone)
     expect(inv.sessionLabel, leak).toMatch(gone)
     expect(inv.nextAction, leak).toMatch(gone)
@@ -322,6 +336,14 @@ test('a bare host, an odd scheme or a disguised link is removed from every rende
     for (const bit of [
       'evil',
       'EVIL',
+      'login',
+      'whatsapp',
+      'resolve',
+      'market',
+      'geo:',
+      'magnet',
+      '1.2.3.4',
+      '8080',
       'bit.ly',
       'xn--',
       'ftp',
@@ -340,17 +362,14 @@ test('a bare host, an odd scheme or a disguised link is removed from every rende
 test('a bare link that a slide carries survives where the sources carry it exactly', async () => {
   fake.requests.length = 0
   fake.reply(
-    reply([
-      item({ kind: 'link', text: 'Deck: real.example/slides' }),
-      item({ kind: 'link', text: 'real.example/other' })
-    ])
+    reply([item({ kind: 'link', text: 'Deck: real.edu/slides' }), item({ kind: 'link', text: 'real.edu/other' })])
   )
   const inv = await buildInventory(config(), {
     transcriptMd: '',
-    slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Deck at real.example/slides' }],
+    slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Deck at real.edu/slides' }],
     chat: []
   })
-  expect(inv.items.map((i) => i.text)).toEqual(['Deck: real.example/slides'])
+  expect(inv.items.map((i) => i.text)).toEqual(['Deck: real.edu/slides'])
 })
 
 test('a string opening with Attendance is dropped, however it is dressed', async () => {

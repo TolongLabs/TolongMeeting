@@ -12,7 +12,9 @@
     "@tm/ai": "workspace:*",
     "@tm/core": "workspace:*",
     "@tm/notify": "workspace:*",
+    "linkify-it": "^6.1.0",
     "sharp": "0.35.5",
+    "tlds": "^1.261.0",
     "zod": "^4.6.7"
   }
 }

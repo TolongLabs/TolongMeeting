@@ -1,4 +1,6 @@
 import { stripPasscode } from '@tm/core'
+import { LinkifyIt } from 'linkify-it'
+import tlds from 'tlds'
 
 export const MEETING_LINK_REMOVED = '[meeting link removed]'
 const CODE_REMOVED = '[removed]'
@@ -10,31 +12,15 @@ const END = `[^\\s.,;:!?)\\]'"<>]`
 const START = `(?<![\\w.@-])(?:https?:\\/\\/)?`
 const SUBDOMAINS = `(?:[\\w-]+\\.)*`
 
-// What the gate treats as a link in running text (see `gateLinks`):
-// 1. a URL with a scheme: http(s) and lookalikes (`hxxps`, `h**ps`, `https:evil.example`), and ftp, file, data,
-//    javascript, vbscript, mailto, tel, sms and intent;
-// 2. a name starting `www.`;
-// 3. a bare `host.tld[:port][/path][?query][#fragment]`: dot-separated labels (letters of any script, digits,
-//    hyphens) ending in a TLD of 2 to 24 letters or an `xn--` punycode TLD. A TLD of digits never matches, so
-//    `1.2.3` is not a host. A bare host with no port, path or query whose TLD is a well-known file extension that is
-//    not a delegated TLD (`notes.pdf`, `index.html`, `app.js`) is a file name, not a link. An address with `@`
-//    right after it (`john.doe@school.edu`) is an email address, not a host.
-const SCHEMES = `(?:h[tx*]{2}ps?|ftp|file|data|javascript|vbscript|mailto|tel|sms|intent)`
-const SCHEME_URL = `(?<![\\p{L}\\p{N}_-])${SCHEMES}\\[?:\\]?(?=\\S)\\S*${END}`
-const WWW_URL = `(?<![\\w.@-])www\\.\\S*${END}`
+// `scrub` uses this to find the passcode parameter of a link with no scheme: dot-separated labels (letters of any
+// script, digits, hyphens) ending in a TLD of 2 to 24 letters or an `xn--` punycode TLD. It is not the link gate;
+// that is `linkSpans`, which asks linkify-it.
 const LABEL = `[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]*[\\p{L}\\p{N}])?`
 const TLD = `(?:xn--[a-z0-9-]{2,59}|\\p{L}{2,24})`
 const BARE_URL =
   `(?<![\\p{L}\\p{N}_.@-])(?<host>(?:${LABEL}\\.)+(?<tld>${TLD}))(?![\\p{L}\\p{N}_@-])` +
   `(?<rest>(?::\\d{1,5})?(?:[/?#]\\S*${END})?)`
-const LINK_IN_TEXT = new RegExp(`${SCHEME_URL}|${WWW_URL}|${BARE_URL}`, 'giu')
 const BARE_ONLY = new RegExp(BARE_URL, 'giu')
-// Extensions of file names that are not delegated TLDs. (`.py`, `.md`, `.sh`, `.zip` and `.mov` are TLDs, so a bare
-// `main.py` is a link unless a slide or the lecturer's chat carries it.)
-const FILE_EXTENSIONS: ReadonlySet<string> = new Set(
-  `pdf doc docx ppt pptx xls xlsx csv txt rtf odt ods odp png jpg jpeg gif webp svg bmp mp3 mp4 wav json xml yaml yml
-html htm css js jsx ts tsx java cpp ipynb tex log bak tmp sql toml lock env`.split(/\s+/)
-)
 
 // A trailing dot on a host is the same host: `us02web.zoom.us./j/1`.
 const HOST_END = `(?:\\.(?=[/?#:]))?`
@@ -134,16 +120,87 @@ export function scrub(text: string): string {
     .replace(MEETING_ID_PHRASE, (_all, label: string) => `${label}: ${CODE_REMOVED}`)
 }
 
-type Groups = { tld?: string; rest?: string } | undefined
+// Every IANA TLD (and `xn--` punycode, which linkify-it always accepts), bare hosts, IP addresses and emails.
+const linkify = new LinkifyIt({ fuzzyLink: true, fuzzyEmail: true, fuzzyIP: true, urlAuth: true }).tlds(tlds)
 
-// A bare name like `notes.pdf`: a file extension that is no TLD, with no port, path or query.
-function isFileName(groups: Groups): boolean {
-  return groups?.tld !== undefined && groups.rest === '' && FILE_EXTENSIONS.has(groups.tld.toLowerCase())
+// Schemes whose links do something without `//`.
+const DANGEROUS_SCHEMES =
+  'javascript|data|vbscript|file|mailto|tel|sms|intent|geo|magnet|skype|callto|view-source|market|content|whatsapp|tg|ftp'
+// Any scheme followed by `//`; a dangerous scheme followed by anything; http(s) and its lookalikes (`hxxps`, `h**ps`,
+// `https:evil.example`) followed by anything. `[:]` is a defanged colon.
+const SCHEME_URL = new RegExp(
+  `(?:[a-z][a-z0-9+.-]*\\[?:\\]?(?=\\/\\/)|h[tx*]{2}ps?\\[?:\\]?(?=\\S)|` +
+    `(?<![\\p{L}\\p{N}])(?:${DANGEROUS_SCHEMES})\\[?:\\]?(?=\\S))\\S*${END}`,
+  'giu'
+)
+// What can follow a host: a port, a path, a query, a fragment.
+const HOST_TAIL = new RegExp(`(?::\\d{1,5})?(?:[/?#]\\S*${END})?`, 'uy')
+const WWW_URL = new RegExp(`(?<![\\w.@-])www\\.\\S*${END}`, 'gi')
+
+const PUNCTUATION = /[^\p{L}\p{N}\s]/u
+const LETTER = /\p{L}/u
+const DIGIT = /\p{N}/u
+
+type Span = readonly [start: number, end: number]
+
+// linkify-it only starts a link after a space or similar and ends it at a TLD followed by little else, so `.evil.com/x`,
+// `wait...evil.com`, `v1.2.3.4`, `evil.com:8080`, `evil.com-x` and `evil.com.pdf` give nothing, where a phone's
+// linkifier finds the host. So each word is also read as every piece that starts after a punctuation character or a
+// letter-to-digit change (or at the start) and ends before a punctuation character (or at the end). A word this long
+// is no word: it is one candidate as it stands.
+const MAX_WORD = 2000
+
+function linkifySpans(text: string): Span[] {
+  const spans: Span[] = []
+  const found = (piece: string, offset: number): void => {
+    for (const m of linkify.match(piece) ?? []) spans.push([offset + m.index, offset + m.lastIndex])
+  }
+  found(text, 0)
+  for (const word of text.matchAll(/\S+/gu)) {
+    const [chars, base] = [word[0], word.index]
+    if (chars.length > MAX_WORD) {
+      spans.push([base, base + chars.length])
+      continue
+    }
+    const starts = [0]
+    const ends = [chars.length]
+    for (let i = 1; i < chars.length; i++) {
+      if (PUNCTUATION.test(chars[i - 1]!) || (LETTER.test(chars[i - 1]!) && DIGIT.test(chars[i]!))) starts.push(i)
+      if (PUNCTUATION.test(chars[i]!)) ends.push(i)
+    }
+    for (const start of starts) for (const end of ends) if (end > start) found(chars.slice(start, end), base + start)
+  }
+  return spans
 }
 
-/** The links in a text: what `gateLinks` compares (see `LINK_IN_TEXT`). A trailing dot, comma or bracket is not part of a link. */
+/**
+ * The links in a normalised text, as `[start, end)` spans. A span is a link candidate for the gate:
+ * 1. whatever linkify-it finds (fuzzy links on any IANA TLD, IP addresses, emails, `//host`, `user:pass@host`),
+ *    also behind punctuation, in the spellings `linkifySpans` covers;
+ * 2. a scheme: any `name:` followed by `//`, a dangerous scheme (`SCHEME_URL`), the `hxxp` and `h**p` lookalikes;
+ * 3. a name starting `www.`.
+ * Overlapping candidates are one span, so a link cannot be split into pieces that each look harmless.
+ */
+function linkSpans(text: string): Span[] {
+  const spans = linkifySpans(text).map(([start, end]): Span => {
+    HOST_TAIL.lastIndex = end
+    return [start, end + (HOST_TAIL.exec(text)?.[0].length ?? 0)]
+  })
+  for (const pattern of [SCHEME_URL, WWW_URL])
+    for (const m of text.matchAll(pattern)) spans.push([m.index, m.index + m[0].length])
+  spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
+  const merged: [number, number][] = []
+  for (const [start, end] of spans) {
+    const last = merged.at(-1)
+    if (last !== undefined && start < last[1]) last[1] = Math.max(last[1], end)
+    else merged.push([start, end])
+  }
+  return merged
+}
+
+/** The links in a text: what `gateLinks` compares (see `linkSpans`). A trailing dot, comma or bracket is not part of a link. */
 export function linksIn(text: string): string[] {
-  return [...text.matchAll(LINK_IN_TEXT)].filter((m) => !isFileName(m.groups)).map((m) => m[0])
+  return linkSpans(text).map(([start, end]) => text.slice(start, end))
 }
 
 /**
@@ -164,10 +221,13 @@ export function normalizeText(text: string): string {
  * is already normalised and scrubbed.
  */
 export function gateLinks(text: string, allowed: ReadonlySet<string>): string {
-  return text.replace(LINK_IN_TEXT, (url, ...rest) => {
-    const groups = rest.at(-1) as Groups
-    return allowed.has(url) || isFileName(groups) ? url : LINK_REMOVED
-  })
+  let out = ''
+  let at = 0
+  for (const [start, end] of linkSpans(text)) {
+    out += text.slice(at, start) + (allowed.has(text.slice(start, end)) ? text.slice(start, end) : LINK_REMOVED)
+    at = end
+  }
+  return out + text.slice(at)
 }
 
 /** One line: every run of whitespace, line breaks included, becomes one space. */

@@ -85,10 +85,10 @@ test('a bare host, in any case or script, and every odd scheme is removed from r
   const cases = [
     'evil.com/login',
     'EVIL.COM/x',
-    'evil.com:8080',
-    'evil.example/a?b=1#c',
+    'evil.com/a?b=1#c',
     'xn--80ak6aa92e.com/pay',
     'аррӏе.com/pay',
+    'evil.рф/x',
     'bit.ly/xyz',
     'sub.domain.evil.co.uk/x',
     'ftp://evil.example/x',
@@ -104,52 +104,105 @@ test('a bare host, in any case or script, and every odd scheme is removed from r
     'hxxp://evil.example/x',
     'h**ps://evil.example/x',
     'https:evil.example',
-    'htt\u200bps://evil.example/x',
-    'https://evil\u200b.example/x',
-    '\uff48\uff54\uff54\uff50\uff53://evil.example/x',
-    'https://evil\u3002example/x',
-    'evil[.]example/x'
+    'htt​ps://evil.example/x',
+    'https://evil​.example/x',
+    'ｈｔｔｐｓ://evil.example/x',
+    'https://evil。example/x',
+    'evil[.]com/x',
+    'https://user:pass@evil.example/x',
+    '//evil.com/x',
+    'www.evil.example/x'
   ]
   for (const url of cases) expect(gate(`see ${url} now`), url).toBe('see [link removed] now')
 })
 
-test('a script link loses its code', () => {
-  expect(gate('x javascript:alert(document.cookie) y')).not.toContain('alert')
+// Every shape a reviewer found that slipped past a hand-written pattern: linkify-it alone does not start a link after
+// punctuation or end one before a port, a hyphen or a second dot, where a phone's linkifier still finds the host.
+test('a host hidden behind or before punctuation is removed, so no bare host reaches a phone linkifier', () => {
+  const cases: [string, string][] = [
+    ['see .evil.com/login', 'see .[link removed]'],
+    ['see -evil.com/login', 'see -[link removed]'],
+    ['see @evil.com/login', 'see @[link removed]'],
+    ['wait...evil.com/login', 'wait...[link removed]'],
+    ['Go to…evil.com/login', 'Go to...[link removed]'],
+    ['a_b.evil.com/login', 'a_[link removed]'],
+    ['x@evil.com/login', '[link removed]'],
+    ['user:pass@evil.com/x', 'user:[link removed]'],
+    ['—evil.com/login', '—[link removed]'],
+    ['evil.com:8080', '[link removed]'],
+    ['evil.com-x', '[link removed]-x'],
+    ['evil.com.pdf', '[link removed].pdf'],
+    ['evil.com.x', '[link removed].x']
+  ]
+  for (const [text, expected] of cases) expect(gate(text), text).toBe(expected)
 })
 
-test('a bare or odd-scheme link that the sources carry exactly survives; a near miss does not', () => {
-  const allowed = ['real.example/slides', 'https://real.example/deck', 'mailto:ta@real.example']
-  expect(gate('a real.example/slides b', allowed)).toBe('a real.example/slides b')
+test('an IP address, with or without a port or path, is removed', () => {
+  expect(gate('see 1.2.3.4/login now')).toBe('see [link removed] now')
+  expect(gate('see 192.168.1.1 now')).toBe('see [link removed] now')
+  expect(gate('see 10.0.0.1:8080/x now')).toBe('see [link removed] now')
+  expect(gate('see http://127.0.0.1:3000/x now')).toBe('see [link removed] now')
+  expect(gate('see v1.2.3.4')).toBe('see v[link removed]')
+})
+
+test('an app scheme is removed, with or without //', () => {
+  for (const url of [
+    'whatsapp://send?text=hi',
+    'tg://resolve?domain=evil',
+    'market://details?id=evil.app',
+    'geo:3.14,101.68',
+    'magnet:?xt=urn:btih:abc',
+    'skype:evil?call',
+    'callto:evil',
+    'view-source:https://evil.example',
+    'content://evil/x',
+    'ws://evil.example/x',
+    'steam://run/1'
+  ])
+    expect(gate(`see ${url} now`), url).toBe('see [link removed] now')
+})
+
+test('a plain email address is a link, and is removed', () => {
+  expect(gate('mail john.doe@school.edu.my about it')).toBe('mail [link removed] about it')
+  expect(gate('mail ta@real.edu about it', ['ta@real.edu'])).toBe('mail ta@real.edu about it')
+})
+
+test('a link the sources carry exactly survives; a near miss, or a link glued to another, does not', () => {
+  const allowed = ['real.edu/slides', 'https://real.example/deck', 'mailto:ta@real.edu', 'www.real.example/x']
+  expect(gate('a real.edu/slides b', allowed)).toBe('a real.edu/slides b')
   expect(gate('a https://real.example/deck. b', allowed)).toBe('a https://real.example/deck. b')
-  expect(gate('a mailto:ta@real.example b', allowed)).toBe('a mailto:ta@real.example b')
-  expect(gate('a real.example/slides/x b', allowed)).toBe('a [link removed] b')
-  expect(gate('a REAL.EXAMPLE/slides b', allowed)).toBe('a [link removed] b')
-  expect(gate('a real.example/deck b', allowed)).toBe('a [link removed] b')
+  expect(gate('a mailto:ta@real.edu b', allowed)).toBe('a mailto:ta@real.edu b')
+  expect(gate('a (www.real.example/x) b', allowed)).toBe('a (www.real.example/x) b')
+  expect(gate('a real.edu/slides/x b', allowed)).toBe('a [link removed] b')
+  expect(gate('a REAL.EDU/slides b', allowed)).toBe('a [link removed] b')
+  expect(gate('a real.edu/deck b', allowed)).toBe('a [link removed] b')
   expect(gate('a http://real.example/deck b', allowed)).toBe('a [link removed] b')
+  expect(gate('a real.edu/slides,evil.com b', allowed)).toBe('a [link removed] b')
+  expect(gate('a real.edu/slides.evil.com b', allowed)).toBe('a [link removed] b')
+  expect(gate('a x@real.edu/slides b', allowed)).toBe('a [link removed] b')
 })
 
-test('versions, file names, email addresses and ordinary prose are not links', () => {
+test('versions, file names, code identifiers and ordinary prose are not links', () => {
   for (const text of [
     'version 1.2.3 is out',
     'Python 3.12.1 and v2.0.0-beta',
     'read notes.pdf and slides.pptx, then lab1.ipynb',
     'open index.html, style.css and src/app.js',
     'e.g. this, i.e. that, U.S.A. 8.30pm RM1.50',
-    'mail john.doe@school.edu.my about it',
+    'call np.mean(x), df.head(), os.path.join, torch.nn.Linear, self.model and math.sqrt',
     'tel: 555 and data: the results',
     'The password is the thing.'
   ]) {
     const kept = text.replace('The password is the thing.', 'The password: [removed] thing.')
     expect(gate(text), text).toBe(kept)
   }
-  expect(linksIn('notes.pdf, 1.2.3, evil.com')).toEqual(['evil.com'])
+  expect(linksIn('notes.pdf, 1.2.3, np.mean, evil.com')).toEqual(['evil.com'])
 })
 
-test('a file extension that is also a TLD, or a file name with a path or port, is a link', () => {
+test('a file extension that is also a TLD is a link; one that is not a TLD stays a file name', () => {
   expect(gate('see main.py')).toBe('see [link removed]')
-  expect(gate('see notes.pdf/extra')).toBe('see [link removed]')
-  expect(gate('see notes.pdf:8080')).toBe('see [link removed]')
   expect(gate('see main.py', ['main.py'])).toBe('see main.py')
+  expect(gate('see notes.pdf/extra')).toBe('see notes.pdf/extra')
 })
 
 test('a join link percent-encoded inside a scheme-less link is removed', () => {
