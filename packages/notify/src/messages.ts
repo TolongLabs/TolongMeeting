@@ -18,6 +18,9 @@ export type AlertKind =
   | 'ai_key'
   | 'recording_gap'
   | 'form_ping_failed'
+  | 'recording_unstable'
+  | 'recorder_failed'
+  | 'component_failed'
 
 const SUMMARY_LIMIT_BYTES = 3900
 
@@ -239,6 +242,12 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
       return `The recorder restarted; ${requireDetail(kind, detail)} seconds are missing from the recording.`
     case 'form_ping_failed':
       return "A form couldn't be checked or pinged. Open the meeting page to see what the bot recorded."
+    case 'recording_unstable':
+      return 'The recorder keeps restarting. Parts of the recording are missing.'
+    case 'recorder_failed':
+      return 'The recorder stopped and could not restart. Nothing is recorded from now on.'
+    case 'component_failed':
+      return `The bot's ${requireDetail(kind, detail)} stopped working. The recording continues.`
   }
 }
 

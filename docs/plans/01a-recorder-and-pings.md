@@ -2026,7 +2026,7 @@ git commit -m "feat(worker): write live transcript lines"
 **Files:**
 
 - Create: `packages/worker/src/run.ts`, `packages/worker/src/run-deps.ts`, `packages/worker/src/events.ts`, `packages/worker/src/frames/handler.ts`, `packages/worker/src/seed.ts`, `packages/worker/src/cli.ts`
-- Test: `packages/worker/src/run.test.ts`, `packages/worker/src/events.test.ts`, `packages/worker/src/frames/handler.test.ts`, `packages/worker/src/cli.test.ts`
+- Test: `packages/worker/test/run.test.ts`, `packages/worker/test/events.test.ts`, `packages/worker/test/handler.test.ts`, `packages/worker/test/cli.test.ts` (with the helper `packages/worker/test/helpers/fake-deps.ts`)
 
 **Interfaces:**
 
@@ -2034,10 +2034,10 @@ git commit -m "feat(worker): write live transcript lines"
 - Produces: `runOccurrence(cfg: JobConfig, deps?: Partial<RunDeps>): Promise<OccurrenceOutcome>` (the optional `deps` only serves tests); CLI `tm-worker --job <path>`.
 - Produces (adds to contracts): `interface OccurrenceOutcome { result: 'completed' | 'denied' | 'not_admitted' | 'failed'; endedBy: 'page' | 'removed' | 'hard_stop' | 'dropped' | null; reason: string | null; joinedAt: string | null; endedAt: string }`, also written to `<dataDir>/outcome.json`; `interface RunDeps` with members `prepareProfile`, `restoreProfile`, `startScreen`, `launchBrowser`, `launchGuestStage`, `startCheckpoints`, `checkpointProfile`, `checkFormProviders`, `startAudioSource`, `startRecorder`, `joinRecording`, `adapterFor`, `startChatCapture`, `startFrameLoop`, `startLiveAsr`, `createFormPinger`, `sendPing` (each typed as its module's export), `now(): Date` and `sleep(ms: number): Promise<void>`; `interface FrameHandlerDeps { dataDir: string; timeZone: string; recordingStart: Date; lecture: boolean; region: () => Rect | null; participants: () => number | null; levelDb: () => number; emit: EventLog['emit']; onAlert: (k: AlertKind) => void; pinger: FormPinger | null }`; `createEventLog(file: string, occurrenceId: string, attempt: number): EventLog` with `interface EventLog { emit(type: EventType, data: Record<string, unknown>): Promise<void> }`; `redact(v: unknown): unknown`; `createFrameHandler(d: FrameHandlerDeps): (f: Frame) => Promise<void>`; failure artefacts `<dataDir>/errors/<step>-<HHMMSS>.png` and `.aria.yml`; CLI `tm-worker --seed --job <path>` and exit codes 0 (completed), 1 (other outcome), 64 (usage), 65 (invalid job).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/run.test.ts (fakeDeps(): a scripted adapter, a fake clock and recorders of calls and pings)
+// packages/worker/test/run.test.ts (fakeDeps(): a scripted adapter, a fake clock and recorders of calls and pings)
 test('happy path: order of steps and outcome', async () => {
   const d = fakeDeps({ states: ['in_meeting', 'in_meeting', 'ended'] })
   const o = await runOccurrence(lectureCfg, d)
@@ -2151,7 +2151,7 @@ test('work entries skip forms; non-fixed links are refused', async () => {
 ```
 
 ```ts
-// packages/worker/src/events.test.ts
+// packages/worker/test/events.test.ts
 test('events are JSON lines with secrets redacted', async () => {
   const log = createEventLog(file, 'occ-1', 1)
   await log.emit('error', {
@@ -2169,7 +2169,7 @@ test('events are JSON lines with secrets redacted', async () => {
 ```
 
 ```ts
-// packages/worker/src/frames/handler.test.ts (synthetic PNGs; fake pinger records offers)
+// packages/worker/test/handler.test.ts (synthetic PNGs; fake pinger records offers)
 test('QR seen twice is offered once; keyframes saved with clock names', async () => {
   const h = createFrameHandler({ ...deps, timeZone: 'Asia/Kuala_Lumpur' })
   const f = await qrFrame('https://forms.gle/abc', 300, { x: 800, y: 300 })
@@ -2192,7 +2192,7 @@ test('QR seen twice is offered once; keyframes saved with clock names', async ()
 ```
 
 ```ts
-// packages/worker/src/cli.test.ts
+// packages/worker/test/cli.test.ts
 test('usage and invalid jobs never echo secrets', async () => {
   const a = Bun.spawnSync(['bun', 'packages/worker/src/cli.ts'])
   expect(a.exitCode).toBe(64)
@@ -2203,12 +2203,12 @@ test('usage and invalid jobs never echo secrets', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/run.test.ts packages/worker/src/events.test.ts packages/worker/src/frames/handler.test.ts packages/worker/src/cli.test.ts`
+Run: `bun test packages/worker/test/run.test.ts packages/worker/test/events.test.ts packages/worker/test/handler.test.ts packages/worker/test/cli.test.ts`
 Expected: FAIL with "Cannot find module".
 
-- [ ] **Step 3: Implement `runOccurrence` in `packages/worker/src/run.ts`**
+- [x] **Step 3: Implement `runOccurrence` in `packages/worker/src/run.ts`**
 
 The sequence (every awaited step has the timeout of its module; a failure saves the stage's screenshot and `ariaSnapshot()` under `errors/`, pings `join_failed` with the step name and returns `failed`):
 
@@ -2245,12 +2245,12 @@ The sequence (every awaited step has the timeout of its module; a failure saves 
 
 `createFrameHandler` computes the thumbnail, feeds `HealthMonitor` (alerts become pings and `alert` events), runs `KeyframeSelector` (kept frames go to `frames/<NNNN>_<HHMMSS>.png` with the clock in the entry's time zone and a `keyframe` event `{ file, region, offsetMs }`, where `offsetMs` is the frame time minus the first recording start), and for lectures decodes QR codes in the latest shared-screen region and offers each confirmed `http(s)` text as a `qr` candidate. `redact` replaces `pwd=` values, `token=` values and `Bearer` tokens, and rewrites any URL to `<host/path>`. `cli.ts` parses `--job` and `--seed`, reads and validates the job with `parseJob`, prints only issue paths on error, runs `runOccurrence` or `seedProfile`, and maps the outcome to the exit code. `seedProfile(cfg)` (`seed.ts`) restores or prepares the profile, launches the browser, opens `https://zoom.us/signin` on the desk, starts `x11vnc -display :99 -clip 1920x1080+1920+0 -rfbport 5900 -forever -shared -passwdfile <file>` (inside the container; `run-job.sh` publishes the port only on the host's `127.0.0.1`) with a random one-time password printed once to the terminal (never to a log), waits for Enter or SIGINT, then closes the browser and writes a checkpoint.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/run.test.ts packages/worker/src/events.test.ts packages/worker/src/frames/handler.test.ts packages/worker/src/cli.test.ts && bun run typecheck && bun run build:worker`
+Run: `bun test packages/worker/test/run.test.ts packages/worker/test/events.test.ts packages/worker/test/handler.test.ts packages/worker/test/cli.test.ts && bun run typecheck && bun run build:worker`
 Expected: all pass; `packages/worker/dist/cli.js` exists.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker docs/TRD.md

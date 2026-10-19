@@ -76,6 +76,17 @@ test('a detail-bearing alert without its detail fails loudly', () => {
   expect(() => alertPing('Data Mining', 'recording_gap')).toThrow('recording_gap needs a detail')
 })
 
+test('recorder and component alerts', () => {
+  expect(alertPing('Data Mining', 'recording_unstable').message).toBe(
+    'The recorder keeps restarting. Parts of the recording are missing.'
+  )
+  expect(alertPing('Data Mining', 'recorder_failed').priority).toBe('high')
+  expect(alertPing('Data Mining', 'component_failed', 'chat capture').message).toBe(
+    "The bot's chat capture stopped working. The recording continues."
+  )
+  expect(() => alertPing('Data Mining', 'component_failed')).toThrow('component_failed needs a detail')
+})
+
 test('summary cut to 3900 bytes never splits a multi-byte character', () => {
   // 'a' is one byte and 'é' is two, so byte 3900 is the second byte of an 'é': the cut lands mid-character.
   const text = 'a' + 'é'.repeat(3000)
