@@ -13,24 +13,18 @@ import { fakeDeps, makeCfg, type FakeDeps } from './helpers/fake-deps'
 let lectureCfg: JobConfig
 let workCfg: JobConfig
 let profileRoot: string
-const saved = { root: process.env.TM_PROFILE_ROOT, key: process.env.TM_MASTER_KEY_FILE }
+const saved = { root: process.env.TM_PROFILE_ROOT }
 
 beforeEach(async () => {
   lectureCfg = await makeCfg('lecture')
   workCfg = await makeCfg('work')
   profileRoot = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'tm-profiles-'))
   process.env.TM_PROFILE_ROOT = profileRoot
-  process.env.TM_MASTER_KEY_FILE = '/unused: readMasterKey is faked'
 })
 
 afterEach(async () => {
-  for (const [name, value] of [
-    ['TM_PROFILE_ROOT', saved.root],
-    ['TM_MASTER_KEY_FILE', saved.key]
-  ] as const) {
-    if (value === undefined) delete process.env[name]
-    else process.env[name] = value
-  }
+  if (saved.root === undefined) delete process.env.TM_PROFILE_ROOT
+  else process.env.TM_PROFILE_ROOT = saved.root
   for (const cfg of [lectureCfg, workCfg]) await rm(join(cfg.dataDir, '..'), { recursive: true, force: true })
   await rm(profileRoot, { recursive: true, force: true })
 })
@@ -153,7 +147,7 @@ test('one automatic rejoin after a drop, then stop', async () => {
   ])
 })
 
-test('work entries skip forms; non-fixed links are refused', async () => {
+test('work entries skip forms; a paste link with nothing pasted ends as no_link', async () => {
   const d = fakeDeps({ states: ['ended'] })
   await runOccurrence(workCfg, d)
   expect(d.calls).not.toContain('checkFormProviders')
@@ -167,7 +161,7 @@ test('work entries skip forms; non-fixed links are refused', async () => {
       },
       fakeDeps({})
     )
-  ).toMatchObject({ result: 'failed', reason: 'link_source_unsupported' })
+  ).toMatchObject({ result: 'failed', reason: 'no_link' })
 })
 
 test('the profile comes from the newest checkpoint, then the next-newest when one is bad', async () => {

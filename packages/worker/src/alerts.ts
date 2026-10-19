@@ -1,5 +1,5 @@
 import type { EventType } from '@tm/core'
-import { alertPing, type AlertKind, type Ping } from '@tm/notify'
+import { alertPing, type AlertKind, type Ping, type SiteLinks } from '@tm/notify'
 import { redact } from './events'
 
 /** The same alert is sent at most once in this window. */
@@ -17,6 +17,8 @@ export interface AlerterDeps {
   send: (p: Ping) => Promise<void>
   emit: (type: EventType, data: Record<string, unknown>) => Promise<void>
   now: () => Date
+  /** The website pages an alert may link to (sign-in again, the meeting page). Null: the ping has no action. */
+  links?: SiteLinks | null
 }
 
 export type Limiter = ((key: string, windowMs: number) => boolean) & {
@@ -55,7 +57,7 @@ export function createAlerter(deps: AlerterDeps): Alerter {
       })
     }
     try {
-      await deps.send(alertPing(deps.entry, kind, detail))
+      await deps.send(alertPing(deps.entry, kind, detail, deps.links))
     } catch (e) {
       // Not rethrown: an alert that cannot be sent must not end the meeting. The event keeps the record, and the
       // slot is released so the next occurrence of this alert tries the ping again.

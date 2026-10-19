@@ -250,7 +250,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
 
   const stage = page()
   const deps: RunDeps = {
-    readMasterKey: async () => Buffer.alloc(32, 7),
+    loadProfileKey: () => Buffer.alloc(32, 7),
     prepareProfile: async () => rec('prepareProfile'),
     restoreProfile: async (file) => {
       rec('restoreProfile')

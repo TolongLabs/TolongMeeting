@@ -308,3 +308,20 @@ test('capacity clash copy', () => {
     })
   ).toEqual(COPY_CASES[3][2])
 })
+
+test('pings that send the member to the website carry one action each', () => {
+  const links = { meetingPage: 'https://t.example/meetings/1', signIn: 'https://t.example/accounts/2/signin' }
+  expect(joinedPing('Data Mining', 3, links).actions).toEqual([{ label: 'Open meeting page', url: links.meetingPage }])
+  expect(joinedPing('Data Mining', 3).actions).toBeUndefined()
+  for (const kind of ['zoom_signin', 'signin_forms'] as const) {
+    expect(alertPing('Data Mining', kind, 'Google', links).actions).toEqual([
+      { label: 'Sign in again', url: links.signIn }
+    ])
+    expect(alertPing('Data Mining', kind, 'Google').actions).toBeUndefined()
+  }
+  expect(alertPing('Data Mining', 'no_link', undefined, links)).toMatchObject({
+    priority: 'high',
+    actions: [{ label: 'Open meeting page', url: links.meetingPage }]
+  })
+  expect(alertPing('Data Mining', 'dropped', undefined, links).actions).toBeUndefined()
+})

@@ -39,8 +39,14 @@ export function redact(v: unknown): unknown {
 }
 
 // Appends one MeetingEvent per line to `file`, redacted and fsynced. Emits run one after the other; a failed write
-// rejects that emit only.
-export function createEventLog(file: string, occurrenceId: string, attempt: number): EventLog {
+// rejects that emit only. `onEvent` gets each redacted event as it is emitted, in order, before the write (the control
+// channel's outbox keeps its own copy).
+export function createEventLog(
+  file: string,
+  occurrenceId: string,
+  attempt: number,
+  onEvent?: (event: MeetingEvent) => void
+): EventLog {
   let queue: Promise<unknown> = Promise.resolve()
   return {
     emit(type, data) {
@@ -51,6 +57,7 @@ export function createEventLog(file: string, occurrenceId: string, attempt: numb
         type,
         data: redact(data) as Record<string, unknown>
       }
+      onEvent?.(event)
       const write = queue.then(async () => {
         await mkdir(dirname(file), { recursive: true })
         await appendDurably(file, `${JSON.stringify(event)}\n`)

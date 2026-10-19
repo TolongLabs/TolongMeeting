@@ -115,6 +115,27 @@ export async function restoreProfile(file: string, dir: string, key: Buffer): Pr
   }
 }
 
+/** The checkpoint files in `dir`, newest first (a missing directory holds none). */
+export async function listCheckpoints(dir: string): Promise<string[]> {
+  let names: string[]
+  try {
+    names = await readdir(dir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  return names
+    .filter((n) => CHECKPOINT_NAME.test(n))
+    .sort()
+    .reverse()
+    .map((n) => join(dir, n))
+}
+
+/** The newest checkpoint in `dir` (the greatest `<timestamp>.tar.enc` name), or null when there is none. */
+export async function latestCheckpoint(dir: string): Promise<string | null> {
+  return (await listCheckpoints(dir))[0] ?? null
+}
+
 export function startCheckpoints(
   dir: string,
   out: string,

@@ -2307,15 +2307,15 @@ git commit -m "feat(web): heartbeats and crash monitor"
 
 **Files:**
 
-- Create: `packages/worker/src/control/outbox.ts`, `packages/worker/src/control/heartbeat.ts`, `packages/worker/src/control/commands.ts`, `packages/worker/src/control/link-override.ts`, `packages/worker/src/control/links.ts`, `packages/worker/src/forms/handled.ts`
-- Modify: `packages/worker/src/profile/profile.ts` (`restoreCheckpoint`, `latestCheckpoint`), `packages/worker/src/run.ts`
-- Test: `packages/worker/src/control/heartbeat.test.ts`, `packages/worker/src/control/commands.test.ts`, `packages/worker/src/forms/handled.test.ts`, `packages/worker/src/profile/profile.test.ts`
+- Create: `packages/worker/src/control/outbox.ts`, `packages/worker/src/control/heartbeat.ts`, `packages/worker/src/control/commands.ts`, `packages/worker/src/control/link-override.ts`, `packages/worker/src/control/links.ts`
+- Modify: `packages/worker/src/profile/profile.ts` (`listCheckpoints`, `latestCheckpoint`), `packages/worker/src/events.ts` (`onEvent` hook), `packages/worker/src/alerts.ts`, `packages/worker/src/profile-setup.ts`, `packages/worker/src/run-deps.ts`, `packages/worker/src/run.ts`, `packages/notify/src/messages.ts` (optional `links`), `packages/core/src/control.ts` (`ControlCommandSchema`, `HeartbeatReplySchema`)
+- Test (final home: `packages/<pkg>/test/`): `packages/worker/test/control.test.ts`, `packages/worker/test/run-control.test.ts`, `packages/worker/test/profile.test.ts`, `packages/notify/test/messages.test.ts`, `packages/core/test/control.test.ts`
 
 **Interfaces:**
 
 - Consumes: `JobConfig`, `Heartbeat`, `HeartbeatReply` (with `link`, Task 15), `MeetingEvent`, `ControlCommand`, `StateEventData` (Task 15); 1A's `runOccurrence`, `checkpointProfile`, `prepareProfile`, `PlatformAdapter.leave`; 1A's `Stopper`; `loadProfileKey` (Task 2).
-- Changes contract: `startHeartbeat(cfg: JobConfig, getStatus: () => Heartbeat, onReply: (reply: HeartbeatReply) => void, opts?: { intervalMs?: number; fetchFn?: typeof fetch }): Stopper`. Architecture's signature had no reply callback, which the worker needs for acks, commands and the pasted link.
-- Produces: `class EventOutbox { push(e: MeetingEvent): void; pending(max = 500): MeetingEvent[]; ack(n: number): void }`; `dispatchCommands(cmds: ControlCommand[], h: { leave(): Promise<void>; stop(): Promise<void>; pause(): Promise<void>; resume(): Promise<void> }): Promise<void>` (in order; `leave_now` and `take_over` both call `h.leave` once per batch until plan 06; `stop` calls `h.stop`; `pause_for_signin` and `resume_after_signin` call `h.pause` and `h.resume`); `class LinkOverride { offer(url: string | null): void; current(): string | null; next(): Promise<string> }` (`next` resolves on the first new non-null URL); `siteLinks(cfg: JobConfig): { meetingPage: string; signIn: string } | null` (from `TM_PUBLIC_URL`: `/meetings/<occurrenceId>` and `/accounts/<identityId>/signin`; null when the variable is unset, as in 1A); `loadHandledForms(dataDir: string): Promise<Set<string>>` (the `finalUrl`, else `url`, of every `forms/*/record.json`); `latestCheckpoint(checkpointsDir: string): Promise<string | null>` (the greatest `<timestamp>.tar.enc` name); `restoreCheckpoint(checkpointPath: string, dir: string, key: Buffer): Promise<void>` (the inverse of 1A's `checkpointProfile`: decrypts and unpacks into an emptied `dir`).
+- Changes contract: `startHeartbeat(cfg: JobConfig, getStatus: () => Heartbeat, onReply: (reply: HeartbeatReply) => void, opts?: HeartbeatOptions): HeartbeatLoop` (a `Stopper` whose `stop()` is awaited, plus `flush()`). Architecture's signature had no reply callback, which the worker needs for acks, commands and the pasted link.
+- Produces: `class EventOutbox { static open(dir, attempt): Promise<EventOutbox>; push(e: MeetingEvent): void; pending(max = 500): MeetingEvent[]; ack(n: number): void; settled(): Promise<void> }` (durable, per attempt, adopted by the next attempt); `dispatchCommands(cmds: ControlCommand[], h: { leave(): Promise<void>; stop(): Promise<void>; pause(): Promise<void>; resume(): Promise<void> }): Promise<void>` (in order; `leave_now` and `take_over` both call `h.leave` once per batch until plan 06; `stop` calls `h.stop`; `pause_for_signin` and `resume_after_signin` call `h.pause` and `h.resume`); `class LinkOverride { constructor(opts?: { normalise?; onRefused? }); offer(url: string | null): void; current(): string | null; next(): Promise<string> }` (`next` resolves on the first new non-null URL); `siteLinks(cfg: JobConfig): { meetingPage: string; signIn: string } | null` (from `TM_PUBLIC_URL`: `/meetings/<occurrenceId>` and `/accounts/<identityId>/signin`; null when the variable is unset, as in 1A); `latestCheckpoint(checkpointsDir: string): Promise<string | null>` (the greatest `<timestamp>.tar.enc` path). Preflight C8: no `restoreCheckpoint` (1A's `restoreProfile` serves) and no `forms/handled.ts` (01b's dispatcher already skips handled forms after a restart).
 
 `startHeartbeat` posts to `<control.url>/heartbeat` with `Authorization: Bearer <control.token>` every 5000 ms, with a 4000 ms timeout and never two requests at once. A 410 reply is passed on as `{ ackedEvents: 0, commands: ['stop'], link: null }`; network errors and 5xx keep the events for the next tick; a 401 stops the timer and logs `heartbeat refused`. It returns a no-op `Stopper` when `cfg.control` is null.
 
@@ -2323,12 +2323,12 @@ git commit -m "feat(web): heartbeats and crash monitor"
 
 - Start the heartbeat first, reporting `starting`; `getStatus` returns the current state, recording flag, participant count and `outbox.pending()`; `onReply` calls `outbox.ack`, `linkOverride.offer(reply.link)` and `dispatchCommands`.
 - Every event 1A appends to `events.jsonl` also goes to `outbox.push`; every change of state emits a `state` event with `StateEventData`, and every account check an `AccountCheckData` event.
-- When `cfg.attempt > 1`, restore `latestCheckpoint(<profileRoot>/<identityId>/checkpoints)` into `cfg.profileDir` with `loadProfileKey` before 1A's `prepareProfile`, and seed the meeting's form de-duplication set from `loadHandledForms(cfg.dataDir)`, so a restarted worker never submits a form twice. The occurrence directory is the same host directory across attempts.
+- `setupProfile` loads the key with `loadProfileKey` (C20) and restores the newest checkpoint that authenticates into an empty working copy; a restarted worker (`cfg.attempt > 1`) keeps its surviving working copy (TRD: the freshest session state). The occurrence directory is the same host directory across attempts, so 01b's dispatcher skips the forms already handled.
 - In `watching_for_link`, race 1A's link sources with `linkOverride.next()`; a pasted link wins until joining starts.
 - `leave`: `adapter.leave(stage)`, report `left_by_member`, then 1A's normal finish (stop recording, join segments, checkpoint). `stop`: report `leaving` and take the same finish as a meeting end. After the finish, report `transcribing` in a last heartbeat (the worker's "my part is done" marker), then exit 0.
 - Pings: the joined ping gets the action `Open meeting page`, and the expired-account ping `Sign in again`, from `siteLinks`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/control/heartbeat.test.ts
@@ -2461,21 +2461,21 @@ test('forms recorded by earlier attempts are handled', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/control packages/worker/src/forms/handled.test.ts packages/worker/src/profile/profile.test.ts`
 
 Expected: FAIL with `Cannot find module './heartbeat'`.
 
-- [ ] **Step 3: Implement the modules and wire `run.ts`**
+- [x] **Step 3: Implement the modules and wire `run.ts`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/control packages/worker/src/forms/handled.test.ts packages/worker/src/profile/profile.test.ts && bun run typecheck`
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src

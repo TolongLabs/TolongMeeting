@@ -1,11 +1,8 @@
 import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { JobConfig } from '@tm/core'
 import type { RunDeps } from './run-deps'
-import { deriveProfileKey } from './profile/keys'
-import { CheckpointAuthError, CheckpointFormatError } from './profile/profile'
-
-const CHECKPOINT_NAME = /^\d{8}T\d{6}Z\.tar\.enc$/
+import { CheckpointAuthError, CheckpointFormatError, listCheckpoints } from './profile/profile'
 
 export interface ProfileSetup {
   key: Buffer
@@ -29,20 +26,15 @@ async function listDir(dir: string): Promise<string[]> {
 // restores. Then the profile is prepared (host check, stale locks).
 export async function setupProfile(
   cfg: JobConfig,
-  deps: Pick<RunDeps, 'readMasterKey' | 'prepareProfile' | 'restoreProfile'>
+  deps: Pick<RunDeps, 'loadProfileKey' | 'prepareProfile' | 'restoreProfile'>
 ): Promise<ProfileSetup> {
   const root = process.env.TM_PROFILE_ROOT
-  const keyFile = process.env.TM_MASTER_KEY_FILE
   if (!root) throw new Error('TM_PROFILE_ROOT is not set')
-  if (!keyFile) throw new Error('TM_MASTER_KEY_FILE is not set')
-  const key = deriveProfileKey(await deps.readMasterKey(keyFile), cfg.identity.id)
+  const key = deps.loadProfileKey(cfg.identity.id)
   const checkpointsDir = join(root, cfg.identity.id, 'checkpoints')
   let restoredFrom: string | null = null
   if ((await listDir(cfg.profileDir)).length === 0) {
-    const names = (await listDir(checkpointsDir))
-      .filter((n) => CHECKPOINT_NAME.test(n))
-      .sort()
-      .reverse()
+    const names = (await listCheckpoints(checkpointsDir)).map((path) => basename(path))
     let last: unknown = null
     for (const name of names) {
       try {

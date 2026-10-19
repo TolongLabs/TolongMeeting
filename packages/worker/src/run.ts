@@ -2,14 +2,33 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
 import { AiKeyError } from '@tm/ai'
-import { localParts, type ChatMessage, type EventType, type FormCandidate, type JobConfig } from '@tm/core'
-import { joinedPing, type Ping } from '@tm/notify'
+import {
+  AccountCheckDataSchema,
+  localParts,
+  StateEventDataSchema,
+  triggerFor,
+  type AccountCheckData,
+  type ChatMessage,
+  type EventType,
+  type FormCandidate,
+  type Heartbeat,
+  type HeartbeatReply,
+  type JobConfig,
+  type OccurrenceState,
+  type StateEventData
+} from '@tm/core'
+import { joinedPing, type Ping, type SiteLinks } from '@tm/notify'
 import { z } from 'zod'
 import { DevicesOnError } from './adapters'
 import type { JoinResult, MeetingState, PlatformAdapter, Rect } from './adapters/types'
 import { createAlerter, createLimiter, type Alerter } from './alerts'
 import type { AudioSource } from './audio/source'
 import type { ChatCapture } from './chat/capture'
+import { dispatchCommands } from './control/commands'
+import { startHeartbeat, type HeartbeatLoop } from './control/heartbeat'
+import { LinkOverride } from './control/link-override'
+import { siteLinks } from './control/links'
+import { EventOutbox } from './control/outbox'
 import { createEventLog, type EventLog } from './events'
 import { makeFormContextBase } from './forms/context'
 import type { FormDispatcher } from './forms/dispatcher'
@@ -50,6 +69,10 @@ const ARTEFACT_TIMEOUT_MS = 10_000
 const TEARDOWN_BUDGET_MS = 50_000
 /** The last part of the budget belongs to the final profile checkpoint: the steps before it cannot use it. */
 const CHECKPOINT_RESERVE_MS = 15_000
+/** With a control channel, the last part of the budget belongs to the final heartbeat: no step before it may use it. */
+const FINAL_HEARTBEAT_RESERVE_MS = 5_000
+/** A meeting with no link is given up this long after its start (PRD LINK-4). */
+const NO_LINK_AFTER_START_MS = 30 * MINUTE
 
 // The most each teardown step may take; the time left in the budget cuts it shorter. A step that overruns is reported
 // and the next one still runs.
@@ -68,6 +91,8 @@ const BOUND = {
   stopCheckpoints: 5_000,
   checkpoint: 120_000,
   alerts: 5_000,
+  finalHeartbeat: 5_000,
+  stopHeartbeat: 3_000,
   stopScreen: 5_000,
   join: 300_000
 }
@@ -113,6 +138,9 @@ export async function runOccurrence(cfg: JobConfig, deps: Partial<RunDeps> = {})
   return new OccurrenceRun(cfg, { ...defaultDeps, ...deps }).run()
 }
 
+/** Why the run was asked to end by something other than the stop signal. */
+type EndRequest = 'leave' | 'stop' | 'superseded'
+
 class OccurrenceRun {
   private readonly events: EventLog
   private readonly alerter: Alerter
@@ -122,6 +150,18 @@ class OccurrenceRun {
   private readonly end: number
   private readonly hardStop: number
   private readonly lecture: boolean
+  private readonly links: SiteLinks | null
+  private readonly linkOverride: LinkOverride
+  private readonly wake: () => void
+
+  // The control channel (absent when the job has none, and when it failed to start).
+  private outbox: EventOutbox | null = null
+  private heartbeat: HeartbeatLoop | null = null
+  private commandChain: Promise<void> = Promise.resolve()
+  private state: OccurrenceState = 'starting'
+  private recording = false
+  private endRequest: EndRequest | null = null
+  private verdict: Verdict | null = null
 
   private profile: ProfileSetup | null = null
   private screen: Screen | null = null
@@ -173,12 +213,21 @@ class OccurrenceRun {
     private readonly cfg: JobConfig,
     private readonly deps: RunDeps
   ) {
-    this.events = createEventLog(join(cfg.dataDir, 'events.jsonl'), cfg.occurrenceId, cfg.attempt)
+    this.links = siteLinks(cfg)
+    this.events = createEventLog(join(cfg.dataDir, 'events.jsonl'), cfg.occurrenceId, cfg.attempt, (e) =>
+      this.outbox?.push(e)
+    )
     this.alerter = createAlerter({
       entry: cfg.entry.name,
       send: (p) => deps.sendPing(cfg.ntfy, p),
       emit: (type, data) => this.events.emit(type, data),
-      now: () => deps.now()
+      now: () => deps.now(),
+      links: this.links
+    })
+    // A pasted link goes through the same rule as the entry's own link (for Zoom, core `normaliseZoomLink`).
+    this.linkOverride = new LinkOverride({
+      normalise: (url) => deps.adapterFor(url)?.normaliseLink(url) ?? null,
+      onRefused: () => void this.report('pasted link', new Error('the pasted link is not a link the bot can join'))
     })
     this.tickLimit = createLimiter(() => deps.now())
     this.start = Date.parse(cfg.entry.start)
@@ -186,7 +235,9 @@ class OccurrenceRun {
     this.hardStop = this.end + HARD_STOP_AFTER_END_MS
     this.lecture = cfg.entry.type === 'lecture'
     const { signal } = deps
+    let wake!: () => void
     this.aborted = new Promise<void>((resolve) => {
+      wake = resolve
       const stop = (): void => {
         this.abortAt ??= Date.now()
         resolve()
@@ -194,6 +245,7 @@ class OccurrenceRun {
       if (signal?.aborted) stop()
       else signal?.addEventListener('abort', stop, { once: true })
     })
+    this.wake = wake
   }
 
   async run(): Promise<OccurrenceOutcome> {
@@ -202,10 +254,12 @@ class OccurrenceRun {
       await mkdir(join(dataDir, dir), { recursive: true })
     let verdict: Verdict
     try {
+      await this.startControl()
       verdict = await this.main()
     } catch (error) {
       verdict = await this.runFailed(error)
     }
+    this.verdict = verdict
     await this.teardown()
     const outcome: OccurrenceOutcome = {
       ...verdict,
@@ -213,9 +267,159 @@ class OccurrenceRun {
       endedAt: this.deps.now().toISOString()
     }
     await writeFileAtomic(join(dataDir, 'outcome.json'), `${JSON.stringify(outcome, null, 2)}\n`)
-    // Last: the pipeline can join the segments later, so this is the one step that may be skipped for lack of time.
+    // The pipeline can join the segments later, so this is the one step that may be skipped for lack of time.
     await this.finishRecording()
+    await this.finalReport(verdict)
     return outcome
+  }
+
+  // --- the control channel ---
+
+  // Starts the outbox and the heartbeat. Both are extras: if they fail, the failure is reported and pinged, and the
+  // meeting is recorded all the same.
+  private async startControl(): Promise<void> {
+    const { cfg } = this
+    if (cfg.control === null) return
+    if (cfg.attempt > 1) this.state = (await this.optional('previous state', () => this.lastState())) ?? 'starting'
+    await this.optional('control channel', async () => {
+      const outbox = await EventOutbox.open(join(cfg.dataDir, 'outbox'), cfg.attempt)
+      this.heartbeat = startHeartbeat(
+        cfg,
+        () => this.status(),
+        (reply) => this.onReply(reply),
+        {
+          ...this.deps.heartbeat,
+          onSuperseded: () => this.requestEnd('superseded'),
+          onRefused: () => this.alerter.alert('component_failed', 'control channel'),
+          onProblem: (problem) => void this.report('heartbeat', new Error(problem)),
+          onRejectedEvent: (event) => {
+            outbox.ack(1)
+            void this.report('heartbeat', new Error(`the server refused a ${event.type} event; it was dropped`))
+          }
+        }
+      )
+      // Events are queued only once the heartbeat exists, so a failed start leaves no outbox to fill.
+      this.outbox = outbox
+    })
+  }
+
+  // The state an earlier attempt of this occurrence last reported, from its event log.
+  private async lastState(): Promise<OccurrenceState | null> {
+    let text: string
+    try {
+      text = await readFile(join(this.cfg.dataDir, 'events.jsonl'), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+    let last: OccurrenceState | null = null
+    for (const line of text.split('\n')) {
+      if (line === '') continue
+      const event = z.object({ type: z.string(), data: z.unknown() }).parse(JSON.parse(line))
+      const change = event.type === 'state' ? StateEventDataSchema.safeParse(event.data) : null
+      if (change?.success) last = change.data.state
+    }
+    return last
+  }
+
+  private status(): Heartbeat {
+    return {
+      occurrenceId: this.cfg.occurrenceId,
+      attempt: this.cfg.attempt,
+      state: this.state,
+      recording: this.recording,
+      participants: this.participants,
+      events: this.outbox?.pending() ?? []
+    }
+  }
+
+  private onReply(reply: HeartbeatReply): void {
+    this.outbox?.ack(reply.ackedEvents)
+    this.linkOverride.offer(reply.link)
+    if (reply.commands.length === 0) return
+    // Batches run in the order they came, one at a time.
+    this.commandChain = this.commandChain
+      .then(() => this.runCommands(reply.commands))
+      .catch((error: unknown) => this.report('command', error))
+  }
+
+  private async runCommands(commands: HeartbeatReply['commands']): Promise<void> {
+    await dispatchCommands(commands, {
+      leave: async () => this.requestEnd('leave'),
+      stop: async () => this.requestEnd('stop'),
+      // The remote sign-in view (plan 01c Task 17) gives these their meaning.
+      pause: () => this.report('command', new Error('pause_for_signin is not available yet')),
+      resume: () => this.report('command', new Error('resume_after_signin is not available yet'))
+    })
+  }
+
+  // Asks the run to end: it wakes every wait, and the run takes its normal teardown. The first request stands, except
+  // that being replaced by another attempt overrides all (a replaced worker reports nothing more).
+  private requestEnd(kind: EndRequest): void {
+    if (this.endRequest === null || kind === 'superseded') this.endRequest = kind
+    this.wake()
+  }
+
+  // Reports a change of state: a `state` event, and the state the next heartbeat carries. A move the server's state
+  // machine has no edge for is not sent: a restarted worker is already past the early states, and a bug elsewhere is
+  // reported rather than sent.
+  private async setState(next: OccurrenceState): Promise<void> {
+    if (next === this.state) return
+    if (triggerFor(this.state, next) === null) {
+      if (this.cfg.attempt === 1)
+        await this.report('state', new Error(`no move from ${this.state} to ${next}; it was not reported`))
+      return
+    }
+    this.state = next
+    await this.ev('state', { state: next } satisfies StateEventData)
+  }
+
+  // The states of the first join. A rejoin after a drop keeps the state `in_meeting`.
+  private async joinState(next: OccurrenceState): Promise<void> {
+    if (this.joinedAt === null) await this.setState(next)
+  }
+
+  // The last report: the state the meeting ended in, then every event still unsent, within the budget. A failure leaves
+  // the events in the outbox on disk for the next attempt (or the scheduler).
+  private async finalReport(verdict: Verdict): Promise<void> {
+    const beat = this.heartbeat
+    if (beat === null) return
+    if (this.endRequest !== 'superseded') {
+      const state = this.finalState(verdict)
+      if (state !== null) await this.setState(state)
+      await this.bounded(
+        'final heartbeat',
+        BOUND.finalHeartbeat,
+        async () => {
+          if (!(await beat.flush())) throw new Error('the server did not take it; the events stay in the outbox')
+        },
+        'final'
+      )
+    }
+    // The outbox file is written last: the acknowledgement of the final heartbeat is on disk before the worker exits.
+    await this.bounded(
+      'heartbeat.stop',
+      BOUND.stopHeartbeat,
+      async () => {
+        await beat.stop()
+        await this.outbox!.settled()
+      },
+      'final'
+    )
+  }
+
+  // Whether the recording goes on to the pipeline: the bot joined, and the run did not end by SIGTERM or a leave.
+  private get handsOver(): boolean {
+    const by = this.verdict?.endedBy
+    return this.joinedAt !== null && by !== 'terminated' && by !== 'member_left'
+  }
+
+  // The state the occurrence ends in as far as the worker is concerned (`leaving` and `uploading` come earlier).
+  private finalState(verdict: Verdict): OccurrenceState | null {
+    if (this.handsOver) return 'transcribing'
+    if (verdict.endedBy === 'terminated' || verdict.endedBy === 'member_left') return null
+    if (verdict.result === 'denied') return 'denied'
+    return verdict.reason === 'no_link' ? 'no_link' : 'failed'
   }
 
   // --- emit, report, alert ---
@@ -260,8 +464,16 @@ class OccurrenceRun {
     return Promise.race([run, this.aborted.then((): typeof ABORTED => ABORTED)])
   }
 
+  // The verdict of a run that was asked to end: by the stop signal, or by a command (or the server replacing it).
   private terminated(): Verdict {
-    return { result: this.joinedAt === null ? 'failed' : 'completed', endedBy: 'terminated', reason: 'terminated' }
+    const joined = this.joinedAt !== null
+    const result = joined ? 'completed' : 'failed'
+    if (this.deps.signal?.aborted !== true) {
+      if (this.endRequest === 'leave') return { result, endedBy: 'member_left', reason: 'left_by_member' }
+      if (this.endRequest === 'stop') return { result, endedBy: 'stopped', reason: 'stopped' }
+      if (this.endRequest === 'superseded') return { result, endedBy: 'terminated', reason: 'superseded' }
+    }
+    return { result, endedBy: 'terminated', reason: 'terminated' }
   }
 
   private async sendQuiet(ping: Ping): Promise<void> {
@@ -334,7 +546,12 @@ class OccurrenceRun {
 
   // The end of the part of the budget that the steps before the final checkpoint may use.
   private get preEnd(): number {
-    return this.budgetEnd - Math.min(CHECKPOINT_RESERVE_MS, this.budgetMs * 0.3)
+    return this.budgetEnd - Math.min(CHECKPOINT_RESERVE_MS + this.finalReserve, this.budgetMs * 0.3)
+  }
+
+  // The part of the budget kept for the final heartbeat; none without a control channel.
+  private get finalReserve(): number {
+    return this.heartbeat === null ? 0 : Math.min(FINAL_HEARTBEAT_RESERVE_MS, this.budgetMs * 0.1)
   }
 
   // The share a pre-checkpoint step always gets, even when the reserve has been used up.
@@ -344,17 +561,20 @@ class OccurrenceRun {
 
   // Runs one teardown or cleanup action with a time limit and says whether it finished. The limit is the step's own,
   // cut to the time left: a step before the final checkpoint (phase 'pre') may not use the checkpoint's reserve, but
-  // always gets a short slice; a later step (phase 'end') may use all that is left. A failure, a timeout or no time
+  // always gets a short slice; a later step (phase 'end') may use all that is left but the final heartbeat's reserve,
+  // which only the last step (phase 'final') may use. A failure, a timeout or no time
   // left is reported; it never throws.
   private async bounded(
     name: string,
     ms: number,
     fn: () => Promise<unknown>,
-    phase: 'pre' | 'end' = 'pre'
+    phase: 'pre' | 'end' | 'final' = 'pre'
   ): Promise<boolean> {
     const now = Date.now()
     const endLeft = this.budgetEnd - now
-    const limit = Math.min(ms, phase === 'pre' ? Math.max(this.preEnd - now, this.minSlice) : endLeft, endLeft)
+    const share =
+      phase === 'pre' ? Math.max(this.preEnd - now, this.minSlice) : endLeft - (phase === 'end' ? this.finalReserve : 0)
+    const limit = Math.min(ms, share, endLeft)
     if (limit <= 0) {
       await this.report(`teardown ${name}`, new Error('skipped: no teardown time left'))
       return false
@@ -380,8 +600,9 @@ class OccurrenceRun {
     return this.deps.now().getTime()
   }
 
+  // True once the run was asked to end: by the stop signal, or by a command.
   private get isAborted(): boolean {
-    return this.deps.signal?.aborted === true
+    return this.deps.signal?.aborted === true || this.endRequest !== null
   }
 
   private async wait(ms: number): Promise<void> {
@@ -397,12 +618,9 @@ class OccurrenceRun {
   private async main(): Promise<Verdict> {
     const { cfg, deps } = this
     const { entry } = cfg
-    if (entry.link.kind !== 'fixed') return failed('link_source_unsupported')
-    const adapter = deps.adapterFor(entry.link.url)
-    const url = adapter?.normaliseLink(entry.link.url) ?? null
-    if (adapter === null || url === null) return failed('unsupported_link')
-    this.adapter = adapter
-    this.url = url
+    // A fixed link is the entry's own; any other source brings its link through the website (a pasted link, the only
+    // source until the link watchers of plan 02). A pasted link wins until joining starts.
+    if (entry.link.kind === 'fixed' && !this.useLink(entry.link.url)) return failed('unsupported_link')
 
     // These steps race the stop signal: one that hangs (a restore, Xvfb, Chrome) must not outlive SIGTERM. A step
     // abandoned that way is left running, and its late failure is swallowed.
@@ -425,6 +643,7 @@ class OccurrenceRun {
     if (checkpoints === ABORTED) return this.terminated()
     this.checkpoints = checkpoints
 
+    await this.setState('verifying_accounts')
     if (this.lecture) {
       const started = await this.untilAborted(
         this.checkFormSignIns(browser.desk).then(() => this.startForms(browser.desk))
@@ -432,9 +651,12 @@ class OccurrenceRun {
       if (started === ABORTED) return this.terminated()
     }
 
-    await this.waitUntil(this.start - JOIN_LEAD_MS)
+    await this.setState('watching_for_link')
+    const linked = await this.untilLink()
+    if (linked === 'no_link') return failed('no_link')
     if (this.isAborted) return this.terminated()
     if (this.now() >= this.hardStop) return failed('past_hard_stop')
+    const adapter = this.adapter!
 
     const audio = await this.abortable('startAudioSource', () => deps.startAudioSource())
     if (audio === ABORTED) return this.terminated()
@@ -445,6 +667,7 @@ class OccurrenceRun {
     )
     if (recorder === ABORTED) return this.terminated()
     this.recorder = recorder
+    this.recording = true
     this.watchRecorder(recorder)
     const recordingStart = await this.untilAborted(this.firstRecordingStart(recorder))
     if (recordingStart === ABORTED) return this.terminated()
@@ -459,12 +682,50 @@ class OccurrenceRun {
     if (this.isAborted) return this.terminated()
     await this.dismiss()
     this.participants = await this.optional('participant count', () => adapter.participantCount(this.stage!))
-    await this.sendQuiet(joinedPing(entry.name, this.participants))
+    await this.sendQuiet(joinedPing(entry.name, this.participants, this.links))
     await this.ev('joined', { participants: this.participants })
 
     if (this.isAborted) return this.terminated()
     await this.startComponents()
     return this.supervise()
+  }
+
+  // Takes a link as the one to join, if its platform's rule accepts it.
+  private useLink(raw: string): boolean {
+    const adapter = this.deps.adapterFor(raw)
+    const url = adapter?.normaliseLink(raw) ?? null
+    if (adapter === null || url === null) return false
+    this.adapter = adapter
+    this.url = url
+    return true
+  }
+
+  // Waits for the time to join (10 minutes before the start) with a link in hand. A link pasted on the website replaces
+  // the entry's own at any point up to the join. Without a link the member is pinged at the start, and the wait ends
+  // 30 minutes after it.
+  private async untilLink(): Promise<'ready' | 'no_link' | 'aborted'> {
+    const joinAt = this.start - JOIN_LEAD_MS
+    const giveUpAt = this.start + NO_LINK_AFTER_START_MS
+    let pinged = false
+    for (;;) {
+      if (this.isAborted) return 'aborted'
+      const pasted = this.linkOverride.current()
+      if (pasted !== null) this.useLink(pasted)
+      const now = this.now()
+      let until: number
+      if (this.url !== '') {
+        if (now >= joinAt) return 'ready'
+        until = joinAt
+      } else {
+        if (now >= this.start && !pinged) {
+          pinged = true
+          this.alerter.alert('no_link')
+        }
+        if (now >= giveUpAt) return 'no_link'
+        until = now < this.start ? this.start : giveUpAt
+      }
+      await Promise.race([this.deps.sleep(Math.min(until - now, MINUTE)), this.aborted, this.linkOverride.next()])
+    }
   }
 
   // The form dispatcher is an extra: if it cannot start, the meeting is still recorded, the member is told, and links
@@ -473,7 +734,7 @@ class OccurrenceRun {
     const { cfg, deps } = this
     await this.optional('form submission', async () => {
       // The meeting page links (1C) are not known yet.
-      const links = { meetingPage: null, signIn: null }
+      const links = { meetingPage: this.links?.meetingPage ?? null, signIn: this.links?.signIn ?? null }
       const base = makeFormContextBase(cfg, desk, this.ev, links, (p) => deps.sendPing(cfg.ntfy, p))
       const dispatcher = await deps.startFormDispatcher(base)
       this.forms = dispatcher
@@ -488,7 +749,15 @@ class OccurrenceRun {
   private async checkFormSignIns(desk: Page): Promise<void> {
     const { cfg, deps } = this
     try {
-      for (const provider of await deps.checkFormProviders(desk, cfg.identity.formProviders)) {
+      const signedOut = await deps.checkFormProviders(desk, cfg.identity.formProviders)
+      // The website shows when each account was last checked and whether it was signed in.
+      for (const provider of cfg.identity.formProviders) {
+        await this.ev('state', {
+          account: provider,
+          signedIn: !signedOut.includes(provider)
+        } satisfies AccountCheckData)
+      }
+      for (const provider of signedOut) {
         this.alerter.alert('signin_forms', provider === 'google' ? 'Google' : 'Microsoft')
       }
     } catch (error) {
@@ -565,6 +834,7 @@ class OccurrenceRun {
   private async enter(): Promise<Verdict | null> {
     const { adapter } = this
     let retries = 0
+    await this.joinState('joining')
     let result = await this.gotoAndJoin()
     for (;;) {
       if (result === ABORTED) return this.terminated()
@@ -572,6 +842,7 @@ class OccurrenceRun {
         case 'in_meeting':
           return this.entered()
         case 'signin_required':
+          await this.ev('state', { account: 'zoom', signedIn: false } satisfies AccountCheckData)
           this.alerter.alert('zoom_signin')
           return failed('signin_required')
         case 'account_busy':
@@ -582,6 +853,7 @@ class OccurrenceRun {
           this.alerter.alert('join_failed', result.reason)
           return failed(result.reason)
         case 'lobby': {
+          await this.joinState('in_lobby')
           const deadline = new Date(Math.min(this.now() + LOBBY_ATTEMPT_MS, this.hardStop))
           const admission = await this.abortable('waitUntilAdmitted', () =>
             adapter!.waitUntilAdmitted(this.stage!, deadline)
@@ -603,8 +875,9 @@ class OccurrenceRun {
     }
   }
 
-  private entered(): null {
+  private async entered(): Promise<null> {
     this.inMeeting = true
+    await this.joinState('in_meeting')
     this.joinedAt ??= this.deps.now()
     return null
   }
@@ -895,6 +1168,8 @@ class OccurrenceRun {
   private async teardown(): Promise<void> {
     this.teardownStart = Date.now()
 
+    // The recording goes on to the pipeline: leaving, then (the bot out of the meeting) uploading.
+    if (this.handsOver) await this.setState('leaving')
     if (this.inMeeting) {
       const chat = this.chat
       if (chat) await this.bounded('chat.sweepNow', BOUND.sweep, () => chat.sweepNow())
@@ -903,6 +1178,8 @@ class OccurrenceRun {
       // A join abandoned by the stop signal may still complete in the page: closing the browser first keeps the bot out.
       await this.closeBrowser()
     }
+    if (this.verdict?.endedBy === 'member_left') await this.setState('left_by_member')
+    else if (this.handsOver) await this.setState('uploading')
     if (this.chat) await this.bounded('chat.stop', BOUND.stopChat, () => this.chat!.stop())
     if (this.frames) await this.bounded('frames.stop', BOUND.stopFrames, () => this.frames!.stop())
     this.handler?.stop()
@@ -915,6 +1192,7 @@ class OccurrenceRun {
     this.formsClosed = true
     if (this.forms) await this.bounded('forms.close', BOUND.forms, () => this.forms!.close())
     if (this.recorder) await this.bounded('recorder.stop', BOUND.stopRecorder, () => this.recorder!.stop())
+    this.recording = false
     if (this.audio) await this.bounded('audio.stop', BOUND.stopAudio, () => this.audio!.stop())
     await this.closeBrowser()
     if (this.checkpoints) await this.bounded('checkpoints.stop', BOUND.stopCheckpoints, () => this.checkpoints!.stop())

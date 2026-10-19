@@ -1,5 +1,5 @@
 import type { FormCandidate } from '@tm/core'
-import type { Ping } from './ntfy'
+import type { Ping, PingAction } from './ntfy'
 
 export type AlertKind =
   | 'black_frames'
@@ -24,15 +24,27 @@ export type AlertKind =
   | 'run_failed'
   | 'device_check_failed'
   | 'device_check_stopped'
+  | 'no_link'
 
 const SUMMARY_LIMIT_BYTES = 3900
 
-export function joinedPing(entry: string, participants: number | null): Ping {
+/** The website pages a ping can link to (null when the worker does not know the website's address). */
+export interface SiteLinks {
+  meetingPage: string
+  signIn: string
+}
+
+export function joinedPing(entry: string, participants: number | null, links?: SiteLinks | null): Ping {
   const message =
     participants === null
       ? 'In the meeting. Recording.'
       : `In the meeting with ${participants} participants. Recording.`
-  return { title: `Joined: ${entry}`, message, priority: 'default' }
+  return {
+    title: `Joined: ${entry}`,
+    message,
+    priority: 'default',
+    ...(links ? { actions: [{ label: 'Open meeting page', url: links.meetingPage }] } : {})
+  }
 }
 
 export function linkUncheckedPing(entry: string, c: FormCandidate, hhmm: string): Ping {
@@ -62,8 +74,23 @@ export function formNotFilledPing(entry: string, c: FormCandidate, hhmm: string,
   }
 }
 
-export function alertPing(entry: string, kind: AlertKind, detail?: string): Ping {
-  return { title: `Alert: ${entry}`, message: alertMessage(kind, detail), priority: 'high' }
+// The alerts that send the member to a page: an expired sign-in to the sign-in page, a missing link to the meeting page.
+// One action each (ntfy allows at most 3 per message).
+function alertActions(kind: AlertKind, links: SiteLinks | null | undefined): PingAction[] | null {
+  if (!links) return null
+  if (kind === 'zoom_signin' || kind === 'signin_forms') return [{ label: 'Sign in again', url: links.signIn }]
+  if (kind === 'no_link') return [{ label: 'Open meeting page', url: links.meetingPage }]
+  return null
+}
+
+export function alertPing(entry: string, kind: AlertKind, detail?: string, links?: SiteLinks | null): Ping {
+  const actions = alertActions(kind, links)
+  return {
+    title: `Alert: ${entry}`,
+    message: alertMessage(kind, detail),
+    priority: 'high',
+    ...(actions ? { actions } : {})
+  }
 }
 
 export function summaryReadyPing(entry: string, md: string, attachPath?: string): Ping {
@@ -246,6 +273,8 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
       return 'The bot could not check that its microphone and camera are off, so it is rejoining the meeting.'
     case 'device_check_stopped':
       return 'The bot could not check its microphone and camera again, so it stopped.'
+    case 'no_link':
+      return 'There is no meeting link yet. Paste it on the meeting page; the bot keeps watching until 30 minutes after the start.'
   }
 }
 

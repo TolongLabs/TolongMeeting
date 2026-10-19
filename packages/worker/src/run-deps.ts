@@ -1,4 +1,5 @@
 import { sendPing } from '@tm/notify'
+import type { HeartbeatOptions } from './control/heartbeat'
 import { adapterFor } from './adapters'
 import { startLiveAsr } from './asr/live'
 import { startAudioSource } from './audio/source'
@@ -10,13 +11,13 @@ import { resolveFormLink } from './forms/links'
 import { checkFormProviders } from './forms/provider-check'
 import { startFrameLoop } from './frames/frames'
 import { checkpointProfile, prepareProfile, restoreProfile, startCheckpoints } from './profile/profile'
-import { readMasterKey } from './profile/keys'
+import { loadProfileKey } from './profile/key'
 import { joinRecording } from './recorder/join'
 import { startRecorder } from './recorder/recorder'
 
 export interface OccurrenceOutcome {
   result: 'completed' | 'denied' | 'not_admitted' | 'failed'
-  endedBy: 'page' | 'removed' | 'hard_stop' | 'dropped' | 'terminated' | null
+  endedBy: 'page' | 'removed' | 'hard_stop' | 'dropped' | 'terminated' | 'member_left' | 'stopped' | null
   reason: string | null
   joinedAt: string | null
   endedAt: string
@@ -26,7 +27,7 @@ export interface OccurrenceOutcome {
 export interface RunDeps {
   prepareProfile: typeof prepareProfile
   restoreProfile: typeof restoreProfile
-  readMasterKey: typeof readMasterKey
+  loadProfileKey: typeof loadProfileKey
   startScreen: typeof startScreen
   launchBrowser: typeof launchBrowser
   launchGuestStage: typeof launchGuestStage
@@ -49,12 +50,14 @@ export interface RunDeps {
   signal?: AbortSignal
   /** Test seam: the time teardown has in all, in milliseconds. Default 50 000, inside the 60 s stop timeout. */
   teardownBudgetMs?: number
+  /** Test seam: the heartbeat's timing (default every 5 s, 4 s timeout, backing off from 1 s to 30 s). */
+  heartbeat?: Pick<HeartbeatOptions, 'intervalMs' | 'timeoutMs' | 'backoff'>
 }
 
 export const defaultDeps: RunDeps = {
   prepareProfile,
   restoreProfile,
-  readMasterKey,
+  loadProfileKey,
   startScreen,
   launchBrowser,
   launchGuestStage,

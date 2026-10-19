@@ -9,6 +9,8 @@ import {
   CheckpointFormatError,
   ProfileHostMismatch,
   checkpointProfile,
+  latestCheckpoint,
+  listCheckpoints,
   prepareProfile,
   restoreProfile,
   scheduleTicks,
@@ -384,4 +386,23 @@ test('restore accepts a symlink that stays inside the profile', async () => {
   const restored = join(root, 'restored-link')
   await restoreProfile(file, restored, key)
   expect(await tree(restored)).toEqual(['Default/Cookies', 'Default/Cookies.bak'])
+})
+
+test('the latest checkpoint is the newest timestamp', async () => {
+  await mkdir(out)
+  for (const name of ['20261021T060000Z.tar.enc', '20261021T060500Z.tar.enc', '20261020T235959Z.tar.enc', 'notes.txt'])
+    await writeFile(join(out, name), '')
+  await writeFile(join(out, '20261022T000000Z.tar.enc.tmp-ab'), '')
+  expect(await latestCheckpoint(out)).toBe(join(out, '20261021T060500Z.tar.enc'))
+  expect((await listCheckpoints(out)).map((f) => basename(f))).toEqual([
+    '20261021T060500Z.tar.enc',
+    '20261021T060000Z.tar.enc',
+    '20261020T235959Z.tar.enc'
+  ])
+})
+
+test('no checkpoint directory, or an empty one, holds no latest checkpoint', async () => {
+  expect(await latestCheckpoint(join(root, 'missing'))).toBeNull()
+  await mkdir(out)
+  expect(await latestCheckpoint(out)).toBeNull()
 })

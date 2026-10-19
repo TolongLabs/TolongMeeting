@@ -1,6 +1,6 @@
 // Control-channel and sign-in contracts shared by the website, the scheduler and the worker (plan 01c).
 import { z } from 'zod'
-import type { EventType, Heartbeat, OccurrenceState } from './types'
+import type { ControlCommand, EventType, Heartbeat, HeartbeatReply, OccurrenceState } from './types'
 
 export const ACCOUNT_KINDS = ['zoom', 'microsoft', 'google', 'whatsapp', 'discord', 'teams'] as const
 
@@ -59,6 +59,14 @@ const EVENT_TYPE_TABLE: Record<EventType, true> = {
   deletion: true
 }
 
+const CONTROL_COMMAND_TABLE: Record<ControlCommand, true> = {
+  leave_now: true,
+  take_over: true,
+  pause_for_signin: true,
+  resume_after_signin: true,
+  stop: true
+}
+
 const keysOf = <T extends string>(table: Record<T, true>) => Object.keys(table) as [T, ...T[]]
 
 export const OccurrenceStateSchema = z.enum(keysOf(OCCURRENCE_STATE_TABLE))
@@ -88,3 +96,22 @@ export const HeartbeatSchema = z.object({
   participants: z.int().min(0).max(1_000_000).nullable(),
   events: z.array(MeetingEventSchema).max(MAX_HEARTBEAT_EVENTS)
 }) satisfies z.ZodType<Heartbeat>
+
+export const ControlCommandSchema = z.enum(keysOf(CONTROL_COMMAND_TABLE))
+
+/**
+ * What the server answers to a heartbeat. A command outside `ControlCommand` fails the whole reply: the worker checks
+ * each command itself (see `HeartbeatReplyShapeSchema`) when it wants to ignore only the unknown ones.
+ */
+export const HeartbeatReplySchema = z.object({
+  ackedEvents: z.int().min(0).max(MAX_HEARTBEAT_EVENTS),
+  commands: z.array(ControlCommandSchema).max(32),
+  link: z.string().max(4096).nullable()
+}) satisfies z.ZodType<HeartbeatReply>
+
+/** The reply with `commands` left as strings, so a worker can drop an unknown command and still use the rest. */
+export const HeartbeatReplyShapeSchema = z.object({
+  ackedEvents: HeartbeatReplySchema.shape.ackedEvents,
+  commands: z.array(z.string().max(64)).max(32),
+  link: HeartbeatReplySchema.shape.link
+})
