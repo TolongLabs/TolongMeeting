@@ -221,6 +221,18 @@ test('the meeting data never holds the meeting link or the passcode', async () =
   expect(text).not.toContain('forms.example.org')
 })
 
+test('event data nested far deeper than any worker event is cut instead of walked', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  let deep: unknown = { text: 'Passcode: SECRETPWD' }
+  for (let i = 0; i < 3000; i++) deep = { n: deep }
+  await addEvent(scope, occurrenceId, { keep: 'kept', deep: deep as Record<string, unknown> })
+  const v = (await meetingData(scope, occurrenceId))!
+  const text = JSON.stringify(v.events.at(-1)!.data)
+  expect(text).toContain('"keep":"kept"')
+  expect(text).toContain('[too deep to show]')
+  expect(text).not.toContain('SECRETPWD')
+})
+
 test('event data drops secret-looking keys in any case or snake_case', async () => {
   const { scope, occurrenceId } = await meetingFixture()
   await addEvent(scope, occurrenceId, {

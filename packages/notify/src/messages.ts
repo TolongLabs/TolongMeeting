@@ -70,7 +70,8 @@ export function summaryFailedPing(entry: string, status: number): Ping {
   }
 }
 
-export type WorkerFailureReason = 'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop'
+export type WorkerFailureReason =
+  'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop' | "it couldn't be reached"
 
 // The member-facing pings of plan 01c. Each wording is fixed here; callers pass only the values that fill it in.
 export const pings = {
@@ -128,6 +129,16 @@ export const pings = {
     return {
       title: `Failed: ${p.entry}`,
       message: `The bot stopped and won't retry (${p.reason}). Anything it recorded is on the meeting page.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  workerUnchecked(p: { entry: string; meetingUrl: string }): Ping {
+    return {
+      title: `Can't check: ${p.entry}`,
+      message:
+        "TolongMeeting can't check your meeting worker: it has stopped reporting and the server can't ask Docker about it. It may still be running.",
       priority: 'high',
       actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
     }

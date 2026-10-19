@@ -137,6 +137,8 @@ const SECRET_KEY = /(pass(code|word)?|pwd|pw|link|url|join|invite)/i
 const REMOVED = '[meeting link removed]'
 /** A passcode phrase and its whole value, up to the end of the clause (newline, `;`, a closing bracket or quote, or a full stop). */
 const PASSCODE_PHRASE = /\b(?:pass[\s-]?code|passwords?|passwd|pwd)\b[^\n;)\]"'<>]*?(?=[.!?](?:\s|$)|[\n;)\]"'<>]|$)/gi
+/** Deeper than the heartbeat route lets event data nest (8), with room to spare. */
+const REDACT_MAX_DEPTH = 16
 const PASSCODE_REMOVED = '[passcode removed]'
 
 /**
@@ -168,17 +170,17 @@ function redactString(text: string): string {
  * Drops every key that names a passcode, link, URL, join or invite (any case, snake_case included) and cuts join links,
  * other URLs and passcode phrases out of every string.
  */
-function redact(value: unknown): unknown {
+function redact(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') return redactString(value)
-  if (Array.isArray(value)) return value.map(redact)
-  if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => !SECRET_KEY.test(key))
-        .map(([key, inner]) => [key, redact(inner)])
-    )
-  }
-  return value
+  if (typeof value !== 'object' || value === null) return value
+  // Data nested deeper than any worker event is cut, so a hostile row can't overflow the stack.
+  if (depth >= REDACT_MAX_DEPTH) return '[too deep to show]'
+  if (Array.isArray(value)) return value.map((inner) => redact(inner, depth + 1))
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !SECRET_KEY.test(key))
+      .map(([key, inner]) => [key, redact(inner, depth + 1)])
+  )
 }
 
 /** The largest artefact the page reads into memory. Bigger files (a chat or transcript that size is not real) are refused. */

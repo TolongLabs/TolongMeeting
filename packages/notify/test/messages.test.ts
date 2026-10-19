@@ -194,6 +194,27 @@ const COPY_CASES: [string, Ping, Ping][] = [
     }
   ],
   [
+    'workerUnchecked',
+    pings.workerUnchecked({ entry: 'Data Mining', meetingUrl: meeting }),
+    {
+      title: "Can't check: Data Mining",
+      priority: 'high',
+      message:
+        "TolongMeeting can't check your meeting worker: it has stopped reporting and the server can't ask Docker about it. It may still be running.",
+      actions: [{ label: 'Open meeting page', url: meeting }]
+    }
+  ],
+  [
+    'workerFailedUnreachable',
+    pings.workerFailed({ entry: 'Data Mining', reason: "it couldn't be reached", meetingUrl: meeting }),
+    {
+      title: 'Failed: Data Mining',
+      priority: 'high',
+      message: "The bot stopped and won't retry (it couldn't be reached). Anything it recorded is on the meeting page.",
+      actions: [{ label: 'Open meeting page', url: meeting }]
+    }
+  ],
+  [
     'deletionSoon',
     pings.deletionSoon({
       entry: 'Data Mining',

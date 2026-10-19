@@ -54,6 +54,8 @@ export {
   KILL_AFTER_END_MS,
   MAX_RESTARTS,
   STOP_AFTER_END_MS,
+  UNREACHABLE_FAIL_MS,
+  UNREACHABLE_PING_MS,
   monitorTick,
   restartOccurrence,
   type MonitorResult

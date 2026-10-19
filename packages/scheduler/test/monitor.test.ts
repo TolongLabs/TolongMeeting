@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import type { OccurrenceState } from '@tm/core'
 import { eq } from 'drizzle-orm'
@@ -12,6 +12,8 @@ import {
   KILL_AFTER_END_MS,
   MAX_RESTARTS,
   STOP_AFTER_END_MS,
+  UNREACHABLE_FAIL_MS,
+  UNREACHABLE_PING_MS,
   launchOccurrence,
   monitorTick,
   restartOccurrence,
@@ -309,6 +311,177 @@ describe('Docker that cannot be asked', () => {
     expect((await f.occurrence()).state).toBe('in_meeting')
     expect(await f.heldBy()).toBe(`occ:${f.id}`)
     expect(f.notifier.sent).toEqual([])
+  })
+})
+
+describe('a worker that cannot be checked', () => {
+  const unreachable = () => new DockerError('inspect', 0, 'proxy unreachable')
+  const at = (ms: number) => new Date(now.getTime() + ms)
+  const titles = (f: { notifier: FakeNotifier }) => f.notifier.sent.map((s) => s.ping.title)
+
+  async function silentWorker(o: Options = {}) {
+    const f = await monitorFixture({ lastHeartbeat: new Date(now.getTime() - 60_000), ...o })
+    return f
+  }
+
+  test('unknown Docker: one ping after 5 minutes, a failure after 15 that keeps the profile held', async () => {
+    const f = await silentWorker()
+    f.docker.inspect = async () => {
+      throw unreachable()
+    }
+    for (const ms of [0, 60_000, UNREACHABLE_PING_MS - 5_000]) {
+      expect(await monitorTick(f.deps, at(ms))).toEqual({ restarted: [], failed: [], released: [] })
+    }
+    expect(f.notifier.sent).toEqual([])
+
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS))
+    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    // The ping is sent once, however many passes follow.
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS + 5_000))
+    await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS - 5_000))
+    expect(titles(f)).toHaveLength(1)
+    expect((await f.occurrence()).state).toBe('in_meeting')
+
+    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS))).failed).toEqual([f.id])
+    expect(await f.occurrence()).toMatchObject({
+      state: 'failed',
+      stateReason: 'worker_unreachable',
+      containerName: f.name,
+      pendingCommands: ['stop']
+    })
+    expect(await f.heldBy()).toBe(`occ:${f.id}`)
+    expect(titles(f)).toEqual(["Can't check: Data Mining", 'Failed: Data Mining'])
+    expect(f.notifier.sent[1]!.ping.message).toContain("it couldn't be reached")
+    // Nothing changed in Docker, and later passes neither fail nor ping again.
+    expect(f.docker.stopped).toEqual([])
+    expect(f.docker.created).toEqual([])
+    expect(await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS + 5_000))).toEqual({
+      restarted: [],
+      failed: [],
+      released: []
+    })
+    expect(titles(f)).toHaveLength(2)
+
+    // Once Docker answers and the container is gone, the profile is freed.
+    f.docker.inspect = async () => null
+    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS + 10_000))).released).toEqual([f.id])
+    expect(await f.heldBy()).toBeNull()
+  })
+
+  test('a container that cannot be stopped reaches the same ceilings', async () => {
+    const f = await silentWorker()
+    f.docker.stop = async () => {
+      throw unreachable()
+    }
+    for (const ms of [0, 5_000, 60_000]) await monitorTick(f.deps, at(ms))
+    expect(f.notifier.sent).toEqual([])
+    // The failed stop hands the claim back, so the worker stays stale and the next pass tries again.
+    expect((await f.occurrence()).lastHeartbeatAt).toEqual(new Date(now.getTime() - 60_000))
+    await monitorTick(f.deps, at(UNREACHABLE_PING_MS))
+    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS))).failed).toEqual([f.id])
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'worker_unreachable' })
+    expect(await f.heldBy()).toBe(`occ:${f.id}`)
+    expect(titles(f)).toEqual(["Can't check: Data Mining", 'Failed: Data Mining'])
+    expect(f.docker.created).toEqual([])
+  })
+
+  test('a worker past its hard stop that cannot be stopped fails the same way', async () => {
+    const f = await monitorFixture({ freshHeartbeats: true })
+    f.docker.stop = async () => {
+      throw unreachable()
+    }
+    const t0 = END.getTime() + KILL_AFTER_END_MS + 60_000
+    // The worker is alive and beating throughout; only its container can't be stopped.
+    const tick = async (ms: number) => {
+      await f.db
+        .update(occurrences)
+        .set({ lastHeartbeatAt: new Date(t0 + ms) })
+        .where(eq(occurrences.id, f.id))
+      return monitorTick(f.deps, new Date(t0 + ms))
+    }
+    await tick(0)
+    await tick(UNREACHABLE_PING_MS)
+    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    expect((await tick(UNREACHABLE_FAIL_MS)).failed).toEqual([f.id])
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'worker_unreachable' })
+    expect(await f.heldBy()).toBe(`occ:${f.id}`)
+  })
+
+  test('a heartbeat in between starts the clock over', async () => {
+    const f = await silentWorker()
+    f.docker.inspect = async () => {
+      throw unreachable()
+    }
+    await monitorTick(f.deps, at(0))
+    await monitorTick(f.deps, at(4 * 60_000))
+    // The worker beats again, then goes quiet again.
+    await f.db
+      .update(occurrences)
+      .set({ lastHeartbeatAt: at(4 * 60_000 + 30_000) })
+      .where(eq(occurrences.id, f.id))
+    await monitorTick(f.deps, at(4 * 60_000 + 35_000))
+    await monitorTick(f.deps, at(8 * 60_000))
+    await monitorTick(f.deps, at(8 * 60_000 + 60_000))
+    expect(f.notifier.sent).toEqual([])
+    await monitorTick(f.deps, at(8 * 60_000 + UNREACHABLE_PING_MS))
+    expect(titles(f)).toEqual(["Can't check: Data Mining"])
+    expect((await f.occurrence()).state).toBe('in_meeting')
+  })
+
+  test('a Docker problem is logged at most once a minute per occurrence', async () => {
+    const f = await silentWorker()
+    f.docker.inspect = async () => {
+      throw unreachable()
+    }
+    const log = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      for (let i = 0; i < 12; i++) await monitorTick(f.deps, at(i * 5_000))
+      const mine = () => log.mock.calls.filter((c) => String(c[0]).includes('proxy unreachable')).length
+      expect(mine()).toBe(1)
+      await monitorTick(f.deps, at(61_000))
+      expect(mine()).toBe(2)
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
+describe('a stuck tick', () => {
+  test('after 60 seconds the next tick runs; the stuck one cannot undo it', async () => {
+    const f = await monitorFixture({ lastHeartbeat: new Date(now.getTime() - 60_000) })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    f.docker.inspect = async () => {
+      if (calls++ === 0) await gate
+      return { running: true }
+    }
+    const log = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const stuck = monitorTick(f.deps, now)
+      await Bun.sleep(100)
+      // Within 60 seconds the guard still holds.
+      expect(await monitorTick(f.deps, new Date(now.getTime() + 10_000))).toEqual({
+        restarted: [],
+        failed: [],
+        released: []
+      })
+      expect(calls).toBe(1)
+      const next = await monitorTick(f.deps, new Date(now.getTime() + 61_000))
+      expect(next.restarted).toEqual([f.id])
+      expect(log.mock.calls.some((c) => String(c[0]).includes('STUCK'))).toBe(true)
+
+      release()
+      const late = await stuck
+      // Its claim finds the worker already claimed by the newer tick.
+      expect(late).toEqual({ restarted: [], failed: [], released: [] })
+      expect(await f.occurrence()).toMatchObject({ state: 'restarting', attempt: 2, restarts: 1 })
+      expect(f.notifier.sent).toHaveLength(1)
+    } finally {
+      log.mockRestore()
+      release()
+    }
   })
 })
 

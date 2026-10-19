@@ -20,11 +20,20 @@ export const STOP_AFTER_END_MS = 35 * 60_000
 /** Past `scheduled_end` by this long, a worker is stopped and the occurrence fails. */
 export const KILL_AFTER_END_MS = 45 * 60_000
 
+/** A worker that can't be checked (stale heartbeat while Docker is unknown, or stop fails) this long gets one ping. */
+export const UNREACHABLE_PING_MS = 5 * 60_000
+/** ... and this long, the occurrence fails with `worker_unreachable`; the profile stays held until Docker says it's gone. */
+export const UNREACHABLE_FAIL_MS = 15 * 60_000
+
 /** No restart once the meeting ended this long ago: there is nothing left to rejoin. */
 const RESTART_UNTIL_END_MS = 30 * 60_000
 /** A worker that has been quiet this long and whose container is gone has died (not just finished its last beat). */
 const GONE_GRACE_MS = 10_000
 const STOP_TIMEOUT_S = 5
+/** A Docker problem is logged at most this often per occurrence. */
+const LOG_EVERY_MS = 60_000
+/** A tick that has run this long is declared stuck, and the next tick runs anyway. */
+const TICK_STUCK_MS = 60_000
 /** Job and key files are deleted this long after launch even if the worker never sent a heartbeat. */
 const JOB_FILES_MAX_AGE_MS = 120_000
 
@@ -37,17 +46,43 @@ const isWorkerState = (s: OccurrenceState): boolean => (WORKER_STATES as Readonl
 const meetingUrl = (deps: LaunchDeps, row: OccurrenceRow): string =>
   `${resolveEnv(deps.env).publicUrl}/meetings/${row.id}`
 
+// Per scheduler process. A restart of the scheduler restarts these clocks, so the ceilings below are then reached at
+// most one ceiling later; nothing is lost, because the occurrence itself stays active and is looked at again.
+const unreachable = new Map<string, { since: number; pinged: boolean }>()
+const lastLogged = new Map<string, number>()
+
+/** Logs a Docker problem for an occurrence at most once a minute. */
+function logDocker(occurrenceId: string, now: Date, message: string): void {
+  const last = lastLogged.get(occurrenceId)
+  if (last !== undefined && now.getTime() - last < LOG_EVERY_MS) return
+  lastLogged.set(occurrenceId, now.getTime())
+  console.error(`monitor: ${message}`)
+}
+
 /** What Docker says about a container. `unknown` (Docker unreachable or refusing) is never treated as `gone`. */
-async function containerView(docker: DockerClient, name: string | null): Promise<'running' | 'gone' | 'unknown'> {
+async function containerView(
+  docker: DockerClient,
+  name: string | null,
+  log: { id: string; now: Date }
+): Promise<'running' | 'gone' | 'unknown'> {
   if (name === null) return 'gone'
   try {
     const state = await docker.inspect(name)
     return state === null || !state.running ? 'gone' : 'running'
   } catch (e) {
     if (!(e instanceof DockerError)) throw e
-    console.error(`monitor: ${e.message}`)
+    logDocker(log.id, log.now, e.message)
     return 'unknown'
   }
+}
+
+/** Whether the occurrence is still on the attempt and in the state a function read it in (a stuck tick may wake late). */
+async function unchanged(deps: LaunchDeps, row: OccurrenceRow): Promise<boolean> {
+  const [now] = await deps.db
+    .select({ attempt: occurrences.attempt, state: occurrences.state })
+    .from(occurrences)
+    .where(eq(occurrences.id, row.id))
+  return now?.attempt === row.attempt && now.state === row.state
 }
 
 /** Stops the container and waits. A container that is already gone is fine; any other Docker failure is thrown. */
@@ -72,6 +107,8 @@ async function failWorker(
   ping: WorkerFailureReason
 ): Promise<boolean> {
   await stopContainer(deps.docker, row.containerName)
+  // A tick that was stuck in the stop may wake up after another tick restarted or failed this occurrence.
+  if (!(await unchanged(deps, row))) return false
   try {
     await applyTrigger(deps.db, row.id, 'fail', { reason })
   } catch (e) {
@@ -87,13 +124,17 @@ async function failWorker(
   return true
 }
 
-/** Crashes the worker, stops its container and starts the next attempt; `failed` when that attempt could not start. */
-async function restart(deps: LaunchDeps, occurrenceId: string, now: Date): Promise<'restarted' | 'failed'> {
+/**
+ * Crashes the worker, stops its container and starts the next attempt; `failed` when that attempt could not start,
+ * `skipped` when the occurrence changed while the old container was being stopped.
+ */
+async function restart(deps: LaunchDeps, occurrenceId: string, now: Date): Promise<'restarted' | 'failed' | 'skipped'> {
   const { db } = deps
   const [row] = await db.select().from(occurrences).where(eq(occurrences.id, occurrenceId))
   if (!row) throw new Error(`No occurrence ${occurrenceId}`)
   // Two workers must never run for one identity, so the old one is stopped before anything else changes.
   await stopContainer(deps.docker, row.containerName)
+  if (!(await unchanged(deps, row))) return 'skipped'
   const { restarts } = await applyTrigger(db, occurrenceId, 'crash')
   if (restarts > MAX_RESTARTS) {
     // Another crash was counted since the caller looked.
@@ -123,6 +164,10 @@ async function restart(deps: LaunchDeps, occurrenceId: string, now: Date): Promi
  * Applies `crash` to an occurrence, stops its old container (5 seconds to stop), and starts the next attempt. The restart
  * count is incremented by `crash` itself; the member is pinged after the new container started. Throws a `DockerError`,
  * before anything changes, when the old container can't be stopped.
+ *
+ * For one caller at a time: it takes no claim, so two concurrent calls for the same occurrence would crash it twice
+ * (the second one is skipped only if the first has finished crashing it by the time the old container is stopped).
+ * `monitorTick` takes its own claim before it restarts anything.
  */
 export async function restartOccurrence(deps: LaunchDeps, occurrenceId: string, now: Date): Promise<void> {
   await restart(deps, occurrenceId, now)
@@ -130,29 +175,43 @@ export async function restartOccurrence(deps: LaunchDeps, occurrenceId: string, 
 
 // --- monitorTick ---------------------------------------------------------------------------------------------------
 
-const ticking = new WeakSet<object>()
+// The tick that holds the guard for a database, and when (by the tick clock) it started.
+const ticking = new WeakMap<object, { startedAt: number }>()
 
 /**
  * One pass, every 5 seconds from the scheduler:
  * - a worker quiet for 30 seconds, or whose container is gone, crashed: it is restarted up to 3 times while the meeting
  *   ended less than 30 minutes ago, else it fails with `worker_unresponsive`;
  * - a worker still running 35 minutes after the meeting end is told to stop, and at 45 minutes it is stopped and failed;
+ * - a worker that can't be checked (quiet for 30 seconds while Docker can't be asked, or its container can't be stopped)
+ *   gets one ping after 5 minutes and fails with `worker_unreachable` after 15, with its profile still held;
  * - the container of an occurrence that is no longer active frees the profile once it is gone, and the newest
  *   checkpoint on disk is recorded;
  * - the job and key files of a running worker go once it has sent a heartbeat, or after 120 seconds.
  * Docker that can't be asked is never read as "gone": nothing is restarted, failed or released on it. A pass that starts
- * while the last one runs does nothing.
+ * while the last one runs does nothing, unless the last one has run for 60 seconds: that one is logged as stuck and
+ * this pass runs. The stuck pass's later writes are guarded (claims, state checks), so they can't undo this one's.
  */
 export async function monitorTick(deps: LaunchDeps, now: Date): Promise<MonitorResult> {
   const result: MonitorResult = { restarted: [], failed: [], released: [] }
-  if (ticking.has(deps.db)) return result
-  ticking.add(deps.db)
+  const running = ticking.get(deps.db)
+  if (running !== undefined) {
+    if (now.getTime() - running.startedAt < TICK_STUCK_MS) return result
+    console.error(
+      `monitor: STUCK: a tick has run for ${Math.round((now.getTime() - running.startedAt) / 1000)} seconds; running the next one anyway`
+    )
+  }
+  const mine = { startedAt: now.getTime() }
+  ticking.set(deps.db, mine)
   try {
     const active = await deps.db
       .select()
       .from(occurrences)
       .where(inArray(occurrences.state, [...ACTIVE_STATES]))
     const handled = new Set<string>()
+    const keys = new Set(active.map(trackKey))
+    for (const key of unreachable.keys()) if (!keys.has(key)) unreachable.delete(key)
+    for (const [id, at] of lastLogged) if (now.getTime() - at > 10 * LOG_EVERY_MS) lastLogged.delete(id)
     for (const row of active) {
       try {
         const outcome = await watch(deps, row, now)
@@ -163,15 +222,81 @@ export async function monitorTick(deps: LaunchDeps, now: Date): Promise<MonitorR
       } catch (e) {
         // A Docker failure for one occurrence leaves it as it was; the next pass looks again.
         if (!(e instanceof DockerError)) throw e
-        console.error(`monitor: ${e.message}`)
+        logDocker(row.id, now, e.message)
+        if ((await noteUnreachable(deps, row, now)) === 'failed') {
+          handled.add(row.id)
+          result.failed.push(row.id)
+        }
       }
     }
     for (const row of active) if (!handled.has(row.id)) await removeLaunchFiles(deps, row, now)
-    result.released.push(...(await releaseFinished(deps)))
+    result.released.push(...(await releaseFinished(deps, now)))
     return result
   } finally {
-    ticking.delete(deps.db)
+    if (ticking.get(deps.db) === mine) ticking.delete(deps.db)
   }
+}
+
+const trackKey = (row: OccurrenceRow): string => `${row.id}:${row.attempt}`
+
+const quietFor = (row: OccurrenceRow, now: Date): number =>
+  row.lastHeartbeatAt === null ? Infinity : now.getTime() - row.lastHeartbeatAt.getTime()
+const isStale = (row: OccurrenceRow, now: Date): boolean => quietFor(row, now) > HEARTBEAT_TIMEOUT_MS
+const hasOverrun = (row: OccurrenceRow, now: Date): boolean =>
+  isWorkerState(row.state) && now.getTime() >= row.scheduledEnd.getTime() + KILL_AFTER_END_MS
+
+/**
+ * Called when a worker that needs attention (quiet for 30 seconds, or past its hard stop) can't be dealt with because
+ * Docker can't be asked or won't stop it. The first call starts the clock; 5 minutes later the member gets one ping, and
+ * 15 minutes later the occurrence fails with `worker_unreachable`. The container name and the profile are kept, so
+ * `releaseFinished` frees the profile only once Docker says the container is gone. A worker that comes back is sent
+ * `stop` in its next reply.
+ */
+async function noteUnreachable(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'failed' | null> {
+  const stale = isStale(row, now)
+  if (!stale && !hasOverrun(row, now)) return null
+  const key = trackKey(row)
+  const t = now.getTime()
+  let entry = unreachable.get(key)
+  if (entry === undefined) {
+    entry = { since: t, pinged: false }
+    unreachable.set(key, entry)
+  }
+  const age = t - entry.since
+  const url = meetingUrl(deps, row)
+  if (age >= UNREACHABLE_FAIL_MS) {
+    // A heartbeat since the clock started means the worker is alive after all.
+    const [fresh] = await deps.db
+      .select({ at: occurrences.lastHeartbeatAt })
+      .from(occurrences)
+      .where(eq(occurrences.id, row.id))
+    if (stale && fresh?.at != null && fresh.at.getTime() > entry.since) {
+      unreachable.delete(key)
+      return null
+    }
+    try {
+      await applyTrigger(deps.db, row.id, 'fail', { reason: 'worker_unreachable' })
+    } catch (e) {
+      if (!(e instanceof IllegalTransition)) throw e
+      unreachable.delete(key)
+      return null
+    }
+    await deps.db
+      .update(occurrences)
+      .set({ pendingCommands: sql`array_append(${occurrences.pendingCommands}, 'stop')` })
+      .where(and(eq(occurrences.id, row.id), sql`not ('stop' = any(${occurrences.pendingCommands}))`))
+    unreachable.delete(key)
+    await deps.notifier.notify(
+      row.memberId,
+      pings.workerFailed({ entry: row.entryName, reason: "it couldn't be reached", meetingUrl: url })
+    )
+    return 'failed'
+  }
+  if (age >= UNREACHABLE_PING_MS && !entry.pinged) {
+    await deps.notifier.notify(row.memberId, pings.workerUnchecked({ entry: row.entryName, meetingUrl: url }))
+    entry.pinged = true
+  }
+  return null
 }
 
 /** The crash, hard-stop and stop-command checks for one active occurrence. */
@@ -180,15 +305,18 @@ async function watch(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'
   const t = now.getTime()
   const end = row.scheduledEnd.getTime()
   const isWorker = isWorkerState(row.state)
+  // Healthy again (or never unreachable): the unreachable clock starts over next time.
+  if (!isStale(row, now) && !hasOverrun(row, now)) unreachable.delete(trackKey(row))
 
   if (isWorker && t >= end + KILL_AFTER_END_MS) {
     return (await failWorker(deps, row, 'overran_hard_stop', 'it ran past the hard stop')) ? 'failed' : null
   }
 
-  const quietMs = row.lastHeartbeatAt === null ? Infinity : t - row.lastHeartbeatAt.getTime()
+  const quietMs = quietFor(row, now)
   if (quietMs >= GONE_GRACE_MS) {
-    const view = await containerView(deps.docker, row.containerName)
+    const view = await containerView(deps.docker, row.containerName, { id: row.id, now })
     const stale = quietMs > HEARTBEAT_TIMEOUT_MS
+    if (view === 'unknown' && stale) return noteUnreachable(deps, row, now)
     if (view !== 'unknown' && (stale || view === 'gone')) {
       // Claim the crash: a heartbeat that landed since the read keeps the worker alive.
       const cutoff = new Date(t - (stale ? HEARTBEAT_TIMEOUT_MS : GONE_GRACE_MS))
@@ -205,8 +333,29 @@ async function watch(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'
         )
         .returning({ id: occurrences.id })
       if (claimed.length === 0) return null
-      if (row.restarts < MAX_RESTARTS && t < end + RESTART_UNTIL_END_MS) return restart(deps, row.id, now)
-      return (await failWorker(deps, row, 'worker_unresponsive', 'it crashed 3 times')) ? 'failed' : null
+      try {
+        if (row.restarts < MAX_RESTARTS && t < end + RESTART_UNTIL_END_MS) {
+          const outcome = await restart(deps, row.id, now)
+          return outcome === 'skipped' ? null : outcome
+        }
+        return (await failWorker(deps, row, 'worker_unresponsive', 'it crashed 3 times')) ? 'failed' : null
+      } catch (e) {
+        // The old container couldn't be stopped, so nothing changed: hand the claim back, or the worker would look
+        // alive for 30 more seconds on every try and the unreachable clock could never run.
+        if (e instanceof DockerError)
+          await db
+            .update(occurrences)
+            .set({ lastHeartbeatAt: row.lastHeartbeatAt })
+            .where(
+              and(
+                eq(occurrences.id, row.id),
+                eq(occurrences.attempt, row.attempt),
+                eq(occurrences.state, row.state),
+                eq(occurrences.lastHeartbeatAt, now)
+              )
+            )
+        throw e
+      }
     }
   }
 
@@ -263,7 +412,7 @@ async function removeLaunchFiles(deps: LaunchDeps, row: OccurrenceRow, now: Date
  * An occurrence that is no longer active but still names a container: once Docker says the container is gone, forget
  * it, give the profile back and record the newest checkpoint.
  */
-async function releaseFinished(deps: LaunchDeps): Promise<string[]> {
+async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
   const { db } = deps
   const rows = await db
     .select()
@@ -271,20 +420,28 @@ async function releaseFinished(deps: LaunchDeps): Promise<string[]> {
     .where(and(notInArray(occurrences.state, [...ACTIVE_STATES]), isNotNull(occurrences.containerName)))
   const released: string[] = []
   for (const row of rows) {
-    if ((await containerView(deps.docker, row.containerName)) !== 'gone') continue
+    if ((await containerView(deps.docker, row.containerName, { id: row.id, now })) !== 'gone') continue
+    // The checkpoint is recorded first: if this pass dies half way, the container name is still set and the next pass
+    // does it again.
+    const newest = (await checkpointFiles(deps.env.profileRoot, row.identityId)).at(-1)
+    if (newest !== undefined) {
+      const path = `${deps.env.profileRoot}/${row.identityId}/checkpoints/${newest}`
+      // A pruner may remove the file between the listing and here: then there is nothing to record.
+      const info = await stat(path).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT') return null
+        throw e
+      })
+      if (info !== null)
+        await db
+          .update(profiles)
+          .set({ latestCheckpoint: path, checkpointAt: info.mtime })
+          .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
+    }
     await db
       .update(occurrences)
       .set({ containerName: null })
       .where(and(eq(occurrences.id, row.id), eq(occurrences.containerName, row.containerName!)))
     await releaseProfile(db, row.identityId, `occ:${row.id}`)
-    const newest = (await checkpointFiles(deps.env.profileRoot, row.identityId)).at(-1)
-    if (newest !== undefined) {
-      const path = `${deps.env.profileRoot}/${row.identityId}/checkpoints/${newest}`
-      await db
-        .update(profiles)
-        .set({ latestCheckpoint: path, checkpointAt: (await stat(path)).mtime })
-        .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
-    }
     released.push(row.id)
   }
   return released

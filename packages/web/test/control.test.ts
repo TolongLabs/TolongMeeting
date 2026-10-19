@@ -5,7 +5,14 @@ import { and, eq } from 'drizzle-orm'
 import { events, forms, occurrences, profiles } from '../db'
 import { QUEUES } from '../db/queues'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
-import { MAX_BODY_BYTES, handleHeartbeat, handleHeartbeatRequest } from '../lib/control'
+import {
+  MAX_BODY_BYTES,
+  MAX_EVENTS_PER_OCCURRENCE,
+  MAX_EVENT_DATA_BYTES,
+  MAX_FORMS_PER_OCCURRENCE,
+  handleHeartbeat,
+  handleHeartbeatRequest
+} from '../lib/control'
 
 afterAll(dropAllTestDbs, 60_000)
 
@@ -191,8 +198,9 @@ describe('idempotent heartbeats', () => {
     )
     expect(await f.occurrence()).toMatchObject({
       state: 'leaving',
-      actualStart: new Date('2026-10-21T05:00:01.000Z'),
-      actualEnd: new Date('2026-10-21T05:00:04.000Z')
+      // The server's clock, not the worker's `at`.
+      actualStart: NOW,
+      actualEnd: NOW
     })
   })
 
@@ -342,6 +350,36 @@ describe('body limits', () => {
     expect(await ok.json()).toEqual({ ackedEvents: 0, commands: [], link: null })
     expect((await handleHeartbeatRequest(request('{not json'), f.deps, NOW)).status).toBe(400)
   })
+
+  test('a missing or malformed Authorization header is refused before the body is read', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    for (const authorization of [undefined, 'Basic abc', 'Bearer nonsense', 'Bearer 1.']) {
+      let read = false
+      const body = new ReadableStream(
+        {
+          pull(controller) {
+            read = true
+            controller.enqueue(new TextEncoder().encode('{}'))
+            controller.close()
+          }
+        },
+        { highWaterMark: 0 }
+      )
+      const res = await handleHeartbeatRequest(
+        new Request('http://tm.test/api/control/heartbeat', {
+          method: 'POST',
+          headers: authorization === undefined ? {} : { authorization },
+          body,
+          duplex: 'half'
+        } as RequestInit),
+        f.deps,
+        NOW
+      )
+      expect(res.status).toBe(401)
+      expect(await res.json()).toEqual({ error: 'unauthorized' })
+      expect(read).toBe(false)
+    }
+  })
 })
 
 describe('side effects of events', () => {
@@ -356,8 +394,8 @@ describe('side effects of events', () => {
       ])
     )
     expect((await f.profile()).accountStatus).toEqual({
-      zoom: { verifiedAt: '2026-10-21T05:00:05.000Z', signedIn: false },
-      google: { verifiedAt: '2026-10-21T05:00:06.000Z', signedIn: true }
+      zoom: { verifiedAt: NOW.toISOString(), signedIn: false },
+      google: { verifiedAt: NOW.toISOString(), signedIn: true }
     })
   })
 
@@ -365,7 +403,7 @@ describe('side effects of events', () => {
     const f = await controlFixture({ state: 'in_meeting' })
     const base = {
       formId: 'f1',
-      url: 'https://forms.gle/x?entry.1=secret',
+      url: 'https://docs.google.com/forms/d/e/x/viewform?entry.1=secret',
       finalUrl: 'https://docs.google.com/forms/d/e/x/viewform?usp=pp_url&entry.1=secret',
       provider: 'google',
       source: 'qr',
@@ -373,20 +411,20 @@ describe('side effects of events', () => {
       senderRole: null,
       trustReason: 'qr_on_screen',
       reason: null,
-      seenAt: '2026-10-21T06:30:00Z',
+      seenAt: '2026-10-21T04:30:00Z',
       submittedAt: null
     }
     await handleHeartbeat(
       f.deps,
       'Bearer 1.abc',
       beat(f.id, 'in_meeting', [
-        ev(f.id, 'form', { ...base, state: 'filling', fieldsFilled: [] }, '2026-10-21T06:30:30.000Z')
+        ev(f.id, 'form', { ...base, state: 'filling', fieldsFilled: [] }, '2026-10-21T04:30:30.000Z')
       ])
     )
     expect(await f.form('f1')).toMatchObject({
       state: 'filling',
       source: 'qr',
-      url: 'https://forms.gle/x',
+      url: 'https://docs.google.com/forms/d/e/x/viewform',
       finalUrl: 'https://docs.google.com/forms/d/e/x/viewform',
       provider: 'google',
       trustReason: 'qr_on_screen',
@@ -403,13 +441,13 @@ describe('side effects of events', () => {
           {
             ...base,
             source: 'meeting_chat',
-            seenAt: '2026-10-21T06:45:00Z',
+            seenAt: '2026-10-21T04:45:00Z',
             state: 'submitted',
             reason: 'deadline',
-            submittedAt: '2026-10-21T06:31:00Z',
+            submittedAt: '2026-10-21T04:31:00Z',
             fieldsFilled: ['full_name']
           },
-          '2026-10-21T06:31:00.000Z'
+          '2026-10-21T04:31:00.000Z'
         )
       ])
     )
@@ -417,8 +455,8 @@ describe('side effects of events', () => {
     expect(await f.form('f1')).toMatchObject({
       state: 'submitted',
       source: 'qr',
-      seenAt: new Date('2026-10-21T06:30:00Z'),
-      submittedAt: new Date('2026-10-21T06:31:00Z'),
+      seenAt: new Date('2026-10-21T04:30:00Z'),
+      submittedAt: new Date('2026-10-21T04:31:00Z'),
       fieldsFilled: ['full_name'],
       result: 'deadline'
     })
@@ -430,13 +468,28 @@ describe('side effects of events', () => {
       { formId: null, outcome: 'ignored', reason: 'not_a_url', host: 'example.com', source: 'meeting_chat' },
       { host: 'docs.google.com', path: '/forms/d/e/x/viewform', source: 'qr' },
       { formId: 'f2', outcome: 'ignored', reason: 'handler_failed' },
-      { formId: 'f3', url: 'javascript:alert(1)', source: 'qr', state: 'detected', seenAt: '2026-10-21T06:30:00Z' },
+      { formId: 'f3', url: 'javascript:alert(1)', source: 'qr', state: 'detected', seenAt: '2026-10-21T04:30:00Z' },
+      {
+        formId: 'f5',
+        url: 'https://example.com/forms/d/e/x/viewform',
+        source: 'qr',
+        state: 'detected',
+        seenAt: '2026-10-21T04:30:00Z'
+      },
+      {
+        formId: 'f6',
+        url: 'https://docs.google.com/forms/d/e/x/viewform',
+        finalUrl: 'https://evil.example/login',
+        source: 'qr',
+        state: 'detected',
+        seenAt: '2026-10-21T04:30:00Z'
+      },
       {
         formId: 'f4',
         url: 'https://forms.gle/x',
         source: 'carrier_pigeon',
         state: 'detected',
-        seenAt: '2026-10-21T06:30:00Z'
+        seenAt: '2026-10-21T04:30:00Z'
       },
       {}
     ]
@@ -446,11 +499,238 @@ describe('side effects of events', () => {
       beat(
         f.id,
         'in_meeting',
-        shapes.map((d, i) => ev(f.id, 'form', d, `2026-10-21T06:30:0${i}.000Z`))
+        shapes.map((d, i) => ev(f.id, 'form', d, `2026-10-21T05:00:0${i}.000Z`))
       )
     )
     expect(res).toMatchObject({ status: 200, body: { ackedEvents: shapes.length } })
     expect(await f.eventCount()).toBe(shapes.length)
     expect(await f.forms()).toEqual([])
+  })
+})
+
+describe('worker-reported moves', () => {
+  const errors = async (f: Awaited<ReturnType<typeof controlFixture>>) =>
+    (await f.events()).filter((e) => e.type === 'error').map((e) => e.data)
+
+  test('the server-owned states are refused from every worker state', async () => {
+    // Each of these has a trigger from some state the machine knows; the worker still can't pick it.
+    const targets: OccurrenceState[] = [
+      'deleted',
+      'completed',
+      'post_processing',
+      'waiting_for_pc',
+      'restarting',
+      'transcribing'
+    ]
+    const f = await controlFixture({ state: 'in_meeting' })
+    let minute = 10
+    for (const from of ['in_meeting', 'uploading', 'restarting', 'in_lobby'] as const) {
+      for (const to of targets) {
+        const at = `2026-10-21T04:${minute++}:00.000Z`
+        await f.db.update(occurrences).set({ state: from, resumeState: null }).where(eq(occurrences.id, f.id))
+        await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, from, [ev(f.id, 'state', { state: to }, at)]))
+        // `uploading` -> `transcribing` is the worker's "my part is done" marker, the one move to a server-owned state.
+        const expected = from === 'uploading' && to === 'transcribing' ? 'transcribing' : from
+        expect([from, to, (await f.occurrence()).state]).toEqual([from, to, expected])
+      }
+    }
+  }, 30_000)
+
+  test('a worker cannot resume a restarting occurrence or crash its own', async () => {
+    const f = await controlFixture({ state: 'restarting' })
+    await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'in_meeting'))
+    expect((await f.occurrence()).state).toBe('restarting')
+    expect(await errors(f)).toEqual([{ reason: 'illegal_transition', from: 'restarting', to: 'in_meeting' }])
+    const g = await controlFixture({ state: 'in_meeting' })
+    await handleHeartbeat(g.deps, 'Bearer 1.abc', beat(g.id, 'restarting'))
+    expect((await g.occurrence()).state).toBe('in_meeting')
+    expect(await errors(g)).toEqual([{ reason: 'illegal_transition', from: 'in_meeting', to: 'restarting' }])
+  })
+
+  test('nothing moves an occurrence that is past the worker: transcribing, post_processing, failed and the rest', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    for (const from of ['transcribing', 'post_processing', 'completed', 'failed', 'waiting_for_pc'] as const) {
+      await f.db.update(occurrences).set({ state: from }).where(eq(occurrences.id, f.id))
+      // `fail` and `delete` are triggers from these states; the worker can't use them.
+      for (const to of ['failed', 'deleted', 'completed', 'post_processing'] as const)
+        await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, to))
+      expect([from, (await f.occurrence()).state]).toEqual([from, from])
+    }
+  }, 30_000)
+
+  test('a worker can still report the moves it owns: lobby, denial, leaving the meeting', async () => {
+    const f = await controlFixture({ state: 'joining' })
+    await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'in_lobby'))
+    await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'denied'))
+    expect((await f.occurrence()).state).toBe('denied')
+    const g = await controlFixture({ state: 'in_meeting' })
+    await handleHeartbeat(g.deps, 'Bearer 1.abc', beat(g.id, 'left_by_member'))
+    expect((await g.occurrence()).state).toBe('left_by_member')
+  })
+})
+
+describe('event times', () => {
+  const droppedFor = async (f: Awaited<ReturnType<typeof controlFixture>>, at: string) => {
+    const res = await handleHeartbeat(
+      f.deps,
+      'Bearer 1.abc',
+      beat(f.id, 'in_meeting', [ev(f.id, 'alert', { kind: 'x' }, at), ev(f.id, 'alert', { kind: 'fine' })])
+    )
+    expect(res).toMatchObject({ status: 200, body: { ackedEvents: 2 } })
+    return (await f.events()).map((e) => [e.type, e.data])
+  }
+
+  test('an event more than 5 minutes ahead of the server, or from 1970 or year 0000, is dropped, not clamped', async () => {
+    for (const at of ['2099-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z', '0000-01-01T00:00:00.000Z']) {
+      const f = await controlFixture({ state: 'in_meeting' })
+      expect(await droppedFor(f, at)).toEqual([
+        ['alert', { kind: 'fine' }],
+        ['error', { reason: 'event_out_of_range' }]
+      ])
+    }
+  })
+
+  test('the edges of the window are kept: 5 minutes ahead, 24 hours before the scheduled start', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    const hb = beat(f.id, 'in_meeting', [
+      ev(f.id, 'alert', { kind: 'ahead' }, new Date(NOW.getTime() + 5 * 60_000).toISOString()),
+      ev(f.id, 'alert', { kind: 'before' }, '2026-10-20T04:00:00.000Z')
+    ])
+    await handleHeartbeat(f.deps, 'Bearer 1.abc', hb)
+    expect((await f.events()).map((e) => e.data)).toEqual([{ kind: 'ahead' }, { kind: 'before' }])
+  })
+
+  test('a state event cannot rewrite the actual start, however it is stamped', async () => {
+    const f = await controlFixture({ state: 'joining' })
+    await handleHeartbeat(
+      f.deps,
+      'Bearer 1.abc',
+      beat(f.id, 'in_meeting', [ev(f.id, 'state', { state: 'in_meeting' }, '2026-10-20T05:00:00.000Z')])
+    )
+    expect((await f.occurrence()).actualStart).toEqual(NOW)
+  })
+
+  test('a form seen at year 0000 is stored as an event but not upserted, and answers 200', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    const url = 'https://docs.google.com/forms/d/e/x/viewform'
+    const data = { formId: 'f1', url, source: 'qr', state: 'detected', fieldsFilled: [] }
+    const res = await handleHeartbeat(
+      f.deps,
+      'Bearer 1.abc',
+      beat(f.id, 'in_meeting', [
+        ev(f.id, 'form', { ...data, seenAt: '0000-01-01T00:00:00Z' }, '2026-10-21T05:00:01.000Z'),
+        ev(f.id, 'form', { ...data, formId: 'f2', seenAt: '2026-10-21T04:30:00Z', submittedAt: '2099-01-01T00:00:00Z' })
+      ])
+    )
+    expect(res.status).toBe(200)
+    expect(await f.eventCount()).toBe(2)
+    expect(await f.forms()).toEqual([])
+  })
+})
+
+describe('event bounds', () => {
+  test('event data over 16 KB, or nested deeper than 8 levels, is dropped with one error event', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    let deep: unknown = 'x'
+    for (let i = 0; i < 9; i++) deep = { n: deep }
+    let ok: unknown = 'x'
+    for (let i = 0; i < 7; i++) ok = { n: ok }
+    const big = { pad: 'x'.repeat(MAX_EVENT_DATA_BYTES) }
+    const res = await handleHeartbeat(
+      f.deps,
+      'Bearer 1.abc',
+      beat(f.id, 'in_meeting', [
+        ev(f.id, 'alert', big, '2026-10-21T05:00:01.000Z'),
+        ev(f.id, 'alert', deep as object, '2026-10-21T05:00:02.000Z'),
+        ev(f.id, 'alert', ok as object, '2026-10-21T05:00:03.000Z'),
+        ev(f.id, 'alert', { arr: [[[[[[[[[1]]]]]]]]] }, '2026-10-21T05:00:04.000Z')
+      ])
+    )
+    expect(res).toMatchObject({ status: 200, body: { ackedEvents: 4 } })
+    expect((await f.events()).map((e) => [e.type, e.data])).toEqual([
+      ['alert', ok as Record<string, unknown>],
+      ['error', { reason: 'event_too_large' }]
+    ])
+  })
+
+  test('a 100,000-level nest (inside the 1 MB body) is a 200 with the event dropped, not a stack overflow', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    const nest = '['.repeat(100_000) + ']'.repeat(100_000)
+    const body = `{"occurrenceId":"${f.id}","attempt":1,"state":"in_meeting","recording":false,"participants":null,"events":[{"occurrenceId":"${f.id}","attempt":1,"at":"2026-10-21T05:00:01.000Z","type":"alert","data":{"a":${nest}}}]}`
+    const res = await handleHeartbeatRequest(
+      new Request('http://tm.test/api/control/heartbeat', {
+        method: 'POST',
+        headers: { authorization: 'Bearer 1.abc' },
+        body
+      }),
+      f.deps,
+      NOW
+    )
+    expect(res.status).toBe(200)
+    expect((await f.events()).map((e) => e.data)).toEqual([{ reason: 'event_too_large' }])
+  })
+
+  test('past the per-occurrence event cap, new events are acknowledged and dropped with one error event', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    const base = Date.parse('2026-10-21T04:10:00Z')
+    for (let from = 0; from < MAX_EVENTS_PER_OCCURRENCE; from += 5000) {
+      await f.db.insert(events).values(
+        Array.from({ length: 5000 }, (_, i) => ({
+          occurrenceId: f.id,
+          memberId: f.memberId,
+          attempt: 1,
+          at: new Date(base + from + i),
+          type: 'alert' as const,
+          data: { i: from + i },
+          dataHash: String(from + i)
+        }))
+      )
+    }
+    for (let i = 0; i < 2; i++) {
+      const res = await handleHeartbeat(
+        f.deps,
+        'Bearer 1.abc',
+        beat(f.id, 'in_meeting', [ev(f.id, 'alert', { n: i }), ev(f.id, 'alert', { n: i + 10 })])
+      )
+      expect(res).toMatchObject({ status: 200, body: { ackedEvents: 2 } })
+    }
+    expect(await f.eventCount()).toBe(MAX_EVENTS_PER_OCCURRENCE + 1)
+    expect((await f.events()).filter((e) => e.type === 'error').map((e) => e.data)).toEqual([{ reason: 'event_cap' }])
+  }, 30_000)
+
+  test('past the per-occurrence form cap, a new form is not stored but a known one still updates', async () => {
+    const f = await controlFixture({ state: 'in_meeting' })
+    const url = 'https://docs.google.com/forms/d/e/x/viewform'
+    await f.db.insert(forms).values(
+      Array.from({ length: MAX_FORMS_PER_OCCURRENCE }, (_, i) => ({
+        occurrenceId: f.id,
+        memberId: f.memberId,
+        formKey: `k${i}`,
+        url,
+        source: 'qr' as const,
+        state: 'detected' as const,
+        seenAt: new Date('2026-10-21T04:30:00Z')
+      }))
+    )
+    const data = (formId: string, state: string) => ({
+      formId,
+      url,
+      source: 'qr',
+      state,
+      seenAt: '2026-10-21T04:30:00Z',
+      fieldsFilled: []
+    })
+    await handleHeartbeat(
+      f.deps,
+      'Bearer 1.abc',
+      beat(f.id, 'in_meeting', [
+        ev(f.id, 'form', data('new', 'detected'), '2026-10-21T05:00:01.000Z'),
+        ev(f.id, 'form', data('k7', 'filling'), '2026-10-21T05:00:02.000Z')
+      ])
+    )
+    expect(await f.forms()).toHaveLength(MAX_FORMS_PER_OCCURRENCE)
+    expect(await f.form('new')).toBeUndefined()
+    expect((await f.form('k7'))!.state).toBe('filling')
+    expect((await f.events()).filter((e) => e.type === 'error').map((e) => e.data)).toEqual([{ reason: 'form_cap' }])
   })
 })
