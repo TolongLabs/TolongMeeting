@@ -241,7 +241,9 @@ test('a short link that answers 200 with no redirect is unresolved, not a non-fo
   expect(err).toMatchObject({ reason: 'network' })
   expect((err as Error).message).toBe('short link forms.gle/gle-200 did not redirect')
   expect(calls.map((c) => c.url)).toEqual(['https://forms.gle/gle-200'])
-  await expect(resolveFormLink(cand('https://bit.ly/gle-200'), { fetch: routedFetch(base, calls) })).rejects.toMatchObject({
+  await expect(
+    resolveFormLink(cand('https://bit.ly/gle-200'), { fetch: routedFetch(base, calls) })
+  ).rejects.toMatchObject({
     reason: 'network'
   })
 })

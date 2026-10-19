@@ -20,6 +20,8 @@ const URL_PATTERN = /https?:\/\/[^\s<>"'()[\]{}]+/gi
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_UNWRAP_DEPTH = 3
+// A shortener that does not redirect is unresolved, never "not a form": a real form behind it would be missed.
+const SHORT_LINK_HOSTS = new Set(['forms.gle', 'bit.ly', 't.co', 'tinyurl.com'])
 
 export function extractLinks(text: string): string[] {
   return [...text.matchAll(URL_PATTERN)].map((m) => m[0].replace(TRAILING_PUNCTUATION, ''))
@@ -78,6 +80,15 @@ function isFinalFormUrl(url: string): boolean {
   return u !== null && u.hostname !== 'forms.gle' && formProviderOf(url) !== null
 }
 
+// A shortener or an unopened Safe Links / Google redirect wrapper: its non-redirect answer cannot be read as "not a form".
+function isShortOrWrapperLink(url: string): boolean {
+  const u = parseUrl(url)
+  if (!u) return false
+  if (SHORT_LINK_HOSTS.has(u.hostname)) return true
+  if (u.hostname.endsWith('.safelinks.protection.outlook.com')) return true
+  return (u.hostname === 'www.google.com' || u.hostname === 'google.com') && u.pathname === '/url'
+}
+
 function trimTrailingSlash(path: string): string {
   return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path
 }
@@ -110,6 +121,14 @@ async function requestOnce(fetchFn: typeof fetch, url: string, signal: AbortSign
   }
 }
 
+async function cancelBody(res: Response, url: string): Promise<void> {
+  try {
+    await res.body?.cancel()
+  } catch (err) {
+    throw new LinkResolveError('network', `form link ${where(url)} could not be closed`, { cause: err })
+  }
+}
+
 // Returns the resolved form, or null when the final URL is not on a form provider.
 export async function resolveFormLink(c: FormCandidate, opts: ResolveOptions = {}): Promise<ResolvedForm | null> {
   const fetchFn = opts.fetch ?? fetch
@@ -123,13 +142,18 @@ export async function resolveFormLink(c: FormCandidate, opts: ResolveOptions = {
     const u = parseUrl(current)
     if (u === null || (u.protocol !== 'http:' && u.protocol !== 'https:')) return null
     const res = await requestOnce(fetchFn, current, signal)
-    await res.body?.cancel()
+    await cancelBody(res, current)
     const location = REDIRECT_STATUSES.has(res.status) ? res.headers.get('location') : null
-    if (location === null) break
+    if (location === null) {
+      if (isShortOrWrapperLink(current)) {
+        throw new LinkResolveError('network', `short link ${where(current)} did not redirect`)
+      }
+      break
+    }
     if (redirects === maxRedirects) {
       throw new LinkResolveError(
         'too_many_redirects',
-        `form link ${where(c.url)} redirected more than ${maxRedirects} times`
+        `form link ${where(current)} redirected more than ${maxRedirects} times`
       )
     }
     redirects += 1
