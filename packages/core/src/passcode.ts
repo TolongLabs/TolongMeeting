@@ -11,7 +11,9 @@ function isTeamsHost(hostname: string): boolean {
  * Removes meeting passcodes from a link. Returns '' when `url` is not a URL. Parameter names match in any case. Only
  * the matching `name=value` pairs are cut from the raw query string, so the rest keeps its original encoding.
  */
-export function stripPasscode(url: string): string {
+export function stripPasscode(input: string): string {
+  // Same clean-up as the WHATWG URL parser, so `pw<TAB>d` is seen as `pwd` here as it is by a browser.
+  const url = input.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '').replace(/[\t\n\r]/g, '')
   if (!URL.canParse(url)) return ''
   const names = new Set(ANY_HOST_PARAMS)
   if (isTeamsHost(new URL(url).hostname)) names.add(TEAMS_PARAM)

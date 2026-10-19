@@ -29,6 +29,16 @@ test('parameter names match in any case', () => {
   expect(stripPasscode('https://example.com/x?P=1')).toBe('https://example.com/x?P=1')
 })
 
+test('repeated, empty and control-character keys are all stripped', () => {
+  expect(stripPasscode('https://example.zoom.us/j/1?pwd=1&pwd=2&keep=3')).toBe('https://example.zoom.us/j/1?keep=3')
+  expect(stripPasscode('https://example.zoom.us/j/1?pwd=')).toBe('https://example.zoom.us/j/1')
+  expect(stripPasscode('https://example.zoom.us/j/1?pwd')).toBe('https://example.zoom.us/j/1')
+  expect(stripPasscode('https://example.zoom.us/j/1?pw\td=abc')).toBe('https://example.zoom.us/j/1')
+  expect(stripPasscode('https://example.zoom.us/j/1?pw\nd=abc')).toBe('https://example.zoom.us/j/1')
+  expect(stripPasscode('https://example.zoom.us/j/1?pwd\r=1&x=2')).toBe('https://example.zoom.us/j/1?x=2')
+  expect(stripPasscode('  https://example.zoom.us/j/1?pwd=1  ')).toBe('https://example.zoom.us/j/1')
+})
+
 test('the rest of the query keeps its original encoding', () => {
   expect(stripPasscode('https://example.zoom.us/j/1?topic=a%20b+c&pwd=abc&tz=Asia%2FKuala_Lumpur#frag')).toBe(
     'https://example.zoom.us/j/1?topic=a%20b+c&tz=Asia%2FKuala_Lumpur#frag'
