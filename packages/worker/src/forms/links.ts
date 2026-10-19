@@ -57,9 +57,14 @@ export function unwrapLink(url: string): string {
   return current
 }
 
+// A form URL is https, on the default port, with no userinfo. Anything else is not a form, whatever its host.
+function isSecureFormUrl(u: URL): boolean {
+  return u.protocol === 'https:' && u.port === '' && u.username === '' && u.password === ''
+}
+
 export function formProviderOf(url: string): FormProvider | null {
   const u = parseUrl(url)
-  if (!u) return null
+  if (!u || !isSecureFormUrl(u)) return null
   if (u.hostname === 'docs.google.com') return u.pathname.startsWith('/forms/') ? 'google' : null
   if (u.hostname === 'forms.gle') return 'google'
   if (u.hostname === 'forms.office.com' || u.hostname === 'forms.microsoft.com') return 'microsoft'
@@ -87,8 +92,10 @@ export function normaliseFormUrl(url: string): string {
     if (u.pathname.toLowerCase() === '/pages/responsepage.aspx' && id) return `https://forms.office.com/id/${id}`
     return `https://forms.office.com${trimTrailingSlash(u.pathname)}`
   }
-  const google = /^\/forms\/d\/(?:e\/)?[^/]+/.exec(u.pathname)
-  if (u.hostname === 'docs.google.com' && google) return `https://docs.google.com${google[0]}`
+  // Google's account-index shape (/forms/u/<n>/d/...) collapses to the plain /forms/d/... key.
+  const google = /^\/forms\/(?:u\/\d+\/)?d\/(e\/)?([^/]+)/.exec(u.pathname)
+  if (u.hostname === 'docs.google.com' && google)
+    return `https://docs.google.com/forms/d/${google[1] ?? ''}${google[2]}`
   return `https://${u.hostname}${trimTrailingSlash(u.pathname)}`
 }
 
@@ -126,10 +133,14 @@ export async function resolveFormLink(c: FormCandidate, opts: ResolveOptions = {
       )
     }
     redirects += 1
+    if (!URL.canParse(location, current)) {
+      throw new LinkResolveError('network', `form link ${where(current)} sent a malformed Location header`)
+    }
     current = unwrapLink(new URL(location, current).href)
   }
 
-  const provider = formProviderOf(current)
+  // Only a final form page counts. A short link that stopped redirecting (forms.gle answering 200) is not a form.
+  const provider = isFinalFormUrl(current) ? formProviderOf(current) : null
   if (provider === null) return null
   return { ...c, finalUrl: current, provider }
 }

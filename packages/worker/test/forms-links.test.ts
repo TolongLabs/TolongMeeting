@@ -37,6 +37,10 @@ beforeAll(() => {
         return redirect('https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=pp_url&entry.123=x')
       if (pathname === '/short-form') return redirect('https://docs.google.com/forms/d/e/1FAIpQ/viewform')
       if (pathname === '/not-a-form') return new Response('plain page', { status: 200 })
+      if (pathname === '/gle-200') return new Response('no redirect here', { status: 200 })
+      if (pathname === '/bad-location') return redirect('http://[bad')
+      if (pathname === '/to-javascript') return redirect('javascript://docs.google.com/forms/x')
+      if (pathname === '/to-file') return redirect('file://forms.office.com/r/a')
       if (pathname.startsWith('/chain/')) {
         const n = Number(pathname.slice('/chain/'.length))
         const total = Number(new URL(req.url).searchParams.get('total'))
@@ -180,4 +184,73 @@ test('Review Focus: one form in three shapes has one key', async () => {
   expect(formProviderOf('https://docs.google.com/document/d/x')).toBeNull()
   expect(formProviderOf('not a url')).toBeNull()
   expect(() => normaliseFormUrl('https://example.com/forms')).toThrow('not a form URL')
+})
+
+test('look-alike hosts are not forms', async () => {
+  const calls: Call[] = []
+  const lookAlikes = [
+    'https://docs.google.com.evil.example/forms/x',
+    'https://forms.office.com.attacker.net/r/a',
+    'https://docs.google.com@evil.example/forms/x'
+  ]
+  for (const url of lookAlikes) {
+    expect(formProviderOf(url)).toBeNull()
+    expect(await resolveFormLink(cand(url), { fetch: routedFetch(base, calls) })).toBeNull()
+  }
+  expect(formProviderOf('docs.google.com@evil.example/forms/x')).toBeNull()
+})
+
+test('a form URL needs https, the default port and no userinfo', async () => {
+  const calls: Call[] = []
+  const notForms = [
+    'http://docs.google.com/forms/d/e/1FAIpQ/viewform',
+    'https://docs.google.com:8080/forms/d/e/1FAIpQ/viewform',
+    'https://user@docs.google.com/forms/d/e/1FAIpQ/viewform',
+    'https://forms.office.com:8443/r/a'
+  ]
+  for (const url of notForms) {
+    expect(formProviderOf(url)).toBeNull()
+    expect(await resolveFormLink(cand(url), { fetch: routedFetch(base, calls) })).toBeNull()
+  }
+  // The explicit default port is the same URL as no port.
+  expect(formProviderOf('https://docs.google.com:443/forms/d/e/1FAIpQ/viewform')).toBe('google')
+})
+
+test('a form link over a non-http scheme is null and makes no request', async () => {
+  const calls: Call[] = []
+  for (const url of ['javascript://docs.google.com/forms/x', 'file://forms.office.com/r/a']) {
+    expect(formProviderOf(url)).toBeNull()
+    expect(await resolveFormLink(cand(url), { fetch: routedFetch(base, calls) })).toBeNull()
+  }
+  expect(calls.length).toBe(0)
+})
+
+test('a redirect to a non-http scheme ends the chain with null', async () => {
+  const calls: Call[] = []
+  expect(await resolveFormLink(cand(`${base}/to-javascript`), { fetch: routedFetch(base, calls) })).toBeNull()
+  expect(await resolveFormLink(cand(`${base}/to-file`), { fetch: routedFetch(base, calls) })).toBeNull()
+  expect(calls.length).toBe(2)
+})
+
+test('a forms.gle link that answers 200 with no redirect is not a form', async () => {
+  const calls: Call[] = []
+  expect(await resolveFormLink(cand('https://forms.gle/gle-200'), { fetch: routedFetch(base, calls) })).toBeNull()
+  expect(calls.map((c) => c.url)).toEqual(['https://forms.gle/gle-200'])
+  expect(calls.length).toBe(1)
+})
+
+test('a malformed Location header raises LinkResolveError with reason network', async () => {
+  await expect(resolveFormLink(cand(`${base}/bad-location`), { fetch: routedFetch(base, []) })).rejects.toBeInstanceOf(
+    LinkResolveError
+  )
+  await expect(resolveFormLink(cand(`${base}/bad-location`), { fetch: routedFetch(base, []) })).rejects.toMatchObject({
+    reason: 'network'
+  })
+})
+
+test('the account-index shape has the same key as the plain shape', () => {
+  const plain = normaliseFormUrl('https://docs.google.com/forms/d/e/1FAIpQ/viewform?usp=sf_link')
+  expect(normaliseFormUrl('https://docs.google.com/forms/u/0/d/e/1FAIpQ/viewform')).toBe(plain)
+  expect(normaliseFormUrl('https://docs.google.com/forms/u/2/d/e/1FAIpQ/viewform?usp=pp_url')).toBe(plain)
+  expect(normaliseFormUrl('https://docs.google.com/forms/u/0/d/XyZ/edit')).toBe('https://docs.google.com/forms/d/XyZ')
 })
