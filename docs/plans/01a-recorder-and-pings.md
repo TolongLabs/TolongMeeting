@@ -2242,17 +2242,17 @@ git commit -m "feat(worker): add occurrence run and tm-worker cli"
 
 - Create: `packages/pipeline/src/transcript.ts`, `packages/pipeline/src/names.ts`, `packages/pipeline/src/chat.ts`
 - Modify: `packages/pipeline/package.json` (depends on `@tm/core`, `@tm/ai`, `@tm/notify`)
-- Test: `packages/pipeline/test/transcript.test.ts`, `packages/pipeline/test/names.test.ts`, `packages/pipeline/test/chat.test.ts`, `packages/pipeline/test/helpers.ts`
+- Test: `packages/pipeline/test/transcript.test.ts`, `packages/pipeline/test/names.test.ts`, `packages/pipeline/test/chat.test.ts`
 
 **Interfaces:**
 
 - Consumes: `JobConfig`, `ChatMessage`, `formatOffset`, `localParts` (Task 2); `transcript/live.jsonl`, `recording/attempts.json` and `chat.jsonl` as written by Tasks 9, 15 and 17.
-- Produces (adds to contracts): `interface LiveLine { startMs: number; endMs: number; text: string }`; `interface Gap { atMs: number; ms: number }`; `type TranscriptBlock = { kind: 'para'; atMs: number; text: string } | { kind: 'silence'; atMs: number; ms: number } | { kind: 'gap'; atMs: number; ms: number }`; `isHallucination(text: string): boolean`; `paragraphs(lines: LiveLine[], gaps: Gap[]): TranscriptBlock[]`; `correctNames(text: string, vocab: string[]): string`; `buildTranscript(cfg: JobConfig, vocab: string[]): Promise<string>`; `orderChat(msgs: ChatMessage[]): ChatMessage[]`; `stripInviteLinks(text: string): string`; `buildChat(cfg: JobConfig): Promise<string>` (each builder returns the path it wrote).
+- Produces (adds to contracts): `interface LiveLine { startMs: number; endMs: number; text: string }`; `interface Gap { atMs: number; ms: number | null }` (`ms` is null when the gap follows a crashed attempt with no `stoppedAt`); `type TranscriptBlock = { kind: 'para'; atMs: number; text: string } | { kind: 'silence'; atMs: number; ms: number } | { kind: 'gap'; atMs: number; ms: number | null }`; `isHallucination(text: string): boolean`; `paragraphs(lines: LiveLine[], gaps: Gap[]): TranscriptBlock[]`; `correctNames(text: string, vocab: string[]): string`; `buildTranscript(cfg: JobConfig, vocab: string[]): Promise<string>`; `orderChat(msgs: ChatMessage[]): ChatMessage[]`; `stripInviteLinks(text: string): string`; `buildChat(cfg: JobConfig): Promise<string>` (each builder returns the path it wrote).
 
-- [x] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing tests**
 
 ```ts
-// packages/pipeline/src/transcript.test.ts
+// packages/pipeline/test/transcript.test.ts
 test('hallucinations are dropped', () => {
   for (const t of ['you', 'You.', 'Thank you for watching!', 'thanks for watching', '.'])
     expect(isHallucination(t)).toBe(true)
@@ -2287,7 +2287,7 @@ test('transcript.md format', async () => {
 ```
 
 ```ts
-// packages/pipeline/src/names.test.ts
+// packages/pipeline/test/names.test.ts
 test('names are corrected from authoritative text and marked as heard', () => {
   expect(correctNames('thanks Dr Amina, today Kubernetis and Kubernetes', ['Dr Aminah', 'Kubernetes'])).toBe(
     'thanks Dr Aminah _(as heard: "Dr Amina")_, today Kubernetes _(as heard: "Kubernetis")_ and Kubernetes'
@@ -2297,7 +2297,7 @@ test('names are corrected from authoritative text and marked as heard', () => {
 ```
 
 ```ts
-// packages/pipeline/src/chat.test.ts
+// packages/pipeline/test/chat.test.ts
 test('de-duplicate, order, replies after parents, invite links removed', () => {
   const out = orderChat([
     m('a', '8:41 PM', 'Lecturer', 'Attendance: https://forms.gle/abc', 1),
@@ -2324,24 +2324,24 @@ test('chat.md format', async () => {
 })
 ```
 
-- [x] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/pipeline/src/transcript.test.ts packages/pipeline/src/names.test.ts packages/pipeline/src/chat.test.ts`
+Run: `bun test packages/pipeline/test/transcript.test.ts packages/pipeline/test/names.test.ts packages/pipeline/test/chat.test.ts`
 Expected: FAIL with "Cannot find module".
 
-- [x] **Step 3: Implement**
+- [ ] **Step 3: Implement**
 
 `isHallucination`: lowercase, strip punctuation and whitespace at the ends; true for an empty or one-character result, or one of `you`, `thank you`, `thank you for watching`, `thanks for watching`. Gaps come from `attempts.json`: for consecutive attempts, `atMs` is the later start minus the first start, `ms` the later start minus the earlier stop. `paragraphs` drops hallucinations, starts a new paragraph after a pause of at least 2,000 ms or at 600 characters, inserts a `silence` block for pauses of at least 120,000 ms, and merges `gap` blocks by time. `correctNames` slides a window of as many words as each term has (1 to 3) over the text; a window whose lowercase form differs from a term of at least 6 letters by a Damerau-Levenshtein distance of at most 1 (2 for terms of 10 or more letters) becomes `<term> _(as heard: "<window>")_`. `buildTranscript` runs `correctNames` on each paragraph and writes `out/transcript.md` (silence and gap notes as `_[HH:MM:SS] No speech for N minutes._` and `_[HH:MM:SS] Recording gap of N minutes._`, rounded minutes). `orderChat` de-duplicates on `(sender, time, text.slice(0, 200))`, keeps posting order by first `seenAt`, and moves each reply directly after its parent and that parent's earlier replies. `stripInviteLinks` replaces Zoom (`/j/`, `/wc/`, `/my/`, `/s/`), Teams (`/l/meetup-join/`, `teams.live.com/meet/`) and Meet (`meet.google.com/xxx-xxxx-xxx`) links with `[meeting link removed]`. `buildChat` writes `out/chat.md`; host and co-host senders get ` (host)` or ` (co-host)`; replies are quoted lines after the parent.
 
-- [x] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/pipeline/src/transcript.test.ts packages/pipeline/src/names.test.ts packages/pipeline/src/chat.test.ts`
+Run: `bun test packages/pipeline/test/transcript.test.ts packages/pipeline/test/names.test.ts packages/pipeline/test/chat.test.ts`
 Expected: all pass.
 
-- [x] **Step 5: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/pipeline docs/plans/architecture.md
+git add packages/pipeline docs/TRD.md
 git commit -m "feat(pipeline): build transcript and chat files"
 ```
 
