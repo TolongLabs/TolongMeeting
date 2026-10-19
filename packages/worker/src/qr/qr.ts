@@ -27,15 +27,21 @@ function initZxing(): Promise<unknown> {
   zxingReady ??= (async () => {
     const entry = createRequire(import.meta.url).resolve('zxing-wasm/reader') // <pkg>/dist/cjs/reader/index.js
     const wasm = await readFile(join(dirname(entry), '../../reader/zxing_reader.wasm'))
-    await prepareZXingModule({
-      overrides: {
-        instantiateWasm(imports: WebAssembly.Imports, ok: (instance: WebAssembly.Instance) => void) {
-          void WebAssembly.instantiate(wasm, imports).then(({ instance }) => ok(instance))
-          return {}
-        }
-      },
-      fireImmediately: true
-    })
+    // prepareZXingModule waits for the instance; a failed instantiation must reject it, not leave it pending.
+    let rejectInstance!: (err: unknown) => void
+    const instance = new Promise<never>((_, reject) => (rejectInstance = reject))
+    await Promise.race([
+      prepareZXingModule({
+        overrides: {
+          instantiateWasm(imports: WebAssembly.Imports, ok: (instance: WebAssembly.Instance) => void) {
+            WebAssembly.instantiate(wasm, imports).then(({ instance }) => ok(instance), rejectInstance)
+            return {}
+          }
+        },
+        fireImmediately: true
+      }),
+      instance
+    ])
   })()
   return zxingReady
 }
@@ -76,11 +82,9 @@ async function zxingRegion(png: Buffer, region: Rect | null): Promise<string[]> 
   )
 }
 
-let bridge: Promise<WechatBridge> | null = null
+// Concurrent calls share the worker's one bridge process (see WechatBridge.shared).
 async function wechatDecode(png: Buffer): Promise<string[]> {
-  if (bridge && !(await bridge.catch(() => null))?.alive) bridge = null
-  bridge ??= WechatBridge.start()
-  return (await bridge).decode(png)
+  return WechatBridge.shared().decode(png)
 }
 
 // Decodes the QR codes on a stage frame (PNG). `region` is the shared-screen rectangle in stage coordinates, or null.
@@ -90,9 +94,7 @@ export async function decodeQr(png: Buffer, region: Rect | null): Promise<string
   return [...new Set(stages.flat())]
 }
 
-// Stops the WeChat bridge, if one runs. Call it when the worker shuts down.
-export async function closeQr(): Promise<void> {
-  const current = bridge
-  bridge = null
-  if (current) (await current.catch(() => null))?.close()
+// Stops the WeChat bridge, if one runs, and resolves once its process has exited. Call it when the worker shuts down.
+export function closeQr(): Promise<void> {
+  return WechatBridge.closeShared()
 }
