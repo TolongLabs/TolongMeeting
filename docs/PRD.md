@@ -116,6 +116,7 @@ The requester wasn't sure, so these are the designer's calls. Each would make th
 | 42  | Live transcript timestamps come from audio stream offsets; names are corrected from slides afterwards                                                | Designer  |
 | 43  | The companion app is built with Electron                                                                                                             | Designer  |
 | 44  | Milestone 1 is split into 1A (record, ping forms, summary), 1B (auto-submit) and 1C (website)                                                        | Designer  |
+| 45  | Work-meeting entries default to native transcription and show an employer-permission notice                                                          | Designer  |
 
 ## Scenarios
 

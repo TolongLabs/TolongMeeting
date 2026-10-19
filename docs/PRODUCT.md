@@ -32,7 +32,7 @@ A missed form means an absence on the member's record. A missed work meeting mea
 
 ## Users and jobs
 
-- **Member** (the user): a TolongLabs member with a handful of sessions a week. This is an internal tool for members only (decision 13), so there is no public sign-up, billing or support for other organisations.
+- **Member** (the user): a TolongLabs member. Expect a handful of members, each with a few sessions a week. This is an internal tool for members only (decision 13), so there is no public sign-up, billing or support for other organisations.
   - **Lecture job**: "Make sure I'm counted present, and tell me what I must do next."
   - **Work-meeting job**: "Tell me what was decided and what I owe, without watching the recording."
   - **Control job**: "Let me step in, sign in again or make the bot leave, from wherever I am."
