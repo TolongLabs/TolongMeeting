@@ -1744,9 +1744,9 @@ git commit -m "feat(worker): add zoom chat and meeting signals"
 **Interfaces:**
 
 - Consumes: `PlatformAdapter.readChat`, `sweepChat` (Task 14); `ChatMessage`, `Stopper`.
-- Produces (adds to contracts): `startChatCapture(page: Page, adapter: PlatformAdapter, file: string, onMessage: (m: ChatMessage) => Promise<void>, opts?: { pollMs?: number; sweepMs?: number; append?: (file: string, data: string) => Promise<void> }): Promise<ChatCapture>` with defaults 3,000 and 600,000 ms; `interface ChatCapture extends Stopper { sweepNow(): Promise<void> }`.
+- Produces (adds to contracts): `startChatCapture(page: Page, adapter: PlatformAdapter, file: string, onMessage: (m: ChatMessage) => Promise<void>, opts?: ChatCaptureOptions): Promise<ChatCapture>` with `interface ChatCaptureOptions { pollMs?: number; sweepMs?: number; append?: (file: string, data: string) => Promise<void>; emit?: (type: EventType, data: Record<string, unknown>) => Promise<void> }` (defaults 3,000 and 600,000 ms; `emit` receives `error` events, stderr without it); `interface ChatCapture extends Stopper { sweepNow(): Promise<void> }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/worker/test/chat-capture.spec.ts
@@ -1807,16 +1807,16 @@ test('a restart does not duplicate lines; sweeps recover a virtualised list', as
 Run: `bunx playwright test -c packages/worker/playwright.config.ts chat-capture.spec.ts`
 Expected: FAIL with "Cannot find module".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 On start, load the keys already in `file` into the cursor. Every `pollMs`, call `readChat`; write all new messages as one JSON-lines append; only after the append resolves adopt the returned cursor and call `onMessage` for each, in order. A failed append keeps the old cursor, logs the error code and retries on the next poll. Every `sweepMs`, and on `sweepNow()`, run `sweepChat` and handle unseen keys the same way. Polls and sweeps never overlap.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts chat-capture.spec.ts`
-Expected: 3 passed.
+Expected: 7 passed (the three above, plus a failed append, a thrown read, a torn last line and form offers).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker docs/TRD.md
