@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { canonicalFormUrl, formIdFor, FormRecordSchema, newFormRecord } from '@tm/core'
+import { canonicalFormUrl, formIdFor, FormRecordSchema, isFormPageUrl, isPlainHttpsUrl, newFormRecord } from '@tm/core'
 import { sampleForm, sampleRecord } from '@tm/core/testing'
 
 const G = 'https://docs.google.com/forms/d/e/1FAIpQLSf-x/viewform'
@@ -87,4 +87,43 @@ test('the sample fixtures are valid records and take a patch', () => {
   const patched = sampleRecord({ state: 'submitted', reason: 'captcha' })
   expect(patched).toMatchObject({ occurrenceId: 'occ-1', state: 'submitted', reason: 'captcha' })
   expect(() => FormRecordSchema.parse({ ...patched, reason: 'nope' })).toThrow()
+})
+
+test('isFormPageUrl accepts only https pages of the two form hosts', () => {
+  for (const url of [
+    G,
+    MS,
+    'https://docs.google.com/forms/u/0/d/e/1FAIpQLSf-x/viewform',
+    'https://forms.office.com/r/XyZ123'
+  ]) {
+    expect(isFormPageUrl(url)).toBe(true)
+  }
+  const refused = [
+    'http://docs.google.com/forms/d/e/1FAIpQLSf-x/viewform',
+    'https://docs.google.com:8443/forms/d/e/1FAIpQLSf-x/viewform',
+    'https://user:pw@docs.google.com/forms/d/e/1FAIpQLSf-x/viewform',
+    'https://docs.google.com/drive/x',
+    'https://docs.google.com/formsx/d/e/1FAIpQLSf-x/viewform',
+    'https://forms.gle/abc',
+    'https://forms.microsoft.com/r/XyZ123',
+    'https://forms.office.com.evil.com/r/XyZ123',
+    'javascript:alert(1)',
+    'not a url'
+  ]
+  for (const url of refused) expect(isFormPageUrl(url)).toBe(false)
+})
+
+test('isFormPageUrl stops at 300 characters', () => {
+  const pad = (length: number) =>
+    `https://forms.office.com/r/${'a'.repeat(length - 'https://forms.office.com/r/'.length)}`
+  expect(isFormPageUrl(pad(300))).toBe(true)
+  expect(isFormPageUrl(pad(301))).toBe(false)
+})
+
+test('isPlainHttpsUrl refuses other schemes, ports and credentials', () => {
+  expect(isPlainHttpsUrl(G)).toBe(true)
+  expect(isPlainHttpsUrl('http://docs.google.com/x')).toBe(false)
+  expect(isPlainHttpsUrl('https://docs.google.com:8443/x')).toBe(false)
+  expect(isPlainHttpsUrl('https://u@docs.google.com/x')).toBe(false)
+  expect(isPlainHttpsUrl('not a url')).toBe(false)
 })

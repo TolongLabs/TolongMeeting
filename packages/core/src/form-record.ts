@@ -174,6 +174,27 @@ export function canonicalFormUrl(finalUrl: string): string {
   return `${u.protocol}//${u.host}${trimTrailingSlash(u.pathname)}`
 }
 
+function parseUrl(url: string): URL | null {
+  try {
+    return new URL(url)
+  } catch {
+    return null
+  }
+}
+
+// An https link with no port and no userinfo. The stored link must pass this, not only its canonical page.
+export function isPlainHttpsUrl(url: string): boolean {
+  const u = parseUrl(url)
+  return u !== null && u.protocol === 'https:' && u.port === '' && u.username === '' && u.password === ''
+}
+
+// The only pages a summary may print: a canonical Google Forms or Microsoft Forms page, at most 300 characters.
+export function isFormPageUrl(url: string): boolean {
+  if (url.length > 300 || !isPlainHttpsUrl(url)) return false
+  const u = new URL(url)
+  return (u.hostname === 'docs.google.com' && u.pathname.startsWith('/forms/')) || u.hostname === 'forms.office.com'
+}
+
 // One id per form per meeting: the first 16 hex characters of SHA-256 of the canonical URL.
 export function formIdFor(finalUrl: string): string {
   return createHash('sha256').update(canonicalFormUrl(finalUrl)).digest('hex').slice(0, 16)

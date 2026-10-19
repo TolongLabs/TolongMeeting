@@ -105,7 +105,7 @@ test('attendance reads not seen without a form, and reads the submitted and need
   const second = await runPipeline(cfg)
   const md = await Bun.file(second.summaryPath).text()
   expect(md).toContain(
-    '\nAttendance: submitted at 20:40 (Google Forms) ✓; needs you: https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform\n'
+    '\nAttendance: needs you: https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform; submitted at 20:40 (Google Forms) ✓\n'
   )
   expect(md).not.toContain('Secret')
 })
@@ -181,11 +181,12 @@ test('a torn or malformed form record reads as a form that could not be read, ne
   await Bun.write(join(occ.dataDir, 'forms', 'm1', 'record.json'), JSON.stringify({ state: 'needs_member', url: 'x' }))
   expect(await Bun.file((await runPipeline(cfg)).summaryPath).text()).toContain(unreadable)
 
-  // A readable form that needs the member comes first, and the record that could not be read is still told.
+  // A readable form that needs the member comes first. A short link is not a form page, so it is unreadable and told.
   await writeForm('g1', { url: 'https://forms.gle/abc', finalUrl: 'https://forms.gle/abc', state: 'needs_member' })
+  await writeForm('g2', { state: 'needs_member' })
   const both = await Bun.file((await runPipeline(cfg)).summaryPath).text()
   expect(both).toContain(
-    '\nAttendance: needs you: https://forms.gle/abc; a form was seen but could not be read; check the meeting page\n'
+    '\nAttendance: needs you: https://docs.google.com/forms/d/e/1FAIpQLSf-x/viewform; a form was seen but could not be read; check the meeting page\n'
   )
 })
 
