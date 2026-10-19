@@ -94,6 +94,12 @@ async function readChat(path: string): Promise<ChatMessage[]> {
   })
 }
 
+// The captured messages in file order; a missing chat.jsonl means none were captured.
+export async function loadChat(cfg: JobConfig): Promise<ChatMessage[]> {
+  const source = join(cfg.dataDir, 'chat.jsonl')
+  return (await Bun.file(source).exists()) ? readChat(source) : []
+}
+
 function roleLabel(role: ChatMessage['senderRole']): string {
   if (role === 'host') return ' (host)'
   if (role === 'co_host') return ' (co-host)'
