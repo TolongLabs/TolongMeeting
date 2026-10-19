@@ -1,6 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import { driverFor } from '../src/forms/drivers'
-import { OpenTimeoutError, TabNotOnDeskError, openDeskTab, openForm, waitForTabSignin } from '../src/forms/open'
+import {
+  OpenTimeoutError,
+  TabCloseFailedError,
+  TabNotOnDeskError,
+  openDeskTab,
+  openForm,
+  waitForTabSignin
+} from '../src/forms/open'
 import { googleUrl, routeFormFixtures } from './forms/route'
 
 const windowOf = async (p: Page) =>
@@ -22,6 +29,40 @@ test('refuses and closes a tab that opened in another window', async ({ page: de
   }
   await expect(openDeskTab(desk, popup)).rejects.toThrow(TabNotOnDeskError)
   expect(desk.context().pages()).toHaveLength(1)
+})
+
+test('says so when a tab outside the desk window cannot be closed', async ({ page: desk }) => {
+  let popupPage: Page | undefined
+  const stubborn = async () => {
+    const [p] = await Promise.all([
+      desk.waitForEvent('popup'),
+      desk.evaluate(() => window.open('about:blank', '_blank', 'popup,left=2000,top=0,width=600,height=400'))
+    ])
+    popupPage = p
+    p.close = async () => {
+      throw new Error('close refused')
+    }
+    return p
+  }
+  const error = await openDeskTab(desk, stubborn).catch((e: unknown) => e)
+  expect(error).toBeInstanceOf(TabCloseFailedError)
+  expect(error).not.toBeInstanceOf(TabNotOnDeskError)
+  expect(popupPage!.isClosed()).toBe(false)
+  delete (popupPage as Partial<Page>).close // the prototype close again
+  await popupPage!.close()
+})
+
+test('closes a tab that fails after it opened, then rethrows', async ({ browser, page: desk }) => {
+  // a page of another context: the desk's context cannot attach a CDP session to it
+  const other = await browser.newContext()
+  try {
+    const foreign = await other.newPage()
+    await expect(openDeskTab(desk, async () => foreign)).rejects.toThrow()
+    expect(foreign.isClosed()).toBe(true)
+    expect(desk.context().pages()).toHaveLength(1)
+  } finally {
+    await other.close()
+  }
 })
 
 test('reports form, signin and timeouts', async ({ context, page: desk }) => {

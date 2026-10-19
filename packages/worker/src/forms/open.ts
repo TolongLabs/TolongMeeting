@@ -1,11 +1,11 @@
 import { canonicalFormUrl } from '@tm/core'
 import { errors, type Page } from 'playwright'
-import { TabNotOnDeskError, openDeskTab } from '../chrome/launch'
+import { TabCloseFailedError, TabNotOnDeskError, openDeskTab } from '../chrome/launch'
 import type { FormDriver } from './drivers'
 import type { PageKind } from './types'
 
 // Both come from chrome/launch.ts: there is one openDeskTab, and a form tab is a desk tab.
-export { TabNotOnDeskError, openDeskTab }
+export { TabCloseFailedError, TabNotOnDeskError, openDeskTab }
 
 export class OpenTimeoutError extends Error {
   constructor(message: string) {
@@ -21,9 +21,11 @@ const OPEN_POLL_MS = 250
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// The page is mid-navigation (a sign-in redirect, a form submit): the read is repeated, anything else is a real error.
-const isNavigationRace = (error: unknown): boolean =>
-  error instanceof Error && /execution context was destroyed|frame was detached|navigat/i.test(error.message)
+// The page is mid-navigation (a sign-in redirect, a form submit): the read is repeated. These are Playwright's messages
+// for that race; anything else is a real error and is thrown.
+const NAVIGATION_RACE =
+  /execution context was destroyed|frame was detached|navigation .*interrupted|interrupted by another navigation/i
+const isNavigationRace = (error: unknown): boolean => error instanceof Error && NAVIGATION_RACE.test(error.message)
 
 // pageKind, repeated while the page is changing under it.
 async function kindOf(tab: Page, driver: FormDriver): Promise<PageKind | 'navigating'> {
@@ -62,6 +64,7 @@ export async function openForm(
 
 // Sleeps `ms`, or less if the signal aborts.
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(timer)
