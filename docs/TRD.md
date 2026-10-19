@@ -296,7 +296,7 @@ TolongMeeting/
 - **Formatting**: Prettier, `bun run lint` to check and `bun run lint:fix` to fix, with husky and lint-staged on commit, as in other TolongLabs repositories. A change is done when `bun run lint` passes.
 - **Commits**: conventional commits (`feat:`, `fix:`, `test:`, `chore:`, `docs:`), header at most 50 characters, one task per commit or less.
 - **Secrets**: never committed, never logged, never in URL query strings of the app's own API. `.env.example` lists names only.
-- **Pinned versions**: Chrome, Playwright, ffmpeg, Node and Bun versions for the worker image live in `docker/worker/versions.env`, set by spike 2 and changed only together with a passing smoke test. `scripts/build-worker-image.sh` passes every key (`NODE_VERSION`, `CHROME_VERSION`, `PLAYWRIGHT_VERSION`, `FFMPEG_VERSION`, `BUN_VERSION`) as a build argument of the same name and tags the image both `tm-worker:dev` and `tolongmeeting/worker:current`.
+- **Pinned versions**: Chrome, Playwright, ffmpeg, Node and Bun versions for the worker image live in `docker/worker/versions.env`, set by spike 2 and changed only together with a passing smoke test. `scripts/build-worker-image.sh` passes every key (`NODE_VERSION`, `CHROME_VERSION`, `PLAYWRIGHT_VERSION`, `FFMPEG_VERSION`, `BUN_VERSION`, `BUN_SHA256`) as a build argument of the same name and tags the image both `tm-worker:dev` and `tolongmeeting/worker:current`.
 
 ## Runtime processes
 
@@ -689,7 +689,7 @@ The milestone plans were written in parallel against this page. Each marks the s
 
 - **All plans**: packages are named `@tm/core`, `@tm/ai`, `@tm/notify`, `@tm/worker`, `@tm/pipeline`, `@tm/scheduler`, `@tm/web`, `@tm/companion` and `@tm/exports`. `AiConfig` and `NtfyConfig` are declared in `@tm/core` and re-exported by `@tm/ai` and `@tm/notify`.
 - **00 spikes**:
-  - the `docker/worker/versions.env` keys `NODE_VERSION`, `CHROME_VERSION`, `PLAYWRIGHT_VERSION`, `FFMPEG_VERSION` and `BUN_VERSION`;
+  - the `docker/worker/versions.env` keys `NODE_VERSION`, `CHROME_VERSION`, `PLAYWRIGHT_VERSION`, `FFMPEG_VERSION` and `BUN_VERSION`, plus `BUN_SHA256` (added by plan 01a);
   - `spikes/DECISIONS.md` and its decision keys (`runLocation.*`, `chrome.*`, `qr.*`, `forms.*`, `asr.*`, `worker.*`, `profile.*`, `watchers.*`, `ntfy.*`);
   - extra managed Chrome policies (no password saving, no browser sign-in or sync, no capture devices).
 - **01a recorder and pings**:

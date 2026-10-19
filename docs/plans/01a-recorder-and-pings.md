@@ -699,16 +699,17 @@ Result: not run: image build blocked by full root filesystem.
 
 - [x] **Step 3: Implement the image**
 
-Dockerfile key lines (base `node:${NODE_VERSION}-bookworm-slim`, as in the spike; the lines below are the shape, the file in `docker/worker/` is the truth: it also checks the Chrome `.deb` and Bun SHA-256, installs Python 3.12 with OpenCV's WeChat detector and its four model files for the QR bridge, and builds without `.git` and `spikes/` through `.dockerignore`. Every version from a build argument, non-root user `tm`, `/app` holds the repository):
+Dockerfile key lines (base `node:${NODE_VERSION}-bookworm-slim`, as in the spike; the lines below are the shape, the file in `docker/worker/` is the truth: it also checks the Chrome `.deb` and the Bun zip against SHA-256 values pinned in the repository (`BUN_SHA256` in `versions.env`), installs Python 3.12 with OpenCV's WeChat detector from hash-pinned wheels (`docker/worker/wechat-requirements.txt`, `--require-hashes --no-deps`) and its four model files for the QR bridge (`TM_WECHAT_MODELS_DIR`, `TM_WECHAT_PYTHON`), keeps dev dependencies because the `test` and `unit` modes need them, and builds without `.git` and `spikes/` through `.dockerignore`. Every version from a build argument, non-root user `tm`, `/app` holds the repository):
 
 ```dockerfile
-ARG CHROME_VERSION NODE_VERSION FFMPEG_VERSION BUN_VERSION PLAYWRIGHT_VERSION
+ARG CHROME_VERSION NODE_VERSION FFMPEG_VERSION BUN_VERSION BUN_SHA256 PLAYWRIGHT_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends xvfb openbox pulseaudio pulseaudio-utils x11vnc x11-utils \
     "ffmpeg=${FFMPEG_VERSION}*" libgl1-mesa-dri fonts-noto fonts-noto-cjk fonts-noto-color-emoji jq curl ca-certificates xz-utils
 RUN curl -fsSLo /tmp/chrome.deb "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}-1_amd64.deb" \
     && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb
 RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /usr/local --strip-components=1
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && mv /root/.bun/bin/bun /usr/local/bin/bun
+RUN curl -fsSLO "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
+    && echo "${BUN_SHA256}  bun-linux-x64.zip" | sha256sum -c - && unzip -q -j bun-linux-x64.zip bun-linux-x64/bun -d /usr/local/bin
 COPY docker/worker/chrome-policy.json /etc/opt/chrome/policies/managed/tm.json
 COPY docker/worker/openbox/rc.xml /etc/xdg/openbox/rc.xml
 COPY docker/worker/pulse/default.pa /etc/pulse/default.pa
@@ -716,7 +717,8 @@ COPY . /app
 # cli.ts arrives in Task 18; until then the image is built without dist/
 RUN cd /app && bun install --frozen-lockfile && if [ -f packages/worker/src/cli.ts ]; then bun run build:worker; fi
 RUN useradd -m tm && chown -R tm /app
-ENV TM_SELECTORS_DIR=/app/config/selectors TM_IN_IMAGE=1
+ENV TM_SELECTORS_DIR=/app/config/selectors TM_IN_IMAGE=1 \
+    TM_WECHAT_MODELS_DIR=/opt/wechat-models TM_WECHAT_PYTHON=/opt/wechat-venv/bin/python
 USER tm
 ENTRYPOINT ["/app/docker/worker/entrypoint.sh"]
 # Run with --shm-size=2g: Chrome's WebRTC tabs crash on Docker's 64 MB default. run-job.sh does this.
@@ -726,11 +728,20 @@ ENTRYPOINT ["/app/docker/worker/entrypoint.sh"]
 
 ```json
 {
-  "URLBlocklist": ["file://*", "chrome://*", "javascript:*", "zoommtg:*", "zoomus:*", "msteams:*"],
+  "URLBlocklist": [
+    "file://*",
+    "chrome://*",
+    "devtools://*",
+    "javascript://*",
+    "zoommtg://*",
+    "zoomus://*",
+    "msteams://*"
+  ],
   "DeveloperToolsAvailability": 2,
   "DownloadRestrictions": 3,
   "AudioCaptureAllowed": false,
   "VideoCaptureAllowed": false,
+  "ScreenCaptureAllowed": false,
   "DefaultNotificationsSetting": 2,
   "PasswordManagerEnabled": false,
   "BrowserSignin": 0,
@@ -752,7 +763,7 @@ set-default-source tm_mic
 set-source-mute tm_mic 1
 ```
 
-`openbox/rc.xml` sets `<focus><focusNew>no</focusNew></focus>` and one `<application class="*">` rule with `<decor>no</decor>`, `<maximized>no</maximized>` and `<focus>no</focus>`. `entrypoint.sh` starts `pulseaudio --daemonize=no --exit-idle-time=-1` in the background, waits for `pactl info`, then dispatches: `selfcheck` runs `selfcheck.sh`; `test` runs `bunx playwright test -c packages/worker/playwright.config.ts "$@"`; `unit` runs `bun test "$@"`; `seed --job <p>` runs `node packages/worker/dist/cli.js --seed --job <p>`; `--job <p>` runs `bun run tm-worker -- --job <p>`, then `bun run tm-pipeline -- --job <p>` whenever `recording/meeting.mkv` exists and the job's `control` is null (with a control URL the milestone 1C pipeline consumer runs it), and exits with the worker's code if it failed, else the pipeline's. `run-job.sh` reads `identity.id` from the job with `jq`, writes `$TM_PROFILE_ROOT/<identityId>/machine-id` (`printf %s "$id" | sha256sum | cut -c1-32`) if absent, and runs `docker run --rm --shm-size=2g --hostname "tm-<first 20 characters of id>"` with the machine id mounted read-only at `/etc/machine-id`, `$TM_DATA_ROOT` and `$TM_PROFILE_ROOT` mounted at the same paths, the master key file mounted read-only at `/run/secrets/tm_master_key` (`TM_MASTER_KEY_FILE` set to it), the job mounted read-only at `/job/job.json`, and mode `--job /job/job.json`; with `seed` it publishes `127.0.0.1:5900:5900` and uses mode `seed`.
+`openbox/rc.xml` sets `<focus><focusNew>no</focusNew></focus>` and one `<application class="*">` rule with `<decor>no</decor>`, `<maximized>no</maximized>` and `<focus>no</focus>`. `entrypoint.sh` starts `pulseaudio --daemonize=no --exit-idle-time=-1` in the background, waits for `pactl info`, then dispatches: `selfcheck` runs `selfcheck.sh`; `test` runs `bunx playwright test -c packages/worker/playwright.config.ts "$@"`; `unit` runs `bun test "$@"`; `seed --job <p>` runs `node packages/worker/dist/cli.js --seed --job <p>`; `--job <p>` runs `node packages/worker/dist/cli.js --job <p>` (not through `bun run`, so `docker stop`'s SIGTERM reaches the worker; a TERM, also one during the PulseAudio wait, stops the job and skips the pipeline), then `bun run tm-pipeline -- --job <p>` whenever `recording/meeting.mkv` exists and the job's `control` is null (with a control URL the milestone 1C pipeline consumer runs it), and exits with the worker's code if it failed, else the pipeline's. `run-job.sh` reads `identity.id` from the job with `jq`, writes `$TM_PROFILE_ROOT/<identityId>/machine-id` (`printf %s "$id" | sha256sum | cut -c1-32`, written to a temp file and renamed) if absent, and runs `docker run --rm --shm-size=2g --hostname "tm-<first 20 characters of id>"` with the machine id mounted read-only at `/etc/machine-id`, only `$TM_PROFILE_ROOT/<identityId>` and the job's `dataDir` (which must sit inside `$TM_DATA_ROOT`) mounted read-write at the same paths (a worker can't reach other identities' profiles or other occurrences' data), `--stop-timeout 60`, `--security-opt no-new-privileges`, `--cap-drop=ALL` and `--pids-limit 2048` (Chrome runs with its own sandbox disabled in the container, per Task 7, so the container is the boundary), the master key file mounted read-only at `/run/secrets/tm_master_key` (`TM_MASTER_KEY_FILE` set to it), the job mounted read-only at `/job/job.json`, and mode `--job /job/job.json`; with `seed` it publishes `127.0.0.1:5900:5900` and uses mode `seed`.
 
 - [x] **Step 4: Run it to verify it passes** (not run: image build blocked by full root filesystem)
 
