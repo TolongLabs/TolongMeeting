@@ -20,9 +20,13 @@ function sqlstateOf(value: unknown): string | undefined {
 /**
  * Turns a failed query into an error that is safe to log or show. A Drizzle query error carries the SQL text and its
  * parameters, which are the member's saved values, in its message, its stack and its `cause`; the result keeps none of
- * them. Any other error is returned unchanged. Use it as `throw safeDbError(e)` wherever a write saves member values.
+ * them. A bare Postgres error (one with a SQLSTATE `code`) is mapped too, since its `detail` can quote the conflicting
+ * key's value. Any other error is returned unchanged. Use it as `throw safeDbError(e)` wherever a write saves member
+ * values.
  */
 export function safeDbError(e: unknown): unknown {
-  if (!(e instanceof Error) || !('query' in e && 'params' in e)) return e
-  return new DbError(sqlstateOf(e.cause) ?? sqlstateOf(e))
+  if (!(e instanceof Error)) return e
+  if ('query' in e && 'params' in e) return new DbError(sqlstateOf(e.cause) ?? sqlstateOf(e))
+  const code = sqlstateOf(e)
+  return code ? new DbError(code) : e
 }

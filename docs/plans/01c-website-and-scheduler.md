@@ -1206,7 +1206,7 @@ git commit -m "feat(web): add AI keys page"
 
 The Accounts page lists the member's identities, each with its settings form (run location select showing all three locations with the two non-server ones disabled and labelled "available later", Zoom guest display name defaulting to the member's display name), its account status, and a "Sign in" button that opens `/accounts/<identityId>/signin` (Task 18). The My details page shows the four built-in values first, then custom pairs, each with editable label variants, then the names the member answers to.
 
-Deferred page step: the Accounts page must confirm a deletion before it runs, and list what will be removed with the identity: its past meetings, recordings and summaries (finished occurrences cascade with the identity), and name what blocks it instead when a timetable entry, an unfinished meeting or sign-in, or a hold stops the delete.
+Deferred page step: the Accounts page must confirm a deletion before it runs, and list what will be removed with the identity: its past meetings and their records (finished occurrences cascade with the identity; their files go at the next nightly retention run), and name what blocks it instead when a timetable entry, an unfinished meeting or sign-in, or a hold stops the delete.
 
 - [x] **Step 1: Write the failing tests**
 
