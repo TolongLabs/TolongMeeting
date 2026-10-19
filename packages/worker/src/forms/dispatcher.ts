@@ -7,7 +7,7 @@ import {
   type ResolvedForm,
   type StopReason
 } from '@tm/core'
-import { handleForm } from './handler'
+import { handleForm, SUBMIT_DEADLINE_MS } from './handler'
 import { formPing } from './pings'
 import { errorText } from './redact'
 import { formEventData, loadFormRecords, saveFormRecord } from './store'
@@ -99,10 +99,13 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
     return pinged
   }
 
-  // Fails a record that is not terminal, saves it, emits it and pings the member. Each step is attempted even when an
-  // earlier one failed, so a broken disk still lets the member hear about the form.
+  // Fails a record, saves it, emits it and pings the member. Each step is attempted even when an earlier one failed, so
+  // a broken disk still lets the member hear about the form. An untrusted record (a queued upgrade) leaves that state
+  // only through a trusted sighting, as the state machine requires, so it passes through that step first.
   async function failRecord(rec: FormRecord, reason: StopReason): Promise<FormRecord> {
-    const failed = applyFormTrigger({ ...rec, reason }, 'error', new Date().toISOString())
+    const at = new Date().toISOString()
+    const from = rec.state === 'untrusted' ? applyFormTrigger(rec, 'trusted_candidate_seen', at) : rec
+    const failed = applyFormTrigger({ ...from, reason }, 'error', at)
     await attempt(failed.formId, () => saveFormRecord(cfg.dataDir, failed))
     await attempt(failed.formId, () => emit('form', formEventData(failed)))
     return pingRecord(failed)
@@ -117,8 +120,8 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
     let record = rec
     if (!isTerminalFormState(rec.state)) {
       record = await failRecord(rec, rec.state === 'submitting' ? 'interrupted_submitting' : 'interrupted')
-    } else if (rec.state === 'failed' && rec.pings.length === 0) {
-      record = await pingRecord(rec) // it failed before its ping went out
+    } else if (rec.state === 'failed' && !rec.pings.some((p) => p.state === 'failed')) {
+      record = await pingRecord(rec) // it failed before its failure ping went out
     }
     entries.set(rec.formId, {
       record,
@@ -184,13 +187,24 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
     entry.running = false
   }
 
+  // Why a form that holds a slot must not be opened: the meeting ended while it queued, or its deadline (from seenAt)
+  // passed. Null when it may still run. Synchronous, so a free slot still starts the handler in the same tick.
+  function expiredReason(f: ResolvedForm): StopReason | null {
+    if (abort.signal.aborted) return 'meeting_ended'
+    if (Date.now() > Date.parse(f.seenAt) + SUBMIT_DEADLINE_MS) return 'deadline'
+    return null
+  }
+
   // Waits for a slot, then handles or refuses the form. Whatever happens, the entry settles and the slot is freed.
   async function execute(entry: Entry, f: ResolvedForm, previous: FormRecord | null): Promise<void> {
     // A free slot is taken at once, so the handler starts in the same tick as the offer.
     if (inFlight < MAX_FORMS_IN_FLIGHT) inFlight++
     else await new Promise<void>((resolve) => waiting.push(resolve))
     try {
-      if (tabsBlocked) await refuse(entry, f, previous)
+      const expired = expiredReason(f)
+      // An expired form is failed unopened: no tab, no handler call.
+      if (expired !== null) entry.record = await failRecord(previous ?? newFormRecord(f, cfg.occurrenceId), expired)
+      else if (tabsBlocked) await refuse(entry, f, previous)
       else await drive(entry, f, previous)
     } catch (error) {
       entry.dead = true

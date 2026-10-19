@@ -297,7 +297,7 @@ test('a ping that fails at runtime is reported, the form settles and the dispatc
   })
   const d = await startFormDispatcher(failingPing(base, 1), handle)
   d.offer(formFor('A', 'qr'))
-  await settle()
+  while (!events.some((e) => e.type === 'form')) await settle() // the record is saved before its form event
   expect(byName((await loadFormRecords(dir)).records, 'A')).toMatchObject({ state: 'failed', pings: [] })
   d.offer(formFor('B', 'qr'))
   expect((await d.close()).map((r) => r.state)).toEqual(['failed', 'failed'])
@@ -365,6 +365,7 @@ test('at most three forms are handled at once, the rest wait their turn, and all
   await settle()
   expect(handle).toHaveBeenCalledTimes(4)
   for (const g of gates) g.resolve()
+  await settle() // E gets its slot and runs before close
   expect((await d.close()).length).toBe(5)
   expect(order).toEqual(['A', 'B', 'C', 'D', 'E'])
   expect(peak).toBe(MAX_FORMS_IN_FLIGHT)
@@ -390,4 +391,69 @@ test('at start a failed record with no ping is pinged and an unreadable record i
   expect(events).toContainEqual(
     expect.objectContaining({ type: 'error', formId: formIdFor(formFor('D', 'qr').finalUrl) })
   )
+})
+
+test('at start a failed record whose pings log only a sign-in ping is pinged again', async () => {
+  const dir = await tmp()
+  await saveFormRecord(dir, {
+    ...recFor('H', 'failed'),
+    reason: 'deadline',
+    pings: [{ state: 'awaiting_signin', at: new Date().toISOString() }]
+  })
+  const { base, pings } = fakeBase(dir)
+  const d = await startFormDispatcher(
+    base,
+    mock(async () => recFor('X', 'submitted'))
+  )
+  await d.close()
+  expect(pings).toHaveLength(1)
+  expect(byName((await loadFormRecords(dir)).records, 'H').pings.map((p) => p.state)).toEqual([
+    'awaiting_signin',
+    'failed'
+  ])
+})
+
+const gatedHandle = (gates: Map<string, ReturnType<typeof deferred<void>>>) =>
+  mock(async (f: ResolvedForm): Promise<FormRecord> => {
+    const n = f.finalUrl.split('/')[6]!
+    await gates.get(n)!.promise
+    return recFor(n, 'submitted')
+  })
+
+test('close fails the forms queued behind full slots as meeting_ended, without opening them', async () => {
+  const dir = await tmp()
+  const gates = new Map(['A', 'B', 'C'].map((n) => [n, deferred<void>()]))
+  const handle = gatedHandle(gates)
+  const { base, pings } = fakeBase(dir)
+  const d = await startFormDispatcher(base, handle)
+  for (const n of ['A', 'B', 'C', 'D', 'E']) d.offer(formFor(n, 'qr'))
+  await settle()
+  const closing = d.close()
+  for (const n of ['A', 'B', 'C']) gates.get(n)!.resolve()
+  const records = await closing
+  expect(handle).toHaveBeenCalledTimes(MAX_FORMS_IN_FLIGHT)
+  for (const n of ['D', 'E']) {
+    expect(byName(records, n)).toMatchObject({ state: 'failed', reason: 'meeting_ended' })
+    expect(byName((await loadFormRecords(dir)).records, n)).toMatchObject({
+      state: 'failed',
+      reason: 'meeting_ended',
+      pings: [{ state: 'failed' }]
+    })
+  }
+  expect(pings).toHaveLength(2)
+})
+
+test('a queued form whose deadline passed before its slot freed fails deadline, without opening it', async () => {
+  const gates = new Map(['A', 'B', 'C'].map((n) => [n, deferred<void>()]))
+  const handle = gatedHandle(gates)
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  for (const n of ['A', 'B', 'C']) d.offer(formFor(n, 'qr'))
+  d.offer({ ...formFor('D', 'qr'), seenAt: new Date(Date.now() - 130_000).toISOString() })
+  await settle()
+  gates.get('A')!.resolve()
+  await settle()
+  for (const n of ['B', 'C']) gates.get(n)!.resolve()
+  const records = await d.close()
+  expect(handle).toHaveBeenCalledTimes(MAX_FORMS_IN_FLIGHT)
+  expect(byName(records, 'D')).toMatchObject({ state: 'failed', reason: 'deadline' })
 })
