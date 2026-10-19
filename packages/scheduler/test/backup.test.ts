@@ -1,21 +1,28 @@
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { FakeQueue } from '@tm/web/db/testing'
-import { FakeDocker, backupCommands, runBackup, type LaunchDeps } from '../src/index'
+import {
+  FakeDocker,
+  backupCommands,
+  expiryCommands,
+  postgresEnv,
+  runBackup,
+  type CommandResult,
+  type LaunchDeps
+} from '../src/index'
 
-test('backups dump the database, copy checkpoints and expire copies older than 7 days', () => {
+test('backups dump the database, copy checkpoints and list the dated folders', () => {
   expect(
     backupCommands({
       date: '2026-10-21',
-      databaseUrl: 'postgres://tm@postgres/tm',
       remote: 'tm-backup:',
       workDir: '/tmp/tm-backup',
       checkpoints: [{ identityId: 'i1', path: '/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc' }]
     })
   ).toEqual([
-    ['pg_dump', '--format=custom', '--dbname=postgres://tm@postgres/tm', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
+    ['pg_dump', '--format=custom', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
     ['rclone', 'copyto', '/tmp/tm-backup/2026-10-21/db.dump', 'tm-backup:2026-10-21/db.dump'],
     [
       'rclone',
@@ -23,15 +30,35 @@ test('backups dump the database, copy checkpoints and expire copies older than 7
       '/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc',
       'tm-backup:2026-10-21/profiles/i1.tar.enc'
     ],
-    ['rclone', 'delete', '--min-age', '7d', 'tm-backup:'],
-    ['rclone', 'rmdirs', '--leave-root', 'tm-backup:']
+    ['rclone', 'lsf', '--dirs-only', 'tm-backup:']
   ])
+})
+
+test('only dated folders more than 7 days old are purged, by their date', () => {
+  const listing = ['2026-11-17/', '2026-11-10/', '2026-11-09/', '2026-10-01/', 'old-notes/', '2026-13-99x/', ''].join(
+    '\n'
+  )
+  expect(expiryCommands('tm-backup:nightly', listing, new Date('2026-11-17T19:00:00Z'))).toEqual([
+    ['rclone', 'purge', 'tm-backup:nightly/2026-10-01'],
+    ['rclone', 'purge', 'tm-backup:nightly/2026-11-09']
+  ])
+})
+
+test('the database URL becomes libpq environment variables', () => {
+  expect(postgresEnv('postgres://tm:p%40ss%2Fword@db.internal:5433/tm_prod?sslmode=require')).toEqual({
+    PGHOST: 'db.internal',
+    PGPORT: '5433',
+    PGUSER: 'tm',
+    PGPASSWORD: 'p@ss/word',
+    PGDATABASE: 'tm_prod',
+    PGSSLMODE: 'require'
+  })
+  expect(() => postgresEnv('postgres://tm@db/tm?options=-c%20x')).toThrow('not supported')
 })
 
 test('a remote path without a trailing separator gets a slash', () => {
   const cmds = backupCommands({
     date: '2026-10-21',
-    databaseUrl: 'postgres://x',
     remote: 'tm-backup:nightly',
     workDir: '/w',
     checkpoints: []
@@ -46,7 +73,10 @@ beforeAll(async () => {
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
 
-function depsFor(profileRoot: string, run: (argv: string[]) => Promise<number>) {
+type Run = (argv: string[], opts?: { env?: Record<string, string>; capture?: boolean }) => Promise<CommandResult>
+const ok = (stdout = ''): CommandResult => ({ code: 0, stdout })
+
+function depsFor(profileRoot: string, run: Run) {
   const base: LaunchDeps = {
     db: undefined as never,
     queue: new FakeQueue(),
@@ -82,16 +112,18 @@ test('runBackup runs the commands in order with each identity newest checkpoint,
   await mkdir(`${profileRoot}/.machine-ids`, { recursive: true })
 
   const ran: string[][] = []
+  const envs: (Record<string, string> | undefined)[] = []
   let workDir = ''
   await runBackup(
-    depsFor(profileRoot, async (argv) => {
+    depsFor(profileRoot, async (argv, opts) => {
       ran.push(argv)
+      envs.push(opts?.env)
       if (argv[0] === 'pg_dump') {
-        const file = argv[3]!.slice('--file='.length)
+        const file = argv[2]!.slice('--file='.length)
         workDir = file.slice(0, file.indexOf('/2026-11-17/'))
         await writeFile(file, 'dump')
       }
-      return 0
+      return ok()
     }),
     new Date('2026-11-17T19:00:00Z')
   )
@@ -99,7 +131,6 @@ test('runBackup runs the commands in order with each identity newest checkpoint,
   expect(ran).toEqual(
     backupCommands({
       date: '2026-11-17',
-      databaseUrl: DB_URL,
       remote: 'tm-backup:',
       workDir,
       checkpoints: [
@@ -108,6 +139,10 @@ test('runBackup runs the commands in order with each identity newest checkpoint,
       ]
     })
   )
+  // The password is in the pg_dump environment only, never in an argument.
+  expect(ran.flat().join(' ')).not.toContain('s3cret')
+  expect(envs[0]).toEqual({ PGHOST: 'postgres', PGUSER: 'tm', PGPASSWORD: 's3cret-pass', PGDATABASE: 'tm' })
+  expect(envs.slice(1).every((e) => e === undefined)).toBe(true)
   expect(workDir.startsWith(tmpdir())).toBe(true)
   await expect(stat(workDir)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(logs).toEqual([
@@ -115,9 +150,37 @@ test('runBackup runs the commands in order with each identity newest checkpoint,
     'backup: rclone exited 0',
     'backup: rclone exited 0',
     'backup: rclone exited 0',
-    'backup: rclone exited 0',
     'backup: rclone exited 0'
   ])
+})
+
+test('an old checkpoint uploaded tonight is kept, and only date folders older than 7 days are purged', async () => {
+  const profileRoot = `${root}/p3`
+  const idle = '44444444-4444-4444-8444-444444444444'
+  const file = `${profileRoot}/${idle}/checkpoints/20261018T000000Z.tar.enc`
+  await mkdir(`${profileRoot}/${idle}/checkpoints`, { recursive: true })
+  await writeFile(file, 'x')
+  const thirtyDaysAgo = new Date('2026-10-18T00:00:00Z')
+  await utimes(file, thirtyDaysAgo, thirtyDaysAgo)
+
+  const ran: string[][] = []
+  await runBackup(
+    depsFor(profileRoot, async (argv, opts) => {
+      ran.push(argv)
+      if (argv[0] === 'pg_dump') await writeFile(argv[2]!.slice('--file='.length), 'dump')
+      // The remote already holds tonight's folder (with the 30-day-old checkpoint), a 7-day-old and an 8-day-old one.
+      return argv[1] === 'lsf' && opts?.capture ? ok('2026-11-17/\n2026-11-10/\n2026-11-09/\n') : ok()
+    }),
+    new Date('2026-11-17T19:00:00Z')
+  )
+
+  expect(ran.some((a) => a.join(' ').includes('7d') || a.includes('delete'))).toBe(false)
+  expect(ran.filter((a) => a[1] === 'copyto').map((a) => a[3])).toEqual([
+    'tm-backup:2026-11-17/db.dump',
+    `tm-backup:2026-11-17/profiles/${idle}.tar.enc`
+  ])
+  expect(ran.filter((a) => a[1] === 'purge')).toEqual([['rclone', 'purge', 'tm-backup:2026-11-09']])
+  expect(ran.at(-1)).toEqual(['rclone', 'purge', 'tm-backup:2026-11-09'])
 })
 
 test('a failing step stops the backup, names only the program, never the database URL, and still removes the dump', async () => {
@@ -128,9 +191,9 @@ test('a failing step stops the backup, names only the program, never the databas
   const err = await runBackup(
     depsFor(profileRoot, async (argv) => {
       calls++
-      workDir = argv[3]!.slice('--file='.length).replace(/\/2026-11-17\/db\.dump$/, '')
-      await writeFile(argv[3]!.slice('--file='.length), 'dump')
-      return 1
+      workDir = argv[2]!.slice('--file='.length).replace(/\/2026-11-17\/db\.dump$/, '')
+      await writeFile(argv[2]!.slice('--file='.length), 'dump')
+      return { code: 1, stdout: '' }
     }),
     new Date('2026-11-17T19:00:00Z')
   ).then(

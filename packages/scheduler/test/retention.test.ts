@@ -170,6 +170,32 @@ test('a ping that fails still leaves the warning stamped', async () => {
   expect((await retentionTick(f.deps, now)).warned).toBe(0)
 })
 
+test('a ping that throws for one meeting does not stop the warnings for the others', async () => {
+  const notifier = new FakeNotifier()
+  const send = notifier.notify.bind(notifier)
+  let calls = 0
+  notifier.notify = async (memberId, ping) => {
+    if (++calls === 1) throw new Error('ntfy down')
+    return await send(memberId, ping)
+  }
+  const f = await retentionFixture({ deleteAfter: new Date('2026-11-20T08:00:00Z'), notifier })
+  const [first] = await f.db.select().from(occurrences).where(eq(occurrences.id, f.id))
+  const [second] = await f.db
+    .insert(occurrences)
+    .values({ ...first!, id: randomUUID(), scheduledStart: new Date('2026-10-22T06:00:00Z') })
+    .returning()
+  const err = await retentionTick(f.deps, now).then(
+    () => null,
+    (e: unknown) => e
+  )
+  expect(err).toBeInstanceOf(AggregateError)
+  expect((err as AggregateError).message).toBe('retention: 1 failure(s): ntfy down')
+  expect(f.notifier.sent).toHaveLength(1)
+  const stamped = await f.db.select({ at: occurrences.deletionWarnedAt }).from(occurrences)
+  expect(stamped.map((r) => r.at)).toEqual([now, now])
+  expect(second!.id).not.toBe(f.id)
+})
+
 test('a meeting past its deletion time is gone from disk and database', async () => {
   const f = await retentionFixture({
     state: 'completed',
@@ -217,6 +243,35 @@ test('deleting an occurrence that became active, or holds the profile, is refuse
     .where(eq(profiles.identityId, held.identityId))
   await expect(deleteOccurrenceData(held.deps, held.id, now)).rejects.toBeInstanceOf(OccurrenceActiveError)
   expect((await held.occurrence()).state).toBe('completed')
+})
+
+test('a meeting still in the pipeline is busy: delete is refused and the tick skips and counts it', async () => {
+  for (const state of ['transcribing', 'waiting_for_pc', 'post_processing'] as const) {
+    const f = await retentionFixture({
+      state,
+      deleteAfter: new Date(now.getTime() - 1000),
+      files: ['recording/meeting.mp4'],
+      withRows: true
+    })
+    await expect(deleteOccurrenceData(f.deps, f.id, now)).rejects.toBeInstanceOf(OccurrenceActiveError)
+    expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 0, skipped: 1 })
+    expect((await f.occurrence()).state).toBe(state)
+    expect(await exists(`${f.dir}/recording/meeting.mp4`)).toBe(true)
+    expect(await f.count(artefacts)).toBe(1)
+  }
+})
+
+test('retrying a tombstone also removes artefact rows left behind', async () => {
+  const f = await retentionFixture({ state: 'completed', files: ['a.txt'], withRows: true })
+  await deleteOccurrenceData(f.deps, f.id, now)
+  await f.db
+    .insert(artefacts)
+    .values({ occurrenceId: f.id, memberId: f.memberId, kind: 'recording', path: 'recording/late.mp4', bytes: 4 })
+  await mkdir(`${f.dir}/leftover`, { recursive: true })
+  await deleteOccurrenceData(f.deps, f.id, now)
+  expect(await f.count(artefacts)).toBe(0)
+  expect(await exists(f.dir)).toBe(false)
+  expect((await f.occurrence()).state).toBe('deleted')
 })
 
 test('delete now deletes before the expiry date and records the member as the reason', async () => {
@@ -270,6 +325,34 @@ test('a directory that cannot be removed leaves a tombstone that the next pass r
   await mkdir(`${f.dir}/leftover`, { recursive: true })
   expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 0, orphansRemoved: 1 })
   expect(await exists(f.dir)).toBe(false)
+})
+
+test('a failing expiry query does not skip the orphan and checkpoint steps', async () => {
+  const f = await retentionFixture({
+    orphanOccurrenceDir: true,
+    checkpoints: ['1', '2', '3', '4'].map((n) => `2026110${n}T000000Z.tar.enc`)
+  })
+  // The warning step selects first and the expiry step second; the second select fails.
+  let selects = 0
+  const db = new Proxy(f.db, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target)
+      if (prop !== 'select') return typeof value === 'function' ? value.bind(target) : value
+      return (...args: unknown[]) => {
+        if (++selects === 2) throw new Error('expiry query down')
+        return (value as (...a: unknown[]) => unknown).apply(target, args)
+      }
+    }
+  })
+  const err = await retentionTick({ ...f.deps, db }, now).then(
+    () => null,
+    (e: unknown) => e
+  )
+  expect(err).toBeInstanceOf(AggregateError)
+  expect((err as AggregateError).errors).toHaveLength(1)
+  expect((err as AggregateError).message).toContain('expiry query down')
+  expect(await f.checkpointNames()).toHaveLength(3)
+  expect((await readdir(`${f.env.dataRoot}/occurrences`)).sort()).toEqual([f.id])
 })
 
 test('orphaned directories go and only 3 checkpoints stay', async () => {
@@ -346,6 +429,18 @@ test('checkpoint pruning keeps the newest by name, spares fresh temp files and n
     '20261106T000000Z.tar.enc.tmp-aaaa'
   ])
   expect(await readFile(`${outside}/keep.txt`, 'utf8')).toBe('keep')
+})
+
+test('checkpoints of an identity whose profile is held are not pruned', async () => {
+  const f = await retentionFixture({ checkpoints: ['1', '2', '3', '4', '5'].map((n) => `2026110${n}T000000Z.tar.enc`) })
+  await f.db
+    .update(profiles)
+    .set({ heldBy: `occ:${f.id}` })
+    .where(eq(profiles.identityId, f.identityId))
+  expect((await retentionTick(f.deps, now)).checkpointsPruned).toBe(0)
+  expect(await f.checkpointNames()).toHaveLength(5)
+  await f.db.update(profiles).set({ heldBy: null }).where(eq(profiles.identityId, f.identityId))
+  expect((await retentionTick(f.deps, now)).checkpointsPruned).toBe(2)
 })
 
 test('a checkpoints directory that is a symlink is left alone', async () => {

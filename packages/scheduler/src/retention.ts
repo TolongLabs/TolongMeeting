@@ -1,8 +1,8 @@
 import { lstat, readdir, rm, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ACTIVE_STATES, formatDay, formatWhen } from '@tm/core'
+import { ACTIVE_STATES, formatDay, formatWhen, type OccurrenceState } from '@tm/core'
 import { pings } from '@tm/notify'
-import { and, eq, inArray, isNull, gt, lte, notInArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, gt, lte, notInArray, sql } from 'drizzle-orm'
 import { artefacts, events, forms, identities, members, occurrences, profiles } from '@tm/web/db'
 import { applyTrigger } from '@tm/web/db/transitions'
 import { resolveEnv } from './container-spec'
@@ -11,7 +11,13 @@ import type { LaunchDeps } from './launch'
 /** How many `*.tar.enc` checkpoints stay in each identity's `checkpoints/` directory. */
 export const KEEP_CHECKPOINTS = 3
 
-const WARN_BEFORE_MS = 3 * 24 * 3_600_000
+/** A meeting in one of these states is still being produced (worker running, or transcript and summary pending). */
+const BUSY_STATES: ReadonlySet<OccurrenceState> = new Set<OccurrenceState>([
+  ...ACTIVE_STATES,
+  'transcribing',
+  'waiting_for_pc',
+  'post_processing'
+])
 /** A temp file this young may belong to a checkpoint still being written. Same limit as the worker's own cleanup. */
 const FRESH_TMP_MS = 60_000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -24,11 +30,11 @@ export type RetentionResult = {
   deleted: number
   orphansRemoved: number
   checkpointsPruned: number
-  /** Occurrences left alone because they became active (or hold a profile) after they were picked. */
+  /** Occurrences left alone because they are busy (running, in the pipeline or holding a profile) when picked. */
   skipped: number
 }
 
-/** The occurrence is running (or holds a browser profile), so its data may not be deleted. */
+/** The occurrence is running or in the pipeline (or holds a browser profile), so its data may not be deleted. */
 export class OccurrenceActiveError extends Error {
   constructor(occurrenceId: string) {
     super(`occurrence ${occurrenceId} is active; its data was not deleted`)
@@ -76,16 +82,20 @@ async function removeUnder(root: string, name: string): Promise<boolean> {
 /**
  * Deletes a meeting's data: the database rows first (one transaction), then `<dataRoot>/occurrences/<id>/`. The row
  * stays as a `deleted` tombstone. A failed `rm` leaves the tombstone, whose directory the orphan pass removes. Running
- * it again on a tombstone only retries the directory. The reason is `member` after "delete now" (`requestDeleteNow`
- * sets `state_reason` to `deleting`) and `expired` otherwise. Throws `OccurrenceActiveError` for an active occurrence.
+ * it again on a tombstone retries the directory and removes any artefact rows left behind. The reason is `member`
+ * after "delete now" (`requestDeleteNow` sets `state_reason` to `deleting`) and `expired` otherwise. Throws
+ * `OccurrenceActiveError` for an occurrence that is running or still in the pipeline.
  */
 export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: string, _now: Date): Promise<void> {
   const { db, env } = deps
   await db.transaction(async (tx) => {
     const [row] = await tx.select().from(occurrences).where(eq(occurrences.id, occurrenceId)).for('update')
     if (!row) throw new Error(`No occurrence ${occurrenceId}`)
-    if (row.state === 'deleted') return
-    if (ACTIVE_STATES.has(row.state)) throw new OccurrenceActiveError(occurrenceId)
+    if (row.state === 'deleted') {
+      await tx.delete(artefacts).where(eq(artefacts.occurrenceId, occurrenceId))
+      return
+    }
+    if (BUSY_STATES.has(row.state)) throw new OccurrenceActiveError(occurrenceId)
     const held = await tx
       .select({ identityId: profiles.identityId })
       .from(profiles)
@@ -104,8 +114,16 @@ export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: strin
   await removeUnder(join(env.dataRoot, 'occurrences'), occurrenceId)
 }
 
-/** Pings each meeting that is within 3 days of deletion, once. The stamp is written first; a failed ping stays stamped. */
-async function warnSoon(deps: LaunchDeps, now: Date): Promise<number> {
+/**
+ * Pings each meeting that is within 3 days of deletion, once. The stamp is written first; a failed ping stays stamped.
+ * A failure on one meeting goes to `fail` and the rest still run. Each warning is counted in `result.warned`.
+ */
+async function warnSoon(
+  deps: LaunchDeps,
+  now: Date,
+  result: RetentionResult,
+  fail: (e: unknown) => void
+): Promise<void> {
   const { db, notifier, env } = deps
   const { publicUrl } = resolveEnv(env)
   const due = await db
@@ -127,32 +145,34 @@ async function warnSoon(deps: LaunchDeps, now: Date): Promise<number> {
         gt(occurrences.deleteAfter, now)
       )
     )
-  let warned = 0
   for (const o of due) {
-    const stamped = await db
-      .update(occurrences)
-      .set({ deletionWarnedAt: now })
-      .where(
-        and(
-          eq(occurrences.id, o.id),
-          isNull(occurrences.deletionWarnedAt),
-          notInArray(occurrences.state, [...ACTIVE_STATES, 'deleted'])
+    try {
+      const stamped = await db
+        .update(occurrences)
+        .set({ deletionWarnedAt: now })
+        .where(
+          and(
+            eq(occurrences.id, o.id),
+            isNull(occurrences.deletionWarnedAt),
+            notInArray(occurrences.state, [...ACTIVE_STATES, 'deleted'])
+          )
         )
+        .returning({ id: occurrences.id })
+      if (stamped.length === 0) continue
+      result.warned++
+      await notifier.notify(
+        o.memberId,
+        pings.deletionSoon({
+          entry: o.entry,
+          when: formatWhen(o.start, o.timeZone),
+          deleteOn: formatDay(o.deleteAfter, o.timeZone),
+          meetingUrl: `${publicUrl}/meetings/${o.id}`
+        })
       )
-      .returning({ id: occurrences.id })
-    if (stamped.length === 0) continue
-    warned++
-    await notifier.notify(
-      o.memberId,
-      pings.deletionSoon({
-        entry: o.entry,
-        when: formatWhen(o.start, o.timeZone),
-        deleteOn: formatDay(o.deleteAfter, o.timeZone),
-        meetingUrl: `${publicUrl}/meetings/${o.id}`
-      })
-    )
+    } catch (e) {
+      fail(e)
+    }
   }
-  return warned
 }
 
 /** UUID-named directories directly under `root`, with their entry type; every other name is left alone. */
@@ -226,22 +246,31 @@ async function checkpointDir(profileRoot: string, identityId: string): Promise<s
   return dir
 }
 
-/** Keeps the newest `KEEP_CHECKPOINTS` checkpoints per identity and removes temp files older than 60 s. */
+/**
+ * Keeps the newest `KEEP_CHECKPOINTS` checkpoints per identity and removes temp files older than 60 s. An identity whose
+ * profile is held is skipped: the running worker owns that directory.
+ */
 async function pruneCheckpoints(deps: LaunchDeps, now: Date): Promise<number> {
   const { profileRoot } = deps.env
+  const heldRows = await deps.db
+    .select({ identityId: profiles.identityId })
+    .from(profiles)
+    .where(isNotNull(profiles.heldBy))
+  const held = new Set(heldRows.map((r) => r.identityId))
   let pruned = 0
   for (const d of await uuidEntries(profileRoot)) {
+    if (held.has(d.name.toLowerCase())) continue
     const dir = await checkpointDir(profileRoot, d.name)
     if (dir === null) continue
     const names = await checkpointFiles(profileRoot, d.name)
     for (const old of names.slice(0, -KEEP_CHECKPOINTS)) {
-      await rm(join(dir, old))
+      await rm(join(dir, old), { force: true })
       pruned++
     }
     for (const f of await readdir(dir, { withFileTypes: true })) {
       if (!f.isFile() || !CHECKPOINT_TMP.test(f.name)) continue
       const st = await lstatOrNull(join(dir, f.name))
-      if (st !== null && now.getTime() - st.mtimeMs >= FRESH_TMP_MS) await rm(join(dir, f.name))
+      if (st !== null && now.getTime() - st.mtimeMs >= FRESH_TMP_MS) await rm(join(dir, f.name), { force: true })
     }
   }
   return pruned
@@ -249,8 +278,9 @@ async function pruneCheckpoints(deps: LaunchDeps, now: Date): Promise<number> {
 
 /**
  * The hourly retention pass: warns about meetings 3 days from deletion, deletes expired ones, removes orphaned
- * directories and prunes old checkpoints. A step that fails does not stop the others; the failures are thrown together
- * at the end, so nothing is hidden and one stuck directory doesn't block the rest.
+ * directories and prunes old checkpoints. A step (or one meeting inside a step) that fails does not stop the others;
+ * the failures are thrown together at the end, and the error message lists theirs. Those messages hold paths, ids and
+ * status codes, no secrets.
  */
 export async function retentionTick(deps: LaunchDeps, now: Date): Promise<RetentionResult> {
   const result: RetentionResult = { warned: 0, deleted: 0, orphansRemoved: 0, checkpointsPruned: 0, skipped: 0 }
@@ -263,25 +293,30 @@ export async function retentionTick(deps: LaunchDeps, now: Date): Promise<Retent
     }
   }
 
-  await step(async () => void (result.warned = await warnSoon(deps, now)))
-  const expired = await deps.db
-    .select({ id: occurrences.id })
-    .from(occurrences)
-    .where(and(notInArray(occurrences.state, [...ACTIVE_STATES, 'deleted']), lte(occurrences.deleteAfter, now)))
-  for (const { id } of expired) {
-    await step(async () => {
-      try {
-        await deleteOccurrenceData(deps, id, now)
-        result.deleted++
-      } catch (e) {
-        if (!(e instanceof OccurrenceActiveError)) throw e
-        result.skipped++
-      }
-    })
-  }
+  await step(() => warnSoon(deps, now, result, (e) => void failures.push(e)))
+  await step(async () => {
+    const expired = await deps.db
+      .select({ id: occurrences.id })
+      .from(occurrences)
+      .where(and(notInArray(occurrences.state, [...ACTIVE_STATES, 'deleted']), lte(occurrences.deleteAfter, now)))
+    for (const { id } of expired) {
+      await step(async () => {
+        try {
+          await deleteOccurrenceData(deps, id, now)
+          result.deleted++
+        } catch (e) {
+          if (!(e instanceof OccurrenceActiveError)) throw e
+          result.skipped++
+        }
+      })
+    }
+  })
   await step(async () => void (result.orphansRemoved = await removeOrphans(deps)))
   await step(async () => void (result.checkpointsPruned = await pruneCheckpoints(deps, now)))
 
-  if (failures.length > 0) throw new AggregateError(failures, `retention: ${failures.length} step(s) failed`)
+  if (failures.length > 0) {
+    const messages = failures.map((e) => (e instanceof Error ? e.message : String(e))).join('; ')
+    throw new AggregateError(failures, `retention: ${failures.length} failure(s): ${messages}`)
+  }
   return result
 }

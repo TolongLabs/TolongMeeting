@@ -39,4 +39,13 @@ export {
   retentionTick,
   type RetentionResult
 } from './retention'
-export { backupCommands, runBackup, type BackupCheckpoint, type CommandRunner } from './backup'
+export {
+  backupCommands,
+  expiryCommands,
+  postgresEnv,
+  runBackup,
+  type BackupCheckpoint,
+  type CommandOptions,
+  type CommandResult,
+  type CommandRunner
+} from './backup'

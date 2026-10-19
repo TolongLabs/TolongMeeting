@@ -3033,11 +3033,10 @@ test('orphaned directories go and only 3 checkpoints stay', async () => {
 
 ```ts
 // packages/scheduler/test/backup.test.ts
-test('backups dump the database, copy checkpoints and expire copies older than 7 days', () => {
+test('backups dump the database, copy checkpoints and list the dated folders', () => {
   expect(
     backupCommands({
       date: '2026-10-21',
-      databaseUrl: 'postgres://tm@postgres/tm',
       remote: 'tm-backup:',
       workDir: '/tmp/tm-backup',
       checkpoints: [
@@ -3048,7 +3047,7 @@ test('backups dump the database, copy checkpoints and expire copies older than 7
       ]
     })
   ).toEqual([
-    ['pg_dump', '--format=custom', '--dbname=postgres://tm@postgres/tm', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
+    ['pg_dump', '--format=custom', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
     ['rclone', 'copyto', '/tmp/tm-backup/2026-10-21/db.dump', 'tm-backup:2026-10-21/db.dump'],
     [
       'rclone',
@@ -3056,9 +3055,10 @@ test('backups dump the database, copy checkpoints and expire copies older than 7
       '/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc',
       'tm-backup:2026-10-21/profiles/i1.tar.enc'
     ],
-    ['rclone', 'delete', '--min-age', '7d', 'tm-backup:'],
-    ['rclone', 'rmdirs', '--leave-root', 'tm-backup:']
+    ['rclone', 'lsf', '--dirs-only', 'tm-backup:']
   ])
+  // runBackup then runs `rclone purge tm-backup:<date>` for each listed YYYY-MM-DD folder more than 7 days old
+  // (expiry by folder date, not file age), and passes the database URL to pg_dump as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE.
 })
 ```
 
@@ -3380,9 +3380,9 @@ Pass: every page and file returns 404, the VNC request 403, the heartbeat 401 an
 
 - [ ] **Step 6: Retention (design acceptance test "Retention")**
 
-Procedure: on a completed test occurrence, set `delete_after` to now plus 2 days and run `docker compose exec scheduler bun run packages/scheduler/src/main.ts --run retention`; then set it to now minus 1 minute and run it again; then run `--run backup`, and with `rclone touch --timestamp <9 days ago> <remote>old/x` plus another `backup` check expiry.
+Procedure: on a completed test occurrence, set `delete_after` to now plus 2 days and run `docker compose exec scheduler bun run packages/scheduler/src/main.ts --run retention`; then set it to now minus 1 minute and run it again; then run `--run backup`, and with `rclone copyto <any file> <remote><date 9 days ago, YYYY-MM-DD>/x` plus another `backup` check expiry.
 
-Pass: the "Deleting in 3 days" ping arrives once; afterwards the occurrence directory is gone, the database holds only the `deleted` tombstone and its one event, and the meeting page says it was deleted; `rclone lsf <remote>` shows the new dated backup and no object older than 7 days.
+Pass: the "Deleting in 3 days" ping arrives once; afterwards the occurrence directory is gone, the database holds only the `deleted` tombstone and its one event, and the meeting page says it was deleted; `rclone lsf <remote>` shows the new dated backup and no dated folder more than 7 days old.
 
 - [ ] **Step 7: Organisation check**
 
