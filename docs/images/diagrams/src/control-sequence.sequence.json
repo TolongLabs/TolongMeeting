@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Control Channel",
+    "output": ".archify/control-sequence/control-sequence.html",
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "participants": [
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "one container"
+    },
+    {
+      "id": "companion",
+      "type": "frontend",
+      "label": "Companion",
+      "sublabel": "local mode only"
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Website API",
+      "sublabel": "control endpoint"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "events"
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "health watch"
+    },
+    {
+      "id": "member",
+      "type": "external",
+      "label": "Member",
+      "sublabel": "site, ping buttons"
+    }
+  ],
+  "segments": [
+    {
+      "from": 171,
+      "to": 259,
+      "label": "Every 5 s"
+    },
+    {
+      "from": 295,
+      "to": 383,
+      "label": "A member command"
+    },
+    {
+      "from": 419,
+      "to": 507,
+      "label": "Crash recovery"
+    },
+    {
+      "from": 543,
+      "to": 661,
+      "label": "Local mode relay"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m1-worker-web",
+      "from": "worker",
+      "to": "web",
+      "y": 185,
+      "label": "heartbeat: state, recording, count, events",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m2-web-pg",
+      "from": "web",
+      "to": "pg",
+      "y": 215,
+      "label": "store events as they arrive",
+      "variant": "dashed"
+    },
+    {
+      "id": "m3-web-worker",
+      "from": "web",
+      "to": "worker",
+      "y": 245,
+      "label": "reply: ackedEvents, commands",
+      "variant": "return"
+    },
+    {
+      "id": "m4-member-web",
+      "from": "member",
+      "to": "web",
+      "y": 309,
+      "label": "Make the bot leave, Take over, Done",
+      "variant": "default"
+    },
+    {
+      "id": "m5-worker-web",
+      "from": "worker",
+      "to": "web",
+      "y": 339,
+      "label": "next heartbeat, within 5 s",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m6-web-worker",
+      "from": "web",
+      "to": "worker",
+      "y": 369,
+      "label": "leave_now, take_over, pause_for_signin, stop",
+      "variant": "return"
+    },
+    {
+      "id": "m7-scheduler-pg",
+      "from": "scheduler",
+      "to": "pg",
+      "y": 433,
+      "label": "last heartbeat older than 30 s?",
+      "variant": "dashed"
+    },
+    {
+      "id": "m8-scheduler-worker",
+      "from": "scheduler",
+      "to": "worker",
+      "y": 463,
+      "label": "crash: restart and rejoin, up to 3 times",
+      "variant": "security"
+    },
+    {
+      "id": "m9-scheduler-member",
+      "from": "scheduler",
+      "to": "member",
+      "y": 493,
+      "label": "ping: worker restarted",
+      "variant": "dashed"
+    },
+    {
+      "id": "m10-worker-companion",
+      "from": "worker",
+      "to": "companion",
+      "y": 557,
+      "label": "heartbeat",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m11-companion-web",
+      "from": "companion",
+      "to": "web",
+      "y": 587,
+      "label": "relay over outbound HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m12-web-companion",
+      "from": "web",
+      "to": "companion",
+      "y": 617,
+      "label": "reply: ackedEvents, commands",
+      "variant": "return"
+    },
+    {
+      "id": "m13-companion-worker",
+      "from": "companion",
+      "to": "worker",
+      "y": 647,
+      "label": "commands",
+      "variant": "return"
+    }
+  ],
+  "activations": [],
+  "cards": []
+}
