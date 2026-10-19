@@ -24,3 +24,11 @@ export {
   type LaunchJob,
   type LaunchResult
 } from './launch'
+export {
+  KEEP_CHECKPOINTS,
+  OccurrenceActiveError,
+  deleteOccurrenceData,
+  retentionTick,
+  type RetentionResult
+} from './retention'
+export { backupCommands, runBackup, type BackupCheckpoint, type CommandRunner } from './backup'

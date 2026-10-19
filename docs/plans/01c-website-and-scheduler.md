@@ -2947,7 +2947,7 @@ git commit -m "feat(pipeline): consume pipeline jobs"
 **Files:**
 
 - Create: `packages/scheduler/src/retention.ts`, `packages/scheduler/src/backup.ts`
-- Test: `packages/scheduler/src/retention.test.ts`, `packages/scheduler/src/backup.test.ts`
+- Test: `packages/scheduler/test/retention.test.ts`, `packages/scheduler/test/backup.test.ts`
 
 **Interfaces:**
 
@@ -2964,10 +2964,10 @@ git commit -m "feat(pipeline): consume pipeline jobs"
 
 `runBackup`, nightly: run `backupCommands` in order with `Bun.spawn`, logging each step's first word and exit code only (never the arguments, which hold the database URL), then remove the local dump. The checkpoints are each identity's newest.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/scheduler/src/retention.test.ts
+// packages/scheduler/test/retention.test.ts
 const now = new Date('2026-11-17T08:00:00Z')
 
 test('a meeting 3 days from deletion gets one warning ping', async () => {
@@ -3032,7 +3032,7 @@ test('orphaned directories go and only 3 checkpoints stay', async () => {
 ```
 
 ```ts
-// packages/scheduler/src/backup.test.ts
+// packages/scheduler/test/backup.test.ts
 test('backups dump the database, copy checkpoints and expire copies older than 7 days', () => {
   expect(
     backupCommands({
@@ -3062,21 +3062,21 @@ test('backups dump the database, copy checkpoints and expire copies older than 7
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/retention.test.ts packages/scheduler/src/backup.test.ts`
+Run: `bun test packages/scheduler/test/retention.test.ts packages/scheduler/test/backup.test.ts`
 
-Expected: FAIL with `Cannot find module './retention'`.
+Expected: FAIL with `Cannot find module '../src/retention'`.
 
-- [ ] **Step 3: Implement retention and backups**
+- [x] **Step 3: Implement retention and backups**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/scheduler/src/retention.test.ts packages/scheduler/src/backup.test.ts`
+Run: `bun test packages/scheduler/test/retention.test.ts packages/scheduler/test/backup.test.ts`
 
-Expected: PASS, `5 pass, 0 fail`.
+Expected: PASS, `19 pass, 0 fail` (the plan's 5 cases plus the symlink, UUID, checkpoint and runBackup cases).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src/retention* packages/scheduler/src/backup*
