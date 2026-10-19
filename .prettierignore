@@ -4,3 +4,7 @@ dist/
 test-results/
 playwright-report/
 packages/worker/test/fixtures/
+spikes/03-qr/.venv/
+.superpowers/
+.dkm/
+graphify-out/
