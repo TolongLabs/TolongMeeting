@@ -58,7 +58,8 @@ async function run(desk: Page, dir: string, modelDelayMs: number, cands: Resolve
           dispatcher: d,
           emitEvent: async () => {},
           ping: async () => {},
-          inFlight
+          inFlight,
+          pinged: new Set<string>()
         })
       )
     )

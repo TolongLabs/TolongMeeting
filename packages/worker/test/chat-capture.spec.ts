@@ -117,7 +117,8 @@ test('form links in messages are resolved and offered to the form dispatcher', a
             dispatcher: { offer: (f) => void offered.push(f), close: async () => [] },
             emitEvent: emit,
             ping: async () => {},
-            inFlight
+            inFlight,
+            pinged: new Set<string>()
           })
         )
       }

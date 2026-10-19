@@ -1,4 +1,4 @@
-import { localParts, type FormCandidate, type JobConfig, type ResolvedForm } from '@tm/core'
+import { canonicalFormUrl, localParts, type FormCandidate, type JobConfig, type ResolvedForm } from '@tm/core'
 import { linkUncheckedPing, type Ping } from '@tm/notify'
 import type { FormDispatcher } from './dispatcher'
 import { LinkResolveError } from './links'
@@ -9,12 +9,18 @@ import type { FormContextBase } from './types'
 export interface IntakeDeps {
   cfg: JobConfig
   resolve: (c: FormCandidate) => Promise<ResolvedForm | null>
-  /** Null when the dispatcher failed to start: trusted links then reach the member as "link seen, not checked". */
+  /**
+   * Null when the dispatcher failed to start or is closed: links then reach the member as "link seen, not checked".
+   * Read after the link resolved, so a property getter lets a late resolve see a dispatcher closed in the meantime.
+   */
   dispatcher: FormDispatcher | null
   emitEvent: FormContextBase['emitEvent']
+  /** Rejects when the ping could not be sent. */
   ping: (p: Ping) => Promise<void>
-  /** Raw URLs being resolved right now, shared by every call of one run. The dispatcher dedupes resolved forms. */
+  /** Links being resolved right now (keyed by trust and raw URL), shared by every call of one run. */
   inFlight: Set<string>
+  /** URLs already pinged as "link seen, not checked", shared by every call of one run: a chat replay pings once. */
+  pinged: Set<string>
 }
 
 // Only the host of a web link reaches events: the rest can carry a passcode or pre-filled answers. Anything that is not
@@ -35,11 +41,14 @@ const clockOf = (cfg: JobConfig, at: string): string => {
 //
 // - A link that is not a form emits `form` {outcome: 'ignored', reason: 'not_a_form'}.
 // - A link that cannot be resolved (timeout, network) emits `form` {outcome: 'unresolved'} and, for a trusted sighting,
-//   pings "link seen, not checked": it may be an attendance form. The same happens to a resolved form when there is no
-//   dispatcher to take it.
+//   pings "link seen, not checked": it may be an attendance form.
+// - A resolved form when there is no dispatcher to take it (it failed to start, or it is closed) pings the same, for a
+//   trusted or an untrusted sender, with the canonical form URL: the member hears about every form.
 export async function onFormCandidate(c: FormCandidate, deps: IntakeDeps): Promise<void> {
-  if (deps.inFlight.has(c.url)) return
-  deps.inFlight.add(c.url)
+  // Keyed by trust too: a trusted repost of a link that is resolving as untrusted must not be dropped.
+  const key = `${checkTrust(c, deps.cfg.entry.trustedSenders).trusted ? 'trusted' : 'untrusted'}:${c.url}`
+  if (deps.inFlight.has(key)) return
+  deps.inFlight.add(key)
   try {
     await intake(c, deps)
   } catch (error) {
@@ -49,7 +58,7 @@ export async function onFormCandidate(c: FormCandidate, deps: IntakeDeps): Promi
       message: errorText(deps.cfg, error)
     })
   } finally {
-    deps.inFlight.delete(c.url)
+    deps.inFlight.delete(key)
   }
 }
 
@@ -71,18 +80,33 @@ async function intake(c: FormCandidate, deps: IntakeDeps): Promise<void> {
     await deps.emitEvent('form', { formId: null, outcome: 'ignored', reason: 'not_a_form', host, source: c.source })
     return
   }
-  if (deps.dispatcher === null) {
-    await unchecked(c, host, 'dispatcher_unavailable', deps)
+  const { dispatcher } = deps
+  if (dispatcher === null) {
+    // The raw link can carry pre-filled answers: the member gets the canonical form URL.
+    const canonical = { ...c, url: canonicalFormUrl(form.finalUrl) }
+    await unchecked(canonical, host, 'dispatcher_unavailable', deps, true)
     return
   }
-  deps.dispatcher.offer(form)
+  dispatcher.offer(form)
 }
 
-async function unchecked(c: FormCandidate, host: string, reason: string, deps: IntakeDeps): Promise<void> {
+// The member is pinged first (once per URL), then the event is written: a failing event writer must not keep the ping
+// back. A ping that fails is not remembered, so the next sighting tries again, and its error is rethrown.
+async function unchecked(
+  c: FormCandidate,
+  host: string,
+  reason: string,
+  deps: IntakeDeps,
+  resolved = false
+): Promise<void> {
   const { cfg } = deps
-  await deps.emitEvent('form', { formId: null, outcome: 'unresolved', reason, host, source: c.source })
-  if (checkTrust(c, cfg.entry.trustedSenders).trusted) {
-    await deps.ping(linkUncheckedPing(cfg.entry.name, c, clockOf(cfg, c.seenAt)))
+  try {
+    if ((resolved || checkTrust(c, cfg.entry.trustedSenders).trusted) && !deps.pinged.has(c.url)) {
+      await deps.ping(linkUncheckedPing(cfg.entry.name, c, clockOf(cfg, c.seenAt)))
+      deps.pinged.add(c.url)
+    }
+  } finally {
+    await deps.emitEvent('form', { formId: null, outcome: 'unresolved', reason, host, source: c.source })
   }
 }
 

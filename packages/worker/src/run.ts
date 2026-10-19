@@ -60,6 +60,7 @@ const BOUND = {
   stopFrames: 5_000,
   stopQr: 3_000,
   stopAsr: 5_000,
+  formIntake: 6_000,
   forms: 10_000,
   stopRecorder: 15_000,
   stopAudio: 5_000,
@@ -135,8 +136,14 @@ class OccurrenceRun {
   private adapter: PlatformAdapter | null = null
   private url = ''
   private forms: FormDispatcher | null = null
-  /** Raw links being resolved now: a link seen twice while it resolves is offered once. */
+  /** Set once teardown closed the dispatcher: a link resolved after that is pinged as "not checked" instead. */
+  private formsClosed = false
+  /** Links being resolved now (by trust and raw URL): a link seen twice while it resolves is offered once. */
   private readonly linksInFlight = new Set<string>()
+  /** URLs pinged as "link seen, not checked" in this run: a chat replay does not ping them again. */
+  private readonly linksPinged = new Set<string>()
+  /** Links being resolved or offered: teardown waits for them before it closes the dispatcher. */
+  private readonly intakes = new Set<Promise<void>>()
   private chat: ChatCapture | null = null
   private frames: FrameLoop | null = null
   private asr: LiveAsr | null = null
@@ -410,11 +417,13 @@ class OccurrenceRun {
     this.context = browser.context
     this.stage = browser.stage
     this.desk = browser.desk
-    this.checkpoints = await this.step('startCheckpoints', () =>
+    const checkpoints = await this.abortable('startCheckpoints', () =>
       deps.startCheckpoints(cfg.profileDir, profile.checkpointsDir, profile.key, (e) =>
         this.fault('profile checkpoint', e)
       )
     )
+    if (checkpoints === ABORTED) return this.terminated()
+    this.checkpoints = checkpoints
 
     if (this.lecture) {
       const started = await this.untilAborted(
@@ -427,15 +436,19 @@ class OccurrenceRun {
     if (this.isAborted) return this.terminated()
     if (this.now() >= this.hardStop) return failed('past_hard_stop')
 
-    const audio = await this.step('startAudioSource', () => deps.startAudioSource())
+    const audio = await this.abortable('startAudioSource', () => deps.startAudioSource())
+    if (audio === ABORTED) return this.terminated()
     this.audio = audio
     audio.onFatal((e) => this.fault('audio capture', e))
-    const recorder = await this.step('startRecorder', () =>
+    const recorder = await this.abortable('startRecorder', () =>
       deps.startRecorder(screen, join(cfg.dataDir, 'recording'), cfg.attempt)
     )
+    if (recorder === ABORTED) return this.terminated()
     this.recorder = recorder
     this.watchRecorder(recorder)
-    this.recordingStart = await this.firstRecordingStart(recorder)
+    const recordingStart = await this.untilAborted(this.firstRecordingStart(recorder))
+    if (recordingStart === ABORTED) return this.terminated()
+    this.recordingStart = recordingStart
 
     // From here the bot is in the meeting: only the join checks below are fatal. The rest is optional (see `optional`).
     const entered = await this.enter()
@@ -462,7 +475,10 @@ class OccurrenceRun {
       // The meeting page links (1C) are not known yet.
       const links = { meetingPage: null, signIn: null }
       const base = makeFormContextBase(cfg, desk, this.ev, links, (p) => deps.sendPing(cfg.ntfy, p))
-      this.forms = await deps.startFormDispatcher(base)
+      const dispatcher = await deps.startFormDispatcher(base)
+      this.forms = dispatcher
+      // Started after the stop signal (the setup abandoned it): nothing will use it, and teardown may be past its step.
+      if (this.isAborted) await dispatcher.close()
     })
   }
 
@@ -706,20 +722,28 @@ class OccurrenceRun {
   // A link from the shared screen or the chat. It is resolved and handed to the form dispatcher without being awaited:
   // resolving takes seconds, and the chat and frame loops must not wait for it. `onFormCandidate` never rejects.
   private offerForm(c: FormCandidate): Promise<void> {
-    return onFormCandidate(c, {
+    const dispatcher = (): FormDispatcher | null => (this.formsClosed ? null : this.forms)
+    const intake = onFormCandidate(c, {
       cfg: this.cfg,
       resolve: (candidate) => this.deps.resolveFormLink(candidate),
-      dispatcher: this.forms,
+      // Read when the link has resolved: teardown may have closed the dispatcher by then.
+      get dispatcher() {
+        return dispatcher()
+      },
       emitEvent: this.ev,
       ping: async (p) => {
         try {
           await this.deps.sendPing(this.cfg.ntfy, p)
         } catch (error) {
-          await this.report('form_ping', error)
+          this.alerter.alert('form_ping_failed')
+          throw error
         }
       },
-      inFlight: this.linksInFlight
-    })
+      inFlight: this.linksInFlight,
+      pinged: this.linksPinged
+    }).finally(() => this.intakes.delete(intake))
+    this.intakes.add(intake)
+    return intake
   }
 
   // Chat links go to the dispatcher one message at a time. A restarted worker replays the file's rows here: the
@@ -859,11 +883,12 @@ class OccurrenceRun {
   // --- teardown ---
 
   // Always runs, inside the stop timeout: 50 s in all, counted from the stop signal when there is one, else from now.
-  // Order: chat sweep, leave, chat, frames, live ASR, forms (the dispatcher fails queued forms as meeting_ended, unopened), recorder, audio, browser, checkpoint timer, final
-  // checkpoint, held-back alerts, screen. The checkpoint comes before the work the pipeline can redo later (joining the
-  // segments, `finishRecording`), and the steps before it leave it a share of the budget. It is skipped only when the
-  // browser would not close: a profile that is still open could be copied half-written. A step that fails or overruns
-  // is reported without stopping the later ones.
+  // Order: chat sweep, leave, chat, frames, live ASR, links still resolving, forms (the dispatcher fails queued forms as
+  // meeting_ended, unopened), recorder, audio, browser, checkpoint timer, final checkpoint, held-back alerts, screen.
+  // The checkpoint comes before the work the pipeline can redo later (joining the segments, `finishRecording`), and the
+  // steps before it leave it a share of the budget. It is skipped only when the browser would not close: a profile that
+  // is still open could be copied half-written. A step that fails or overruns is reported without stopping the later
+  // ones.
   private async teardown(): Promise<void> {
     this.teardownStart = Date.now()
 
@@ -880,6 +905,11 @@ class OccurrenceRun {
     this.handler?.stop()
     await this.bounded('qr bridge', BOUND.stopQr, () => closeQr())
     if (this.asr) await this.bounded('asr.stop', BOUND.stopAsr, () => this.asr!.stop())
+    // A link still resolving gets its say first: it reaches the dispatcher, or after the close it pings "not checked".
+    await this.bounded('forms.intake', BOUND.formIntake, async () => {
+      while (this.intakes.size > 0) await Promise.allSettled([...this.intakes])
+    })
+    this.formsClosed = true
     if (this.forms) await this.bounded('forms.close', BOUND.forms, () => this.forms!.close())
     if (this.recorder) await this.bounded('recorder.stop', BOUND.stopRecorder, () => this.recorder!.stop())
     if (this.audio) await this.bounded('audio.stop', BOUND.stopAudio, () => this.audio!.stop())

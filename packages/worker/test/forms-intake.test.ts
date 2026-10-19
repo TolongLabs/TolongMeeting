@@ -29,6 +29,7 @@ function harness(patch: Partial<IntakeDeps> = {}) {
     emitEvent: async (type, data) => void events.push([type, data]),
     ping: async (p) => void pings.push(p),
     inFlight: new Set(),
+    pinged: new Set(),
     ...patch
   }
   return { deps, offered, events, pings }
@@ -123,7 +124,7 @@ test('the same raw link is resolved once while it is in flight, and again once i
   expect(h.offered).toEqual([resolved, resolved])
 })
 
-test('with no dispatcher a trusted form link still reaches the member, an untrusted one is only logged', async () => {
+test('with no dispatcher every resolved form reaches the member, trusted or not, by its canonical URL', async () => {
   const trusted = harness({ dispatcher: null })
   await onFormCandidate(cand, trusted.deps)
   expect(trusted.events.map(([, d]) => [d.outcome, d.reason])).toEqual([['unresolved', 'dispatcher_unavailable']])
@@ -132,7 +133,71 @@ test('with no dispatcher a trusted form link still reaches the member, an untrus
   const untrusted = harness({ dispatcher: null })
   await onFormCandidate({ ...cand, sender: 'Classmate', senderRole: 'participant' }, untrusted.deps)
   expect(untrusted.events).toHaveLength(1)
-  expect(untrusted.pings).toEqual([])
+  expect(untrusted.pings.map((p) => [p.title, p.message.startsWith('Classmate')])).toEqual([
+    ['Link seen, not checked: Example lecture', true]
+  ])
+})
+
+test('the ping of a form nobody can handle never carries the pre-filled answers of the raw link', async () => {
+  const raw = 'https://docs.google.com/forms/d/e/x/formResponse?entry.1=x&submit=Submit'
+  const h = harness({ dispatcher: null, resolve: async (c) => ({ ...c, finalUrl: c.url, provider: 'google' }) })
+  await onFormCandidate({ ...cand, url: raw }, h.deps)
+  expect(h.pings).toHaveLength(1)
+  const [action] = h.pings[0]!.actions!
+  expect(action!.url).toBe('https://docs.google.com/forms/d/e/x/viewform')
+  for (const leak of ['entry.', 'submit', 'formResponse']) {
+    expect(action!.url).not.toContain(leak)
+    expect(JSON.stringify(h.pings)).not.toContain(leak)
+  }
+})
+
+test('a link is pinged as unchecked once, even when it is seen again (a chat replay)', async () => {
+  const h = harness({
+    resolve: async () => {
+      throw new LinkResolveError('timeout', 'timed out')
+    }
+  })
+  await onFormCandidate(cand, h.deps)
+  await onFormCandidate(cand, h.deps)
+  expect(h.pings).toHaveLength(1)
+  expect(h.events).toHaveLength(2)
+})
+
+test('the member is pinged before the event is written, and a failed ping is tried again at the next sighting', async () => {
+  const order: string[] = []
+  let fail = true
+  const h = harness({
+    resolve: async () => {
+      throw new LinkResolveError('timeout', 'timed out')
+    },
+    ping: async () => {
+      order.push('ping')
+      if (fail) throw new Error('ntfy down')
+    },
+    emitEvent: async (type) => void order.push(type)
+  })
+  await onFormCandidate(cand, h.deps)
+  expect(order).toEqual(['ping', 'form', 'error'])
+  fail = false
+  await onFormCandidate(cand, h.deps)
+  expect(order.filter((o) => o === 'ping')).toHaveLength(2)
+})
+
+test('a trusted repost of a link that is resolving for an untrusted sender is not dropped', async () => {
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  const h = harness({
+    resolve: async () => {
+      await gate
+      return resolved
+    }
+  })
+  const peer = { ...cand, sender: 'Classmate', senderRole: 'participant' as const }
+  const first = onFormCandidate(peer, h.deps)
+  const second = onFormCandidate(cand, h.deps)
+  release()
+  await Promise.all([first, second])
+  expect(h.offered).toHaveLength(2)
 })
 
 test('a failure never rejects: it becomes an error event with the member details masked', async () => {

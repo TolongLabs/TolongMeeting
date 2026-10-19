@@ -6,6 +6,13 @@ import { z } from 'zod'
 
 const ATTENDANCE_CONFIRMATION = 'attendance_confirmation'
 
+// The fields of a 1A FormPingRecord that decide whether its ping went out. The rest is ours to trust.
+const PingRecordSchema = z.object({
+  formId: z.string().min(1),
+  url: z.string().min(1),
+  pingedAt: z.string().nullable()
+})
+
 function formDir(dataDir: string, formId: string): string {
   return join(dataDir, 'forms', formId)
 }
@@ -67,19 +74,33 @@ export async function saveFormRecord(dataDir: string, rec: FormRecord): Promise<
   await rename(temp, final)
 }
 
-// A form directory whose record cannot be read or fails the schema is reported as invalid. It still counts as
-// handled, so the worker never submits that form again. This includes the records of the 1A pinger (FormPingRecord).
+// The records of this occurrence's form directories, and the ids of the directories that count as handled but hold no
+// usable record (`invalid`), so the worker never submits those forms again:
+// - a FormRecord is returned;
+// - a form dir with no record.json was never recorded: absent, so a restart handles the form;
+// - a 1A FormPingRecord (the old pinger) with `pingedAt` null never pinged: absent as well;
+// - a 1A record with `pingedAt` set, a file that is not JSON, and any other shape are invalid.
+// A read error other than ENOENT (EACCES, EIO) is thrown: a form must not be skipped or repeated unseen.
 export async function loadFormRecords(dataDir: string): Promise<{ records: FormRecord[]; invalid: string[] }> {
   const records: FormRecord[] = []
   const invalid: string[] = []
   for (const formId of await formDirIds(dataDir)) {
-    const raw = await readFile(join(formDir(dataDir, formId), 'record.json'), 'utf8').catch(() => null)
-    const parsed = raw === null ? null : FormRecordSchema.safeParse(parseJson(raw))
-    if (parsed?.success) {
+    const raw = await readFile(join(formDir(dataDir, formId), 'record.json'), 'utf8').catch(
+      (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') return null
+        throw err
+      }
+    )
+    if (raw === null) continue
+    const json = parseJson(raw)
+    const parsed = FormRecordSchema.safeParse(json)
+    if (parsed.success) {
       records.push(parsed.data)
-    } else {
-      invalid.push(formId)
+      continue
     }
+    const ping = PingRecordSchema.safeParse(json)
+    if (ping.success && ping.data.pingedAt === null) continue
+    invalid.push(formId)
   }
   return { records, invalid }
 }

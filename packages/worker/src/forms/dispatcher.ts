@@ -238,7 +238,11 @@ export async function startFormDispatcher(base: FormContextBase, handle: Handle 
   }
 
   function offer(f: ResolvedForm): void {
-    if (closing !== null) return
+    if (closing !== null) {
+      // The caller falls back to a "link seen" ping once the dispatcher is closed; this event keeps the late form in the log.
+      track(emit('form', { formId: null, outcome: 'ignored', reason: 'closed' }))
+      return
+    }
     if (!URL.canParse(f.finalUrl)) {
       track(emitError(null, new Error('a form candidate has a finalUrl that is not a URL')))
       return

@@ -143,3 +143,42 @@ test('the store writes the record file as plain JSON of the record', async () =>
   expect(JSON.parse(text)).toEqual(rec)
   await rm(dir, { recursive: true, force: true })
 })
+
+const oldPing = { url: 'https://docs.google.com/forms/d/e/x/viewform', source: 'qr', state: 'needs_member' }
+
+async function writeRaw(dir: string, formId: string, body: string | object): Promise<void> {
+  await mkdir(join(dir, 'forms', formId), { recursive: true })
+  await writeFile(join(dir, 'forms', formId, 'record.json'), typeof body === 'string' ? body : JSON.stringify(body))
+}
+
+test('loadFormRecords: a form dir with no record.json is absent, so a restart handles the form', async () => {
+  const dir = await tempDir()
+  await mkdir(join(dir, 'forms', '1111111111111111'), { recursive: true })
+  expect(await loadFormRecords(dir)).toEqual({ records: [], invalid: [] })
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('loadFormRecords: a 1A record is absent until its ping went out, then it counts as handled', async () => {
+  const dir = await tempDir()
+  const at = '2026-10-20T12:00:00.000Z'
+  await writeRaw(dir, '4444444444444444', { ...oldPing, formId: '4444444444444444', pingedAt: at })
+  await writeRaw(dir, '5555555555555555', { ...oldPing, formId: '5555555555555555', pingedAt: null, state: 'failed' })
+  expect(await loadFormRecords(dir)).toEqual({ records: [], invalid: ['4444444444444444'] })
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('loadFormRecords: a record that is not JSON or matches neither shape counts as handled', async () => {
+  const dir = await tempDir()
+  await writeRaw(dir, '6666666666666666', 'not json')
+  await writeRaw(dir, '7777777777777777', { unrelated: true })
+  await writeRaw(dir, '8888888888888888', { ...oldPing, formId: '8888888888888888', pingedAt: 'not a date but set' })
+  expect((await loadFormRecords(dir)).invalid).toEqual(['6666666666666666', '7777777777777777', '8888888888888888'])
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('loadFormRecords: a read error other than a missing file is thrown, not turned into a verdict', async () => {
+  const dir = await tempDir()
+  await mkdir(join(dir, 'forms', '9999999999999999', 'record.json'), { recursive: true }) // EISDIR on read
+  await expect(loadFormRecords(dir)).rejects.toMatchObject({ code: 'EISDIR' })
+  await rm(dir, { recursive: true, force: true })
+})

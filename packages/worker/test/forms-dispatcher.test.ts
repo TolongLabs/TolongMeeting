@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'bun:test'
 import { once } from 'node:events'
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -38,6 +38,13 @@ function formFor(name: string, source: FormSource, sender?: { name: string; role
 function recFor(name: string, state: FormRecord['state']): FormRecord {
   const rec = newFormRecord(formFor(name, 'qr'), 'occ-test')
   return sampleRecord({ ...rec, state, history: [...rec.history, { state, at: rec.seenAt }] })
+}
+
+// A form directory whose record.json is not JSON: the form counts as handled.
+async function writeInvalidRecord(dir: string, name: string): Promise<void> {
+  const formDir = join(dir, 'forms', formIdFor(formFor(name, 'qr').finalUrl))
+  await mkdir(formDir, { recursive: true })
+  await writeFile(join(formDir, 'record.json'), 'not json')
 }
 
 function fakeBase(dir: string) {
@@ -87,7 +94,7 @@ test('a restart fails unfinished forms once and never hands any loaded form out 
     ['C', 'filling']
   ] as const)
     await saveFormRecord(dir, recFor(n, s))
-  await mkdir(join(dir, 'forms', formIdFor(formFor('D', 'qr').finalUrl)), { recursive: true }) // no readable record.json
+  await writeInvalidRecord(dir, 'D')
   const handle = mock(async (_f: ResolvedForm) => recFor('X', 'submitted'))
   const { base, pings } = fakeBase(dir)
   const d = await startFormDispatcher(base, handle)
@@ -99,6 +106,19 @@ test('a restart fails unfinished forms once and never hands any loaded form out 
   for (const n of ['A', 'B', 'C', 'D']) d.offer(formFor(n, 'qr'))
   await d.close()
   expect(handle).not.toHaveBeenCalled()
+})
+
+test('a form offered after close is logged as ignored, not dropped silently', async () => {
+  const handle = mock(async (_f: ResolvedForm) => recFor('F', 'submitted'))
+  const { base, events } = fakeBase(await tmp())
+  const d = await startFormDispatcher(base, handle)
+  await d.close()
+  d.offer(formFor('F', 'qr'))
+  await settle()
+  expect(handle).not.toHaveBeenCalled()
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: 'form', formId: null, outcome: 'ignored', reason: 'closed' })
+  )
 })
 
 test('the same form is handled once', async () => {
@@ -389,7 +409,7 @@ test('at start a failed record with no ping is pinged and an unreadable record i
     reason: 'deadline',
     pings: [{ state: 'failed', at: new Date().toISOString() }]
   })
-  await mkdir(join(dir, 'forms', formIdFor(formFor('D', 'qr').finalUrl)), { recursive: true })
+  await writeInvalidRecord(dir, 'D')
   const { base, pings, events } = fakeBase(dir)
   const d = await startFormDispatcher(
     base,

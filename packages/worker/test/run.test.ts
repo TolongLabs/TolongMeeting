@@ -317,7 +317,7 @@ test('forms are only handled in lectures, and the dispatcher closes before the r
   expect(work.calls).not.toContain('forms.close')
 })
 
-test('a dispatcher that cannot start is pinged, and trusted links still reach the member', async () => {
+test('a dispatcher that cannot start is pinged, and every form link still reaches the member', async () => {
   const d = fakeDeps({
     states: ['in_meeting', 'ended'],
     dispatcherStartFails: new Error('forms directory unreadable'),
@@ -333,7 +333,8 @@ test('a dispatcher that cannot start is pinged, and trusted links still reach th
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({ result: 'completed' })
   expect(messages(d).filter((m) => !m.startsWith('In the meeting'))).toEqual([
     "The bot's form submission stopped working. The recording continues.",
-    "Dr Lee shared a link at 20:01 that couldn't be checked within 5 seconds. It may be a form."
+    "Dr Lee shared a link at 20:01 that couldn't be checked within 5 seconds. It may be a form.",
+    "Classmate shared a link at 20:01 that couldn't be checked within 5 seconds. It may be a form."
   ])
   expect(await errorsAt(lectureCfg, 'form submission')).toHaveLength(1)
   expect(
@@ -680,3 +681,101 @@ test.each(['prepareProfile', 'startScreen', 'launchBrowser'] as const)(
     await settle()
   }
 )
+
+test.each(['startCheckpoints', 'startAudioSource', 'startRecorder'] as const)(
+  'SIGTERM while %s hangs ends the run, and the abandoned step failing later is swallowed',
+  async (step) => {
+    const abort = new AbortController()
+    const lateFailures: ((e: Error) => void)[] = []
+    const d = fakeDeps({})
+    const stuck = () =>
+      new Promise<never>((_, reject) => {
+        lateFailures.push(reject)
+        abort.abort()
+      })
+    Object.assign(d, { [step]: stuck })
+    const o = await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+    expect(o).toMatchObject({ result: 'failed', endedBy: 'terminated', reason: 'terminated', joinedAt: null })
+    expect(d.calls).toContain('checkpointProfile')
+    for (const fail of lateFailures) fail(new Error('late failure'))
+    await settle()
+  }
+)
+
+// --- no form link is lost at teardown ---
+
+function gated() {
+  let release = (): void => {}
+  const promise = new Promise<void>((resolve) => (release = resolve))
+  return { promise, release }
+}
+
+test('a link still resolving at SIGTERM reaches the dispatcher before it closes', async () => {
+  const abort = new AbortController()
+  const gate = gated()
+  const d = fakeDeps({
+    states: 'always_in_meeting',
+    resolve: async (c) => {
+      await gate.promise
+      return { ...c, finalUrl: c.url, provider: 'google' }
+    },
+    onState: async (n) => {
+      if (n !== 1) return
+      await d.hooks.chat.onMessage!(chatMessage({ links: [GOOGLE('late')] }))
+      abort.abort()
+      setTimeout(gate.release, 100) // the resolve settles after the SIGTERM chat sweep
+    }
+  })
+  await runOccurrence(lectureCfg, { ...d, signal: abort.signal })
+  expect(d.calls.indexOf('sweepNow')).toBeGreaterThan(-1)
+  expect(d.forms!.offers.map((o) => o.finalUrl)).toEqual([GOOGLE('late')])
+  expect(d.pings.map((p) => p.title)).toEqual(['Joined: Data Mining'])
+})
+
+test('a link that resolves after the dispatcher closed is pinged by its canonical URL', async () => {
+  const gate = gated()
+  const raw = `${GOOGLE('x').replace('viewform', 'formResponse')}?entry.1=x&submit=Submit`
+  const d = fakeDeps({
+    states: ['in_meeting', 'ended'],
+    teardownBudgetMs: 1000,
+    resolve: async (c) => {
+      await gate.promise
+      return { ...c, finalUrl: c.url, provider: 'google' }
+    },
+    // The intake wait ran out of time; the dispatcher closes, and only then does the resolve finish.
+    formsClose: async () => {
+      gate.release()
+      await settle()
+    },
+    onState: async (n) => {
+      if (n === 1) await d.hooks.chat.onMessage!(chatMessage({ links: [raw] }))
+    }
+  })
+  await runOccurrence(lectureCfg, d)
+  expect(d.forms!.offers).toEqual([])
+  const unchecked = d.pings.filter((p) => p.title.startsWith('Link seen, not checked'))
+  expect(unchecked.map((p) => p.actions?.map((a) => a.url))).toEqual([[GOOGLE('x')]])
+  expect(await errorsAt(lectureCfg, 'teardown forms.intake')).toHaveLength(1)
+})
+
+test('a form link ping that cannot be sent raises the form_ping_failed alert', async () => {
+  const d = fakeDeps({
+    states: ['in_meeting', 'ended'],
+    dispatcherStartFails: new Error('forms directory unreadable'),
+    onState: async (n) => {
+      if (n !== 1) return
+      await d.hooks.chat.onMessage!(chatMessage({ links: [GOOGLE('host-form')] }))
+      await settle()
+    }
+  })
+  const send = d.sendPing
+  d.sendPing = async (cfg, ping) => {
+    if (ping.title.startsWith('Link seen')) throw new Error('ntfy down')
+    await send(cfg, ping)
+  }
+  await runOccurrence(lectureCfg, d)
+  expect((await events(lectureCfg)).filter((e) => e.type === 'alert').map((e) => e.data.kind)).toContain(
+    'form_ping_failed'
+  )
+  expect(await errorsAt(lectureCfg, 'form_intake')).toHaveLength(1)
+})
