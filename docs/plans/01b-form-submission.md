@@ -969,8 +969,10 @@ export const DERIVED_LABELS = {
 
 - **Pool**: the member's details, each with its own labels plus `DEFAULT_LABELS[key]` plus the key with underscores as spaces; `session_date` (`DD/MM/YYYY`) and `session_start` (`HH:MM`, 24-hour) from `entry.start` in `entry.timeZone`; every `entry.formDetails` pair with `DERIVED_LABELS[key]` and its key as words. An `entry.formDetails` key overrides a member detail with the same key, and empty values are dropped.
 - **Exact match**: a question's normalised label equals a normalised label of exactly one detail. Equal to two or more details means no exact match.
-- **Plan, per question in page order**: (1) `confirmationAnswer`: the question is required, radio or checkbox, and exactly one option `confirmsAttendance`; that option is chosen with `via: 'confirmation'`. (2) A matched text or paragraph question gets the detail's value. (3) A matched radio, checkbox or dropdown gets the one option whose normalised text equals the normalised value; none or several means unmatched. (4) Anything else is unmatched; it goes to `unmatchedRequired` if required and is otherwise left blank. `via` is `label` for `exact` and `model` for `model`.
-- **Model questions**: neither exact-matched nor answerable by `confirmationAnswer`, and not of type `other`.
+- **Copy box**: a question whose label and options together contain a copy word (`copy`, `copies`, `receipt`, `salinan`, `resit`) and a send word (`send`, `email`, `e mail`, `get`, `receive`, `hantar`, `emel`), matched on normalised text. It is never answered and never sent to the model.
+- **Plan, per question in page order**: (1) `confirmationAnswer`: the question is required, radio or checkbox, not the copy box, its normalised label contains an attendance word (`attendance`, `kehadiran`, `hadir`, `present`, `presence`, `attend`, `attending`, `register`, `registration`, `sign in`, `sign in sheet`, `roll call`, `check in`), and exactly one option `confirmsAttendance`; that option is chosen with `via: 'confirmation'`. A question such as "Which describes the sample?" with "Present" and "Absent" is not a confirmation. (2) A matched text or paragraph question gets the detail's value. (3) A matched radio, checkbox or dropdown gets the one option whose strict text equals the saved value. Strict text is NFKC, case-folded, trimmed and whitespace-collapsed; punctuation counts, so `Dr Example` and `Dr. Example` differ, and `C` never matches `C++`. None or several equal options means unmatched. (4) Anything else is unmatched; it goes to `unmatchedRequired` if required and is otherwise left blank. `via` is `label` for `exact` and `model` for `model`.
+- **Model questions**: neither exact-matched nor answerable by `confirmationAnswer`, not the copy box, and not of type `other`.
+- **Date and time**: questions of type `other` (date, time, grid, upload) are never filled, even when matched by label. They fail closed as unmatched until a follow-up issue adds typed answers.
 - **Verification**: `verifyFill` is true only when every answer shows in `after` (text equal; option chosen or ticked), every question without an answer is empty, and `sendCopy` is not `true`.
 - **Test job**: entry "Example lecture", start `2026-10-20T20:00:00+08:00`, end `2026-10-20T22:00:00+08:00`, `Asia/Kuala_Lumpur`, `trustedSenders: ['Dr Example']`, `formDetails: { course_code: 'ABC1234', section: '02', lecturer: 'Dr Example' }`; identity organisation `{ name: 'Example University', emailDomain: 'example.edu.my' }` unless patched; details `full_name` "Test Student", `student_id` "A00000000", `university_email` "student@example.edu.my", `programme` "MSc Example", all with `labels: []`; `ai.models.formMatch` "qwen-flash".
 
@@ -1040,7 +1042,8 @@ test('confirmations need one confirming option on a required radio or checkbox',
     via: 'confirmation'
   })
   expect(
-    confirmationAnswer(q('b', 'Declaration', 'checkbox', ['I confirm I am attending this class'], true))?.kind
+    confirmationAnswer(q('b', 'Attendance declaration', 'checkbox', ['I confirm I am attending this class'], true))
+      ?.kind
   ).toBe('choose')
   expect(confirmationAnswer(q('c', 'Status', 'radio', ['Present', 'Present (online)', 'Absent'], true))).toBeNull()
   expect(confirmationAnswer(q('d', 'Status', 'radio', ['Not present', 'Tidak hadir'], true))).toBeNull()

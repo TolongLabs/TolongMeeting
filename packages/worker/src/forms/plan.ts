@@ -3,12 +3,24 @@ import { confirmsAttendance, normaliseText } from './rules'
 import type { Answer, FormPage, FormQuestion, MatchQuestion, PagePlan } from './types'
 
 const MODEL_TEXT_LIMIT = 120
-// Matches "send me a copy", "send a copy" and "email me a copy" once normaliseText has run.
-const COPY_BOX = /\b(?:send|email) (?:me )?a copy\b/
+// Matched against normaliseText output, so "e-mail" arrives as "e mail".
+const COPY_NOUN = /\b(?:copy|copies|receipt|salinan|resit)\b/
+const COPY_VERB = /\b(?:send|email|e mail|get|receive|hantar|emel)\b/
+// Attendance vocabulary for a confirmation question's label. Option text alone never makes a confirmation.
+const ATTENDANCE_LABEL =
+  /\b(?:attendance|kehadiran|hadir|present|presence|attend|attending|register|registration|sign in|sign in sheet|roll call|check in)\b/
 
-// The "send me a copy" box is never answered, even when its wording mentions attendance.
+// The copy box is never answered, even when its wording mentions attendance. A copy word and a send word anywhere
+// in the question's label or options make it one.
 function isCopyBox(q: FormQuestion): boolean {
-  return [q.label, ...q.options].some((text) => COPY_BOX.test(normaliseText(text)))
+  const text = normaliseText([q.label, ...q.options].join(' '))
+  return COPY_NOUN.test(text) && COPY_VERB.test(text)
+}
+
+// Choice equality is stricter than normaliseText: NFKC, case-folded, trimmed, whitespace collapsed. Punctuation counts,
+// so "Dr. Example" and "Dr Example" differ, and so do "a.b@x" and "a_b@x".
+function strictText(s: string): string {
+  return s.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ')
 }
 
 function cut(text: string): string {
@@ -30,17 +42,17 @@ export function exactLabelMatches(page: FormPage, pool: SavedDetail[]): Map<stri
   return found
 }
 
-// A required radio or checkbox whose single confirming option is the only way to confirm attendance.
-// Zero or several confirming options mean no answer. Judged on the option text, not the question label.
+// A required radio or checkbox that asks about attendance (label), with exactly one confirming option.
+// Zero or several confirming options mean no answer. The option text alone is judged by confirmsAttendance.
 export function confirmationAnswer(q: FormQuestion): Answer | null {
   if (!q.required || (q.type !== 'radio' && q.type !== 'checkbox')) return null
-  if (isCopyBox(q)) return null
+  if (isCopyBox(q) || !ATTENDANCE_LABEL.test(normaliseText(q.label))) return null
   const confirming = q.options.filter(confirmsAttendance)
   if (confirming.length !== 1) return null
   return { questionId: q.id, kind: 'choose', option: confirming[0], detailKey: null, via: 'confirmation' }
 }
 
-// Choice questions take an option only when its normalised text equals the normalised saved value.
+// Choice questions take an option only when its strict text equals the strict saved value; none or several means null.
 function answerFrom(q: FormQuestion, key: string, via: 'label' | 'model', pool: SavedDetail[]): Answer | null {
   const detail = pool.find((d) => d.key === key)
   if (!detail) throw new Error(`unknown detail key for question ${q.id}: ${key}`)
@@ -48,9 +60,9 @@ function answerFrom(q: FormQuestion, key: string, via: 'label' | 'model', pool: 
     return { questionId: q.id, kind: 'text', value: detail.value, detailKey: key, via }
   }
   if (q.type === 'radio' || q.type === 'checkbox' || q.type === 'dropdown') {
-    const want = normaliseText(detail.value)
+    const want = strictText(detail.value)
     if (want === '') return null
-    const matches = q.options.filter((o) => normaliseText(o) === want)
+    const matches = q.options.filter((o) => strictText(o) === want)
     if (matches.length !== 1) return null
     return { questionId: q.id, kind: 'choose', option: matches[0], detailKey: key, via }
   }

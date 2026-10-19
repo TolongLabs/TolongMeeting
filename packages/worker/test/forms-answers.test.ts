@@ -105,7 +105,8 @@ test('confirmations need exactly one confirming option on a required radio or ch
     via: 'confirmation'
   })
   expect(
-    confirmationAnswer(q('b', 'Declaration', 'checkbox', ['I confirm I am attending this class'], true))?.kind
+    confirmationAnswer(q('b', 'Attendance declaration', 'checkbox', ['I confirm I am attending this class'], true))
+      ?.kind
   ).toBe('choose')
   expect(confirmationAnswer(q('c', 'Status', 'radio', ['Present', 'Present (online)', 'Absent'], true))).toBeNull()
   expect(confirmationAnswer(q('d', 'Status', 'radio', ['Not present', 'Tidak hadir'], true))).toBeNull()
@@ -113,9 +114,29 @@ test('confirmations need exactly one confirming option on a required radio or ch
   expect(confirmationAnswer(q('f', 'Attendance', 'dropdown', ['Present', 'Absent'], true))).toBeNull()
 })
 
+test('a confirmation also needs attendance words in the question label', () => {
+  expect(confirmationAnswer(q('p', 'Which describes the sample?', 'radio', ['Present', 'Absent'], true))).toBeNull()
+  expect(confirmationAnswer(q('a', 'Attendance', 'radio', ['Present', 'Absent'], true))).toMatchObject({
+    kind: 'choose',
+    option: 'Present'
+  })
+  expect(confirmationAnswer(q('k', 'Kehadiran', 'radio', ['Hadir', 'Tidak hadir'], true))).toMatchObject({
+    kind: 'choose',
+    option: 'Hadir'
+  })
+  const plan = planPage(
+    pageOf([q('p1q0', 'Which describes the sample?', 'radio', ['Present', 'Absent'], true)]),
+    pool,
+    new Map(),
+    new Map()
+  )
+  expect(plan.answers).toEqual([])
+  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q0'])
+})
+
 test('a lone denying option is never chosen or ticked', () => {
   expect(confirmationAnswer(q('g', 'Attendance', 'radio', ['Absent'], true))).toBeNull()
-  expect(confirmationAnswer(q('h', 'Declaration', 'checkbox', ["I can't attend"], true))).toBeNull()
+  expect(confirmationAnswer(q('h', 'Attendance declaration', 'checkbox', ["I can't attend"], true))).toBeNull()
   const plan = planPage(pageOf([q('p1q0', 'Attendance', 'radio', ['Absent'], true)]), pool, new Map(), new Map())
   expect(plan.answers).toEqual([])
   expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q0'])
@@ -137,6 +158,24 @@ test('the send-me-a-copy box is never ticked, even when its wording mentions att
   const optional = q('p1q1', 'Options', 'checkbox', ['Send me a copy'], false)
   expect(planPage(pageOf([optional]), pool, new Map(), new Map([['p1q1', 'university_email']])).answers).toEqual([])
   expect(questionsForModel(pageOf([optional]), new Map())).toEqual([])
+})
+
+test('copy boxes in other wording and languages are never ticked or sent to the model', () => {
+  const microsoft = q(
+    'p1q0',
+    'Send me an email receipt of my responses',
+    'checkbox',
+    ['Send me an email receipt of my responses'],
+    true
+  )
+  const malay = q('p1q1', 'Kehadiran', 'checkbox', ['Hadir', 'Hantar salinan jawapan kepada saya'], true)
+  const emailed = q('p1q2', 'Receipt', 'checkbox', ['Get an e-mail copy'], false)
+  for (const box of [microsoft, malay, emailed]) {
+    expect(confirmationAnswer(box)).toBeNull()
+  }
+  const page = pageOf([microsoft, malay, emailed])
+  expect(planPage(page, pool, new Map(), new Map()).answers).toEqual([])
+  expect(questionsForModel(page, new Map())).toEqual([])
 })
 
 test('choice questions need an option exactly equal to the saved value', () => {
@@ -165,11 +204,11 @@ test('choice questions need an option exactly equal to the saved value', () => {
   expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q1'])
 })
 
-test('choice equality ignores case, spacing and punctuation, but not extra words or repeats', () => {
+test('choice equality ignores case and spacing, but not punctuation or extra words', () => {
   const p = pageOf([
-    q('p1q0', 'Lecturer', 'radio', ['Prof Other', '  DR   EXAMPLE. '], true),
-    q('p1q1', 'Lecturer', 'dropdown', ['Dr Example Jr', 'Dr. Example Jr'], true),
-    q('p1q2', 'Lecturer', 'radio', ['Dr Example', 'dr. example'], true)
+    q('p1q0', 'Lecturer', 'radio', ['Prof Other', '  DR   EXAMPLE '], true),
+    q('p1q1', 'Lecturer', 'dropdown', ['Dr. Example', 'Dr Example Jr'], true),
+    q('p1q2', 'Lecturer', 'radio', ['Dr Example', 'DR EXAMPLE'], true)
   ])
   const exact = new Map([
     ['p1q0', 'lecturer'],
@@ -178,9 +217,33 @@ test('choice equality ignores case, spacing and punctuation, but not extra words
   ])
   const plan = planPage(p, pool, exact, new Map())
   expect(plan.answers).toEqual([
-    { questionId: 'p1q0', kind: 'choose', option: '  DR   EXAMPLE. ', detailKey: 'lecturer', via: 'label' }
+    { questionId: 'p1q0', kind: 'choose', option: '  DR   EXAMPLE ', detailKey: 'lecturer', via: 'label' }
   ])
   expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q1', 'p1q2'])
+})
+
+test('a short saved choice does not match a longer option that starts with it', () => {
+  const cPool = [{ key: 'language', value: 'C', labels: ['Language'] }]
+  const exact = new Map([['p1q0', 'language']])
+  const withC = pageOf([q('p1q0', 'Language', 'radio', ['C', 'C++', 'C#'], true)])
+  expect(planPage(withC, cPool, exact, new Map()).answers).toEqual([
+    { questionId: 'p1q0', kind: 'choose', option: 'C', detailKey: 'language', via: 'label' }
+  ])
+  const withoutC = pageOf([q('p1q0', 'Language', 'radio', ['C++', 'C#'], true)])
+  const plan = planPage(withoutC, cPool, exact, new Map())
+  expect(plan.answers).toEqual([])
+  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q0'])
+})
+
+test('an email differing only by "." and "_" is never chosen for the other', () => {
+  const emailPool = [{ key: 'university_email', value: 'a.b@example.edu.my', labels: ['Email'] }]
+  const exact = new Map([['p1q0', 'university_email']])
+  const onlyUnderscore = pageOf([q('p1q0', 'Email', 'dropdown', ['a_b@example.edu.my'], true)])
+  expect(planPage(onlyUnderscore, emailPool, exact, new Map()).unmatchedRequired).toHaveLength(1)
+  const both = pageOf([q('p1q0', 'Email', 'dropdown', ['a_b@example.edu.my', 'a.b@example.edu.my'], true)])
+  expect(planPage(both, emailPool, exact, new Map()).answers).toEqual([
+    { questionId: 'p1q0', kind: 'choose', option: 'a.b@example.edu.my', detailKey: 'university_email', via: 'label' }
+  ])
 })
 
 test('a date widget matched by label is still not filled', () => {
