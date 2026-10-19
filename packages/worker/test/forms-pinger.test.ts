@@ -125,6 +125,7 @@ test('trusted QR form: manual-submission ping within 30 s and a record', async (
     provider: 'google',
     url: 'https://forms.gle/abc'
   })
+  expect(rec.formId).toMatch(/^[0-9a-f]{16}$/)
   expect(Date.parse(rec.pingedAt!) - Date.parse(rec.seenAt)).toBeLessThan(30_000)
   expect(ev.filter((e) => e.type === 'form').map((e) => e.data.state)).toEqual([
     'resolving',
@@ -191,6 +192,85 @@ test('a failed ping moves the form to failed and emits an error', async () => {
   expect(ev.find((e) => e.type === 'error')!.data).toMatchObject({
     where: 'form',
     state: 'failed',
-    host: 'docs.google.com'
+    host: 'docs.google.com',
+    message: 'ntfy responded 500'
   })
+})
+
+test('a failed ping releases the form: a later sighting of the same form is pinged', async () => {
+  let ntfyUp = false
+  const flaky = async (p: Ping): Promise<void> => {
+    if (!ntfyUp) throw new Error('ntfy responded 500')
+    await send(p)
+  }
+  const p = createFormPinger({ cfg, send: flaky, emit, resolve })
+  await p.offer({ url: FORM, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.idle()
+
+  expect(sent).toEqual([])
+  expect(ev.find((e) => e.type === 'alert')!.data).toMatchObject({ kind: 'form_ping_failed', host: 'docs.google.com' })
+
+  ntfyUp = true
+  await p.offer({ url: SAFE_LINK, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.idle()
+
+  expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
+  expect(await onlyRecord()).toMatchObject({ state: 'needs_member' })
+  expect((await onlyRecord()).pingedAt).not.toBeNull()
+})
+
+test('a failure after the ping went out keeps the state it was in and never rejects the task', async () => {
+  const flakyEvents: typeof emit = async (type, data) => {
+    if (type === 'form' && data.state === 'needs_member') throw new Error('event log full')
+    ev.push({ type, data })
+  }
+  const p = createFormPinger({ cfg, send, emit: flakyEvents, resolve })
+  await p.offer({ url: 'https://forms.gle/abc', source: 'qr', sender: null, senderRole: null, seenAt: t0 })
+  await p.idle()
+
+  expect(sent.map((s) => s.title)).toEqual(['Form to submit: Data Mining'])
+  expect(ev.find((e) => e.type === 'error')!.data).toMatchObject({
+    state: 'needs_member',
+    message: 'event log full'
+  })
+  expect(ev.some((e) => e.type === 'alert')).toBe(false)
+  expect(await onlyRecord()).toMatchObject({ state: 'needs_member' })
+  expect((await onlyRecord()).pingedAt).not.toBeNull()
+})
+
+test('a candidate that is not a URL is ignored without a rejected task', async () => {
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  await p.offer({ url: 'not a url at all', source: 'qr', sender: null, senderRole: null, seenAt: t0 })
+  await p.idle()
+
+  expect(sent).toEqual([])
+  expect(ev).toEqual([{ type: 'form', data: expect.objectContaining({ formId: null, outcome: 'ignored' }) }])
+})
+
+test('an untrusted unresolved link is not marked done: a trusted repost is checked and pinged', async () => {
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  const url = 'https://slow.example/form'
+  await p.offer({ url, source: 'meeting_chat', sender: 'Student A', senderRole: 'participant', seenAt: t0 })
+  await p.idle()
+  expect(sent).toEqual([])
+
+  await p.offer({ url, source: 'meeting_chat', sender: 'Dr Lecturer', senderRole: 'host', seenAt: t0 })
+  await p.idle()
+
+  expect(sent.map((s) => s.title)).toEqual(['Link seen, not checked: Data Mining'])
+  expect(ev.filter((e) => e.data.outcome === 'unresolved')).toHaveLength(2)
+})
+
+test('ping times are wall-clock in the entry time zone, not the container zone', async () => {
+  const p = createFormPinger({ cfg, send, emit, resolve })
+  await p.offer({
+    url: 'https://forms.gle/abc',
+    source: 'qr',
+    sender: null,
+    senderRole: null,
+    seenAt: '2026-10-21T06:30:00.000Z'
+  })
+  await p.idle()
+
+  expect(sent[0].message).toContain('was seen at 14:30.')
 })

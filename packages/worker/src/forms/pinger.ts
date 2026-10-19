@@ -12,7 +12,7 @@ import type {
   SenderRole,
   TrustReason
 } from '@tm/core'
-import { localParts, nextFormState } from '@tm/core'
+import { IllegalTransition, localParts, nextFormState } from '@tm/core'
 import { formNotSubmittedPing, formToSubmitPing, linkUncheckedPing, type Ping } from '@tm/notify'
 import { LinkResolveError, normaliseFormUrl, resolveFormLink } from './links'
 import { checkTrust } from './trust'
@@ -54,9 +54,26 @@ function locate(url: string): Location {
   return { host: u.host, path: u.pathname }
 }
 
-// One id per form per meeting: the first 12 hex characters of SHA-256 of the duplicate key.
+// One id per form per meeting: the first 16 hex characters of SHA-256 of the duplicate key.
 function formIdOf(key: string): string {
-  return createHash('sha256').update(key).digest('hex').slice(0, 12)
+  return createHash('sha256').update(key).digest('hex').slice(0, 16)
+}
+
+// Only some states have a 'fail' edge. Terminal states such as needs_member keep their state.
+function canFail(state: FormState): boolean {
+  try {
+    nextFormState(state, 'fail')
+    return true
+  } catch (err) {
+    if (err instanceof IllegalTransition) return false
+    throw err
+  }
+}
+
+// A resolver timeout is reported by its reason alone: its message names the link.
+function messageOf(err: unknown): string {
+  if (err instanceof LinkResolveError) return err.reason
+  return err instanceof Error ? err.message : String(err)
 }
 
 export function createFormPinger(deps: FormPingerDeps): FormPinger {
@@ -90,31 +107,42 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
     })
   }
 
-  async function reportUnresolved(c: FormCandidate, err: LinkResolveError): Promise<void> {
+  async function reportUnresolved(c: FormCandidate, err: LinkResolveError, at: Location): Promise<void> {
     if (checkTrust(c, cfg.entry.trustedSenders).trusted) {
       await send(linkUncheckedPing(cfg.entry.name, c, clockOf(c.seenAt)))
+    } else {
+      // No ping went out, so the link is not done: a later trusted posting of the same URL is still checked.
+      offered.delete(c.url)
     }
-    await emit('form', { outcome: 'unresolved', reason: err.reason, ...locate(c.url) })
+    await emit('form', { formId: null, outcome: 'unresolved', reason: err.reason, ...at })
   }
 
   async function run(c: FormCandidate): Promise<void> {
-    const raw = locate(c.url)
-    let state: FormState = nextFormState('detected', 'resolve')
-    let location = raw
+    let state: FormState = 'detected'
+    let location: Location | null = null
+    let formId: string | null = null
+    let claimedKey: string | null = null
     let rec: FormPingRecord | null = null
     try {
-      await emit('form', { formId: null, state, source: c.source, trustReason: null, ...raw })
+      // Text that is not a URL (arbitrary QR content) is not a form, so it is ignored rather than failed.
+      if (!URL.canParse(c.url)) {
+        await emit('form', { formId: null, outcome: 'ignored', host: null, path: null })
+        return
+      }
+      location = locate(c.url)
+      state = nextFormState(state, 'resolve')
+      await emit('form', { formId: null, state, source: c.source, trustReason: null, ...location })
 
       let form: ResolvedForm | null
       try {
         form = await resolve(c)
       } catch (err) {
         if (!(err instanceof LinkResolveError)) throw err
-        await reportUnresolved(c, err)
+        await reportUnresolved(c, err, location)
         return
       }
       if (form === null) {
-        await emit('form', { outcome: 'ignored', ...raw })
+        await emit('form', { formId: null, outcome: 'ignored', ...location })
         return
       }
 
@@ -122,11 +150,13 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       const key = normaliseFormUrl(form.finalUrl)
       if (formKeys.has(key)) return
       formKeys.add(key)
+      claimedKey = key
+      formId = formIdOf(key)
 
       location = locate(form.finalUrl)
       state = nextFormState(state, 'resolved')
       rec = {
-        formId: formIdOf(key),
+        formId,
         url: c.url,
         source: c.source,
         sender: c.sender,
@@ -151,13 +181,28 @@ export function createFormPinger(deps: FormPingerDeps): FormPinger {
       rec = { ...rec, state, trustReason: decision.reason, pingedAt: now().toISOString() }
       await commit(rec, location)
     } catch (err) {
-      state = nextFormState(state, 'fail')
-      if (rec !== null) {
-        rec = { ...rec, state }
-        await writeRecord(rec)
+      const ended: FormState = canFail(state) ? nextFormState(state, 'fail') : state
+      const failed = ended === 'failed'
+      if (failed) {
+        // The form was not pinged, so a later sighting of it (or of this raw URL) must be handled again.
+        offered.delete(c.url)
+        if (claimedKey !== null) formKeys.delete(claimedKey)
       }
-      const message = err instanceof Error ? err.message : String(err)
-      await emit('error', { where: 'form', formId: rec?.formId ?? null, state, ...location, message })
+
+      let recordMessage: string | null = null
+      if (rec !== null) {
+        try {
+          await writeRecord({ ...rec, state: ended })
+        } catch (writeErr) {
+          recordMessage = messageOf(writeErr)
+        }
+      }
+
+      const at = location ?? { host: null, path: null }
+      await emit('error', { where: 'form', formId, state: ended, ...at, message: messageOf(err), recordMessage })
+      if (failed) {
+        await emit('alert', { kind: 'form_ping_failed', formId, ...at })
+      }
     }
   }
 
