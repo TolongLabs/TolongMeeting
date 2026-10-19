@@ -156,6 +156,8 @@ const updatedAt = () =>
  * A composite foreign key `(child, member_id) -> parent(id, member_id)`: a child row can only point at a parent owned by
  * the same member, so member isolation holds in the database and not only in the scope. The parent table needs a unique
  * constraint on `(id, member_id)`. Cascade is the default action, like the single-column keys it replaces.
+ * `'set null'` needs a hand edit in the generated migration to `ON DELETE SET NULL (<child column>)`: drizzle-kit writes a
+ * plain `SET NULL`, which would also null `member_id` and fail its NOT NULL on every parent delete.
  */
 function ownedFk(
   name: string,

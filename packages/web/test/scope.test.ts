@@ -160,13 +160,14 @@ describe('scope operations', () => {
     expect(rowA!.displayName).not.toBe('Bee')
   })
 
-  test('updateMe ignores keys outside its four settings', async () => {
+  test('updateMe refuses keys outside its four settings and writes nothing', async () => {
     const b = await seedMember(db)
     const scope = createScope(db, b.memberId)
     const before = await scope.me()
-    await scope.updateMe({ role: 'admin', githubLogin: 'taken', authUserId: 'x', displayName: 'Bee' } as never)
-    await scope.updateMe({ role: 'admin' } as never)
-    expect(await scope.me()).toEqual({ ...before, displayName: 'Bee' })
+    const attempt = { role: 'admin', githubLogin: 'taken', authUserId: 'x', displayName: 'Bee' } as never
+    await expect(scope.updateMe(attempt)).rejects.toThrow('not a member setting: role, githubLogin, authUserId')
+    await expect(scope.updateMe({ role: 'admin' } as never)).rejects.toThrow('not a member setting: role')
+    expect(await scope.me()).toEqual(before)
   })
 
   test('a transaction scope keeps the same member', async () => {

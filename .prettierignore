@@ -8,3 +8,4 @@ spikes/03-qr/.venv/
 .superpowers/
 .dkm/
 graphify-out/
+packages/web/db/migrations/meta/

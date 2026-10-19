@@ -51,6 +51,8 @@ export function createScope(db: Db, memberId: string): MemberScope {
 
     async updateMe(set) {
       // A runtime whitelist: a caller that casts past the type can't set `role`, `githubLogin` or any other column.
+      const unknown = Object.keys(set).filter((key) => !(ME_KEYS as readonly string[]).includes(key))
+      if (unknown.length > 0) throw new Error(`updateMe: not a member setting: ${unknown.join(', ')}`)
       const allowed: Partial<MemberRow> = {}
       for (const key of ME_KEYS) if (set[key] !== undefined) Object.assign(allowed, { [key]: set[key] })
       if (Object.keys(allowed).length === 0) return
