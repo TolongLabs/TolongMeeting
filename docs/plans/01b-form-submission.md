@@ -1142,7 +1142,7 @@ git commit -m "feat(worker): plan form answers"
 **Files:**
 
 - Create: `packages/worker/src/forms/model-match.ts`
-- Test: `packages/worker/src/forms/model-match.test.ts`
+- Test: `packages/worker/test/forms-model-match.test.ts`
 
 **Interfaces:**
 
@@ -1179,7 +1179,7 @@ Reply with JSON only, in this shape: {"matches":[{"question":"<id>","detail":"<k
 
 The user message is `JSON.stringify({ details: detailKeys, questions })`, with each label and option cut to `LABEL_LIMIT` characters. Keys only: saved values never leave the worker. The call is `chatJson(ai, ai.models.formMatch, messages, FormMatchSchema, MATCH_TIMEOUT_MS)`, with thinking off by `chatJson`'s default. With no questions or no keys, return an empty map without calling. Keep only entries with `confidence === 'high'`, a non-null `detail` among `detailKeys`, and a `question` among the ids sent. Any error (timeout, HTTP error, `AiKeyError`, invalid JSON, schema mismatch) returns an empty map, which leaves those questions unmatched.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // stubCompletions(reply, delayMs = 0): Bun.serve on port 0 answering POST /chat/completions with
@@ -1261,23 +1261,23 @@ test('returns no matches on malformed JSON or an HTTP error, and makes no call w
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/model-match.test.ts`
+Run: `bun test packages/worker/test/forms-model-match.test.ts`
 Expected: FAIL with "Cannot find module './model-match'".
 
-- [ ] **Step 3: Implement `matchWithModel` in `packages/worker/src/forms/model-match.ts`**
+- [x] **Step 3: Implement `matchWithModel` in `packages/worker/src/forms/model-match.ts`**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/model-match.test.ts`
+Run: `bun test packages/worker/test/forms-model-match.test.ts`
 Expected: PASS (about 6 seconds, for the timeout case).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/model-match.ts packages/worker/src/forms/model-match.test.ts
-git commit -m "feat(worker): match form labels with the model"
+git add packages/worker/src/forms/model-match.ts packages/worker/test/forms-model-match.test.ts
+git commit -m "feat(worker): match form labels with a model"
 ```
 
 ### Task 8: Selector maps and the Google Forms driver

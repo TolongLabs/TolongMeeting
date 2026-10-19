@@ -18,6 +18,7 @@
     "qrcode": "^1.5.4"
   },
   "dependencies": {
+    "@tm/ai": "workspace:*",
     "@tm/core": "workspace:*",
     "@tm/notify": "workspace:*",
     "playwright": "1.64.1",
