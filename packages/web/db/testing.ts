@@ -1,9 +1,10 @@
 // Test helpers: a real Postgres database per call and a seeded member. Import from tests only, never from app code.
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { MEMBER_OWNED, schema, type Db } from './index'
 import { runMigrations } from './migrate'
+import { hashEventData } from './transitions'
 
 interface TestDbHandle {
   name: string
@@ -64,23 +65,6 @@ export async function dropTestDb(db: Db): Promise<void> {
 
 export async function dropAllTestDbs(): Promise<void> {
   for (const db of [...created.keys()]) await dropTestDb(db)
-}
-
-/** SHA-256 of the canonical (sorted-key) JSON of `data`, as stored in `events.data_hash`. */
-export function hashEventData(data: unknown): string {
-  const canonical = (v: unknown): unknown =>
-    Array.isArray(v)
-      ? v.map(canonical)
-      : v && typeof v === 'object'
-        ? Object.fromEntries(
-            Object.entries(v)
-              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-              .map(([k, x]) => [k, canonical(x)])
-          )
-        : v
-  return createHash('sha256')
-    .update(JSON.stringify(canonical(data)))
-    .digest('hex')
 }
 
 export interface Seeded {

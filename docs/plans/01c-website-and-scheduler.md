@@ -308,7 +308,7 @@ git commit -m "feat(core): seal secrets with HKDF keys"
 **Files:**
 
 - Create: `packages/core/src/occurrence-machine.ts`, `packages/core/src/passcode.ts`, `packages/web/db/transitions.ts`
-- Test: `packages/core/src/occurrence-machine.test.ts`, `packages/core/src/passcode.test.ts`, `packages/web/db/transitions.test.ts`
+- Test: `packages/core/test/occurrence-machine.test.ts`, `packages/core/test/passcode.test.ts`, `packages/web/test/transitions.test.ts` (tests live in `test/`, not beside the source)
 
 **Interfaces:**
 
@@ -370,10 +370,10 @@ all outside ACTIVE_STATES, except deleted   delete -> deleted
 
 `stripPasscode` removes the query parameters `pwd` and `passcode` on any host, and `p` on `teams.microsoft.com`, `*.teams.microsoft.com` and `teams.live.com`; it returns `''` for a string that doesn't parse as a URL.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/occurrence-machine.test.ts
+// packages/core/test/occurrence-machine.test.ts
 test('the main line runs from scheduled to completed', () => {
   const path: [OccurrenceTrigger, OccurrenceState][] = [
     ['launch', 'starting'],
@@ -424,7 +424,7 @@ test('triggerFor finds the trigger between two states', () => {
 ```
 
 ```ts
-// packages/core/src/passcode.test.ts
+// packages/core/test/passcode.test.ts
 test('passcodes are stripped from meeting links', () => {
   expect(stripPasscode('https://example.zoom.us/j/00000000000?pwd=PASSCODE')).toBe(
     'https://example.zoom.us/j/00000000000'
@@ -438,7 +438,7 @@ test('passcodes are stripped from meeting links', () => {
 ```
 
 ```ts
-// packages/web/db/transitions.test.ts
+// packages/web/test/transitions.test.ts
 test('a transition writes the state and a state event', async () => {
   const db = await createTestDb()
   const a = await seedMember(db)
@@ -478,23 +478,23 @@ test('an illegal trigger changes nothing', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/occurrence-machine.test.ts packages/core/src/passcode.test.ts packages/web/db/transitions.test.ts`
+Run: `bun test packages/core/test/occurrence-machine.test.ts packages/core/test/passcode.test.ts packages/web/test/transitions.test.ts`
 
 Expected: FAIL with `Cannot find module './occurrence-machine'`.
 
-- [ ] **Step 3: Implement the machine, `stripPasscode` and `applyTrigger`**
+- [x] **Step 3: Implement the machine, `stripPasscode` and `applyTrigger`**
 
 Hold the transitions above as one table (`Record<OccurrenceState, Partial<Record<OccurrenceTrigger, OccurrenceState>>>` plus the three group rules), so that `nextOccurrenceState` and `triggerFor` read the same data.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/occurrence-machine.test.ts packages/core/src/passcode.test.ts packages/web/db/transitions.test.ts`
+Run: `bun test packages/core/test/occurrence-machine.test.ts packages/core/test/passcode.test.ts packages/web/test/transitions.test.ts`
 
-Expected: PASS, `8 pass, 0 fail`.
+Expected: PASS, `12 pass, 0 fail` (the three files together).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/occurrence-machine* packages/core/src/passcode* packages/web/db/transitions*
