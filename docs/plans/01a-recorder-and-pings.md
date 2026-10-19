@@ -1810,17 +1810,17 @@ git commit -m "feat(worker): add durable chat capture"
 
 - Create: `packages/worker/src/forms/pinger.ts`, `packages/worker/src/forms/provider-check.ts`
 - Create fixtures: `packages/worker/test/fixtures/forms-home.html` (a forms list page with no sign-in fields), `packages/worker/test/fixtures/forms-signin.html` (a visible `input[type=email]`)
-- Test: `packages/worker/src/forms/pinger.test.ts`, `packages/worker/test/provider-check.spec.ts`
+- Test: `packages/worker/test/forms-pinger.test.ts`, `packages/worker/test/provider-check.spec.ts`
 
 **Interfaces:**
 
 - Consumes: `nextFormState`, `FormTrigger` (Task 2); `formToSubmitPing`, `formNotSubmittedPing`, `linkUncheckedPing` (Task 3); `resolveFormLink`, `LinkResolveError`, `normaliseFormUrl`, `checkTrust` (Task 12); `localParts` (Task 2).
 - Produces (adds to contracts): `createFormPinger(deps: FormPingerDeps): FormPinger`; `interface FormPingerDeps { cfg: JobConfig; send: (p: Ping) => Promise<void>; emit: (type: EventType, data: Record<string, unknown>) => Promise<void>; resolve?: typeof resolveFormLink; now?: () => Date }`; `interface FormPinger { offer(c: FormCandidate): Promise<void>; idle(): Promise<void> }`; `interface FormPingRecord { formId: string; url: string; source: FormSource; sender: string | null; senderRole: SenderRole | null; seenAt: string; provider: FormProvider | null; state: FormState; trustReason: TrustReason | null; pingedAt: string | null }`, written to `forms/<formId>/record.json` (`formId` is the first 12 hex characters of SHA-256 of the duplicate key); `checkFormProviders(desk: Page, providers: FormProvider[], opts?: { urls?: Partial<Record<FormProvider, string>> }): Promise<FormProvider[]>` (returns the signed-out providers).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/forms/pinger.test.ts (resolveMap is a fake resolver that waits 50 ms; sent collects pings; ev collects events)
+// packages/worker/test/forms-pinger.test.ts (resolveMap is a fake resolver that waits 50 ms; sent collects pings; ev collects events)
 test('trusted QR form: manual-submission ping within 30 s and a record', async () => {
   const p = createFormPinger({ cfg, send, emit, resolve: resolveMap })
   await p.offer({
@@ -1911,21 +1911,21 @@ test('reports signed-out providers', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/pinger.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts provider-check.spec.ts`
+Run: `bun test packages/worker/test/forms-pinger.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts provider-check.spec.ts`
 Expected: FAIL with "Cannot find module" in both.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `offer` ignores a raw URL already in flight or done; each candidate runs concurrently through `nextFormState` from `detected`: `resolve`, then `resolveFormLink`. A null result emits `form` `{ outcome: 'ignored', host }` and stops without a record. A `LinkResolveError` sends `linkUncheckedPing` only when `checkTrust` on the candidate is trusted, emits `form` `{ outcome: 'unresolved', reason, host }`, and stops. Otherwise `resolved`; a duplicate key (`normaliseFormUrl(finalUrl)`) stops silently; then `checkTrust(form, cfg.entry.trustedSenders)` gives `manual_only` (ping `formToSubmitPing`) or `untrusted` (ping `formNotSubmittedPing`), with times shown as `HH:MM` in `cfg.entry.timeZone`. Each state change emits `form` `{ formId, state, source, trustReason, host, path }` (never the query) and rewrites `record.json`; a thrown error moves the form to `failed` and emits `error`. `checkFormProviders` defaults to `https://docs.google.com/forms/u/0/` and `https://forms.office.com/`, navigates the desk with a 15-second timeout, and counts a provider as signed out when the final host is `accounts.google.com`, `login.microsoftonline.com` or `login.live.com`, when a visible `input[type=email]` or `input[type=password]` is present, or when the load times out.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/pinger.test.ts && bunx playwright test -c packages/worker/playwright.config.ts provider-check.spec.ts`
+Run: `bun test packages/worker/test/forms-pinger.test.ts && bunx playwright test -c packages/worker/playwright.config.ts provider-check.spec.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker docs/TRD.md
