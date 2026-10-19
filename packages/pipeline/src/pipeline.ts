@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
+import { link, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AiKeyError } from '@tm/ai'
 import { canonicalFormUrl, type JobConfig } from '@tm/core'
@@ -76,7 +76,8 @@ async function attendanceText(dataDir: string): Promise<string> {
   waiting.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
   if (waiting.length > 0) {
     const more = waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''
-    return `needs you: ${waiting[0]!.url}${more}`
+    const unread = unreadable > 0 ? '; another form could not be read' : ''
+    return `needs you: ${waiting[0]!.url}${more}${unread}`
   }
   if (unreadable > 0) return ATTENDANCE_UNREADABLE
   return dirs.length > 0 ? ATTENDANCE_SEEN : 'not seen'
@@ -100,9 +101,10 @@ async function writeAtomic(path: string, text: string): Promise<void> {
   }
 }
 
-// Takes the lock beside the marker, or says another run holds it. A lock older than LOCK_STALE_MS is taken over.
+// Takes the lock beside the marker, or says another run holds it. A lock older than LOCK_STALE_MS is taken over by
+// renaming it to a name of this run's own: of several runs that see the same stale lock, one rename wins.
 async function claimLock(lock: string): Promise<boolean> {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await (await open(lock, 'wx')).close()
       return true
@@ -113,10 +115,25 @@ async function claimLock(lock: string): Promise<boolean> {
       if (err.code === 'ENOENT') return null
       throw err
     })
-    if (held !== null) {
-      if (Date.now() - held.mtimeMs < LOCK_STALE_MS) return false
-      await rm(lock, { force: true })
+    if (held === null) continue
+    if (Date.now() - held.mtimeMs < LOCK_STALE_MS) return false
+    const taken = `${lock}.${randomUUID()}`
+    try {
+      await rename(lock, taken)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue // another run took it over first
+      throw err
     }
+    // The file this run now holds may be a live lock that replaced the stale one in between: put it back.
+    const grabbed = await stat(taken)
+    if (Date.now() - grabbed.mtimeMs < LOCK_STALE_MS) {
+      await link(taken, lock).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'EEXIST') throw err
+      })
+      await rm(taken, { force: true })
+      return false
+    }
+    await rm(taken, { force: true })
   }
   return false
 }

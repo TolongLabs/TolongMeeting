@@ -3,7 +3,7 @@ import { chatJson } from '@tm/ai'
 import { localParts, type ChatMessage, type JobConfig } from '@tm/core'
 import { z } from 'zod'
 import { orderChat } from '../chat'
-import { escapeHeadings, oneLine, scrub } from '../scrub'
+import { escapeHeadings, gateLinks, LINK_REMOVED, linksIn, oneLine, scrub } from '../scrub'
 import type { Slide } from '../slides'
 
 const Source = z.enum(['slide', 'lecturer_chat', 'speech'])
@@ -73,23 +73,31 @@ function chatSection(messages: ChatMessage[]): string {
   return messages.map((m) => `[${oneLine(m.time)}] ${oneLine(scrub(m.sender))}: ${oneLine(scrub(m.text))}`).join('\n')
 }
 
-const URL_IN_TEXT = /https?:\/\/\S*[^\s.,;:!?)\]'"<>]/gi
-const ATTENDANCE = /^\s*attendance\b/i
+// A model line that opens like the form-record line (also as "**Attendance**", "1. Attendance" or "- Attendance").
+const ATTENDANCE = /^(?:[\s\W_]|\d+(?=[.):]))*attendance(?![a-z0-9])/i
 
 /**
  * The summary's attendance line comes only from the form records, and a link must come from the slides or the
- * lecturer's chat, so a model reply steered by the transcript or other students' chat cannot add either.
+ * lecturer's chat. Every string the model wrote that reaches the summary is scrubbed, any link outside `allowed` is
+ * replaced with "[link removed]", and a string that opens with "Attendance" is dropped, so a model reply steered by
+ * the transcript or other students' chat can add neither.
  */
-function vetted(inv: Inventory, linkSources: string): Inventory {
-  const fromSources = (text: string): boolean => {
-    const urls = text.match(URL_IN_TEXT) ?? []
-    return urls.length > 0 && urls.every((url) => linkSources.includes(url))
-  }
+function vetted(inv: Inventory, allowed: ReadonlySet<string>): Inventory {
+  const clear = (text: string): string => gateLinks(scrub(text), allowed)
+  const usable = (text: string): boolean => !ATTENDANCE.test(text)
+  const single = (text: string | null): string | null => (text === null || !usable(text) ? null : clear(text))
+  const items = inv.items.flatMap((i): Inventory['items'] => {
+    if (!usable(i.text)) return []
+    const text = clear(i.text)
+    // A link item is only its link: with a link that is not trusted, or none, nothing is left of it.
+    if (i.kind === 'link' && (linksIn(text).length === 0 || text.includes(LINK_REMOVED))) return []
+    return [{ ...i, text, conflicts: i.conflicts.map((c) => ({ ...c, text: clear(c.text) })) }]
+  })
   return {
-    sessionLabel: inv.sessionLabel !== null && ATTENDANCE.test(inv.sessionLabel) ? null : inv.sessionLabel,
-    nextAction: inv.nextAction !== null && ATTENDANCE.test(inv.nextAction) ? null : inv.nextAction,
-    items: inv.items.filter((i) => !ATTENDANCE.test(i.text) && (i.kind !== 'link' || fromSources(i.text))),
-    covered: inv.covered.filter((line) => !ATTENDANCE.test(line))
+    sessionLabel: single(inv.sessionLabel),
+    nextAction: single(inv.nextAction),
+    items,
+    covered: inv.covered.filter(usable).map(clear)
   }
 }
 
@@ -118,10 +126,12 @@ export async function buildInventory(
   ].join('\n\n')
   const lectureDate = localParts(cfg.entry.start, cfg.entry.timeZone).date
   const system = SYSTEM_PROMPT.replace('<YYYY-MM-DD>', lectureDate)
-  const linkSources = [
-    ...src.slides.filter((s) => s.failed !== true).map((s) => scrub(`${s.title}\n${s.text}`)),
-    ...lecturerChat.map((m) => scrub(m.text))
-  ].join('\n')
+  const allowed = new Set(
+    [
+      ...src.slides.filter((s) => s.failed !== true).map((s) => scrub(`${s.title}\n${s.text}`)),
+      ...lecturerChat.map((m) => scrub(m.text))
+    ].flatMap(linksIn)
+  )
   const inventory = await chatJson(
     cfg.ai,
     cfg.ai.models.summary,
@@ -132,5 +142,5 @@ export async function buildInventory(
     InventorySchema,
     INVENTORY_TIMEOUT_MS
   )
-  return vetted(inventory, linkSources)
+  return vetted(inventory, allowed)
 }

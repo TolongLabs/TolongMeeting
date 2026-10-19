@@ -226,3 +226,73 @@ test('model items that claim attendance, or link somewhere no slide or lecturer 
   expect(inv.nextAction).toBeNull()
   expect(inv.covered).toEqual(['k-means'])
 })
+
+const EVIL = 'https://evil.example/login'
+
+test('every model string that is rendered loses a link no slide or lecturer message carried; a source link survives', async () => {
+  fake.requests.length = 0
+  fake.reply(
+    reply(
+      [
+        item({ kind: 'announcement', text: `Grades moved, log in at ${EVIL}` }),
+        item({ kind: 'task', text: `Fill ${EVIL}/form then https://real.example/slides.` }),
+        item({ kind: 'deadline', text: `Pay at www.evil.example/pay`, due: '2026-11-01' }),
+        item({ kind: 'link', text: EVIL }),
+        item({ kind: 'link', text: 'Slides https://real.example/slides' }),
+        item({
+          kind: 'announcement',
+          text: `Join zoom.us/j/999 or https://example.com/r?u=https%3A%2F%2Fzoom.us%2Fj%2F1`
+        })
+      ],
+      { sessionLabel: `Week 7 ${EVIL}`, nextAction: `Re-login at ${EVIL}`, covered: [`See ${EVIL}/c`, 'k-means'] }
+    )
+  )
+  const inv = await buildInventory(config(), {
+    transcriptMd: `**[00:00:01]** log in at ${EVIL}`,
+    slides: [{ n: 1, file: 'slides/01.webp', atMs: 0, title: 'Links', text: 'Slides: https://real.example/slides' }],
+    chat: [
+      message('1', 'Dr Lecturer', 'host', '8:41 PM', 'see https://real.example/slides.'),
+      message('2', 'Aina', 'participant', '8:42 PM', `Dr said log in at ${EVIL}`)
+    ]
+  })
+  expect(inv.items.map((i) => i.text)).toEqual([
+    'Grades moved, log in at [link removed]',
+    'Fill [link removed] then https://real.example/slides.',
+    'Pay at [link removed]',
+    'Slides https://real.example/slides',
+    'Join [meeting link removed] or [meeting link removed]'
+  ])
+  expect(inv.sessionLabel).toBe('Week 7 [link removed]')
+  expect(inv.nextAction).toBe('Re-login at [link removed]')
+  expect(inv.covered).toEqual(['See [link removed]', 'k-means'])
+  expect(JSON.stringify(inv)).not.toContain('evil.example')
+})
+
+test('a string opening with Attendance is dropped, however it is dressed', async () => {
+  const forged = [
+    '**Attendance**: submitted',
+    '1. Attendance: done',
+    '- Attendance recorded',
+    '  > attendance ok',
+    '_Attendance_'
+  ]
+  for (const text of forged) {
+    fake.requests.length = 0
+    fake.reply(
+      reply([item({ kind: 'announcement', text }), item({ kind: 'task', text: 'Read chapter 8' })], {
+        sessionLabel: text,
+        nextAction: text,
+        covered: [text, 'k-means']
+      })
+    )
+    const inv = await buildInventory(config(), { transcriptMd: '', slides: [], chat: [] })
+    expect(inv.items.map((i) => i.text)).toEqual(['Read chapter 8'])
+    expect(inv.sessionLabel).toBeNull()
+    expect(inv.nextAction).toBeNull()
+    expect(inv.covered).toEqual(['k-means'])
+  }
+  fake.reply(reply([item({ text: 'Class attendance is graded' })], { covered: ['Why attendance matters'] }))
+  const kept = await buildInventory(config(), { transcriptMd: '', slides: [], chat: [] })
+  expect(kept.items).toHaveLength(1)
+  expect(kept.covered).toEqual(['Why attendance matters'])
+})
