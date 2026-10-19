@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import { z } from 'zod'
 import type { AiConfig } from '@tm/core'
@@ -13,6 +14,7 @@ export interface AsrOptions {
   now?: () => number
   rotateAfterMs?: number
   forceRotateMs?: number
+  reconnectDelaysMs?: number[] // one entry per retry; default 1, 2, 4, 8, 16 s
 }
 
 export interface AsrStream {
@@ -23,8 +25,8 @@ export interface AsrStream {
 }
 
 export class AsrDisconnected extends Error {
-  constructor() {
-    super('ASR connection was lost and could not be restored after 5 attempts')
+  constructor(cause: Error) {
+    super('ASR connection was lost and could not be restored', { cause })
     this.name = 'AsrDisconnected'
   }
 }
@@ -38,27 +40,49 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000]
 const FINISH_WAIT_MS = 5_000
 const LINGER_MS = 10_000
 
+// Server events that carry no state this client needs. Any other type is reported through onError.
+const IGNORED_EVENTS = new Set([
+  'session.created',
+  'session.updated',
+  'conversation.item.created',
+  'input_audio_buffer.committed',
+  'conversation.item.input_audio_transcription.text'
+])
+
 const Envelope = z.object({ type: z.string() })
-const SpeechStarted = z.object({ audio_start_ms: z.number().optional() })
-const SpeechStopped = z.object({ audio_end_ms: z.number().optional() })
-const Transcript = z.object({ transcript: z.string() })
+const SpeechStarted = z.object({ item_id: z.string().optional(), audio_start_ms: z.number().optional() })
+const SpeechStopped = z.object({ item_id: z.string().optional(), audio_end_ms: z.number().optional() })
+const Transcript = z.object({ item_id: z.string().optional(), transcript: z.string() })
+const TranscriptFailed = z.object({
+  item_id: z.string().optional(),
+  error: z.object({
+    code: z.string().optional(),
+    message: z.string().optional(),
+    param: z.string().optional()
+  })
+})
 const ServerError = z.object({
   code: z.string().optional(),
   message: z.string().optional(),
   error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional()
 })
 
+interface Turn {
+  start?: number
+  end?: number
+}
+
 interface Session {
   seq: number
   ws: WebSocket
   ready: boolean
-  retired: boolean // rotated away from; finishing and lingering for results
+  confirmed: boolean // session.updated seen; the next server event shows the connection is stable
   baseMs: number // stream time of this session's first byte, replay included
   delivered: number // bytes handed to this session, replay included
   createdAt: number
   outbox: string[] // JSON messages waiting for the socket to open
-  pendingStart?: number
-  pendingEnd?: number
+  turns: Map<string, Turn> // pending speech by item_id; key '' when the server sent no item_id
+  failure?: Error // why this connection failed, when the socket says so
   finished: Promise<void>
   markFinished: () => void
   linger?: ReturnType<typeof setTimeout>
@@ -68,7 +92,9 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
   const now = opts.now ?? Date.now
   const rotateAfterMs = opts.rotateAfterMs ?? DEFAULT_ROTATE_MS
   const forceRotateMs = opts.forceRotateMs ?? DEFAULT_FORCE_ROTATE_MS
-  const url = `${cfg.asrUrl}?model=${cfg.models.asr}`
+  const reconnectDelaysMs = opts.reconnectDelaysMs ?? RECONNECT_DELAYS_MS
+  const url = new URL(cfg.asrUrl)
+  url.searchParams.set('model', cfg.models.asr)
 
   const resultListeners: Array<(r: AsrResult) => void> = []
   const errorListeners: Array<(e: Error) => void> = []
@@ -81,7 +107,7 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
   let lastSeq = 0 // session of the last emitted result
   let lastEnd = 0
   let lastText = ''
-  let attempts = 0
+  let attempts = 0 // reconnects since the last stable connection
   let closing = false
   let failed = false
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
@@ -101,7 +127,7 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
   }
 
   function write(s: Session, msg: object): void {
-    s.outbox.push(JSON.stringify(msg))
+    s.outbox.push(JSON.stringify({ event_id: `evt_${randomUUID()}`, ...msg }))
     if (s.ready) flush(s)
   }
 
@@ -132,11 +158,12 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
       seq,
       ws,
       ready: false,
-      retired: false,
+      confirmed: false,
       baseMs: (accepted - ring.length) / BYTES_PER_MS,
       delivered: 0,
       createdAt: now(),
       outbox: [],
+      turns: new Map(),
       finished,
       markFinished
     }
@@ -149,33 +176,41 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
     appendAudio(s, ring)
     ws.on('open', () => {
       s.ready = true
-      attempts = 0
       flush(s)
     })
     ws.on('message', (data) => onMessage(s, data.toString()))
     ws.on('unexpected-response', (_req, res) => {
+      res.resume() // drain the body so the socket is released
       const status = res.statusCode
       if (status === 401 || status === 402 || status === 429) {
         fail(new AiKeyError(status, `ASR handshake rejected with HTTP ${status}`))
+        return
       }
+      s.failure = new Error(`ASR handshake rejected with HTTP ${status}`)
+      ws.terminate() // ends in 'close', which drives the reconnect backoff
     })
-    // Handshake and network failures end in 'close', which drives the reconnect or AsrDisconnected.
-    ws.on('error', () => {})
-    ws.on('close', () => onClose(s))
+    ws.on('error', (e) => {
+      s.failure ??= e
+    })
+    ws.on('close', (code, reason) => onClose(s, code, reason.toString()))
     return s
   }
 
-  function onClose(s: Session): void {
+  function onClose(s: Session, code: number, reason: string): void {
     s.ready = false
     sessions.delete(s)
     clearTimeout(s.linger)
     if (s !== current || closing || failed) return
     current = undefined
-    if (attempts >= RECONNECT_DELAYS_MS.length) {
-      fail(new AsrDisconnected())
+    if (attempts >= reconnectDelaysMs.length) {
+      fail(
+        new AsrDisconnected(
+          s.failure ?? new Error(`ASR connection closed (code ${code}${reason ? `: ${reason}` : ''})`)
+        )
+      )
       return
     }
-    const delay = RECONNECT_DELAYS_MS[attempts]!
+    const delay = reconnectDelaysMs[attempts]!
     attempts += 1
     reconnectTimer = setTimeout(() => {
       if (!closing && !failed) current = openSession()
@@ -191,10 +226,19 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
   function rotate(): void {
     const old = current!
     current = undefined
-    old.retired = true
     write(old, { type: 'session.finish' })
     old.linger = setTimeout(() => old.ws.close(), LINGER_MS)
     current = openSession()
+  }
+
+  function turnFor(s: Session, itemId: string | undefined): Turn {
+    const key = itemId ?? ''
+    let turn = s.turns.get(key)
+    if (!turn) {
+      turn = {}
+      s.turns.set(key, turn)
+    }
+    return turn
   }
 
   function onMessage(s: Session, raw: string): void {
@@ -211,6 +255,13 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
       return
     }
     const type = envelope.data.type
+    if (type === 'session.updated') {
+      s.confirmed = true
+    } else if (s.confirmed) {
+      // The first server event after session.updated: this connection is stable, so the backoff starts over.
+      s.confirmed = false
+      if (s === current) attempts = 0
+    }
     switch (type) {
       case 'session.finished':
         s.markFinished()
@@ -218,20 +269,28 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
       case 'input_audio_buffer.speech_started': {
         const ev = SpeechStarted.safeParse(json)
         if (!ev.success) return fail(badEvent(type))
-        s.pendingStart = s.baseMs + (ev.data.audio_start_ms ?? s.delivered / BYTES_PER_MS)
+        turnFor(s, ev.data.item_id).start = s.baseMs + (ev.data.audio_start_ms ?? s.delivered / BYTES_PER_MS)
         return
       }
       case 'input_audio_buffer.speech_stopped': {
         const ev = SpeechStopped.safeParse(json)
         if (!ev.success) return fail(badEvent(type))
-        s.pendingEnd = s.baseMs + (ev.data.audio_end_ms ?? s.delivered / BYTES_PER_MS)
+        turnFor(s, ev.data.item_id).end = s.baseMs + (ev.data.audio_end_ms ?? s.delivered / BYTES_PER_MS)
         if (s === current) rotateIfDue(true)
         return
       }
       case 'conversation.item.input_audio_transcription.completed': {
         const ev = Transcript.safeParse(json)
         if (!ev.success) return fail(badEvent(type))
-        emitResult(s, ev.data.transcript)
+        emitResult(s, ev.data.item_id, ev.data.transcript)
+        return
+      }
+      case 'conversation.item.input_audio_transcription.failed': {
+        const ev = TranscriptFailed.safeParse(json)
+        if (!ev.success) return fail(badEvent(type))
+        s.turns.delete(ev.data.item_id ?? '')
+        const { code, message } = ev.data.error
+        emitError(new Error(`ASR transcription failed (${code ?? 'no code'}): ${message ?? 'no message'}`))
         return
       }
       case 'error': {
@@ -248,18 +307,21 @@ export function openAsrStream(cfg: AiConfig, opts: AsrOptions = {}): AsrStream {
         return
       }
       default:
+        if (IGNORED_EVENTS.has(type)) return
+        emitError(new Error(`ASR sent an unknown event type: ${type}`))
         return
     }
   }
 
-  function emitResult(s: Session, transcript: string): void {
+  function emitResult(s: Session, itemId: string | undefined, transcript: string): void {
+    const key = itemId ?? ''
+    const turn = s.turns.get(key)
+    s.turns.delete(key)
     const r: AsrResult = {
-      startMs: s.pendingStart ?? lastEnd,
-      endMs: s.pendingEnd ?? sentMs(s),
+      startMs: turn?.start ?? lastEnd,
+      endMs: turn?.end ?? sentMs(s),
       text: transcript.trim()
     }
-    s.pendingStart = undefined
-    s.pendingEnd = undefined
     if (s.seq > lastSeq && r.startMs < lastEnd) {
       // A newer session replayed audio the last result already covered.
       r.text = dropOverlap(lastText, r.text)
