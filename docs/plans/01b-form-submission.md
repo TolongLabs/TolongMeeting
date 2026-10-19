@@ -488,7 +488,7 @@ git commit -m "feat(worker): store form records and events"
 **Files:**
 
 - Create: `packages/worker/src/forms/pings.ts`
-- Test: `packages/worker/src/forms/pings.test.ts`
+- Test: `packages/worker/test/forms-pings.test.ts` (moved from `src/`; tests live in `test/`)
 
 **Interfaces:**
 
@@ -503,7 +503,7 @@ export interface FormLinks {
 export function formPing(rec: FormRecord, opts: { entryName: string; timeZone: string; links: FormLinks }): Ping | null // null for states that don't ping
 ```
 
-Exact copy. `<entry>` is the entry name; `<provider>` is `Google Forms` or `Microsoft Forms`; `<time>` is `submittedAt` as `HH:MM` (24-hour) in the entry's time zone; `<sender>` is the sender, or `someone` when null; `<source>` is `meeting chat`, `watched chat` or `shared screen`. `Open form` links to `finalUrl`. `actions` is always an array, and `attachPath` is never set.
+Exact copy. `<entry>` is the entry name; `<provider>` is `Google Forms` or `Microsoft Forms`; `<time>` is `submittedAt` as `HH:MM` (24-hour) in the entry's time zone; `<sender>` is the sender, or `someone` when null; `<source>` is `meeting chat`, `watched chat` or `shared screen`. `Open form` links to `canonicalFormUrl(finalUrl)` (ruling B1: a raw submit-style link must never be a tap target), which equals `finalUrl` for the plain form URLs the tests use. `actions` is always an array, and `attachPath` is never set.
 
 ```text
 submitted (high) "Attendance submitted"
@@ -546,7 +546,7 @@ failed (high) "Form needs you"
   unexpected_error        of an unexpected error
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const opts = {
@@ -612,24 +612,24 @@ test('non-outcome states do not ping', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/pings.test.ts`
+Run: `bun test packages/worker/test/forms-pings.test.ts`
 Expected: FAIL with "Cannot find module './pings'".
 
-- [ ] **Step 3: Implement `formPing` in `packages/worker/src/forms/pings.ts`**
+- [x] **Step 3: Implement `formPing` in `packages/worker/src/forms/pings.ts`**
 
 The time uses `Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone })`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/pings.test.ts`
+Run: `bun test packages/worker/test/forms-pings.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/pings.ts packages/worker/src/forms/pings.test.ts
+git add packages/worker/src/forms/pings.ts packages/worker/test/forms-pings.test.ts docs/plans/01b-form-submission.md docs/TRD.md
 git commit -m "feat(worker): add form ping copy"
 ```
 
