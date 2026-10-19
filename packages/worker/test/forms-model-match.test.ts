@@ -133,6 +133,26 @@ test('keeps only high-confidence matches to known keys and questions', async () 
   expect(await matchWithModel(ai(s.url), qs, ['full_name', 'student_id'])).toEqual(new Map([['p1q0', 'full_name']]))
 })
 
+test('drops a question whose high-confidence answers name different keys, keeps same-key repeats', async () => {
+  const s = stubCompletions({
+    matches: [
+      { question: 'p1q0', detail: 'full_name', confidence: 'high' },
+      { question: 'p1q0', detail: 'student_id', confidence: 'high' },
+      { question: 'p1q1', detail: 'full_name', confidence: 'high' },
+      { question: 'p1q1', detail: 'full_name', confidence: 'high' },
+      { question: 'p1q2', detail: 'full_name', confidence: 'high' },
+      { question: 'p1q2', detail: 'student_id', confidence: 'medium' }
+    ]
+  })
+  const qs = ['p1q0', 'p1q1', 'p1q2'].map((id) => ({ id, label: id, options: [] }))
+  expect(await matchWithModel(ai(s.url), qs, ['full_name', 'student_id'])).toEqual(
+    new Map([
+      ['p1q1', 'full_name'],
+      ['p1q2', 'full_name']
+    ])
+  )
+})
+
 test('returns no matches when the model takes longer than 5 seconds', async () => {
   const s = stubCompletions(
     {

@@ -60,12 +60,22 @@ export async function matchWithModel(
     throw e
   }
 
-  const questionIds = new Set(questions.map((q) => q.id))
-  const keys = new Set(detailKeys)
+  // Keys each question's high-confidence answers name. Two different keys mean the model is unsure, so drop it.
+  const named = new Map<string, Set<string>>()
   for (const m of reply.matches) {
     if (m.confidence !== 'high' || m.detail === null) continue
-    if (!questionIds.has(m.question) || !keys.has(m.detail)) continue
-    matches.set(m.question, m.detail)
+    const details = named.get(m.question) ?? new Set<string>()
+    details.add(m.detail)
+    named.set(m.question, details)
+  }
+
+  const questionIds = new Set(questions.map((q) => q.id))
+  const keys = new Set(detailKeys)
+  for (const [question, details] of named) {
+    if (details.size > 1) continue
+    const detail = [...details][0]!
+    if (!questionIds.has(question) || !keys.has(detail)) continue
+    matches.set(question, detail)
   }
   return matches
 }
