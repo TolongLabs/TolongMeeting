@@ -16,6 +16,7 @@ export type FormStepCode =
   | 'submit_unconfirmed' // Submit WAS clicked (or an earlier call clicked it) and the outcome is unknown: maybe recorded
   | 'dropdown_failed' // a dropdown's options never showed, or the list stayed open
   | 'not_a_form' // the page is not a form page on a form host (sign-in, captcha, status page, other site)
+  | 'meeting_ended' // the signal aborted before the Submit click: nothing was clicked, so the form is not maybe-submitted
 
 export class FormStepError extends Error {
   constructor(
@@ -49,7 +50,7 @@ export interface FormDriver {
    * captcha, sign-in or unknown page, or a failed read). The caller MUST treat this as maybe-submitted: record the form
    * as handled, never retry or call submit again, and ping the member to check.
    */
-  submit(page: Page): Promise<void>
+  submit(page: Page, opts?: { signal?: AbortSignal }): Promise<void>
 }
 
 interface RawQuestion {
@@ -444,7 +445,7 @@ export function createDriver(
     return found
   }
 
-  async function submit(page: Page): Promise<void> {
+  async function submit(page: Page, opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (submitClicked.has(page)) {
       throw new FormStepError('submit_unconfirmed', 'Submit was already clicked on this page: never submit twice')
     }
@@ -454,6 +455,8 @@ export function createDriver(
     const labelsBefore = await labels(page)
     const target = await submitTarget(page)
     await assertForm(page) // the page may have moved on while the button was checked
+    // Nothing is clicked yet: a meeting that ended by now stops here, and the guard below stays unset.
+    if (opts.signal?.aborted) throw new FormStepError('meeting_ended', 'the meeting ended before Submit was clicked')
     // From the click on, the response may be on its way: every failure is "unconfirmed", never "failed".
     submitClicked.add(page)
     try {

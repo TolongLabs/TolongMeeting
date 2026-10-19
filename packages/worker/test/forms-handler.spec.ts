@@ -183,6 +183,20 @@ test('records the form as submitting on disk before Submit is clicked', async ({
   expect(onDisk).toBe('submitting')
 })
 
+test('fails with meeting_ended, and submits nothing, when the meeting ends after submitting is recorded', async ({
+  page: desk
+}) => {
+  const { ctx, abort } = testContext(desk, testJob(dir))
+  const emitEvent = ctx.emitEvent
+  ctx.emitEvent = async (type, data) => {
+    await emitEvent(type, data)
+    if (data.state === 'submitting') abort.abort() // the meeting ends just before the click
+  }
+  const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+  expect(rec).toMatchObject({ state: 'failed', reason: 'meeting_ended' })
+  expect(fx.submissions).toEqual([])
+})
+
 test('treats a Submit that never confirms as maybe-submitted: one submission, a ping, no retry', async ({
   page: desk,
   context

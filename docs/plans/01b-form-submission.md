@@ -1353,7 +1353,7 @@ export interface FormDriver {
   // refused it. A second submit() on a clicked page never clicks: 'submit_unconfirmed'. 'submit_unconfirmed' once Submit was clicked and nothing confirms it
   // (still on the form after 15 s, captcha, sign-in, unknown page, failed read): the caller MUST treat it as maybe-submitted,
   // record the form handled, never retry, and ping the member.
-  submit(page: Page): Promise<void>
+  submit(page: Page, opts?: { signal?: AbortSignal }): Promise<void> // an aborted signal before the click: FormStepError('meeting_ended'), nothing clicked
 }
 export function createDriver(
   provider: FormProvider,

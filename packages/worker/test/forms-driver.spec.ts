@@ -438,6 +438,19 @@ for (const c of CASES)
       expect(await page.evaluate(() => (window as unknown as { mouseEvents: number }).mouseEvents)).toBe(0)
     })
 
+    test('a submit() whose signal is already aborted clicks nothing and leaves the page submittable', async ({
+      page
+    }) => {
+      await page.goto(c.url('widgets'))
+      await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+      const ended = new AbortController()
+      ended.abort()
+      await expect(driver.submit(page, { signal: ended.signal })).rejects.toMatchObject({ code: 'meeting_ended' })
+      expect(fx.submissions).toHaveLength(0)
+      await driver.submit(page)
+      expect(fx.submissions).toHaveLength(1)
+    })
+
     test('an error banner outside every question after the click is submit_unconfirmed', async ({ page }) => {
       await page.goto(c.url('widgets') + '#banner')
       await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)

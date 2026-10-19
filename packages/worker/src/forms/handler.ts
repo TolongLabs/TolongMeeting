@@ -174,6 +174,7 @@ class FormRun {
     if (this.ctx.signal.aborted) await this.fail('meeting_ended')
     if (!signedIn) await this.fail('signin_not_completed')
     await this.closeTab() // TabCloseFailedError stops the run and raises the alert
+    if (this.ctx.signal.aborted) await this.fail('meeting_ended') // the meeting may end while the sign-in tab closes
     this.rec = { ...this.rec, signinRetried: true }
     await this.apply('signed_in')
     this.deadline = Date.now() + SUBMIT_DEADLINE_MS
@@ -322,8 +323,10 @@ class FormRun {
       throw error
     }
     try {
-      await this.driver!.submit(this.tab!)
+      await this.driver!.submit(this.tab!, { signal: this.ctx.signal })
     } catch (error) {
+      // The meeting ended before the click: nothing was sent, so the form is failed, not maybe-submitted.
+      if (error instanceof FormStepError && error.code === 'meeting_ended') await this.fail('meeting_ended')
       if (error instanceof FormStepError && (error.code === 'submit_failed' || error.code === 'not_a_form')) {
         await this.stepFailed(error, 'submit_failed')
       }
