@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, open, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { artefacts, type Db } from '../db'
 import { createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
-import { memberFile, serveFile } from '../lib/files'
+import { openMemberFile, serveFile, type OpenedFile } from '../lib/files'
 import { createScope } from '../lib/scope'
 
 let db: Db
@@ -31,11 +32,16 @@ async function file(name: string, bytes: Uint8Array | string): Promise<string> {
   return path
 }
 
+/** Opens a plain file the way `openMemberFile` would hand it over; `serveFile` closes it. */
+const opened = async (path: string): Promise<OpenedFile> => ({ handle: await open(path, 'r'), name: path })
+const serve = async (path: string, range: string | null, signal?: AbortSignal) =>
+  serveFile(await opened(path), range, signal)
+
 const thousand = () => new Uint8Array(1000).map((_, i) => i % 251)
 
 test('a range request returns 206 with the slice', async () => {
   const p = await file('v.mp4', thousand())
-  const r = await serveFile(p, 'bytes=0-99')
+  const r = await serve(p, 'bytes=0-99')
   expect(r.status).toBe(206)
   expect(r.headers.get('content-range')).toBe('bytes 0-99/1000')
   expect(r.headers.get('content-length')).toBe('100')
@@ -48,20 +54,20 @@ test('a range request returns 206 with the slice', async () => {
 
 test('open-ended, suffix and over-long ranges are clamped to the file', async () => {
   const p = await file('v.mp4', thousand())
-  const open = await serveFile(p, 'bytes=900-')
-  expect([open.status, open.headers.get('content-range')]).toEqual([206, 'bytes 900-999/1000'])
-  const suffix = await serveFile(p, 'bytes=-10')
+  const tail = await serve(p, 'bytes=900-')
+  expect([tail.status, tail.headers.get('content-range')]).toEqual([206, 'bytes 900-999/1000'])
+  const suffix = await serve(p, 'bytes=-10')
   expect([suffix.status, suffix.headers.get('content-range')]).toEqual([206, 'bytes 990-999/1000'])
   expect(new Uint8Array(await suffix.arrayBuffer())).toEqual(thousand().slice(990))
-  const long = await serveFile(p, 'bytes=990-5000')
+  const long = await serve(p, 'bytes=990-5000')
   expect([long.status, long.headers.get('content-range')]).toEqual([206, 'bytes 990-999/1000'])
-  const big = await serveFile(p, 'bytes=-5000')
+  const big = await serve(p, 'bytes=-5000')
   expect([big.status, big.headers.get('content-range')]).toEqual([206, 'bytes 0-999/1000'])
 })
 
 test('no range returns the whole file; a bad range returns 416', async () => {
   const p = await file('v.mp4', thousand())
-  const whole = await serveFile(p, null)
+  const whole = await serve(p, null)
   expect(whole.status).toBe(200)
   expect(whole.headers.get('content-range')).toBeNull()
   expect((await whole.arrayBuffer()).byteLength).toBe(1000)
@@ -74,7 +80,7 @@ test('no range returns the whole file; a bad range returns 416', async () => {
     'bytes=a-b',
     'bytes=1-2-3'
   ]) {
-    const bad = await serveFile(p, range)
+    const bad = await serve(p, range)
     expect([range, bad.status, bad.headers.get('content-range')]).toEqual([range, 416, 'bytes */1000'])
   }
 })
@@ -82,22 +88,22 @@ test('no range returns the whole file; a bad range returns 416', async () => {
 test('a range in another unit, or several ranges, is ignored', async () => {
   const p = await file('v.mp4', thousand())
   for (const range of ['items=0-9', 'bytes=0-9,20-29']) {
-    const r = await serveFile(p, range)
+    const r = await serve(p, range)
     expect([range, r.status, (await r.arrayBuffer()).byteLength]).toEqual([range, 200, 1000])
   }
 })
 
 test('an empty file serves with no body, and every range on it is 416', async () => {
   const p = await file('empty.txt', '')
-  expect((await serveFile(p, null)).status).toBe(200)
-  expect((await serveFile(p, 'bytes=0-0')).status).toBe(416)
+  expect((await serve(p, null)).status).toBe(200)
+  expect((await serve(p, 'bytes=0-0')).status).toBe(416)
 })
 
 test('markdown is plain text, and unlisted types (html, svg) are downloads that no browser runs', async () => {
-  const md = await serveFile(await file('s.md', '# x'), null)
+  const md = await serve(await file('s.md', '# x'), null)
   expect(md.headers.get('content-type')).toBe('text/plain; charset=utf-8')
   for (const name of ['x.html', 'x.svg', 'x.bin', 'noext']) {
-    const r = await serveFile(await file(name, '<script>alert(1)</script>'), null)
+    const r = await serve(await file(name, '<script>alert(1)</script>'), null)
     expect([name, r.headers.get('content-type'), r.headers.get('content-disposition')]).toEqual([
       name,
       'application/octet-stream',
@@ -107,15 +113,35 @@ test('markdown is plain text, and unlisted types (html, svg) are downloads that 
   }
 })
 
-test('a directory, a missing file and a symlink answer 404 with no path in the body', async () => {
-  const dir = join(work, 'a-dir')
-  await mkdir(dir, { recursive: true })
-  const real = await file('real.txt', 'hello')
-  await symlink(real, join(work, 'link.txt'))
-  for (const path of [dir, join(work, 'missing.txt'), join(work, 'link.txt')]) {
-    const r = await serveFile(path, null)
-    expect([r.status, await r.text()]).toEqual([404, 'Not found'])
-  }
+test('a range number longer than 15 digits clamps to the file instead of failing', async () => {
+  const p = await file('v.mp4', thousand())
+  const r = await serve(p, 'bytes=0-99999999999999999999')
+  expect([r.status, r.headers.get('content-range'), (await r.arrayBuffer()).byteLength]).toEqual([
+    206,
+    'bytes 0-999/1000',
+    1000
+  ])
+  const suffix = await serve(p, 'bytes=-99999999999999999999')
+  expect([suffix.status, suffix.headers.get('content-range')]).toEqual([206, 'bytes 0-999/1000'])
+  const past = await serve(p, 'bytes=99999999999999999999-')
+  expect([past.status, past.headers.get('content-range')]).toEqual([416, 'bytes */1000'])
+})
+
+test('serveFile closes the handle when the request is already aborted, and when it aborts mid-stream', async () => {
+  const p = await file('big.mp4', new Uint8Array(4 * 1024 * 1024))
+  const gone = await opened(p)
+  const early = await serveFile(gone, null, AbortSignal.abort())
+  expect([early.status, await early.text()]).toEqual([404, 'Not found'])
+  expect(gone.handle.fd).toBe(-1)
+
+  const live = await opened(p)
+  const controller = new AbortController()
+  const r = await serveFile(live, null, controller.signal)
+  expect(r.status).toBe(200)
+  controller.abort()
+  for (let i = 0; i < 50 && live.handle.fd !== -1; i++) await Bun.sleep(20)
+  expect(live.handle.fd).toBe(-1)
+  await r.body?.cancel().catch(() => undefined)
 })
 
 async function occurrenceFixture() {
@@ -123,44 +149,97 @@ async function occurrenceFixture() {
   const b = await seedMember(db)
   const occurrenceId = a.ids.occurrences
   const dir = join(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId)
+  const otherId = b.ids.occurrences
+  const otherDir = join(process.env.TM_DATA_ROOT!, 'occurrences', otherId)
   await mkdir(join(dir, 'recording'), { recursive: true })
-  return { scope: createScope(db, a.memberId), other: createScope(db, b.memberId), occurrenceId, dir }
+  await mkdir(otherDir, { recursive: true })
+  return { scope: createScope(db, a.memberId), other: createScope(db, b.memberId), occurrenceId, dir, otherDir }
 }
 
 async function register(scope: ReturnType<typeof createScope>, occurrenceId: string, path: string) {
   await scope.insert(artefacts, { occurrenceId, kind: 'recording', path, bytes: 1 })
 }
 
-test('memberFile returns the real path of a registered regular file, only to its owner', async () => {
+/** Opens, reads and closes, so a test can compare what `openMemberFile` handed over. */
+async function readOpened(f: OpenedFile | null): Promise<string | null> {
+  if (f === null) return null
+  try {
+    return await f.handle.readFile('utf8')
+  } finally {
+    await f.handle.close()
+  }
+}
+
+test('openMemberFile opens a registered regular file, only for its owner', async () => {
   const { scope, other, occurrenceId, dir } = await occurrenceFixture()
   await writeFile(join(dir, 'recording', 'meeting.mp4'), 'video')
   await register(scope, occurrenceId, 'recording/meeting.mp4')
-  const found = await memberFile(scope, occurrenceId, 'recording/meeting.mp4')
-  expect(found).toEndWith(`/occurrences/${occurrenceId}/recording/meeting.mp4`)
-  expect(await memberFile(other, occurrenceId, 'recording/meeting.mp4')).toBeNull()
-  expect(await memberFile(scope, occurrenceId, 'recording/other.mp4')).toBeNull()
-  expect(await memberFile(scope, occurrenceId, '../../x')).toBeNull()
-  expect(await memberFile(scope, occurrenceId, 'recording/meeting.mp4\0.png')).toBeNull()
+  expect(await readOpened(await openMemberFile(scope, occurrenceId, 'recording/meeting.mp4'))).toBe('video')
+  expect(await openMemberFile(other, occurrenceId, 'recording/meeting.mp4')).toBeNull()
+  expect(await openMemberFile(scope, occurrenceId, 'recording/other.mp4')).toBeNull()
+  expect(await openMemberFile(scope, occurrenceId, '../../x')).toBeNull()
+  expect(await openMemberFile(scope, occurrenceId, 'recording/meeting.mp4\0.png')).toBeNull()
 })
 
-test('memberFile refuses a symlink that points outside the occurrence directory', async () => {
+test('openMemberFile refuses a symlink that points outside the occurrence directory', async () => {
   const { scope, occurrenceId, dir } = await occurrenceFixture()
   const secret = await file('secret.txt', 'not yours')
   await symlink(secret, join(dir, 'recording', 'leak.mp4'))
   await symlink(work, join(dir, 'linked-dir'))
   await register(scope, occurrenceId, 'recording/leak.mp4')
   await register(scope, occurrenceId, 'linked-dir/secret.txt')
-  expect(await memberFile(scope, occurrenceId, 'recording/leak.mp4')).toBeNull()
-  expect(await memberFile(scope, occurrenceId, 'linked-dir/secret.txt')).toBeNull()
+  expect(await openMemberFile(scope, occurrenceId, 'recording/leak.mp4')).toBeNull()
+  expect(await openMemberFile(scope, occurrenceId, 'linked-dir/secret.txt')).toBeNull()
 })
 
-test('memberFile allows a symlink that stays inside, and refuses a directory or a file that is gone', async () => {
+test('openMemberFile refuses a final symlink even inside, a directory, a file that is gone and a FIFO', async () => {
   const { scope, occurrenceId, dir } = await occurrenceFixture()
   await writeFile(join(dir, 'recording', 'meeting.mkv'), 'video')
   await symlink(join(dir, 'recording', 'meeting.mkv'), join(dir, 'recording', 'alias.mkv'))
   await mkdir(join(dir, 'forms'), { recursive: true })
-  for (const path of ['recording/alias.mkv', 'forms', 'recording/gone.mp4']) await register(scope, occurrenceId, path)
-  expect(await memberFile(scope, occurrenceId, 'recording/alias.mkv')).toEndWith('/recording/meeting.mkv')
-  expect(await memberFile(scope, occurrenceId, 'forms')).toBeNull()
-  expect(await memberFile(scope, occurrenceId, 'recording/gone.mp4')).toBeNull()
+  execFileSync('mkfifo', [join(dir, 'recording', 'pipe')])
+  for (const path of ['recording/alias.mkv', 'forms', 'recording/gone.mp4', 'recording/pipe'])
+    await register(scope, occurrenceId, path)
+  for (const path of ['recording/alias.mkv', 'forms', 'recording/gone.mp4', 'recording/pipe']) {
+    expect([path, await openMemberFile(scope, occurrenceId, path)]).toEqual([path, null])
+  }
+})
+
+test('openMemberFile allows a path through a directory symlink that stays inside the occurrence', async () => {
+  const { scope, occurrenceId, dir } = await occurrenceFixture()
+  await mkdir(join(dir, 'real'), { recursive: true })
+  await writeFile(join(dir, 'real', 'a.txt'), 'inside')
+  await symlink(join(dir, 'real'), join(dir, 'alias'))
+  await register(scope, occurrenceId, 'alias/a.txt')
+  expect(await readOpened(await openMemberFile(scope, occurrenceId, 'alias/a.txt'))).toBe('inside')
+})
+
+test("a directory swapped for a symlink to another member's occurrence after the lookup is refused", async () => {
+  const { scope, occurrenceId, dir, otherDir } = await occurrenceFixture()
+  await mkdir(join(dir, 'sub'), { recursive: true })
+  await writeFile(join(dir, 'sub', 'x.txt'), 'mine')
+  await writeFile(join(otherDir, 'x.txt'), 'THEIRS')
+  await register(scope, occurrenceId, 'sub/x.txt')
+  // Without the swap the file opens.
+  expect(await readOpened(await openMemberFile(scope, occurrenceId, 'sub/x.txt'))).toBe('mine')
+  const swapped = await openMemberFile(scope, occurrenceId, 'sub/x.txt', {
+    afterLookup: async () => {
+      await rename(join(dir, 'sub'), join(dir, 'sub.old'))
+      await symlink(otherDir, join(dir, 'sub'))
+    }
+  })
+  expect(swapped).toBeNull()
+})
+
+test('a file swapped for a FIFO after the lookup does not hang and is refused', async () => {
+  const { scope, occurrenceId, dir } = await occurrenceFixture()
+  await writeFile(join(dir, 'recording', 'meeting.mp4'), 'video')
+  await register(scope, occurrenceId, 'recording/meeting.mp4')
+  const swapped = await openMemberFile(scope, occurrenceId, 'recording/meeting.mp4', {
+    afterLookup: async () => {
+      await unlink(join(dir, 'recording', 'meeting.mp4'))
+      execFileSync('mkfifo', [join(dir, 'recording', 'meeting.mp4')])
+    }
+  })
+  expect(swapped).toBeNull()
 })

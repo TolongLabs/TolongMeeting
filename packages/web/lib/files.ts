@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { open, realpath, stat } from 'node:fs/promises'
+import { open, realpath, type FileHandle } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import type { MemberScope } from './scope'
@@ -36,31 +36,73 @@ export function notFound(): Response {
   })
 }
 
-const MISSING = new Set(['ENOENT', 'ENOTDIR', 'ELOOP'])
+/** Errors that mean "there is no such readable regular file here": the same uniform answer as a missing row. */
+const MISSING = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENXIO', 'ENODEV'])
 
 function isMissing(e: unknown): boolean {
   return e instanceof Error && MISSING.has((e as NodeJS.ErrnoException).code ?? '')
 }
 
+/** A verified, open meeting file. The holder must hand it to `serveFile` or close the handle. */
+export interface OpenedFile {
+  handle: FileHandle
+  /** Only the extension decides the content type. */
+  name: string
+}
+
+/** Test seam: runs after the artefact lookup and before the open, where a worker could swap a path component. */
+export interface OpenHooks {
+  afterLookup?: () => Promise<void>
+}
+
 /**
- * The real path of a file the member may read, or null. `scope.artefactFile` checks the artefact row and the path
- * lexically; this adds what it leaves to the serving code: the file is resolved through every symlink and must still be
- * inside `<TM_DATA_ROOT>/occurrences/<occurrenceId>/`, and it must be a regular file.
+ * Opens a file the member may read, or returns null. The check is on the OPEN descriptor, so nothing a worker does to
+ * the path after the open can matter (the worker that writes `occurrences/<id>/` is untrusted):
+ *
+ * 1. `scope.artefactFile` checks the artefact row (ownership) and the path lexically.
+ * 2. The file opens `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`. `O_NOFOLLOW` refuses a final symlink and `O_NONBLOCK` keeps a
+ *    FIFO from blocking the open. A symlinked directory in the middle of the path is still followed, so:
+ * 3. the descriptor's real path (`/proc/self/fd/<fd>`, Linux) must lie inside `<TM_DATA_ROOT>/occurrences/<id>/`, and
+ *    `fstat` must say it is a regular file.
+ *
+ * Any failed check closes the descriptor and gives null, the same answer as a missing file.
  */
-export async function memberFile(scope: MemberScope, occurrenceId: string, relPath: string): Promise<string | null> {
+export async function openMemberFile(
+  scope: MemberScope,
+  occurrenceId: string,
+  relPath: string,
+  hooks: OpenHooks = {}
+): Promise<OpenedFile | null> {
   if (relPath.includes('\0')) return null
   const lexical = await scope.artefactFile(occurrenceId, relPath)
   if (lexical === null) return null
-  const dir = resolve(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId)
+  await hooks.afterLookup?.()
+  let handle: FileHandle
   try {
-    const [real, base] = await Promise.all([realpath(lexical), realpath(dir)])
-    if (!real.startsWith(base + sep)) return null
-    return (await stat(real)).isFile() ? real : null
+    handle = await open(lexical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   } catch (e) {
     if (isMissing(e)) return null
     throw e
   }
+  try {
+    const dir = resolve(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId)
+    const [actual, base, info] = await Promise.all([
+      realpath(`/proc/self/fd/${handle.fd}`),
+      realpath(dir),
+      handle.stat()
+    ])
+    if (info.isFile() && actual.startsWith(base + sep)) return { handle, name: lexical }
+  } catch (e) {
+    await handle.close().catch(() => undefined)
+    if (isMissing(e)) return null
+    throw e
+  }
+  await handle.close().catch(() => undefined)
+  return null
 }
+
+/** A digit string of more than 15 digits is bigger than any file: it clamps instead of losing precision (RFC 9110). */
+const number = (digits: string): number => (digits.length > 15 ? Number.MAX_SAFE_INTEGER : Number(digits))
 
 type ByteRange = { kind: 'whole' } | { kind: 'slice'; start: number; end: number } | { kind: 'unsatisfiable' }
 
@@ -74,42 +116,36 @@ function parseRange(header: string | null, size: number): ByteRange {
   if (!match) return { kind: 'whole' }
   const spec = match[1]!.trim()
   if (spec.includes(',')) return { kind: 'whole' }
-  const parts = /^(\d{0,15})-(\d{0,15})$/.exec(spec)
+  const parts = /^(\d*)-(\d*)$/.exec(spec)
   if (!parts || (parts[1] === '' && parts[2] === '')) return { kind: 'unsatisfiable' }
   const [first, last] = [parts[1]!, parts[2]!]
   if (first === '') {
-    const length = Number(last)
+    const length = number(last)
     if (length === 0 || size === 0) return { kind: 'unsatisfiable' }
     return { kind: 'slice', start: Math.max(0, size - length), end: size - 1 }
   }
-  const start = Number(first)
+  const start = number(first)
   if (start >= size) return { kind: 'unsatisfiable' }
   if (last === '') return { kind: 'slice', start, end: size - 1 }
-  const end = Number(last)
+  const end = number(last)
   if (end < start) return { kind: 'unsatisfiable' }
   return { kind: 'slice', start, end: Math.min(end, size - 1) }
 }
 
 /**
- * Serves one regular file. The caller has already decided the member may read `absPath` (see `memberFile`). The file is
- * opened without following a symlink at its last component, and a directory or other non-regular file answers 404.
+ * Serves a file `openMemberFile` verified, and owns its handle: every path out of here closes it (a stream closes it
+ * when it ends or is cancelled). If `signal` aborts (the client went away) the handle is closed at once.
  */
-export async function serveFile(absPath: string, range: string | null): Promise<Response> {
-  let handle
+export async function serveFile(file: OpenedFile, range: string | null, signal?: AbortSignal): Promise<Response> {
+  const { handle } = file
   try {
-    handle = await open(absPath, constants.O_RDONLY | constants.O_NOFOLLOW)
-  } catch (e) {
-    if (isMissing(e)) return notFound()
-    throw e
-  }
-  try {
-    const info = await handle.stat()
-    if (!info.isFile()) {
+    if (signal?.aborted) {
       await handle.close()
       return notFound()
     }
+    const info = await handle.stat()
     const size = info.size
-    const type = CONTENT_TYPES[extname(absPath).toLowerCase()]
+    const type = CONTENT_TYPES[extname(file.name).toLowerCase()]
     const headers: Record<string, string> = { ...BASE_HEADERS }
     if (type) headers['Content-Type'] = type
     else {
@@ -129,9 +165,10 @@ export async function serveFile(absPath: string, range: string | null): Promise<
       await handle.close()
       return new Response(null, { status, headers })
     }
-    // The stream owns the handle from here and closes it when it ends or is cancelled.
-    const body = Readable.toWeb(handle.createReadStream({ start, end })) as unknown as ReadableStream<Uint8Array>
-    return new Response(body, { status, headers })
+    // The stream owns the handle from here and closes it when it ends or is destroyed.
+    const stream = handle.createReadStream({ start, end })
+    signal?.addEventListener('abort', () => stream.destroy(), { once: true })
+    return new Response(Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>, { status, headers })
   } catch (e) {
     await handle.close().catch(() => undefined)
     throw e

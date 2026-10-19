@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { artefacts, events, forms, occurrences, type Db } from '../db'
@@ -8,6 +8,8 @@ import { hashEventData } from '../db/transitions'
 import { createTestDb, dropAllTestDbs, FakeQueue, seedMember } from '../db/testing'
 import { InputError, InUseError } from '../lib/identities'
 import {
+  ArtefactTooLargeError,
+  MAX_ARTEFACT_BYTES,
   makeBotLeave,
   meetingData,
   parseTranscript,
@@ -78,6 +80,11 @@ test('a silence note keeps its time; a transcript with no speech keeps its sente
   expect(
     parseTranscript('# x: transcript\n\nintro\n\n## Transcript\n\n_No live transcript for this meeting._\n')
   ).toEqual([{ seconds: null, text: 'No live transcript for this meeting.', note: true }])
+})
+
+test('a transcript file with no "## Transcript" heading has no lines', () => {
+  expect(parseTranscript('# x: transcript\n\n**[00:00:05]** Not under the heading.\n')).toEqual([])
+  expect(parseTranscript('')).toEqual([])
 })
 
 async function twoMembers() {
@@ -187,15 +194,7 @@ test('a meeting with no files yet has empty parts, not errors', async () => {
   expect([v.summaryMd, v.chatMd, v.videoUrl, v.transcript, v.slides]).toEqual([null, null, null, [], []])
 })
 
-test('the meeting data never holds the meeting link or the passcode', async () => {
-  const { scope, occurrenceId } = await meetingFixture()
-  const data = {
-    link: 'https://example.zoom.us/j/00000000000?pwd=SECRETPWD',
-    passcode: 'SECRETPWD',
-    message:
-      'could not open https://example.zoom.us/j/00000000000?pwd=SECRETPWD or https://forms.example.org/a?pwd=SECRETPWD&b=1',
-    nested: [{ note: 'Passcode: SECRETPWD', url: 'https://teams.microsoft.com/l/meetup-join/abc?p=SECRETPWD' }]
-  }
+async function addEvent(scope: MemberScope, occurrenceId: string, data: Record<string, unknown>) {
   await scope.insert(events, {
     occurrenceId,
     attempt: 1,
@@ -204,12 +203,84 @@ test('the meeting data never holds the meeting link or the passcode', async () =
     data,
     dataHash: hashEventData(data)
   })
-  const v = await meetingData(scope, occurrenceId)
-  const text = JSON.stringify(v)
+}
+
+test('the meeting data never holds the meeting link or the passcode', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await addEvent(scope, occurrenceId, {
+    link: 'https://example.zoom.us/j/00000000000?pwd=SECRETPWD',
+    passcode: 'SECRETPWD',
+    message:
+      'could not open https://example.zoom.us/j/00000000000?pwd=SECRETPWD or https://forms.example.org/a?pwd=SECRETPWD&b=1',
+    nested: [{ note: 'Passcode: SECRETPWD', url: 'https://teams.microsoft.com/l/meetup-join/abc?p=SECRETPWD' }]
+  })
+  const text = JSON.stringify(await meetingData(scope, occurrenceId))
   expect(text).not.toContain('SECRETPWD')
   expect(text).not.toContain('00000000000')
   expect(text).not.toContain('11111111111')
-  expect(text).toContain('forms.example.org/a?b=1')
+  expect(text).not.toContain('forms.example.org')
+})
+
+test('event data drops secret-looking keys in any case or snake_case', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await addEvent(scope, occurrenceId, {
+    join_url: 'x1',
+    pasted_link: 'x2',
+    meeting_passcode: 'x3',
+    Invite: 'x4',
+    PWD: 'x5',
+    zoom_password: 'x6',
+    joinLink: 'x7',
+    inner: { 'meeting-url': 'x8', keep: 'kept' },
+    reason: 'sign_in_failed'
+  })
+  const v = (await meetingData(scope, occurrenceId))!
+  const data = v.events.at(-1)!.data
+  expect(data).toEqual({ inner: { keep: 'kept' }, reason: 'sign_in_failed' })
+})
+
+test('event text loses passcode phrases to the end of the clause, and any URL that is not a form', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await addEvent(scope, occurrenceId, {
+    a: 'Passcode 123456',
+    b: 'passcode is xk9q',
+    c: 'Passcode: 123 456',
+    d: 'Password: hunter 2; then more',
+    e: 'retry (passcode 998 877) later',
+    f: 'Meeting says Passcode: 123 456. Next step ok.',
+    g: 'see https://evil.example/join?room=SECRETROOM and zoom.us/j/33333333333 and zoommtg://zoom.us/join?confno=44444444444',
+    h: 'form https://docs.google.com/forms/d/e/x/viewform?pwd=SECRETPWD kept, https://forms.office.com/r/abc kept'
+  })
+  const v = (await meetingData(scope, occurrenceId))!
+  const d = v.events.at(-1)!.data as Record<string, string>
+  const text = JSON.stringify(d)
+  for (const secret of [
+    '123456',
+    'xk9q',
+    '123 456',
+    'hunter',
+    '998',
+    'SECRETROOM',
+    '33333333333',
+    '44444444444',
+    'SECRETPWD'
+  ])
+    expect([secret, text.includes(secret)]).toEqual([secret, false])
+  expect(d.d).toContain('then more')
+  expect(d.e).toBe('retry ([passcode removed]) later')
+  expect(d.f).toBe('Meeting says [passcode removed]. Next step ok.')
+  expect(d.h).toBe('form https://docs.google.com/forms/d/e/x/viewform kept, https://forms.office.com/r/abc kept')
+})
+
+test('a file above the size cap is refused with a message the page can show', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  const path = join(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId, 'out/chat.md')
+  await truncate(path, MAX_ARTEFACT_BYTES + 1)
+  const error = await meetingData(scope, occurrenceId).catch((e: unknown) => e)
+  expect(error).toBeInstanceOf(ArtefactTooLargeError)
+  expect((error as Error).message).toBe('out/chat.md is too large to show here (20.0 MB; the limit is 20 MB).')
+  await truncate(path, MAX_ARTEFACT_BYTES)
+  expect((await meetingData(scope, occurrenceId))!.chatMd).toHaveLength(MAX_ARTEFACT_BYTES)
 })
 
 async function stateOf(scope: MemberScope, id: string) {
@@ -267,4 +338,25 @@ test('the pipeline re-runs only after an AI key error', async () => {
   )
   await rerunPipeline(scope, occurrenceId, queue)
   expect(queue.sent).toEqual([{ name: 'pipeline', data: { occurrenceId }, opts: undefined }])
+})
+
+test('submitting a re-run twice queues one job, and a failed send puts the reason back', async () => {
+  const { scope, occurrenceId, queue } = await meetingFixture()
+  await scope.update(
+    occurrences,
+    { state: 'post_processing', stateReason: 'ai_key_error' },
+    eq(occurrences.id, occurrenceId)
+  )
+  const results = await Promise.allSettled([
+    rerunPipeline(scope, occurrenceId, queue),
+    rerunPipeline(scope, occurrenceId, queue)
+  ])
+  expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected'])
+  expect(queue.sent).toHaveLength(1)
+  expect((await stateOf(scope, occurrenceId)).stateReason).toBe('rerun_queued')
+
+  await scope.update(occurrences, { stateReason: 'ai_key_error' }, eq(occurrences.id, occurrenceId))
+  const broken = { send: async () => Promise.reject(new Error('queue down')) }
+  await expect(rerunPipeline(scope, occurrenceId, broken)).rejects.toThrow('queue down')
+  expect((await stateOf(scope, occurrenceId)).stateReason).toBe('ai_key_error')
 })
