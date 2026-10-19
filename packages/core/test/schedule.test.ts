@@ -65,14 +65,14 @@ describe('expandEntry', () => {
     expect(slots.map((s) => s.start.toISOString())).toEqual(['2026-10-25T16:30:00.000Z'])
   })
 
-  test('a session in the spring-forward gap moves to the first valid time, and an overlap uses the first occurrence', () => {
+  test('a time in the spring-forward gap shifts forward by the gap length, and an overlap uses the first occurrence', () => {
     const run = (date: string, zone: string, startTime: string) =>
       expandEntry(
         { repeat: { kind: 'once', date }, startTime, endTime: '23:00' },
         zone,
         new Date('2026-03-25T00:00:00Z')
       )
-    // London: 01:30 on 29 Mar 2026 does not exist (01:00 -> 02:00).
+    // London: 01:30 on 29 Mar 2026 does not exist (01:00 -> 02:00), so it becomes 02:30 BST.
     expect(run('2026-03-29', 'Europe/London', '01:30').map((s) => s.start.toISOString())).toEqual([
       '2026-03-29T01:30:00.000Z'
     ])
@@ -83,6 +83,65 @@ describe('expandEntry', () => {
       new Date('2026-10-25T00:00:00Z')
     )
     expect(fall.map((s) => s.start.toISOString())).toEqual(['2026-11-01T05:30:00.000Z'])
+  })
+
+  test('a slot whose start is moved by a gap keeps its length instead of becoming 24 hours', () => {
+    const hours = (date: string, zone: string, startTime: string, endTime: string, from: string) => {
+      const [s] = expandEntry({ repeat: { kind: 'once', date }, startTime, endTime }, zone, new Date(from))
+      return [s!.start.toISOString(), s!.end.toISOString(), (s!.end.getTime() - s!.start.getTime()) / 3_600_000]
+    }
+    // London 29 Mar 2026: 01:30 -> 02:30 BST (01:30Z), the end 02:30 BST is the same instant, so it moves to 03:30 BST.
+    expect(hours('2026-03-29', 'Europe/London', '01:30', '02:30', '2026-03-25T00:00:00Z')).toEqual([
+      '2026-03-29T01:30:00.000Z',
+      '2026-03-29T02:30:00.000Z',
+      1
+    ])
+    // New York 8 Mar 2026: 02:30 -> 03:30 EDT (07:30Z), the end 03:30 EDT is the same instant, so it moves to 04:30 EDT.
+    expect(hours('2026-03-08', 'America/New_York', '02:30', '03:30', '2026-03-04T00:00:00Z')).toEqual([
+      '2026-03-08T07:30:00.000Z',
+      '2026-03-08T08:30:00.000Z',
+      1
+    ])
+  })
+
+  test('on a fall-back day the slot runs over the repeated hour', () => {
+    const one = (date: string, zone: string, from: string) =>
+      expandEntry({ repeat: { kind: 'once', date }, startTime: '01:30', endTime: '02:30' }, zone, new Date(from))[0]!
+    // London 25 Oct 2026: 01:30 BST (00:30Z) to 02:30 GMT (02:30Z).
+    const london = one('2026-10-25', 'Europe/London', '2026-10-21T00:00:00Z')
+    expect([london.start.toISOString(), london.end.toISOString()]).toEqual([
+      '2026-10-25T00:30:00.000Z',
+      '2026-10-25T02:30:00.000Z'
+    ])
+    // New York 1 Nov 2026: 01:30 EDT (05:30Z) to 02:30 EST (07:30Z).
+    const ny = one('2026-11-01', 'America/New_York', '2026-10-28T00:00:00Z')
+    expect([ny.start.toISOString(), ny.end.toISOString()]).toEqual([
+      '2026-11-01T05:30:00.000Z',
+      '2026-11-01T07:30:00.000Z'
+    ])
+  })
+
+  test('daily slots around a clock change never overlap each other', () => {
+    const cases = [
+      ['Europe/London', '2026-03-27T00:00:00Z'],
+      ['America/New_York', '2026-03-06T00:00:00Z'],
+      ['Europe/London', '2026-10-23T00:00:00Z'],
+      ['America/New_York', '2026-10-30T00:00:00Z']
+    ] as const
+    for (const [zone, from] of cases) {
+      const slots = expandEntry(
+        {
+          repeat: { kind: 'weekly', days: [1, 2, 3, 4, 5, 6, 7], from: '2026-01-01' },
+          startTime: '01:30',
+          endTime: '02:30'
+        },
+        zone,
+        new Date(from)
+      ).map((s, i) => ({ id: String(i), ...s, rank: i }))
+      expect(slots.length).toBeGreaterThan(10)
+      expect(findClashes(slots)).toEqual([])
+      for (const s of slots) expect(s.end.getTime() - s.start.getTime()).toBeLessThanOrEqual(2 * 3_600_000)
+    }
   })
 
   test('times with seconds, as Postgres returns them, are accepted', () => {
@@ -142,6 +201,11 @@ describe('findClashes', () => {
 test('times are shown in the member time zone', () => {
   expect(formatWhen(new Date('2026-10-21T06:00:00Z'), 'Asia/Kuala_Lumpur')).toBe('Wed 21 Oct, 14:00')
   expect(formatDay(new Date('2026-11-20T08:00:00Z'), 'Asia/Kuala_Lumpur')).toBe('Fri 20 Nov')
+})
+
+test('months are always three letters, September included', () => {
+  expect(formatWhen(new Date('2026-09-09T06:00:00Z'), 'Asia/Kuala_Lumpur')).toBe('Wed 9 Sep, 14:00')
+  expect(formatDay(new Date('2026-09-09T06:00:00Z'), 'Asia/Kuala_Lumpur')).toBe('Wed 9 Sep')
 })
 
 describe('RepeatRuleSchema', () => {

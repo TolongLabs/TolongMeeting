@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, lt, notInArray, sql } from 'drizzle-orm'
 import { expandEntry, findClashes, type OccurrenceState } from '@tm/core'
 import type { Db } from './index'
 import { aiKeys, members, occurrences, timetableEntries } from './schema'
-import { QUEUES, type Queue } from './queues'
+import { QUEUES, queueDbOf, type Queue } from './queues'
 
 type OccurrenceRow = typeof occurrences.$inferSelect
 
@@ -122,6 +122,8 @@ async function syncMember(db: Db, queue: Queue, now: Date, memberId: string, tim
       .where(and(eq(occurrences.id, row.id), eq(occurrences.state, 'scheduled')))
   }
 
+  // The hard delete loses nothing: only `scheduled` rows go, and no machine edge returns to `scheduled`, so such a row
+  // never had events, forms or artefacts.
   // Deleted rows must go before inserts: a moved slot may reuse the (entry, start) pair of a removed one.
   const removed =
     stale.length === 0
@@ -143,6 +145,8 @@ async function syncMember(db: Db, queue: Queue, now: Date, memberId: string, tim
           .returning({ id: occurrences.id, scheduledStart: occurrences.scheduledStart })
 
   inserted.sort((a, b) => a.scheduledStart.getTime() - b.scheduledStart.getTime())
+  // The job goes through this transaction's connection: it exists only if the occurrence rows commit.
+  const txDb = queueDbOf(db)
   for (const row of inserted) {
     const scheduledStart = row.scheduledStart.toISOString()
     await queue.send(
@@ -150,7 +154,8 @@ async function syncMember(db: Db, queue: Queue, now: Date, memberId: string, tim
       { occurrenceId: row.id, scheduledStart },
       {
         startAfter: new Date(Math.max(row.scheduledStart.getTime() - LAUNCH_LEAD, now.getTime())),
-        singletonKey: `launch:${row.id}:${scheduledStart}`
+        singletonKey: `launch:${row.id}:${scheduledStart}`,
+        db: txDb
       }
     )
   }

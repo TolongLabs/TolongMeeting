@@ -57,3 +57,32 @@ test('triggerFor finds the trigger between two states', () => {
   expect(triggerFor('uploading', 'transcribing')).toBe('uploaded')
   expect(triggerFor('in_meeting', 'completed')).toBeNull()
 })
+
+test('no edge leads back to scheduled, so deleting a scheduled row never loses a started occurrence', () => {
+  const all: Record<OccurrenceState, true> = {
+    scheduled: true,
+    starting: true,
+    verifying_accounts: true,
+    waiting_for_signin: true,
+    watching_for_link: true,
+    no_link: true,
+    joining: true,
+    in_lobby: true,
+    denied: true,
+    in_meeting: true,
+    restarting: true,
+    left_by_member: true,
+    leaving: true,
+    uploading: true,
+    transcribing: true,
+    waiting_for_pc: true,
+    post_processing: true,
+    completed: true,
+    skipped_capacity: true,
+    skipped_identity_clash: true,
+    skipped_pc_offline: true,
+    failed: true,
+    deleted: true
+  }
+  for (const from of Object.keys(all) as OccurrenceState[]) expect(triggerFor(from, 'scheduled')).toBeNull()
+})

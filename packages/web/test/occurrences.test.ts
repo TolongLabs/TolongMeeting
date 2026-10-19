@@ -29,7 +29,8 @@ describe('syncOccurrences', () => {
       data: { occurrenceId: expect.any(String), scheduledStart: '2026-10-21T06:00:00.000Z' },
       opts: {
         startAfter: new Date('2026-10-21T05:00:00.000Z'),
-        singletonKey: expect.stringMatching(/^launch:.+:2026-10-21T06:00:00\.000Z$/)
+        singletonKey: expect.stringMatching(/^launch:.+:2026-10-21T06:00:00\.000Z$/),
+        db: expect.anything()
       }
     })
     const [o] = await rows(db, memberId)

@@ -14,20 +14,29 @@ export interface ClashSlot extends Slot {
 
 const DAY_MS = 24 * 3_600_000
 
-function localTime(day: DateTime, hhmm: string): DateTime {
+function parseTime(hhmm: string): { hour: number; minute: number } {
   const match = /^(\d{2}):(\d{2})(?::\d{2})?$/.exec(hhmm)
-  if (!match) throw new Error(`Not a time of day: ${hhmm}`)
-  if (Number(match[1]) > 23 || Number(match[2]) > 59) throw new Error(`Not a time of day: ${hhmm}`)
-  // `set` on a valid local day resolves a time inside a spring-forward gap to the first valid time after it, and a
-  // time that happens twice in an autumn overlap to the first one.
-  const at = day.set({ hour: Number(match[1]), minute: Number(match[2]), second: 0, millisecond: 0 })
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) throw new Error(`Not a time of day: ${hhmm}`)
+  return { hour: Number(match[1]), minute: Number(match[2]) }
+}
+
+/**
+ * The instant of wall-clock `hhmm` on `day`, and how many milliseconds the wall clock was moved to reach it. `set` on a
+ * valid local day resolves a time inside a spring-forward gap to the time shifted forward by the gap length, and a time
+ * that happens twice in an autumn overlap to the first one.
+ */
+function localTime(day: DateTime, hhmm: string): { at: DateTime; shiftMs: number } {
+  const { hour, minute } = parseTime(hhmm)
+  const at = day.set({ hour, minute, second: 0, millisecond: 0 })
   if (!at.isValid) throw new Error(`Not a time of day: ${hhmm}`)
-  return at
+  const wall = (d: { year: number; month: number; day: number; hour: number; minute: number }) =>
+    Date.UTC(d.year, d.month - 1, d.day, d.hour, d.minute)
+  return { at, shiftMs: wall(at) - wall({ year: day.year, month: day.month, day: day.day, hour, minute }) }
 }
 
 /**
  * The sessions of a timetable entry that start after `now` and before `now + horizonDays`. Dates and times are the
- * wall clock of `timeZone`; an end at or before the start is on the next day.
+ * wall clock of `timeZone`; an end written at or before the start is on the next day.
  */
 export function expandEntry(
   e: { repeat: RepeatRule; startTime: string; endTime: string },
@@ -39,6 +48,9 @@ export function expandEntry(
   if (!first.isValid) throw new Error(`Not a time zone: ${timeZone}`)
   const limit = now.getTime() + horizonDays * DAY_MS
   const slots: Slot[] = []
+  // Decided on the written times, not on resolved instants: a gap or an overlap must not turn a 1 hour slot into 24.
+  const toMinutes = (t: string) => parseTime(t).hour * 60 + parseTime(t).minute
+  const endsNextDay = toMinutes(e.endTime) <= toMinutes(e.startTime)
   // One day either side of the window covers every local date whose session could start inside it.
   const days = Math.ceil(horizonDays) + 2
   for (let i = -1; i < days; i++) {
@@ -50,10 +62,13 @@ export function expandEntry(
         : e.repeat.days.includes(day.weekday as 1) && date >= e.repeat.from
     if (!hit) continue
     const start = localTime(day, e.startTime)
-    let end = localTime(day, e.endTime)
-    if (end <= start) end = localTime(day.plus({ days: 1 }), e.endTime)
-    const startMs = start.toMillis()
-    if (startMs > now.getTime() && startMs < limit) slots.push({ start: start.toJSDate(), end: end.toJSDate() })
+    const end = localTime(endsNextDay ? day.plus({ days: 1 }) : day, e.endTime)
+    const startMs = start.at.toMillis()
+    let endMs = end.at.toMillis()
+    // A start that a spring-forward gap pushed to or past an end that was not moved would give an empty or negative
+    // slot: move the end by the same amount so the slot keeps its intended length.
+    if (endMs <= startMs) endMs += start.shiftMs
+    if (startMs > now.getTime() && startMs < limit) slots.push({ start: new Date(startMs), end: new Date(endMs) })
   }
   return slots
 }
@@ -79,12 +94,16 @@ export function findClashes(slots: ClashSlot[]): { winner: string; loser: string
   return clashes
 }
 
-/** `Wed 21 Oct, 14:00` in the member's time zone. */
-export function formatWhen(d: Date, timeZone: string): string {
-  return DateTime.fromJSDate(d, { zone: timeZone }).setLocale('en-GB').toFormat('ccc d LLL, HH:mm')
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** `Wed 21 Oct` in the member's time zone. Fixed English names: ICU locale data spells September `Sept` in places. */
+export function formatDay(d: Date, timeZone: string): string {
+  const t = DateTime.fromJSDate(d, { zone: timeZone })
+  return `${WEEKDAYS[t.weekday - 1]} ${t.day} ${MONTHS[t.month - 1]}`
 }
 
-/** `Wed 21 Oct` in the member's time zone. */
-export function formatDay(d: Date, timeZone: string): string {
-  return DateTime.fromJSDate(d, { zone: timeZone }).setLocale('en-GB').toFormat('ccc d LLL')
+/** `Wed 21 Oct, 14:00` in the member's time zone. */
+export function formatWhen(d: Date, timeZone: string): string {
+  return `${formatDay(d, timeZone)}, ${DateTime.fromJSDate(d, { zone: timeZone }).toFormat('HH:mm')}`
 }
