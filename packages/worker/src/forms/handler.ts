@@ -120,8 +120,8 @@ class FormRun {
     else if (kind === 'no_access') await this.fail('no_access')
     else if (kind === 'captcha') await this.fail('captcha')
     else if (kind === 'unknown') await this.fail('unknown_page')
-    else if (kind === 'signin')
-      await this.fail('signin_required_again') // the wall came back after the one retry
+    // 'signin' here means the wall came back after the one retry.
+    else if (kind === 'signin') await this.fail('signin_required_again')
     else await this.fail('unexpected_error') // 'confirmation' before any submit
     for (let n = 1; ; n++) {
       if (n > MAX_PAGES) await this.fail('unknown_page')
@@ -170,7 +170,9 @@ class FormRun {
     }
     await this.apply('signin_wall') // pings "Sign in again"; the tab stays open and untouched
     const signedIn = await this.ctx.waitForSignin(this.tab!, this.f.provider, this.ctx.signal)
-    if (!signedIn) await this.fail(this.ctx.signal.aborted ? 'meeting_ended' : 'signin_not_completed')
+    // The meeting can end in the same moment the member finishes signing in: then no new tab opens.
+    if (this.ctx.signal.aborted) await this.fail('meeting_ended')
+    if (!signedIn) await this.fail('signin_not_completed')
     await this.closeTab() // TabCloseFailedError stops the run and raises the alert
     this.rec = { ...this.rec, signinRetried: true }
     await this.apply('signed_in')
@@ -284,7 +286,9 @@ class FormRun {
     return this.fail(reason)
   }
 
+  // Checked before the fill and again before the Submit click. A form is never submitted after the meeting ended.
   private async beforeDeadline(): Promise<void> {
+    if (this.ctx.signal.aborted) await this.fail('meeting_ended')
     if (Date.now() > this.deadline) await this.fail('deadline')
   }
 
