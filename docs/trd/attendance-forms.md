@@ -21,7 +21,7 @@ Contents:
 
 ## QR decoding
 
-Decode the full stage frame and, if known, the upscaled shared-screen region with both zxing-cpp and OpenCV's WeChat detector (compared in [spike 3](../TRD.md#early-spikes)). Accept a code only after it decodes in 2 consecutive frames.
+`decodeQr` returns the union of three stages, with no first-hit stop: zxing-wasm on the full stage frame, zxing-wasm on the shared-screen region upscaled 2x (when a region is known), and OpenCV's WeChat detector on the full frame. WeChat runs in a Python bridge configured by `TM_WECHAT_PYTHON` and `TM_WECHAT_MODELS_DIR` ([environment variables](../TRD.md#environment-variables)). Codes smaller than about 12% of the slide height may be missed; chat links remain the fallback ([spike 3](../TRD.md#early-spikes)). Accept a code only after it decodes in 2 consecutive frames.
 
 ## Opening
 
