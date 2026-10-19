@@ -6,6 +6,7 @@ import {
   containerName,
   containerSpec,
   jobFileBase,
+  machineIdPath,
   type SpecParams
 } from '../src/index'
 
@@ -26,7 +27,7 @@ test('the worker spec keeps host paths, the shm size and no secrets in its envir
   expect(b.HostConfig.Binds).toEqual([
     `/srv/tolongmeeting/data/occurrences/${occ}:/srv/tolongmeeting/data/occurrences/${occ}`,
     `/srv/tolongmeeting/profiles/${idn}:/srv/tolongmeeting/profiles/${idn}`,
-    `/srv/tolongmeeting/profiles/${idn}/machine-id:/etc/machine-id:ro`
+    `/srv/tolongmeeting/profiles/.machine-ids/${idn}:/etc/machine-id:ro`
   ])
   expect(b.HostConfig.ShmSize).toBe(2147483648)
   expect(b.HostConfig.NetworkMode).toBe(WORKER_NETWORK)
@@ -70,7 +71,7 @@ test('the sign-in spec mounts only the profile and gets a smaller box', () => {
   expect(b.Labels).toEqual({ 'tm.role': 'signin', 'tm.session': occ })
   expect(b.HostConfig.Binds).toEqual([
     `/srv/tolongmeeting/profiles/${idn}:/srv/tolongmeeting/profiles/${idn}`,
-    `/srv/tolongmeeting/profiles/${idn}/machine-id:/etc/machine-id:ro`
+    `/srv/tolongmeeting/profiles/.machine-ids/${idn}:/etc/machine-id:ro`
   ])
   expect(b.HostConfig.Memory).toBe(2147483648)
   expect(b.HostConfig.NanoCpus).toBe(1000000000)
@@ -90,4 +91,15 @@ test.each([
   ['a public URL that is not a URL', { ...worker, env: { ...env, publicUrl: 'tm.example' } }]
 ] as [string, SpecParams][])('a spec with %s throws', (_name, p) => {
   expect(() => containerSpec(p)).toThrow()
+})
+
+test('the machine id file sits outside every directory a container can write', () => {
+  const file = machineIdPath(env.profileRoot, idn)
+  expect(file).toBe(`/srv/tolongmeeting/profiles/.machine-ids/${idn}`)
+  for (const p of [worker, signin]) {
+    const writable = containerSpec(p)
+      .HostConfig.Binds.filter((b) => !b.endsWith(':ro'))
+      .map((b) => b.split(':')[0]!)
+    expect(writable.some((dir) => file.startsWith(`${dir}/`) || file === dir)).toBe(false)
+  }
 })

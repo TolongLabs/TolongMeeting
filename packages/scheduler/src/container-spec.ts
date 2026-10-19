@@ -32,6 +32,8 @@ export type CreateBody = {
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const WORKER_NAME_RE = /^tm-worker-([0-9a-f-]{36})-a([1-9][0-9]{0,8})$/
+const SIGNIN_NAME_RE = /^tm-signin-([0-9a-f-]{36})$/
 const ROOT_RE = /^(?:\/[A-Za-z0-9._@+-]+)+$/
 const HOST_RE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/
 
@@ -59,6 +61,29 @@ export function parseOrigin(label: string, value: string): URL {
   }
   return url
 }
+
+/** A container name this system creates: `tm-worker-<occurrenceId>-a<attempt>` or `tm-signin-<sessionId>`. */
+export function parseName(name: string): { kind: 'worker' | 'signin'; subjectId: string; attempt: number } | null {
+  const worker = WORKER_NAME_RE.exec(name)
+  const match = worker ?? SIGNIN_NAME_RE.exec(name)
+  if (!match || !UUID_RE.test(match[1]!)) return null
+  return { kind: worker ? 'worker' : 'signin', subjectId: match[1]!, attempt: worker ? Number(worker[2]) : 0 }
+}
+
+/** Checks the roots and URLs a spec depends on; returns the public origin and the two hosts pinned to Caddy. */
+export function resolveEnv(env: SpecEnv): { publicUrl: string; hosts: string[] } {
+  assertRoot('dataRoot', env.dataRoot)
+  assertRoot('profileRoot', env.profileRoot)
+  const pub = parseOrigin('publicUrl', env.publicUrl)
+  return { publicUrl: pub.origin, hosts: [pub.hostname, parseOrigin('ntfyUrl', env.ntfyUrl).hostname] }
+}
+
+/**
+ * The host file bound read-only at `/etc/machine-id`. It sits in `<profileRoot>/.machine-ids/`, a tree no container
+ * mounts, so a compromised worker can't replace it with a symlink that the next launch would bind-mount.
+ */
+export const machineIdPath = (profileRoot: string, identityId: string): string =>
+  `${profileRoot}/.machine-ids/${identityId}`
 
 export type BodyInput = {
   kind: 'worker' | 'signin'
@@ -100,7 +125,7 @@ export function buildCreateBody(i: BodyInput): CreateBody {
       Binds: [
         ...(worker ? [`${dataDir}:${dataDir}`] : []),
         `${profileDir}:${profileDir}`,
-        `${profileDir}/machine-id:/etc/machine-id:ro`
+        `${machineIdPath(i.profileRoot, i.identityId)}:/etc/machine-id:ro`
       ],
       ShmSize: 2147483648,
       NetworkMode: WORKER_NETWORK,
@@ -118,8 +143,7 @@ export function buildCreateBody(i: BodyInput): CreateBody {
 }
 
 function toInput(p: SpecParams): BodyInput {
-  assertRoot('dataRoot', p.env.dataRoot)
-  assertRoot('profileRoot', p.env.profileRoot)
+  const { publicUrl, hosts } = resolveEnv(p.env)
   if (!UUID_RE.test(p.identityId)) throw new Error('identityId must be a lower-case UUID')
   const subjectId = p.kind === 'worker' ? p.occurrenceId : p.sessionId
   if (!UUID_RE.test(subjectId)) throw new Error('occurrenceId and sessionId must be lower-case UUIDs')
@@ -134,8 +158,8 @@ function toInput(p: SpecParams): BodyInput {
     identityId: p.identityId,
     dataRoot: p.env.dataRoot,
     profileRoot: p.env.profileRoot,
-    publicUrl: parseOrigin('publicUrl', p.env.publicUrl).origin,
-    hosts: [parseOrigin('publicUrl', p.env.publicUrl).hostname, parseOrigin('ntfyUrl', p.env.ntfyUrl).hostname]
+    publicUrl,
+    hosts
   }
 }
 

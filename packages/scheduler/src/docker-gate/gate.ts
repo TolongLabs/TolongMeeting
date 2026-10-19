@@ -1,4 +1,5 @@
-import { validateRequest, type GateConfig } from './validate'
+import { WORKER_IMAGE, parseName, resolveEnv } from '../container-spec'
+import { API_PREFIX_RE, validateRequest, type GateConfig } from './validate'
 
 export type GateOptions = GateConfig & {
   /** The Docker Engine socket, e.g. `/var/run/docker.sock`. */
@@ -8,8 +9,28 @@ export type GateOptions = GateConfig & {
 }
 
 const MAX_BODY = 64 * 1024
-const MANAGED_ROLES = new Set(['worker', 'signin'])
-const PREFIX_RE = /^\/v[0-9]+\.[0-9]+/
+type Inspect = {
+  Id?: unknown
+  Name?: unknown
+  Config?: { Image?: unknown; Labels?: Record<string, unknown> | null } | null
+  HostConfig?: { Privileged?: unknown } | null
+}
+
+/** True when the container is one this system made: a worker or sign-in role, the worker image, not privileged, a matching name. */
+function isManaged(info: Inspect): boolean {
+  const role = info.Config?.Labels?.['tm.role']
+  const name = typeof info.Name === 'string' ? parseName(info.Name.replace(/^\//, '')) : null
+  return (
+    typeof info.Id === 'string' &&
+    /^[0-9a-f]{64}$/.test(info.Id) &&
+    (role === 'worker' || role === 'signin') &&
+    info.Config?.Image === WORKER_IMAGE &&
+    typeof info.HostConfig === 'object' &&
+    info.HostConfig !== null &&
+    info.HostConfig.Privileged !== true &&
+    name?.kind === role
+  )
+}
 
 const deny = (status: number, message: string): Response => Response.json({ message }, { status })
 
@@ -19,6 +40,7 @@ const deny = (status: number, message: string): Response => Response.json({ mess
  * gate checked is exactly what Docker reads.
  */
 export function createGate(o: GateOptions): (req: Request) => Promise<Response> {
+  resolveEnv(o) // fail at start-up, not on the first request, when a root or URL is unusable
   const docker = (path: string, init: { method: string; body?: string } = { method: 'GET' }): Promise<Response> =>
     fetch(`http://docker${path}`, {
       unix: o.socketPath,
@@ -64,14 +86,33 @@ export function createGate(o: GateOptions): (req: Request) => Promise<Response> 
       o.log(`${line} failed: inspect answered ${inspected.status}`)
       return deny(502, 'docker inspect failed')
     }
-    const info = (await inspected.json()) as { Id?: unknown; Config?: { Labels?: Record<string, string> | null } }
-    const role = info.Config?.Labels?.['tm.role']
-    if (typeof info.Id !== 'string' || !/^[0-9a-f]{64}$/.test(info.Id) || !role || !MANAGED_ROLES.has(role)) {
+    const info = (await inspected.json()) as Inspect
+    if (!isManaged(info)) {
       o.log(`${line} refused: container is not a worker or sign-in container`)
       return deny(403, 'container is not a worker or sign-in container')
     }
     if (verdict.kind === 'inspect') return Response.json(info)
-    const prefix = PREFIX_RE.exec(url.pathname)?.[0] ?? ''
-    return docker(`${prefix}/containers/${info.Id}/${verdict.kind}${url.search}`, { method: 'POST' })
+    const prefix = API_PREFIX_RE.exec(url.pathname)?.[0] ?? ''
+    return docker(`${prefix}/containers/${info.Id as string}/${verdict.kind}${url.search}`, { method: 'POST' })
   }
+}
+
+export type ServeOptions = GateOptions & { port: number; hostname?: string }
+
+/**
+ * Serves the gate. Bun refuses bodies over 64 KiB itself, development mode is off so errors carry no stack page, and an
+ * error thrown by the handler (Docker unreachable, inspect answered with bad JSON) becomes a bare 502.
+ */
+export function serveGate(o: ServeOptions): ReturnType<typeof Bun.serve> {
+  return Bun.serve({
+    port: o.port,
+    hostname: o.hostname,
+    maxRequestBodySize: MAX_BODY,
+    development: false,
+    fetch: createGate(o),
+    error(err) {
+      o.log(`failed: ${err.name}`)
+      return new Response('bad gateway\n', { status: 502, headers: { 'Content-Type': 'text/plain' } })
+    }
+  })
 }

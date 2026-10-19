@@ -1,8 +1,13 @@
 import { expect, test } from 'bun:test'
 import { containerName, containerSpec, validateRequest, type SpecParams } from '../src/index'
 
-const cfg = { dataRoot: '/srv/tolongmeeting/data', profileRoot: '/srv/tolongmeeting/profiles' }
-const env = { ...cfg, publicUrl: 'https://tm.example', ntfyUrl: 'https://ntfy.tm.example' }
+const cfg = {
+  dataRoot: '/srv/tolongmeeting/data',
+  profileRoot: '/srv/tolongmeeting/profiles',
+  publicUrl: 'https://tm.example',
+  ntfyUrl: 'https://ntfy.tm.example'
+}
+const env = cfg
 const occ = '11111111-1111-4111-8111-111111111111'
 const idn = '22222222-2222-4222-8222-222222222222'
 const spec = { kind: 'worker', occurrenceId: occ, attempt: 1, identityId: idn, env } as const
@@ -57,7 +62,16 @@ test.each([
   ['a bind whose target differs', (b: any) => (b.HostConfig.Binds[1] = `${cfg.profileRoot}/${idn}:/root`)],
   ['a bind with options', (b: any) => (b.HostConfig.Binds[0] += ':rw')],
   ['a writable machine id', (b: any) => (b.HostConfig.Binds[2] = b.HostConfig.Binds[2].replace(':ro', ''))],
-  ['a machine id of another identity', (b: any) => (b.HostConfig.Binds[2] = '/etc/shadow:/etc/machine-id:ro')],
+  ['a machine id from /etc/shadow', (b: any) => (b.HostConfig.Binds[2] = '/etc/shadow:/etc/machine-id:ro')],
+  [
+    'a machine id file inside the mounted profile directory',
+    (b: any) => (b.HostConfig.Binds[2] = `${cfg.profileRoot}/${idn}/machine-id:/etc/machine-id:ro`)
+  ],
+  [
+    'the machine id of another identity',
+    (b: any) =>
+      (b.HostConfig.Binds[2] = `${cfg.profileRoot}/.machine-ids/33333333-3333-4333-8333-333333333333:/etc/machine-id:ro`)
+  ],
   ['a missing machine id bind', (b: any) => b.HostConfig.Binds.pop()],
   ['a mounts list', (b: any) => (b.HostConfig.Mounts = [{ Type: 'bind', Source: '/', Target: '/h' }])],
   ['volumes from another container', (b: any) => (b.HostConfig.VolumesFrom = ['other'])],
@@ -84,6 +98,11 @@ test.each([
   ['a bigger memory limit', (b: any) => (b.HostConfig.Memory = 0)],
   ['more cpu', (b: any) => (b.HostConfig.NanoCpus = 64000000000)],
   ['another dns server', (b: any) => (b.HostConfig.Dns = ['9.9.9.9'])],
+  ['a public host pointing at another address', (b: any) => (b.HostConfig.ExtraHosts[0] = 'tm.example:10.0.0.1')],
+  ['another public host pinned to Caddy', (b: any) => (b.HostConfig.ExtraHosts[0] = `evil.example:172.30.0.2`)],
+  ['another ntfy host pinned to Caddy', (b: any) => (b.HostConfig.ExtraHosts[1] = `evil.example:172.30.0.2`)],
+  ['another public URL in the environment', (b: any) => (b.Env[3] = 'TM_PUBLIC_URL=https://evil.example')],
+  ['a public URL with a path', (b: any) => (b.Env[3] = 'TM_PUBLIC_URL=https://tm.example/x')],
   ['an extra host pointing elsewhere', (b: any) => b.HostConfig.ExtraHosts.push('evil.example:10.0.0.1')],
   ['a different sysctl', (b: any) => (b.HostConfig.Sysctls = { 'kernel.core_pattern': '|/x' })],
   ['an extra sysctl', (b: any) => (b.HostConfig.Sysctls['net.ipv4.ip_forward'] = '1')],
@@ -215,4 +234,27 @@ test('the right path with the wrong method is refused', () => {
   expect(validateRequest({ method: 'POST', path: `/containers/${id}/json`, body: null }, cfg).ok).toBe(false)
   expect(validateRequest({ method: 'GET', path: `/containers/create?name=${id}`, body: null }, cfg).ok).toBe(false)
   expect(validateRequest({ method: 'POST', path: '/_ping', body: null }, cfg).ok).toBe(false)
+})
+
+test('the gate speaks Docker API v1.41 to v1.51 only', () => {
+  const id = containerName(spec)
+  for (const v of ['v1.41', 'v1.47', 'v1.51']) {
+    expect(validateRequest({ method: 'GET', path: `/${v}/containers/${id}/json`, body: null }, cfg).ok).toBe(true)
+  }
+  for (const v of ['v1.40', 'v1.52', 'v1.99', 'v2.0', 'v1.4', 'v1.470']) {
+    expect(validateRequest({ method: 'GET', path: `/${v}/containers/${id}/json`, body: null }, cfg)).toEqual({
+      ok: false,
+      reason: 'endpoint not allowed'
+    })
+  }
+})
+
+test('a create is judged against the configured URLs, not the request', () => {
+  const body = containerSpec(spec)
+  const req = { method: 'POST', path: `/containers/create?name=${containerName(spec)}`, body }
+  expect(validateRequest(req, cfg).ok).toBe(true)
+  expect(validateRequest(req, { ...cfg, publicUrl: 'https://other.example' }).ok).toBe(false)
+  expect(validateRequest(req, { ...cfg, ntfyUrl: 'https://ntfy.other.example' }).ok).toBe(false)
+  expect(() => validateRequest(req, { ...cfg, publicUrl: 'https://tm.example/path' })).toThrow()
+  expect(() => validateRequest(req, { ...cfg, ntfyUrl: 'ntfy' })).toThrow()
 })
