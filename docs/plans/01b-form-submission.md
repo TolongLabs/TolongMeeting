@@ -399,7 +399,7 @@ git commit -m "feat(core): complete the form state machine"
 **Files:**
 
 - Create: `packages/worker/src/forms/store.ts`
-- Test: `packages/worker/src/forms/store.test.ts`
+- Test: `packages/worker/test/forms-store.test.ts` (moved from `src/`; tests live in `test/`)
 
 **Interfaces:**
 
@@ -409,12 +409,12 @@ git commit -m "feat(core): complete the form state machine"
 ```ts
 export async function saveFormRecord(dataDir: string, rec: FormRecord): Promise<void> // forms/<formId>/record.json via record.json.tmp and rename; creates the directory
 export async function loadFormRecords(dataDir: string): Promise<{ records: FormRecord[]; invalid: string[] }> // invalid: formIds whose record.json is unreadable or fails the schema
-export function formEventData(rec: FormRecord): Record<string, unknown> // { formId, state, provider, source, sender, trustReason, reason, fields }
+export function formEventData(rec: FormRecord): Record<string, unknown> // { formId, state, provider, source, sender, senderRole, trustReason, reason, seenAt, submittedAt, url, finalUrl, fieldsFilled }
 ```
 
-`fields` lists `detailKey` for each filled field, and `attendance_confirmation` where `detailKey` is null.
+`fieldsFilled` lists `detailKey` for each filled field, and `attendance_confirmation` where `detailKey` is null. `url` and `finalUrl` are both `canonicalFormUrl(finalUrl)`, so no query (no prefilled answers) reaches an event (ruling B10).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const rec = sampleRecord()
@@ -456,31 +456,31 @@ test('formEventData names fields but never carries their values', () => {
       }
     ]
   })
-  expect(data.fields).toEqual(['full_name', 'attendance_confirmation'])
+  expect(data.fieldsFilled).toEqual(['full_name', 'attendance_confirmation'])
   expect(JSON.stringify(data)).not.toContain('Test Student')
   expect(JSON.stringify(data)).not.toContain('I confirm')
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/store.test.ts`
+Run: `bun test packages/worker/test/forms-store.test.ts`
 Expected: FAIL with "Cannot find module './store'".
 
-- [ ] **Step 3: Implement `packages/worker/src/forms/store.ts`**
+- [x] **Step 3: Implement `packages/worker/src/forms/store.ts`**
 
 `node:fs/promises` only; records are parsed with `FormRecordSchema.safeParse`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/store.test.ts`
+Run: `bun test packages/worker/test/forms-store.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/store.ts packages/worker/src/forms/store.test.ts
-git commit -m "feat(worker): persist form records and events"
+git add packages/worker/src/forms/store.ts packages/worker/test/forms-store.test.ts docs/plans/01b-form-submission.md
+git commit -m "feat(worker): store form records and events"
 ```
 
 ### Task 4: Form ping copy
