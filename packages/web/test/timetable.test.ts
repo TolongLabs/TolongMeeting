@@ -9,6 +9,7 @@ import {
   ChatLinkSchema,
   deleteEntry,
   EntryInputSchema,
+  maskedLink,
   type EntryDeps,
   NoWorkingKeyError,
   saveEntry,
@@ -86,13 +87,38 @@ test('a chat link is refused until link watchers exist, and chat targets are che
   expect(ChatLinkSchema.safeParse({ kind: 'chat', app: 'whatsapp', chat: 'Class group' }).success).toBe(true)
 })
 
-test('a fixed link must be https on a Zoom host; other links are refused', () => {
+test('a fixed link is accepted only if the worker would accept it, and the trimmed original is kept', () => {
   const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
-  const ok = (url: string) => EntryInputSchema.safeParse({ ...base, identityId, link: { kind: 'fixed', url } }).success
-  expect(ok('https://example.zoom.us/j/00000000000?pwd=abc')).toBe(true)
-  expect(ok('http://example.zoom.us/j/00000000000')).toBe(false)
-  expect(ok('https://evil.example.com/j/00000000000')).toBe(false)
-  expect(ok('not a url')).toBe(false)
+  const parse = (url: string) => EntryInputSchema.safeParse({ ...base, identityId, link: { kind: 'fixed', url } })
+  expect(parse('https://example.zoom.us/j/00000000000?pwd=abc').success).toBe(true)
+  expect(parse('https://example.zoom.us/wc/join/00000000000?pwd=abc').success).toBe(true)
+  const padded = parse('  https://example.zoom.us/j/00000000000?pwd=abc  ')
+  expect(padded.data?.link).toEqual({ kind: 'fixed', url: 'https://example.zoom.us/j/00000000000?pwd=abc' })
+  for (const url of [
+    'http://example.zoom.us/j/00000000000',
+    'https://evil.example.com/j/00000000000',
+    'https://zoom.us.example.com/j/00000000000',
+    'https://user:pass@example.zoom.us/j/00000000000',
+    'https://example.zoom.us:8443/j/00000000000',
+    'https://example.zoom.us/my/lecturer',
+    'https://example.zoom.us/signin',
+    'https://example.zoom.us/j/0000\t0000000',
+    'not a url'
+  ]) {
+    expect(parse(url).success).toBe(false)
+  }
+})
+
+test('a chat target must be https', () => {
+  expect(
+    ChatLinkSchema.safeParse({ kind: 'chat', app: 'discord', chat: 'http://discord.com/channels/1/2' }).success
+  ).toBe(false)
+  expect(
+    ChatLinkSchema.safeParse({ kind: 'chat', app: 'teams', chat: 'http://teams.microsoft.com/l/chat/x' }).success
+  ).toBe(false)
+  expect(
+    ChatLinkSchema.safeParse({ kind: 'chat', app: 'teams', chat: 'https://teams.microsoft.com/l/chat/x' }).success
+  ).toBe(true)
 })
 
 test('entry name and lists reject control characters and are length-capped', () => {
@@ -215,4 +241,79 @@ test("another member's entry can't be paused or deleted", async () => {
   const { entryId } = await saveEntry(theirs.scope, { ...base, identityId: theirs.identityId }, theirs.deps)
   await expect(setPaused(mine.scope, entryId, true, mine.deps)).rejects.toThrow(InputError)
   await expect(deleteEntry(mine.scope, entryId, mine.deps)).rejects.toThrow('No such entry.')
+})
+
+test('saving again without paused leaves a paused entry paused', async () => {
+  const { scope, identityId, deps } = await member()
+  const { entryId } = await saveEntry(scope, { ...base, identityId }, deps)
+  await setPaused(scope, entryId, true, deps)
+  await saveEntry(scope, { ...base, id: entryId, identityId, name: 'Data Mining 2' }, deps)
+  const [row] = await scope.select(timetableEntries, eq(timetableEntries.id, entryId))
+  expect(row?.paused).toBe(true)
+  expect(row?.name).toBe('Data Mining 2')
+  expect(await scope.select(occurrences, eq(occurrences.entryId, entryId))).toHaveLength(0)
+})
+
+test('a new entry is not paused unless it says so', async () => {
+  const { scope, identityId, deps } = await member()
+  const a = await saveEntry(scope, { ...base, identityId }, deps)
+  const b = await saveEntry(
+    scope,
+    { ...base, name: 'Other', identityId, start: '08:00', end: '09:00', paused: true },
+    deps
+  )
+  const [rowA] = await scope.select(timetableEntries, eq(timetableEntries.id, a.entryId))
+  const [rowB] = await scope.select(timetableEntries, eq(timetableEntries.id, b.entryId))
+  expect([rowA?.paused, rowB?.paused]).toEqual([false, true])
+})
+
+test('an edit with link keep, or no link, leaves the stored link; a create needs a link', async () => {
+  const { scope, identityId, deps } = await member()
+  const { entryId } = await saveEntry(scope, { ...base, identityId }, deps)
+  const { link: _link, ...noLink } = base
+  await saveEntry(scope, { ...base, id: entryId, identityId, link: { kind: 'keep' }, name: 'Renamed' }, deps)
+  await saveEntry(scope, { ...noLink, id: entryId, identityId, name: 'Renamed again' }, deps)
+  const [row] = await scope.select(timetableEntries, eq(timetableEntries.id, entryId))
+  expect(row?.name).toBe('Renamed again')
+  expect(row?.link).toEqual({ kind: 'fixed', url: base.link.url })
+
+  await expect(saveEntry(scope, { ...base, identityId, link: { kind: 'keep' } }, deps)).rejects.toThrow(InputError)
+  await expect(saveEntry(scope, { ...noLink, identityId }, deps)).rejects.toThrow(InputError)
+})
+
+test('a masked link shows the host and meeting id, never the passcode', () => {
+  const masked = maskedLink({ link: { kind: 'fixed', url: `https://example.zoom.us/j/00000000000?pwd=${PASSCODE}` } })
+  expect(masked).toEqual({ kind: 'fixed', host: 'example.zoom.us', meetingId: '00000000000' })
+  expect(JSON.stringify(masked)).not.toContain(PASSCODE)
+  expect(maskedLink({ link: { kind: 'paste' } })).toEqual({ kind: 'paste' })
+  expect(maskedLink({ link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' } })).toEqual({
+    kind: 'chat',
+    app: 'whatsapp'
+  })
+})
+
+test("another member's entry can't be edited", async () => {
+  const mine = await member()
+  const theirs = await member()
+  const { entryId } = await saveEntry(theirs.scope, { ...base, identityId: theirs.identityId }, theirs.deps)
+  await expect(
+    saveEntry(mine.scope, { ...base, id: entryId, identityId: mine.identityId, name: 'Hijacked' }, mine.deps)
+  ).rejects.toThrow('No such entry.')
+  const [row] = await theirs.scope.select(timetableEntries, eq(timetableEntries.id, entryId))
+  expect(row?.name).toBe('Data Mining')
+})
+
+test('a failing queue send rolls the whole save back', async () => {
+  const { scope, identityId, deps } = await member()
+  const failing: EntryDeps = {
+    ...deps,
+    queue: {
+      send: async () => {
+        throw new Error('queue down')
+      }
+    }
+  }
+  await expect(saveEntry(scope, { ...base, identityId }, failing)).rejects.toThrow('queue down')
+  expect(await scope.select(timetableEntries)).toEqual([])
+  expect(await scope.select(occurrences)).toEqual([])
 })

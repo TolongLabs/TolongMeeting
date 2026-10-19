@@ -24,6 +24,12 @@ async function startQueue(url: string): Promise<Queue> {
   const boss = new PgBoss({ connectionString: url, supervise: false, schedule: false })
   // Only the error's name is logged: a message can quote a connection string.
   boss.on('error', (e) => console.error(`queue error: ${e.name}`))
-  await boss.start()
+  try {
+    await boss.start()
+  } catch (e) {
+    // A half-started instance may hold a connection pool and timers; close it, then report the original failure.
+    await boss.stop({ graceful: false, close: true }).catch(() => undefined)
+    throw e
+  }
   return bossQueue(boss)
 }

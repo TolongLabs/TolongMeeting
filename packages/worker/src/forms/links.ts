@@ -1,4 +1,6 @@
-import { canonicalFormUrl, type FormCandidate, type FormProvider, type ResolvedForm } from '@tm/core'
+import { canonicalFormUrl, unwrapLink, type FormCandidate, type FormProvider, type ResolvedForm } from '@tm/core'
+
+export { unwrapLink }
 
 export interface ResolveOptions {
   fetch?: typeof fetch
@@ -19,7 +21,6 @@ export class LinkResolveError extends Error {
 const URL_PATTERN = /https?:\/\/[^\s<>"'()[\]{}]+/gi
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
-const MAX_UNWRAP_DEPTH = 3
 // A shortener that does not redirect is unresolved, never "not a form": a real form behind it would be missed.
 const SHORT_LINK_HOSTS = new Set(['forms.gle', 'bit.ly', 't.co', 'tinyurl.com'])
 
@@ -35,28 +36,6 @@ function parseUrl(url: string): URL | null {
 function where(url: string): string {
   const u = new URL(url)
   return `${u.host}${u.pathname}`
-}
-
-function unwrapOnce(url: string): string {
-  const u = parseUrl(url)
-  if (!u) return url
-  if (u.hostname.endsWith('.safelinks.protection.outlook.com')) return u.searchParams.get('url') ?? url
-  if (u.hostname === 'www.google.com' || u.hostname === 'google.com') {
-    if (u.pathname !== '/url') return url
-    return u.searchParams.get('q') ?? u.searchParams.get('url') ?? url
-  }
-  return url
-}
-
-// Peels Safe Links and Google redirect wrappers, up to three layers.
-export function unwrapLink(url: string): string {
-  let current = url
-  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
-    const next = unwrapOnce(current)
-    if (next === current) break
-    current = next
-  }
-  return current
 }
 
 // A form URL is https, on the default port, with no userinfo. Anything else is not a form, whatever its host.

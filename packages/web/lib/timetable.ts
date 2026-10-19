@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
-import { ACTIVE_STATES, formatWhen, RepeatRuleSchema } from '@tm/core'
+import { ACTIVE_STATES, formatWhen, normaliseZoomLink, RepeatRuleSchema, type LinkSource } from '@tm/core'
 import { pings, type Ping } from '@tm/notify'
 import { loadMasterKey } from '../db/secrets'
 import { safeDbError } from '../db/errors'
@@ -42,20 +42,18 @@ export interface EntryDeps {
 
 const CLASH_WINDOW_MS = 14 * 24 * 3_600_000
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
-const ZOOM_HOST = /(^|\.)zoom\.us$/
 
 const text = (max: number) => z.string().trim().min(1).max(max).refine(noControlCharacters, NO_CONTROL_MESSAGE)
 
-function isZoomLink(value: string): boolean {
-  if (!URL.canParse(value)) return false
-  const url = new URL(value)
-  return url.protocol === 'https:' && ZOOM_HOST.test(url.hostname)
-}
-
 // Meeting links only for the platforms this build can join: Zoom in 1C. Teams and Meet arrive with plans 04 and 05.
+// A link is accepted only if the worker would accept it (the one rule in `@tm/core`). The trimmed original is stored.
 const FixedLinkSchema = z.object({
   kind: z.literal('fixed'),
-  url: z.string().trim().max(2048).refine(isZoomLink, 'Enter a Zoom meeting link that starts with https://.')
+  url: z
+    .string()
+    .trim()
+    .max(2048)
+    .refine((url) => normaliseZoomLink(url) !== null, 'Enter a Zoom meeting link that starts with https://.')
 })
 
 const CHAT_TARGET = {
@@ -82,7 +80,7 @@ export const ChatLinkSchema = z
       return
     }
     const target = CHAT_TARGET[link.app]
-    const ok = URL.canParse(link.chat) && target.ok(new URL(link.chat))
+    const ok = URL.canParse(link.chat) && new URL(link.chat).protocol === 'https:' && target.ok(new URL(link.chat))
     if (!ok) ctx.addIssue({ code: 'custom', path: ['chat'], message: `Enter a ${target.label} chat link.` })
   })
 
@@ -90,7 +88,9 @@ export const ChatLinkSchema = z
 const LinkSchema = z.discriminatedUnion('kind', [
   FixedLinkSchema,
   ChatLinkSchema.refine(() => false, 'Watching a chat arrives with link watchers.'),
-  z.object({ kind: z.literal('paste') })
+  z.object({ kind: z.literal('paste') }),
+  // An edit sends this (or no link) to leave the stored link as it is, so the passcode never has to be shown again.
+  z.object({ kind: z.literal('keep') })
 ])
 
 const FormDetailsSchema = z.object({
@@ -108,12 +108,12 @@ export const EntryInputSchema = z
     start: z.string().regex(TIME, 'Enter a start time as HH:MM.'),
     end: z.string().regex(TIME, 'Enter an end time as HH:MM.'),
     identityId: z.uuid(),
-    link: LinkSchema,
+    link: LinkSchema.optional(),
     trustedSenders: z.array(text(100)).max(10).default([]),
     transcription: z.enum(['live', 'native']).optional(),
     formDetails: FormDetailsSchema.default({}),
     attendanceKeywords: z.array(text(60)).max(20).default([]),
-    paused: z.boolean().default(false)
+    paused: z.boolean().optional()
   })
   .transform((value) => {
     const lecture = value.type === 'lecture'
@@ -138,6 +138,25 @@ function parseId(id: unknown): string {
   const parsed = z.uuid().safeParse(id)
   if (!parsed.success) throw new InputError('No such entry.')
   return parsed.data
+}
+
+/**
+ * What an edit page may show of a stored link: the host and meeting id of a Zoom link, never the passcode or any other
+ * query. A chat source shows only its app, and a pasted link has nothing to show.
+ */
+export type MaskedLink =
+  | { kind: 'fixed'; host: string; meetingId: string }
+  | { kind: 'chat'; app: 'whatsapp' | 'discord' | 'teams' }
+  | { kind: 'paste' }
+
+export function maskedLink(entry: { link: LinkSource }): MaskedLink {
+  const { link } = entry
+  if (link.kind === 'paste') return { kind: 'paste' }
+  if (link.kind === 'chat') return { kind: 'chat', app: link.app }
+  const normal = normaliseZoomLink(link.url)
+  if (normal === null) throw new Error('stored link is not a Zoom meeting link')
+  const { host, pathname } = new URL(normal)
+  return { kind: 'fixed', host, meetingId: pathname.slice('/wc/join/'.length) }
 }
 
 /** The `Record<string, string>` the form details are stored as: the fields the member filled in. */
@@ -168,25 +187,31 @@ export async function saveEntry(
     startTime: value.start,
     endTime: value.end,
     identityId: value.identityId,
-    link: value.link,
     trustedSenders: value.trustedSenders,
     transcription: value.transcription,
     formDetails: filledDetails(value.formDetails),
     attendanceKeywords: value.attendanceKeywords,
-    paused: value.paused,
     updatedAt: deps.now
   }
+  // `keep` (or no link) leaves the stored link alone; only a create must name one.
+  const link = value.link === undefined || value.link.kind === 'keep' ? null : value.link
+  if (!value.id && !link) throw new InputError('Choose how to find the meeting link.')
 
   let entryId: string
   try {
     entryId = await scope.transaction(async (s) => {
       if (value.id) {
-        const changed = await s.update(timetableEntries, values, eq(timetableEntries.id, value.id))
+        // `paused` changes only when supplied: pausing and resuming go through `setPaused`.
+        const changed = await s.update(
+          timetableEntries,
+          { ...values, ...(link && { link }), ...(value.paused !== undefined && { paused: value.paused }) },
+          eq(timetableEntries.id, value.id)
+        )
         if (changed === 0) throw new InputError('No such entry.')
         await s.syncOccurrences(deps.queue, deps.now)
         return value.id
       }
-      const row = await s.insert(timetableEntries, values)
+      const row = await s.insert(timetableEntries, { ...values, link: link!, paused: value.paused ?? false })
       await s.syncOccurrences(deps.queue, deps.now)
       return row.id
     })
@@ -260,7 +285,8 @@ export async function appEntryDeps(scope: MemberScope): Promise<EntryDeps> {
   if (!publicUrl) throw new Error('TM_PUBLIC_URL is not set')
   return {
     queue: await getQueue(),
-    notifier: appNotifier(),
+    // Built on first use, so pausing and deleting work without NTFY_URL.
+    notifier: { notify: (memberId, ping) => appNotifier().notify(memberId, ping) },
     ensureNtfy: async () => {
       await ensureNtfy(scope, ntfyAdminFromEnv(), loadMasterKey())
     },
