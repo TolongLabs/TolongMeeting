@@ -2013,7 +2013,7 @@ git commit -m "feat(scheduler): launch workers at T-60"
 
 - Create: `packages/web/lib/control.ts`, `packages/web/app/api/control/heartbeat/route.ts`, `packages/scheduler/src/monitor.ts`
 - Modify: `packages/core/src/types.ts` (`HeartbeatReply`), `packages/core/src/control.ts` (`HeartbeatSchema` and event data shapes)
-- Test: `packages/web/lib/control.test.ts`, `packages/scheduler/src/monitor.test.ts`
+- Test: `packages/web/test/control.test.ts`, `packages/scheduler/test/monitor.test.ts`
 
 **Interfaces:**
 
@@ -2038,10 +2038,10 @@ git commit -m "feat(scheduler): launch workers at T-60"
 - **Exit**: an occurrence outside `ACTIVE_STATES` that still has `container_name`, whose container `inspect` returns `null` or not running, gets `container_name` cleared, its profile released, and `profiles.latest_checkpoint` and `checkpoint_at` set from the newest file in `<profileRoot>/<identityId>/checkpoints/`.
 - **Job files**: the current attempt's job files are removed once `last_heartbeat_at` is later than the launch, or 120 seconds after the launch.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/lib/control.test.ts
+// packages/web/test/control.test.ts
 const ev = (type: EventType, data: object, at = '2026-10-21T05:00:05.000Z'): MeetingEvent => ({
   occurrenceId: ID,
   attempt: 1,
@@ -2204,7 +2204,7 @@ test('account checks and form events are recorded', async () => {
 ```
 
 ```ts
-// packages/scheduler/src/monitor.test.ts
+// packages/scheduler/test/monitor.test.ts
 const now = new Date('2026-10-21T06:30:00Z')
 
 test('30 seconds without a heartbeat restarts the worker as attempt 2 with a ping', async () => {
@@ -2280,27 +2280,27 @@ test('a finished container releases the identity and records the newest checkpoi
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/lib/control.test.ts packages/scheduler/src/monitor.test.ts`
+Run: `bun test packages/web/test/control.test.ts packages/scheduler/test/monitor.test.ts`
 
 Expected: FAIL with `Cannot find module './control'`.
 
-- [ ] **Step 3: Implement the contract change, `handleHeartbeat`, the route and `monitorTick`**
+- [x] **Step 3: Implement the contract change, `handleHeartbeat`, the route and `monitorTick`**
 
 The route reads `Authorization`, rejects bodies over 1 MB by `Content-Length`, and returns `Response.json(body, { status })`. Neither module logs tokens, links or event data.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/control.test.ts packages/scheduler/src/monitor.test.ts && bun run typecheck`
+Run: `bun test packages/web/test/control.test.ts packages/scheduler/test/monitor.test.ts && bun run typecheck`
 
 Expected: PASS, `11 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src packages/web/lib/control* packages/web/app/api/control packages/scheduler/src/monitor*
-git commit -m "feat: add heartbeat endpoint and monitor"
+git commit -m "feat(web): heartbeats and crash monitor"
 ```
 
 ### Task 16: Worker heartbeat and commands

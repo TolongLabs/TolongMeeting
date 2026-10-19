@@ -49,3 +49,12 @@ export {
   type CommandResult,
   type CommandRunner
 } from './backup'
+export {
+  HEARTBEAT_TIMEOUT_MS,
+  KILL_AFTER_END_MS,
+  MAX_RESTARTS,
+  STOP_AFTER_END_MS,
+  monitorTick,
+  restartOccurrence,
+  type MonitorResult
+} from './monitor'

@@ -114,4 +114,5 @@ export interface Heartbeat {
 export interface HeartbeatReply {
   ackedEvents: number // how many of the sent events were stored
   commands: ControlCommand[]
+  link: string | null // the link the member pasted on the website; the worker uses it instead of watching for one
 }
