@@ -52,6 +52,9 @@ function startFake() {
     error(status: number, body: unknown = { error: { message: 'rejected' } }, delayMs = 0) {
       script.push({ status, body, delayMs })
     },
+    raw(body: unknown, status = 200) {
+      script.push({ status, body, delayMs: 0 })
+    },
     stop: () => server.stop(true)
   }
 }
@@ -138,4 +141,44 @@ test('thinking: true is passed through', async () => {
   fake.reply('ok')
   await chatText(fake.cfg, 'm', msgs, 5000, { thinking: true })
   expect(fake.last.body.enable_thinking).toBe(true)
+})
+
+test('a 200 reply without choices raises AiError 502 without the body', async () => {
+  fake.raw({ error: { message: 'content filtered sk-test' } })
+  const e = await chatText(fake.cfg, 'm', msgs, 5000).catch((x) => x)
+  expect(e).toBeInstanceOf(AiError)
+  expect(e).not.toBeInstanceOf(AiKeyError)
+  expect(e.status).toBe(502)
+  expect(e.message).not.toContain('sk-test')
+  expect(e.message).not.toContain('filtered')
+})
+
+test('a 200 reply with null message content raises AiError 502', async () => {
+  fake.raw({ choices: [{ message: { content: null } }] })
+  const e = await chatJson(fake.cfg, 'm', msgs, z.object({ a: z.number() }), 5000).catch((x) => x)
+  expect(e).toBeInstanceOf(AiError)
+  expect(e.status).toBe(502)
+  expect(fake.seen).toHaveLength(1)
+})
+
+test('the API key never appears in an error, even when the provider echoes it', async () => {
+  fake.error(500, { error: { message: 'bad key sk-test' } })
+  const httpErr = await chatText(fake.cfg, 'm', msgs, 5000).catch((x) => x)
+  expect(httpErr).toBeInstanceOf(AiError)
+  expect(httpErr.message).toContain('[redacted]')
+  expect(httpErr.message).not.toContain('sk-test')
+
+  fake.raw({ error: 'sk-test rejected' })
+  const malformed = await chatText(fake.cfg, 'm', msgs, 5000).catch((x) => x)
+  expect(malformed.status).toBe(502)
+  expect(malformed.message).not.toContain('sk-test')
+})
+
+test('an empty API key leaves the error body intact instead of inserting markers', async () => {
+  const keyless = { ...fake.cfg, apiKey: '' }
+  fake.error(500, { error: { message: 'quota exhausted' } })
+  const e = await chatText(keyless, 'm', msgs, 5000).catch((x) => x)
+  expect(e).toBeInstanceOf(AiError)
+  expect(e.message).toContain('quota exhausted')
+  expect(e.message).not.toContain('[redacted]')
 })

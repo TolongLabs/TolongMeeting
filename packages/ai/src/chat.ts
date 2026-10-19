@@ -18,6 +18,7 @@ export interface ChatOptions {
 const KEY_STATUSES = [401, 402, 429] as const
 const ERROR_BODY_CHARS = 200
 const RETRY_NOTE = 'Your reply was not valid JSON for the schema. Reply with JSON only.'
+const MALFORMED_REPLY_MESSAGE = 'AI reply had no usable completion text (missing choices or null content)'
 
 const CompletionSchema = z.object({
   choices: z.array(z.object({ message: z.object({ content: z.string() }) })).min(1)
@@ -79,7 +80,8 @@ async function complete(
       signal
     })
     if (!res.ok) {
-      const snippet = (await res.text()).slice(0, ERROR_BODY_CHARS).replaceAll(cfg.apiKey, '[redacted]')
+      const body = (await res.text()).slice(0, ERROR_BODY_CHARS)
+      const snippet = cfg.apiKey ? body.replaceAll(cfg.apiKey, '[redacted]') : body
       throw httpError(res.status, snippet)
     }
     raw = await res.json()
@@ -87,7 +89,9 @@ async function complete(
     if (signal.aborted) throw new AiTimeoutError(timeoutMs, { cause: e })
     throw e
   }
-  return CompletionSchema.parse(raw).choices[0]!.message.content
+  const completion = CompletionSchema.safeParse(raw)
+  if (!completion.success) throw new AiError(MALFORMED_REPLY_MESSAGE, 502)
+  return completion.data.choices[0]!.message.content
 }
 
 function httpError(status: number, snippet: string): Error {
