@@ -19,6 +19,7 @@ import { exactLabelMatches, planPage, questionsForModel, verifyFill } from './pl
 import { looksLikeAttendance, orgRestricted } from './rules'
 import { formEventData, saveFormRecord } from './store'
 import { checkTrust } from './trust'
+import { errorText } from './redact'
 import type { Answer, FormContext, FormPage } from './types'
 
 export const SUBMIT_DEADLINE_MS = 120_000
@@ -33,6 +34,16 @@ function cut(text: string): string {
   return last >= 0xd800 && last <= 0xdbff ? head.slice(0, -1) : head
 }
 
+// Emits an event. A failing emitter is reported on stderr in fixed text (an event's own message could carry a value)
+// and never stops the run: the record on disk already holds what happened.
+async function emitSafely(ctx: FormContext, type: 'form' | 'error' | 'alert', data: Record<string, unknown>) {
+  try {
+    await ctx.emitEvent(type, data)
+  } catch {
+    console.error(`[tm-worker] could not emit a ${type} event`)
+  }
+}
+
 // How a run ended before the record could say so: the handler stops the run and returns the record as it stands.
 class Stop extends Error {}
 
@@ -40,22 +51,13 @@ class FormRun {
   rec: FormRecord
   tab: Page | null = null
   private driver: FormDriver | null = null
-  private readonly deadline: number
+  private deadline = 0
 
   constructor(
     private readonly f: ResolvedForm,
     private readonly ctx: FormContext
   ) {
-    this.deadline = Date.parse(f.seenAt) + SUBMIT_DEADLINE_MS
-    this.rec = ctx.previous
-      ? {
-          ...applyFormTrigger(ctx.previous, 'trusted_candidate_seen', new Date().toISOString()),
-          source: f.source,
-          sender: f.sender,
-          senderRole: f.senderRole,
-          reason: null
-        }
-      : newFormRecord(f, ctx.cfg.occurrenceId)
+    this.rec = ctx.previous ?? newFormRecord(f, ctx.cfg.occurrenceId)
   }
 
   private get cfg() {
@@ -66,7 +68,13 @@ class FormRun {
   async apply(trigger: FormTrigger): Promise<void> {
     this.rec = applyFormTrigger(this.rec, trigger, new Date().toISOString())
     await saveFormRecord(this.cfg.dataDir, this.rec)
-    await this.ctx.emitEvent('form', formEventData(this.rec))
+    await emitSafely(this.ctx, 'form', formEventData(this.rec))
+    await this.sendPing()
+  }
+
+  // Sends the ping of the record's state, if it has one, and writes it into rec.pings. The log is updated in memory
+  // before it is saved, so a failing save can never make recover() send the same ping twice.
+  private async sendPing(): Promise<void> {
     const ping = formPing(this.rec, {
       entryName: this.cfg.entry.name,
       timeZone: this.cfg.entry.timeZone,
@@ -76,6 +84,18 @@ class FormRun {
     await this.ctx.ping(ping)
     this.rec = { ...this.rec, pings: [...this.rec.pings, { state: this.rec.state, at: new Date().toISOString() }] }
     await saveFormRecord(this.cfg.dataDir, this.rec)
+  }
+
+  // Sends the ping of a terminal state whose ping never went out (the ping or a save threw before it was recorded).
+  async ensurePing(): Promise<void> {
+    const state = this.rec.state
+    if (!isTerminalFormState(state)) return
+    if (
+      this.rec.pings.filter((p) => p.state === state).length >= this.rec.history.filter((h) => h.state === state).length
+    ) {
+      return
+    }
+    await this.sendPing()
   }
 
   async fail(reason: StopReason): Promise<never> {
@@ -107,12 +127,23 @@ class FormRun {
   }
 
   private async start(): Promise<void> {
+    const seen = Date.parse(this.f.seenAt)
+    // Without a readable time there is no deadline, and a missing deadline would let a stale form be submitted.
+    if (Number.isNaN(seen)) throw new Error('the form has an unreadable seenAt, so its deadline cannot be set')
+    this.deadline = seen + SUBMIT_DEADLINE_MS
     if (this.ctx.previous === null) {
       await this.apply('resolve_started')
       await this.apply('resolved')
     } else {
+      this.rec = {
+        ...applyFormTrigger(this.rec, 'trusted_candidate_seen', new Date().toISOString()),
+        source: this.f.source,
+        sender: this.f.sender,
+        senderRole: this.f.senderRole,
+        reason: null
+      }
       await saveFormRecord(this.cfg.dataDir, this.rec)
-      await this.ctx.emitEvent('form', formEventData(this.rec))
+      await emitSafely(this.ctx, 'form', formEventData(this.rec))
     }
     const decision = checkTrust(this.f, this.cfg.entry.trustedSenders)
     if (decision.trusted) {
@@ -187,7 +218,8 @@ class FormRun {
       await driver.fill(tab, page, plan.answers)
       if (!verifyFill(plan, await driver.readPage(tab, n))) await this.fail('fill_failed')
     } catch (error) {
-      if (error instanceof FormStepError) await this.fail(error.code === 'not_a_form' ? 'unknown_page' : 'fill_failed')
+      if (error instanceof FormStepError)
+        await this.stepFailed(error, error.code === 'not_a_form' ? 'unknown_page' : 'fill_failed')
       throw error
     }
     this.rec = { ...this.rec, fieldsFilled: [...this.rec.fieldsFilled, ...this.filled(n, page, plan.answers)] }
@@ -202,7 +234,7 @@ class FormRun {
         await driver.next(tab)
       } catch (error) {
         if (error instanceof FormStepError)
-          await this.fail(error.code === 'not_a_form' ? 'unknown_page' : 'next_failed')
+          await this.stepFailed(error, error.code === 'not_a_form' ? 'unknown_page' : 'next_failed')
         throw error
       }
       await this.apply('next_page')
@@ -215,9 +247,20 @@ class FormRun {
     try {
       return await this.driver!.readPage(this.tab!, n)
     } catch (error) {
-      if (error instanceof FormStepError && error.code === 'not_a_form') await this.fail('unknown_page')
+      if (error instanceof FormStepError && error.code === 'not_a_form') await this.stepFailed(error, 'unknown_page')
       throw error
     }
+  }
+
+  // A driver step that failed in a way the driver names: say why (redacted), then end the form with `reason`.
+  private async stepFailed(error: FormStepError, reason: StopReason): Promise<never> {
+    await emitSafely(this.ctx, 'error', {
+      where: 'form_step',
+      formId: this.rec.formId,
+      code: error.code,
+      message: errorText(this.cfg, error)
+    })
+    return this.fail(reason)
   }
 
   private async beforeDeadline(): Promise<void> {
@@ -243,13 +286,21 @@ class FormRun {
   // The one irreversible step. The record says `submitting` on disk before the click, so a crash from here on is
   // recovered as maybe-submitted. After the click nothing is retried: every outcome but a confirmation is final.
   private async submit(): Promise<void> {
+    if (this.rec.trustReason === null) throw new Error('refusing to submit a form that was never trusted')
     await this.beforeDeadline()
-    await this.apply('submit_clicked')
+    // Only the click and what follows it may be maybe-submitted. A failed save here is a failure before the click.
+    const before = this.rec
+    try {
+      await this.apply('submit_clicked')
+    } catch (error) {
+      this.rec = before
+      throw error
+    }
     try {
       await this.driver!.submit(this.tab!)
     } catch (error) {
       if (error instanceof FormStepError && (error.code === 'submit_failed' || error.code === 'not_a_form')) {
-        await this.fail('submit_failed')
+        await this.stepFailed(error, 'submit_failed')
       }
       throw error // submit_unconfirmed and anything unexpected: handled as maybe-submitted by the caller
     }
@@ -277,8 +328,15 @@ class FormRun {
 }
 
 // Handles one form from first sight to a terminal state. It never throws: whatever goes wrong ends in the record.
+// (The one exception is a finalUrl that is not a URL: no record can exist for it.)
 export async function handleForm(f: ResolvedForm, ctx: FormContext): Promise<FormRecord> {
-  const run = new FormRun(f, ctx)
+  let run: FormRun
+  try {
+    run = new FormRun(f, ctx)
+  } catch (error) {
+    await emitSafely(ctx, 'error', { where: 'form_handler', message: errorText(ctx.cfg, error) })
+    throw error
+  }
   try {
     await run.run()
   } catch (error) {
@@ -287,42 +345,43 @@ export async function handleForm(f: ResolvedForm, ctx: FormContext): Promise<For
   try {
     await run.closeTab()
   } catch (error) {
-    await report(ctx, 'alert', { kind: 'form_tab_not_closed', formId: run.rec.formId, message: messageOf(error, ctx) })
+    await emitSafely(ctx, 'alert', {
+      kind: 'form_tab_not_closed',
+      formId: run.rec.formId,
+      message: errorText(ctx.cfg, error)
+    })
   }
   return run.rec
 }
 
-function messageOf(error: unknown, ctx: FormContext): string {
-  let message = error instanceof Error ? error.message : String(error)
-  // Playwright echoes typed text in some errors; saved values never leave the record.
-  for (const value of ctx.cfg.member.details.map((d) => d.value).filter((v) => v !== '')) {
-    message = message.split(value).join('[value]')
-  }
-  return message
-}
-
-async function report(ctx: FormContext, type: 'error' | 'alert', data: Record<string, unknown>): Promise<void> {
-  try {
-    await ctx.emitEvent(type, data)
-  } catch (error) {
-    console.error(`[tm-worker] could not emit a ${type} event: ${messageOf(error, ctx)}`)
-  }
-}
-
 // An unexpected exception: say so, and end the form as failed. Once Submit may have been clicked the form is
-// maybe-submitted, never "unexpected".
+// maybe-submitted, never "unexpected". The terminal ping is sent even when the exception came from sending it.
 async function recover(run: FormRun, ctx: FormContext, error: unknown): Promise<void> {
-  const message = messageOf(error, ctx)
-  await report(ctx, 'error', { where: 'form_handler', formId: run.rec.formId, message })
+  const message = errorText(ctx.cfg, error)
+  await emitSafely(ctx, 'error', { where: 'form_handler', formId: run.rec.formId, message })
   if (error instanceof TabCloseFailedError) {
-    await report(ctx, 'alert', { kind: 'form_tab_not_closed', formId: run.rec.formId, message })
+    await emitSafely(ctx, 'alert', { kind: 'form_tab_not_closed', formId: run.rec.formId, message })
   }
-  if (isTerminalFormState(run.rec.state)) return // already ended; the exception came from the ping or the cleanup
-  try {
-    await run.fail(run.rec.state === 'submitting' ? 'submit_unconfirmed' : 'unexpected_error')
-  } catch (again) {
-    if (!(again instanceof Stop)) {
-      await report(ctx, 'error', { where: 'form_handler', formId: run.rec.formId, message: messageOf(again, ctx) })
+  if (!isTerminalFormState(run.rec.state)) {
+    try {
+      await run.fail(run.rec.state === 'submitting' ? 'submit_unconfirmed' : 'unexpected_error')
+    } catch (again) {
+      if (!(again instanceof Stop)) {
+        await emitSafely(ctx, 'error', {
+          where: 'form_handler',
+          formId: run.rec.formId,
+          message: errorText(ctx.cfg, again)
+        })
+      }
     }
+  }
+  try {
+    await run.ensurePing()
+  } catch (again) {
+    await emitSafely(ctx, 'error', {
+      where: 'form_ping',
+      formId: run.rec.formId,
+      message: errorText(ctx.cfg, again)
+    })
   }
 }

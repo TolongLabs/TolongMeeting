@@ -7,7 +7,7 @@ import { waitForTabSignin } from '../../src/forms/open'
 import type { FormContext, MatchQuestion } from '../../src/forms/types'
 import { googleUrl, microsoftUrl } from './route'
 
-// A FormContext whose pings, events and model calls are recorded. The matcher maps "Programme of study" to `programme`.
+// A FormContext whose pings, events (every type, as `{ type, ...data }`) and model calls are recorded. The matcher maps "Programme of study" to `programme`.
 export function testContext(
   desk: Page,
   job: JobConfig,
@@ -24,7 +24,7 @@ export function testContext(
   const matchCalls: MatchQuestion[][] = []
   const abort = new AbortController()
   const base = makeFormContextBase(job, desk, async (type, data) => {
-    if (type === 'form') events.push(data)
+    events.push({ type, ...data })
   })
   const ctx: FormContext = {
     ...base,

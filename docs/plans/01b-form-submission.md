@@ -2002,7 +2002,7 @@ test('submits a two-page Google form shown as a QR code', async ({ page: desk, c
       Section: '02',
       'Programme of study': 'MSc Example',
       Attendance: 'Present',
-      Declaration: ['I confirm I am attending this class']
+      'Attendance declaration': ['I confirm I am attending this class']
     }
   })
   expect(rec.screenshots).toEqual(
@@ -2028,12 +2028,18 @@ test('submits a Microsoft form the host posted in the meeting chat', async ({ pa
 })
 
 test("trusts a participant's form only when it is limited to the member's organisation", async ({ page: desk }) => {
-  for (const p of ['google', 'microsoft'] as const)
-    expect(
-      (await handleForm(candidate(p, 'attendance', 'meeting_chat', participant), testContext(desk, testJob(dir)).ctx))
-        .trustReason
-    ).toBe('org_restricted')
+  const google = await handleForm(
+    candidate('google', 'attendance', 'meeting_chat', participant),
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect([google.state, google.trustReason]).toEqual(['submitted', 'org_restricted'])
   fx.submissions.length = 0
+  // Microsoft org trust is off: its notice is generic, so a participant's Microsoft form is never org-restricted.
+  const microsoft = await handleForm(
+    candidate('microsoft', 'attendance', 'meeting_chat', participant),
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect([microsoft.state, microsoft.reason, fx.submissions.length]).toEqual(['untrusted', 'not_org_restricted', 0])
   const { ctx, pings } = testContext(desk, testJob(dir))
   const rec = await handleForm(candidate('google', 'external', 'meeting_chat', participant), ctx)
   expect([rec.state, rec.reason, fx.submissions.length]).toEqual(['untrusted', 'not_org_restricted', 0])
@@ -2124,7 +2130,11 @@ Expected: FAIL with "Cannot find module '../src/forms/handler'".
 - [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-handler.spec.ts && bun run typecheck`
-Expected: PASS (11 tests), and the typecheck reports no errors.
+Expected: PASS (14+ tests: the plan's 11 plus the fixes after review), and the typecheck reports no errors.
+
+The review added tests for: redaction of typed and `formDetails` values in every event type; a quiz or an unmatched required question on page 2; an exception after Submit (`submit_unconfirmed`, no retry); the page limit (`unknown_page`); a failed save before the click (`unexpected_error`); a failing event sink (the ping still goes out); a failing ping (`recover` sends it again); a record `handleForm` cannot continue (it returns it, never submits again); an unreadable `seenAt`.
+
+Behaviour added by the review: every event, alert and error message is redacted (`redact.ts`: all values of `buildDetailPool`, longest first, cut at `\nCall log:`); `apply` reports a failing `emitEvent` on stderr and still sends the ping; `recover` sends a terminal ping that is missing from `rec.pings`; `handleForm` ends every failure in the record; a `FormStepError` from a fill, Next or Submit emits a redacted `form_step` error event; only the click and what follows it may be maybe-submitted (a failed save before it is `unexpected_error`); `submit` refuses a form with no `trustReason`; an unreadable `seenAt` fails the form instead of disabling the deadline.
 
 - [x] **Step 5: Commit**
 
@@ -2278,6 +2288,7 @@ Rules:
   - **Id finished**: if the record is `untrusted` and `trusted`, run `handle(f, { ...base, previous: record, signal })`; otherwise ignore it.
   - **Pending upgrade**: when a run ends `untrusted` with an upgrade waiting, the upgrade runs immediately with that record as `previous`.
 - **`close`**: abort `signal`, await every running and pending handler, and return the records.
+- **From the Task 11 review**: the dispatcher must never call `handle` with `previous: null` for a form that already has a `record.json` (`handleForm` would start from `detected` and could submit a second time). A restart maps `submitting` to `interrupted_submitting`. After a `form_tab_not_closed` alert the dispatcher opens no more tabs.
 
 - [ ] **Step 1: Write the failing tests**
 

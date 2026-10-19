@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
+import { formIdFor, type FormProvider } from '@tm/core'
+import { driverFor, FormStepError, type FormDriver } from '../src/forms/drivers'
 import { loadFormRecords } from '../src/forms/store'
 import { handleForm } from '../src/forms/handler'
 import { candidate, testContext } from './forms/context'
@@ -204,4 +206,187 @@ test('closes the tab when the form does not load in time', async ({ page: desk, 
   expect(rec).toMatchObject({ state: 'failed', reason: 'open_timeout' })
   expect(pings[0].ping.priority).toBe('high')
   expect(context.pages()).toHaveLength(1)
+})
+
+// Runs `fn` with some of the provider's real driver methods replaced (the driver is cached per provider, so every
+// handler run sees the change); the originals come back afterwards.
+async function withDriver(
+  provider: FormProvider,
+  patch: (real: FormDriver) => Partial<FormDriver>,
+  fn: () => Promise<void>
+): Promise<void> {
+  const driver = await driverFor(provider)
+  const original = { ...driver }
+  Object.assign(driver, patch(original))
+  try {
+    await fn()
+  } finally {
+    Object.assign(driver, original)
+  }
+}
+
+const SECRETS = ['Test Student', 'A00000000', 'ABC1234', 'Dr Example'] // typed values and a formDetails value
+
+test('keeps member values out of every event, alert and error', async ({ page: desk }) => {
+  const message = `Timeout 1000ms exceeded typing Test Student, ABC1234 and a00000000.\nCall log:\n  - fill("MSc Example")`
+  for (const make of [
+    () => new Error(message),
+    () => new FormStepError('dropdown_failed', message),
+    () => new Error(`${message}\nCall log:`)
+  ]) {
+    const { ctx, events } = testContext(desk, testJob(dir))
+    await withDriver(
+      'google',
+      () => ({
+        fill: async () => {
+          throw make()
+        }
+      }),
+      async () => {
+        const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+        expect(rec.state).toBe('failed')
+      }
+    )
+    const errors = events.filter((e) => e.type === 'error')
+    expect(errors.length).toBeGreaterThan(0)
+    const text = JSON.stringify(events)
+    for (const value of [...SECRETS, 'MSc Example', 'Call log'])
+      expect(text.toLowerCase()).not.toContain(value.toLowerCase())
+    expect(text).toContain('[value]')
+  }
+})
+
+test('says why a driver step failed, with the message redacted', async ({ page: desk }) => {
+  const { ctx, events } = testContext(desk, testJob(dir))
+  await withDriver(
+    'google',
+    () => ({
+      next: async () => {
+        throw new FormStepError('next_failed', 'Next refused Test Student')
+      }
+    }),
+    async () => {
+      const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+      expect(rec).toMatchObject({ state: 'failed', reason: 'next_failed' })
+    }
+  )
+  expect(events.filter((e) => e.type === 'error')).toEqual([
+    {
+      type: 'error',
+      where: 'form_step',
+      formId: expect.any(String),
+      code: 'next_failed',
+      message: 'Next refused [value]'
+    }
+  ])
+})
+
+test('refuses a form whose second page is a quiz, and submits nothing', async ({ page: desk, context }) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'attendance-quiz-p2', 'qr'), ctx)
+  expect(rec.state).toBe('quiz')
+  expect(fx.submissions).toHaveLength(0)
+  expect(pings.map((p) => p.ping.priority)).toEqual(['default'])
+  expect(context.pages()).toHaveLength(1)
+})
+
+test('refuses a form whose second page has an unmatched required question, and pings the member', async ({
+  page: desk
+}) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'attendance-unmatched-p2', 'qr'), ctx)
+  expect([rec.state, rec.unmatched]).toEqual(['needs_member', ['What did you learn today?']])
+  expect(fx.submissions).toHaveLength(0)
+  expect(pings.map((p) => p.ping.title)).toEqual(['Form needs you'])
+})
+
+test('stops at the page limit', async ({ page: desk }) => {
+  test.setTimeout(180_000)
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'attendance-endless', 'qr'), ctx)
+  expect(rec).toMatchObject({ state: 'failed', reason: 'unknown_page' })
+  expect(rec.screenshots).toHaveLength(30)
+  expect(fx.submissions).toHaveLength(0)
+  expect(pings).toHaveLength(1)
+})
+
+test('treats an unexpected exception after Submit as maybe-submitted, with no retry', async ({ page: desk }) => {
+  const { ctx, pings, events } = testContext(desk, testJob(dir))
+  await withDriver(
+    'google',
+    (real) => ({
+      submit: async (tab) => {
+        await real.submit(tab)
+        throw new Error('the connection to Test Student dropped')
+      }
+    }),
+    async () => {
+      const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+      expect(rec).toMatchObject({ state: 'failed', reason: 'submit_unconfirmed' })
+    }
+  )
+  expect(fx.submissions).toHaveLength(1)
+  expect(pings.map((p) => p.ping.message)).toEqual([expect.stringContaining('may have been submitted')])
+  expect(JSON.stringify(events)).not.toContain('Test Student')
+})
+
+test('a failure to save before the Submit click is not maybe-submitted', async ({ page: desk }) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const url = googleUrl('attendance')
+  const matchLabels = ctx.matchLabels
+  ctx.matchLabels = async (questions, keys) => {
+    // On the last page, make the next save of the record fail.
+    if (questions.some((q) => q.label === 'Any comments?'))
+      mkdirSync(join(dir, 'forms', formIdFor(url), 'record.json.tmp'))
+    return matchLabels(questions, keys)
+  }
+  const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+  expect(rec).toMatchObject({ state: 'failed', reason: 'unexpected_error' })
+  expect(rec.history.map((h) => h.state)).not.toContain('submitting')
+  expect(fx.submissions).toHaveLength(0)
+  expect(pings).toHaveLength(1)
+})
+
+test('sends the ping even when the event sink fails', async ({ page: desk }) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  ctx.emitEvent = async () => {
+    throw new Error('the event sink is down')
+  }
+  const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+  expect(rec.state).toBe('submitted')
+  expect(pings.map((p) => p.ping.title)).toEqual(['Attendance submitted'])
+  expect(rec.pings.map((p) => p.state)).toEqual(['submitted'])
+})
+
+test('sends the terminal ping again when the first attempt threw', async ({ page: desk }) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const record = ctx.ping
+  let calls = 0
+  ctx.ping = async (ping) => {
+    if (++calls === 1) throw new Error('ntfy is down')
+    await record(ping)
+  }
+  const rec = await handleForm(candidate('google', 'closed', 'qr'), ctx)
+  expect([rec.state, calls, pings.length]).toEqual(['failed', 2, 1])
+  expect(rec.pings.map((p) => p.state)).toEqual(['failed'])
+  expect((await loadFormRecords(dir)).records).toEqual([rec])
+})
+
+test('never throws, and never submits again, for a record it cannot continue', async ({ page: desk }) => {
+  const first = await handleForm(candidate('google', 'attendance', 'qr'), testContext(desk, testJob(dir)).ctx)
+  expect(first.state).toBe('submitted')
+  const { ctx, pings, events } = testContext(desk, testJob(dir))
+  const again = await handleForm(candidate('google', 'attendance', 'qr'), { ...ctx, previous: first })
+  expect(again).toEqual(first)
+  expect(fx.submissions).toHaveLength(1)
+  expect(pings).toHaveLength(0)
+  expect(events.filter((e) => e.type === 'error')).toHaveLength(1)
+})
+
+test('fails loudly when seenAt is unreadable instead of dropping the deadline', async ({ page: desk }) => {
+  const { ctx, events } = testContext(desk, testJob(dir))
+  const rec = await handleForm({ ...candidate('google', 'attendance', 'qr'), seenAt: 'not a time' }, ctx)
+  expect(rec).toMatchObject({ state: 'failed', reason: 'unexpected_error' })
+  expect(fx.requests).toHaveLength(0)
+  expect(JSON.stringify(events.filter((e) => e.type === 'error'))).toContain('seenAt')
 })
