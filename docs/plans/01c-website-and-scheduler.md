@@ -199,8 +199,8 @@ git commit -m "feat(web): add database schema"
 **Files:**
 
 - Create: `packages/core/src/secrets.ts`, `packages/web/db/secrets.ts`, `packages/web/test/no-log.ts`, `packages/worker/src/profile/key.ts`
-- Modify: `packages/worker/src/run.ts` (the key passed to 1A's `checkpointProfile` comes from `loadProfileKey`)
-- Test: `packages/core/src/secrets.test.ts`, `packages/web/db/secrets.test.ts`, `packages/worker/src/profile/key.test.ts`
+- Modify: `packages/worker/src/profile/keys.ts` (`deriveProfileKey` delegates to core `profileKey`). The `run.ts` swap to `loadProfileKey` moves to Task 16 (C20).
+- Test: `packages/core/test/secrets.test.ts`, `packages/web/test/secrets.test.ts`, `packages/worker/test/profile-key.test.ts`
 
 **Interfaces:**
 
@@ -210,7 +210,7 @@ git commit -m "feat(web): add database schema"
 - Produces, `packages/web/test/no-log.ts`: `expectNotLogged(secret: string, fn: () => Promise<unknown>): Promise<void>` (captures `console.*`, `process.stdout.write` and `process.stderr.write` while `fn` runs, and fails if any output contains `secret`).
 - Produces (adds to contracts), `packages/worker/src/profile/key.ts`: `loadProfileKey(identityId: string): Buffer`, which returns the 32-byte base64 key in the file named by the new variable `TM_PROFILE_KEY_FILE` when it is set (the launcher sets it, Task 13), and otherwise `profileKey(master from TM_MASTER_KEY_FILE, identityId)`, as 1A runs.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/secrets.test.ts
@@ -280,23 +280,23 @@ test('loadProfileKey prefers TM_PROFILE_KEY_FILE over deriving from the master k
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core/src/secrets.test.ts packages/web/db/secrets.test.ts packages/worker/src/profile/key.test.ts`
 
 Expected: FAIL with `Cannot find module './secrets'`.
 
-- [ ] **Step 3: Implement the three modules**
+- [x] **Step 3: Implement the three modules**
 
 Use `node:crypto` (`hkdfSync`, `createCipheriv('aes-256-gcm')`). `SecretError` and `MasterKeyError` carry fixed messages only, never input bytes. Replace the key that 1A's `run.ts` passes to `checkpointProfile` with `loadProfileKey(cfg.identity.id)`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/secrets.test.ts packages/web/db/secrets.test.ts packages/worker/src/profile/key.test.ts`
 
 Expected: PASS, `6 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/secrets* packages/web/db/secrets* packages/web/test/no-log.ts packages/worker/src/profile packages/worker/src/run.ts

@@ -1,21 +1,25 @@
-import { createHash, hkdfSync } from 'node:crypto'
+import { profileKey } from '@tm/core'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-const HKDF_SALT = 'tolongmeeting/v1'
 const KEY_BYTES = 32
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 
-// Same derivation as plan 01c's profileKey (core secrets.ts), so 1A checkpoints restore under 1C.
+// Core's profileKey, so 1A checkpoints restore under 1C (one derivation, one salt).
 export function deriveProfileKey(masterKey: Buffer, identityId: string): Buffer {
-  if (masterKey.length !== KEY_BYTES) throw new Error('master key must be 32 bytes')
-  return Buffer.from(hkdfSync('sha256', masterKey, HKDF_SALT, `profile:${identityId}`, KEY_BYTES))
+  return profileKey(masterKey, identityId)
+}
+
+/** Decodes the text of a key file: 32 bytes, base64. Throws `<variable> must hold 32 bytes, base64` (never the text). */
+export function parseKeyText(text: string, variable: string): Buffer {
+  const trimmed = text.trim()
+  const key = BASE64.test(trimmed) ? Buffer.from(trimmed, 'base64') : Buffer.alloc(0)
+  if (key.length !== KEY_BYTES) throw new Error(`${variable} must hold 32 bytes, base64`)
+  return key
 }
 
 export async function readMasterKey(file: string): Promise<Buffer> {
-  const text = (await readFile(file, 'utf8')).trim()
-  const key = BASE64.test(text) ? Buffer.from(text, 'base64') : Buffer.alloc(0)
-  if (key.length !== KEY_BYTES) throw new Error('TM_MASTER_KEY_FILE must hold 32 bytes, base64')
-  return key
+  return parseKeyText(await readFile(file, 'utf8'), 'TM_MASTER_KEY_FILE')
 }
 
 // Matches run-job.sh: sha256 of the identity id, first 32 hex characters.
