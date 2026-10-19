@@ -1,0 +1,14 @@
+{
+  "URLBlocklist": ["file://*", "chrome://*", "javascript:*", "zoommtg:*", "zoomus:*", "msteams:*"],
+  "DeveloperToolsAvailability": 2,
+  "DownloadRestrictions": 3,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "DefaultNotificationsSetting": 2,
+  "PasswordManagerEnabled": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "MetricsReportingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "ExternalProtocolDialogShowAlwaysOpenCheckbox": false
+}

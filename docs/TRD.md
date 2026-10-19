@@ -282,7 +282,7 @@ TolongMeeting/
 - **Formatting**: Prettier, `bun run lint` to check and `bun run lint:fix` to fix, with husky and lint-staged on commit, as in other TolongLabs repositories. A change is done when `bun run lint` passes.
 - **Commits**: conventional commits (`feat:`, `fix:`, `test:`, `chore:`, `docs:`), header at most 50 characters, one task per commit or less.
 - **Secrets**: never committed, never logged, never in URL query strings of the app's own API. `.env.example` lists names only.
-- **Pinned versions**: Chrome, Playwright, ffmpeg, Node and Bun versions for the worker image live in `docker/worker/versions.env`, set by spike 2 and changed only together with a passing smoke test.
+- **Pinned versions**: Chrome, Playwright, ffmpeg, Node and Bun versions for the worker image live in `docker/worker/versions.env`, set by spike 2 and changed only together with a passing smoke test. `scripts/build-worker-image.sh` passes every key (`NODE_VERSION`, `CHROME_VERSION`, `PLAYWRIGHT_VERSION`, `FFMPEG_VERSION`, `BUN_VERSION`) as a build argument of the same name and tags the image both `tm-worker:dev` and `tolongmeeting/worker:current`.
 
 ## Runtime processes
 
@@ -642,6 +642,7 @@ pg-boss uses its own schema in the same database. Plan 1C defines the columns.
 | `TM_PROFILE_ROOT`                                        | worker, scheduler           | root of identity profiles (encrypted volume)                        |
 | `TM_MASTER_KEY_FILE`                                     | worker, scheduler, web      | path to the Docker secret holding the 32-byte master key (base64)   |
 | `TM_SELECTORS_DIR`                                       | worker                      | directory of selector maps (default `/app/config/selectors`)        |
+| `TM_IN_IMAGE`                                            | worker                      | `1` inside the worker image; gates the image-only tests             |
 | `TM_PUBLIC_URL`                                          | web, scheduler, pipeline    | the website's base URL, for links in pings                          |
 | `DATABASE_URL`                                           | web, scheduler, pipeline    | Postgres connection string                                          |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_ORG` | web                         | sign-in and organisation check                                      |
@@ -672,6 +673,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - worker: `Screen`, `Stopper`, `Frame`, `Recorder`, `AudioSource`, `LiveAsr`, `OccurrenceOutcome`, `RunDeps`, `launchGuestStage`, `restoreProfile`, `startCheckpoints`, `deriveProfileKey`, `joinRecording`, `startChatCapture`, `createFormPinger`, `FormPinger`, `FormPingerDeps`, `FormPingRecord`, `checkFormProviders`, `ResolveOptions`, `LinkResolveError`, `extractLinks`, `unwrapLink`, `formProviderOf`, `normaliseFormUrl`, `adapterFor`, `zoomAdapter`, `DevicesOnError`, `loadSelectors`, `ZoomSelectorsSchema`, `zoomRoot`, `ZOOM_TIMEOUTS`;
   - pipeline: `Slide`, `InventorySchema`, `summaryFileName`, `LiveLine`, `Gap`, `TranscriptBlock`, `isHallucination`, `paragraphs`, `correctNames`, `buildTranscript`, `orderChat`, `stripInviteLinks`, `buildChat`;
   - data: `recording/attempts.json`, `outcome.json`, `errors/`.
+  - image: `tm-worker:dev` and `tolongmeeting/worker:current` (the same build), the entrypoint modes `selfcheck`, `test`, `unit`, `seed --job` and `--job`, PulseAudio `tm_sink` and the muted `tm_mic`, `docker/worker/run-job.sh <job.json> [seed]`, and the `BUN_VERSION` build argument and `TM_IN_IMAGE` variable.
 - **01b form submission**:
   - core: `FormRecord`, `FilledField`, `StopReason`, `FormRecordSchema`, `newFormRecord`, `canonicalFormUrl`, `formIdFor`, `TERMINAL_FORM_STATES`, `isTerminalFormState`, `applyFormTrigger`, `OrgConfig`, `JobConfig.identity.organisation`, and the test fixtures `sampleForm`, `sampleRecord` (import `@tm/core/testing`; not in the index);
   - worker: `FormContext`, `FormContextBase`, `makeFormContextBase`, `FormLinks`, `startFormDispatcher`, `onFormCandidate`;

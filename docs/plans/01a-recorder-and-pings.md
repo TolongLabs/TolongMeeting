@@ -673,7 +673,7 @@ git commit -m "feat(ai): add realtime asr stream with rotation"
 - Consumes: `docker/worker/versions.env`, written by spike 2 (plan 00), with `CHROME_VERSION`, `PLAYWRIGHT_VERSION`, `FFMPEG_VERSION`, `NODE_VERSION` and `BUN_VERSION`. If it is missing, stop: this task can't start before spike 2.
 - Produces (adds to contracts): image `tm-worker:dev`; entrypoint modes `selfcheck`, `test <playwright filter>`, `unit <bun test path>`, `seed --job <path>` and `--job <path>`; PulseAudio sink `tm_sink` and muted null source `tm_mic`; `docker/worker/run-job.sh <job.json> [seed]` as the documented way to start a worker.
 
-- [ ] **Step 1: Write the failing test, `docker/worker/selfcheck.sh`**
+- [x] **Step 1: Write the failing test, `docker/worker/selfcheck.sh`**
 
 ```bash
 #!/bin/sh
@@ -691,14 +691,15 @@ pactl get-source-mute tm_mic | grep -q "Mute: yes" || { echo "mic not muted"; ex
 echo "SELFCHECK OK"
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun run image:worker`
 Expected: FAIL with "failed to read dockerfile" (no Dockerfile yet).
+Result: not run: image build blocked by full root filesystem.
 
-- [ ] **Step 3: Implement the image**
+- [x] **Step 3: Implement the image**
 
-Dockerfile key lines (base `ubuntu:24.04`, every version from a build argument, non-root user `tm`, `/app` holds the repository):
+Dockerfile key lines (base `node:${NODE_VERSION}-bookworm-slim`, as in the spike; the lines below are the shape, the file in `docker/worker/` is the truth: it also checks the Chrome `.deb` and Bun SHA-256, installs Python 3.12 with OpenCV's WeChat detector and its four model files for the QR bridge, and builds without `.git` and `spikes/` through `.dockerignore`. Every version from a build argument, non-root user `tm`, `/app` holds the repository):
 
 ```dockerfile
 ARG CHROME_VERSION NODE_VERSION FFMPEG_VERSION BUN_VERSION PLAYWRIGHT_VERSION
@@ -751,14 +752,15 @@ set-default-source tm_mic
 set-source-mute tm_mic 1
 ```
 
-`openbox/rc.xml` sets `<focus><focusNew>no</focusNew></focus>` and one `<application class="*">` rule with `<decor>no</decor>`, `<maximized>no</maximized>` and `<focus>no</focus>`. `entrypoint.sh` starts `pulseaudio --daemonize=no --exit-idle-time=-1` in the background, waits for `pactl info`, then dispatches: `selfcheck` runs `selfcheck.sh`; `test` runs `bunx playwright test -c packages/worker/playwright.config.ts "$@"`; `unit` runs `bun test "$@"`; `seed --job <p>` runs `node packages/worker/dist/cli.js --seed --job <p>`; `--job <p>` runs `bun run tm-worker -- --job <p>`, then `bun run tm-pipeline -- --job <p>` whenever `recording/meeting.mkv` exists, and exits with the worker's code if it failed, else the pipeline's. `run-job.sh` reads `identity.id` from the job with `jq`, writes `$TM_PROFILE_ROOT/<identityId>/machine-id` (`printf %s "$id" | sha256sum | cut -c1-32`) if absent, and runs `docker run --rm --shm-size=2g --hostname "tm-<first 20 characters of id>"` with the machine id mounted read-only at `/etc/machine-id`, `$TM_DATA_ROOT` and `$TM_PROFILE_ROOT` mounted at the same paths, the master key file mounted read-only at `/run/secrets/tm_master_key` (`TM_MASTER_KEY_FILE` set to it), the job mounted read-only at `/job/job.json`, and mode `--job /job/job.json`; with `seed` it publishes `127.0.0.1:5900:5900` and uses mode `seed`.
+`openbox/rc.xml` sets `<focus><focusNew>no</focusNew></focus>` and one `<application class="*">` rule with `<decor>no</decor>`, `<maximized>no</maximized>` and `<focus>no</focus>`. `entrypoint.sh` starts `pulseaudio --daemonize=no --exit-idle-time=-1` in the background, waits for `pactl info`, then dispatches: `selfcheck` runs `selfcheck.sh`; `test` runs `bunx playwright test -c packages/worker/playwright.config.ts "$@"`; `unit` runs `bun test "$@"`; `seed --job <p>` runs `node packages/worker/dist/cli.js --seed --job <p>`; `--job <p>` runs `bun run tm-worker -- --job <p>`, then `bun run tm-pipeline -- --job <p>` whenever `recording/meeting.mkv` exists and the job's `control` is null (with a control URL the milestone 1C pipeline consumer runs it), and exits with the worker's code if it failed, else the pipeline's. `run-job.sh` reads `identity.id` from the job with `jq`, writes `$TM_PROFILE_ROOT/<identityId>/machine-id` (`printf %s "$id" | sha256sum | cut -c1-32`) if absent, and runs `docker run --rm --shm-size=2g --hostname "tm-<first 20 characters of id>"` with the machine id mounted read-only at `/etc/machine-id`, `$TM_DATA_ROOT` and `$TM_PROFILE_ROOT` mounted at the same paths, the master key file mounted read-only at `/run/secrets/tm_master_key` (`TM_MASTER_KEY_FILE` set to it), the job mounted read-only at `/job/job.json`, and mode `--job /job/job.json`; with `seed` it publishes `127.0.0.1:5900:5900` and uses mode `seed`.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes** (not run: image build blocked by full root filesystem)
 
 Run: `bun run image:worker && docker run --rm --shm-size=2g tm-worker:dev selfcheck`
 Expected: last line `SELFCHECK OK`. Without `--shm-size=2g` it prints "shm below 2g: run with --shm-size=2g" and exits 1.
+Result: not run: image build blocked by full root filesystem. Checked instead: `bash -n` and `sh -n` on every script, the policy JSON and openbox XML parse, the Chrome `.deb` URL and its SHA-256, the four WeChat model URLs and hashes, the Bun release zip and the entrypoint exit-code logic against stub commands. The `packages/worker/package.json` change was left to the Playwright dependency work.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docker/worker packages/worker/package.json bun.lock docs/TRD.md
