@@ -8,7 +8,7 @@
 
 **Tech Stack:** Ubuntu 24.04 LTS server (Singapore, 8 vCPUs, 16 GB, 200 GB), Docker Engine, Xvfb, openbox, PulseAudio, pinned Google Chrome, Node 24 and Playwright, x11vnc and noVNC, ffmpeg, Bun for scripts run on the server itself, zxing-wasm (zxing-cpp's WebAssembly build), OpenCV's WeChat QR detector (`opencv-contrib-python-headless`), DashScope real-time speech recognition, Tailscale, ntfy, Caddy.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`
 
 Contents:
 
@@ -978,7 +978,7 @@ Expected: the check prints nothing; the commit succeeds.
 **Files:**
 
 - Create: `spikes/DECISIONS.md`
-- Modify: `docs/app-design/2026-10-20-meeting-bot-design.md` ("Early spikes", and the sections the outcome table names)
+- Modify: `docs/PRD.md`, `docs/TRD.md`, `docs/trd/*.md` and `docs/DESIGN.md` ("Early spikes", and the sections the outcome table names; the section map is under the outcome table)
 - Modify: `docs/plans/README.md` ("Roadmap", "When the spikes change things")
 - Modify, only where an outcome row says so: `docs/plans/architecture.md`, `docs/plans/01a-recorder-and-pings.md`, `docs/plans/01b-form-submission.md`, `docs/plans/01c-website-and-scheduler.md`, `docs/plans/02-link-watchers.md`, `docs/plans/03-companion-and-native.md`, `docs/plans/04-teams.md`, `docs/plans/05-meet.md`, `docs/plans/08-run-locations.md`
 
@@ -1010,7 +1010,7 @@ Expected: the check prints nothing; the commit succeeds.
 | `watchers.whatsappFromServer`, `watchers.discordFromServer`                                                 | 7     | 01c, 02      |
 | `ntfy.attachSummary`, `ntfy.version`                                                                        | 8     | 01a, 01c, 03 |
 
-Outcome table. Each spike task applies its matching rows in its own commit; this task checks them and applies row 0. "Design" means `docs/app-design/2026-10-20-meeting-bot-design.md`; plan names are files in `docs/plans/`; quoted text is the design's current wording.
+Outcome table. Each spike task applies its matching rows in its own commit; this task checks them and applies row 0. "Design" means the documents that replaced the single design page; plan names are files in `docs/plans/`; quoted text is their current wording. Section names in the table below sit in these files: "Early spikes", "Platform realities", "Tech stack", "Deployment and cost" and "Security and privacy" in `docs/TRD.md`; "Meeting worker" and "Platform adapters" in `docs/trd/meeting-worker.md`; "Scheduler" in `docs/trd/scheduler-and-control.md`; "Link watchers" in `docs/trd/link-watchers.md`; "Attendance form handler" in `docs/trd/attendance-forms.md` (rules in `docs/PRD.md`, "Attendance forms"); "Transcription" in `docs/trd/transcription-and-summaries.md` (rules in `docs/PRD.md`, "Transcription"); "Notifications" in `docs/trd/notifications-and-companion.md` (priorities and buttons in `docs/DESIGN.md`, "Pings"); "Run locations" in `docs/trd/notifications-and-companion.md` (rules in `docs/PRD.md`, "Run locations"); "Build order" is "Milestones" in `docs/PRD.md`; "Website" is "Website pages" in `docs/DESIGN.md`.
 
 | Row  | Outcome                                                                                                                                                                               | Design edits                                                                                                                                                                                                                                                                                                                                                       | Plan edits                                                                                                                                                                                                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1107,13 +1107,13 @@ For each spike, find its rows in the outcome table from its decisions, confirm t
 
 ```bash
 ls spikes/0*/REPORT.md | wc -l
-grep -nE "spike [1-8]" docs/app-design/2026-10-20-meeting-bot-design.md
+grep -nE "spike [1-8]" docs/PRD.md docs/TRD.md docs/trd/*.md docs/DESIGN.md
 diff <(grep -v '^#' docker/worker/versions.env) <(grep -v '^#' spikes/00-setup/worker/versions.env)
-grep -rnE "at most [0-9] (server workers|meetings)" docs/app-design docs/plans
+grep -rnE "at most [0-9] (server workers|meetings)" docs/PRD.md docs/TRD.md docs/trd docs/plans
 bunx prettier --check "docs/**/*.md" "spikes/**/*.md"
 ```
 
-Expected: `9`; every spike mention in the design states a result (none left saying "verify", "tests it", "decide", "compared in" or "measures"); no `diff` output; every cap matches `worker.concurrencyCap`; Prettier reports all files formatted.
+Expected: `9`; every spike mention in the PRD, TRD and design states a result (none left saying "verify", "tests it", "decide", "compared in" or "measures"); no `diff` output; every cap matches `worker.concurrencyCap`; Prettier reports all files formatted.
 
 - [ ] **Step 4: Tear down**
 

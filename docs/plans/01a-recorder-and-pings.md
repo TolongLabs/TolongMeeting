@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun 1.x, TypeScript (strict), zod, Node 24, Playwright and Playwright Test, Google Chrome (pinned), Xvfb, openbox, PulseAudio, ffmpeg, x11vnc (profile seeding), sharp, zxing-wasm, `ws`, `tar`, self-hosted ntfy, DashScope (OpenAI-compatible chat and `qwen3-asr-flash-realtime` WebSocket).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/TRD.md`
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`
 
 Contents:
 
