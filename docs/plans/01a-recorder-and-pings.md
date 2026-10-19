@@ -1113,21 +1113,21 @@ git commit -m "feat(worker): add segment recorder and joiner"
 **Files:**
 
 - Create: `packages/core/src/image.ts`, `packages/worker/src/audio/source.ts`, `packages/worker/src/frames/frames.ts`, `packages/worker/src/frames/keyframes.ts`, `packages/worker/src/health/health.ts`
-- Test: `packages/core/src/image.test.ts`, `packages/worker/src/frames/keyframes.test.ts`, `packages/worker/src/health/health.test.ts`, `packages/worker/src/frames/frames.int.test.ts` (image only)
+- Test: `packages/core/test/image.test.ts`, `packages/worker/test/keyframes.test.ts`, `packages/worker/test/health.test.ts`, `packages/worker/test/frames.test.ts` (host: real Xvfb, ffmpeg and a generated test signal), `packages/worker/test/image/frames.spec.ts` (image only)
 
 **Interfaces:**
 
 - Consumes: `Screen`, `Stopper` from Task 7.
-- Produces: `startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<void>, intervalMs = 2000): Stopper`.
-- Produces (adds to contracts): `interface Frame { at: Date; png: Buffer }`; in `@tm/core`, `interface GreyImage { width: number; height: number; data: Uint8Array }`, `meanLuma(img: GreyImage): number`, `meanDiff(a: GreyImage, b: GreyImage): number`, `dHash256(img: GreyImage): bigint` (input 17x16), `hamming(a: bigint, b: bigint): number`; in the worker, `thumbnail(png: Buffer): Promise<GreyImage>` (left 74%, greyscale, 128x72), `hashInput(png: Buffer): Promise<GreyImage>` (left 74%, greyscale, 17x16), `class KeyframeSelector { consider(thumb: GreyImage, hash: () => Promise<bigint>): Promise<boolean> }` with exported `CHANGE = 7.0`, `STABLE = 2.0`, `HASH_DUP = 12`, `DIFF_WIDTH = 0.74`; `startAudioSource(): Promise<AudioSource>` with `interface AudioSource { startedAt: Date; onChunk(cb: (pcm16le: Buffer) => void): () => void; levelDb(windowMs: number): number; stop(): Promise<void> }`; `class HealthMonitor { constructor(onAlert: (k: 'black_frames' | 'frozen_silent') => void); sample(s: HealthSample): void }` with `interface HealthSample { atMs: number; meanLuma: number; diffPrev: number; levelDb: number; participants: number | null }`.
+- Produces: `startFrameLoop(screen: Screen, onFrame: (f: Frame) => Promise<void>, intervalMs = 2000): FrameLoop` (a `Stopper` that also has `onFatal(cb)`; `stop()` rejects with the fatal error if there was one).
+- Produces (adds to contracts): `interface Frame { at: Date; png: Buffer }`; in `@tm/core`, `interface GreyImage { width: number; height: number; data: Uint8Array }`, `meanLuma(img: GreyImage): number`, `meanDiff(a: GreyImage, b: GreyImage): number`, `dHash256(img: GreyImage): bigint` (input 17x16), `hamming(a: bigint, b: bigint): number`; in the worker, `thumbnail(png: Buffer): Promise<GreyImage>` (left 74%, greyscale, 128x72), `hashInput(png: Buffer): Promise<GreyImage>` (left 74%, greyscale, 17x16), `class KeyframeSelector { consider(thumb: GreyImage, hash: () => Promise<bigint>): Promise<boolean> }` with exported `CHANGE = 7.0`, `STABLE = 2.0`, `HASH_DUP = 12`, `DIFF_WIDTH = 0.74`; `startAudioSource(options?: AudioSourceOptions): Promise<AudioSource>` (`options.testInput: 'sine' | 'silence'` is test-only, for hosts without PulseAudio) with `interface AudioSource { startedAt: Date; onChunk(cb: (pcm16le: Buffer) => void): () => void; levelDb(windowMs: number): number; stop(): Promise<void> }`; `class HealthMonitor { constructor(onAlert: (k: 'black_frames' | 'frozen_silent') => void); sample(s: HealthSample): void }` with `interface HealthSample { atMs: number; meanLuma: number; diffPrev: number; levelDb: number; participants: number | null }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/frames/keyframes.test.ts (grey(v) is a flat 128x72 image; slide(n) a patterned one)
+// packages/worker/test/keyframes.test.ts (grey(v) is a flat 128x72 image; slide(n) a patterned one)
 test("the session's keyframe rule: settled, changed, not a dHash repeat", async () => {
   const k = new KeyframeSelector()
-  const h = (n: number) => async () => BigInt(n) << 200n
+  const h = (n: number) => async () => ((1n << 64n) - 1n) << BigInt(n * 64) // far-apart hashes
   expect(await k.consider(slide(1), h(1))).toBe(false) // nothing to compare with yet
   expect(await k.consider(slide(1), h(1))).toBe(true) // settled and new
   expect(await k.consider(slide(1), h(1))).toBe(false) // unchanged
@@ -1139,7 +1139,7 @@ test("the session's keyframe rule: settled, changed, not a dHash repeat", async 
 ```
 
 ```ts
-// packages/worker/src/health/health.test.ts
+// packages/worker/test/health.test.ts
 test('black frames alert once after 10 s and re-arm', () => {
   const got: string[] = []
   const m = new HealthMonitor((k) => got.push(k))
@@ -1203,7 +1203,7 @@ test('frozen frame plus silence for 5 minutes with participants; a frozen slide 
 ```
 
 ```ts
-// packages/core/src/image.test.ts
+// packages/core/test/image.test.ts
 test('image maths', () => {
   expect(meanLuma(flat(128, 72, 40))).toBe(40)
   expect(meanDiff(flat(128, 72, 10), flat(128, 72, 17))).toBe(7)
@@ -1213,13 +1213,13 @@ test('image maths', () => {
 ```
 
 ```ts
-// packages/worker/src/frames/frames.int.test.ts (image only): stage page red, desk page blue
+// packages/worker/test/image/frames.spec.ts (image only, Playwright Test): stage page red, desk page blue
 test('frames every 2 s show the stage only; the audio source reports level', async () => {
   const frames: Frame[] = []
   const s = startFrameLoop(screen, async (f) => {
     frames.push(f)
   })
-  await sleep(7000)
+  await sleep(10_000) // x11grab delivers the first frame after about two intervals
   await s.stop()
   expect(frames.length).toBeGreaterThanOrEqual(3)
   expect(await pixel(frames[0]!.png, 960, 540)).toEqual([255, 0, 0])
@@ -1231,25 +1231,28 @@ test('frames every 2 s show the stage only; the audio source reports level', asy
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/image.test.ts packages/worker/src/frames packages/worker/src/health`
+Run: `bun test packages/core/test/image.test.ts packages/worker/test/keyframes.test.ts packages/worker/test/health.test.ts packages/worker/test/frames.test.ts`
 Expected: FAIL with "Cannot find module".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-`KeyframeSelector.consider`: `settled = prev !== null && meanDiff(thumb, prev) <= STABLE`; `changed = kept === null || meanDiff(thumb, kept) >= CHANGE`; if both, compute the hash and keep the frame only if `hamming` exceeds `HASH_DUP` against every kept hash; when settled and changed, `kept = thumb` whether or not the hash was new; always `prev = thumb`. `HealthMonitor`: black means `meanLuma < 10`, alerting once black has lasted 10,000 ms; frozen-silent means `diffPrev < 0.5 && levelDb < -50 && participants !== null && participants >= 2`, alerting once it has lasted 300,000 ms; each alert re-arms after one sample without its condition. `startFrameLoop` runs one ffmpeg (`-f x11grab -framerate <1000/intervalMs> -video_size 1920x1080 -draw_mouse 0 -i :99.0+<stage.x>,<stage.y> -c:v png -f image2pipe pipe:1`), splits PNGs after each `IEND` chunk and calls `onFrame` one at a time, skipping frames that arrive while a call is running. `startAudioSource` runs `parec --device=tm_sink.monitor --format=s16le --rate=16000 --channels=1 --latency-msec=100`, keeps the last 10 s for `levelDb` (RMS in dBFS, -120 for digital silence) and fans chunks out to `onChunk` subscribers. Thumbnails use `sharp`.
+`KeyframeSelector.consider`: `settled = prev !== null && meanDiff(thumb, prev) <= STABLE`; `changed = kept === null || meanDiff(thumb, kept) >= CHANGE`; if both, compute the hash and keep the frame only if `hamming` exceeds `HASH_DUP` against every kept hash; when settled and changed, `kept = thumb` whether or not the hash was new; always `prev = thumb`. `HealthMonitor`: black means `meanLuma < 10`, alerting once black has lasted 10,000 ms; frozen-silent means `diffPrev < 0.5 && levelDb < -50 && participants !== null && participants >= 2`, alerting once it has lasted 300,000 ms; each alert re-arms after one sample without its condition. `startFrameLoop` runs one ffmpeg (`-f x11grab -framerate <1000/intervalMs> -video_size 1920x1080 -draw_mouse 0 -i :99.0+<stage.x>,<stage.y> -c:v png -f image2pipe pipe:1`), splits PNGs after each `IEND` chunk and calls `onFrame` one at a time, skipping frames that arrive while a call is running. `startAudioSource` waits for the first audio (it throws with the tool's own message when the monitor is missing, and never invents audio) and runs `parec --device=tm_sink.monitor --format=s16le --rate=16000 --channels=1 --latency-msec=100`, keeps the last 10 s for `levelDb` (RMS in dBFS, -120 for digital silence) and fans chunks out to `onChunk` subscribers. Thumbnails use `sharp`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/image.test.ts packages/worker/src/frames packages/worker/src/health && docker run --rm --shm-size=2g tm-worker:dev unit packages/worker/src/frames/frames.int.test.ts` (after `bun run image:worker`)
+Run: `bun test packages/core/test/image.test.ts packages/worker/test/keyframes.test.ts packages/worker/test/health.test.ts packages/worker/test/frames.test.ts && docker run --rm --shm-size=2g tm-worker:dev test frames.spec.ts` (after `bun run image:worker`; the image part was not run on the build host, which has no PulseAudio)
+Expected: all pass.
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/image.ts packages/core/src/image.test.ts packages/worker/src docs/TRD.md
-git commit -m "feat(worker): add frames, keyframes and health"
+git add packages/core/src/image.ts packages/core/src/index.ts packages/core/test/image.test.ts
+git commit -m "feat(core): add image maths"
+git add packages/worker/src/audio packages/worker/src/frames packages/worker/src/health packages/worker/test docs/TRD.md
+git commit -m "feat(worker): add frames, audio and health"
 ```
 
 ### Task 11: QR decoding
