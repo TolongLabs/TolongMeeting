@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import type { FormRecord, FormState } from '@tm/core'
+import type { FormProvider, FormRecord, FormState, StopReason } from '@tm/core'
 import { sampleRecord } from '@tm/core/testing'
 import { formPing, type FormLinks } from '../src/forms/pings'
 
@@ -190,6 +190,67 @@ test('Microsoft Forms copy names its provider', () =>
     actions: [{ label: 'Open form', url: 'https://forms.office.com/r/abc' }],
     message: 'Example lecture: Microsoft Forms says this form was already answered, so nothing was sent.'
   }))
+
+// Ruling B1: a link that pre-fills answers or submits is never a tap target. The plain form is.
+const SUBMIT_LINKS: Array<[string, FormProvider, string, string]> = [
+  [
+    'Google Forms',
+    'google',
+    'https://docs.google.com/forms/d/e/x/formResponse?entry.1=Test&submit=Submit',
+    'https://docs.google.com/forms/d/e/x/viewform'
+  ],
+  [
+    'Microsoft Forms',
+    'microsoft',
+    'https://forms.office.com/Pages/ResponsePage.aspx?id=ABC&r1=Absent',
+    'https://forms.office.com/Pages/ResponsePage.aspx?id=ABC'
+  ]
+]
+
+test.each(SUBMIT_LINKS)(
+  '%s: Open form and Sign in again link the plain form (ruling B1)',
+  (_name, provider, finalUrl, plain) => {
+    const rec = { ...base, provider, finalUrl }
+    const open = formPing({ ...rec, state: 'needs_member', unmatched: ['Q1'] }, opts)?.actions
+    const signIn = formPing({ ...rec, state: 'awaiting_signin' }, opts)?.actions
+    expect(open).toEqual([{ label: 'Open form', url: plain }])
+    expect(signIn).toEqual([{ label: 'Sign in again', url: plain }])
+    for (const action of [...(open ?? []), ...(signIn ?? [])])
+      expect(action.url).not.toMatch(/entry\.|formResponse|submit|r1=/)
+  }
+)
+
+// Copy for each failed reason, from the Task 4 copy block. Typed over every StopReason except the two untrusted
+// reasons, so adding a reason fails to compile until its copy is written here.
+const FAILED_REASON_TEXT: Record<Exclude<StopReason, 'untrusted_source' | 'not_org_restricted'>, string> = {
+  tab_not_on_desk: "its tab didn't open on the unrecorded side",
+  open_timeout: "it didn't load within 15 seconds",
+  signin_required_again: 'it asked for sign-in again after you signed in',
+  signin_not_completed: "sign-in wasn't completed within 15 minutes",
+  meeting_ended: 'the meeting ended before sign-in was completed',
+  form_closed: "it's no longer accepting responses",
+  no_access: "your account doesn't have access to it",
+  captcha: 'it asks for a CAPTCHA',
+  unknown_page: "the page didn't look like a form",
+  fill_failed: "an answer didn't stay filled in",
+  next_failed: "its next page didn't open",
+  submit_failed: "it didn't confirm the submission (check whether your response was recorded)",
+  deadline: "it wasn't ready to submit within 2 minutes",
+  interrupted: 'the worker restarted while handling it',
+  interrupted_submitting: 'the worker restarted while submitting it (check whether your response was recorded)',
+  unexpected_error: 'of an unexpected error'
+}
+
+type FailedReason = keyof typeof FAILED_REASON_TEXT
+
+test.each(Object.entries(FAILED_REASON_TEXT) as Array<[FailedReason, string]>)(
+  'failed %s puts its reason in the message',
+  (reason, text) => {
+    const ping = formPing({ ...base, state: 'failed', reason }, opts)
+    expect(ping?.title).toBe('Form needs you')
+    expect(ping?.message).toContain(`because ${text}.`)
+  }
+)
 
 test('states that do not ping return null', () => {
   const quiet: FormState[] = [

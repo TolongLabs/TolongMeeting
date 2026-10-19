@@ -511,7 +511,7 @@ submitted (high) "Attendance submitted"
   links.meetingPage set:  "<entry>: attendance form submitted at <time> (<provider>). Screenshots are on the meeting page."  actions: Open meeting page -> links.meetingPage
 awaiting_signin (high) "Sign in again"
   "<entry>: an attendance form needs your <provider> sign-in, which has expired. Sign in on the desk view and I'll try once more while the form is open, or open the form yourself."
-  actions: Sign in again -> links.signIn ?? finalUrl; plus Open form when links.signIn is set
+  actions: Sign in again -> links.signIn ?? canonicalFormUrl(finalUrl); plus Open form when links.signIn is set
 needs_member (high) "Form needs you"
   "<entry>: I didn't submit this <provider> form because no saved detail answers "<q1>", "<q2>", "<q3>" and <n> more."  (up to 3 questions from rec.unmatched; " and <n> more" only when there are more)  actions: Open form
 untrusted, reason untrusted_source (high) "Form seen, not submitted"
