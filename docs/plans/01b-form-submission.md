@@ -1743,25 +1743,25 @@ Microsoft fixtures carry the same names and questions as the Google ones (Task 8
 
 `routeFormFixtures` adds: `microsoftUrl(name)` (302 to `https://login.microsoftonline.com/common/oauth2/authorize?redirect_uri=<encoded form URL>` while signed out), `formapi/**` (records the submission and replies `{}` or `{ "alreadyResponded": true }` per `submitResult`), and `login.microsoftonline.com/**`.
 
-- [ ] **Step 1: Add the Microsoft row to `CASES` in `forms-driver.spec.ts`**
+- [x] **Step 1: Add the Microsoft row to `CASES` in `forms-driver.spec.ts`**
 
 ```ts
 { provider: 'microsoft' as const, url: microsoftUrl, org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: true } },
 ```
 
-- [ ] **Step 2: Run the tests to verify the Microsoft ones fail**
+- [x] **Step 2: Run the tests to verify the Microsoft ones fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts`
 Expected: the 7 Google tests PASS; the 7 Microsoft tests FAIL with "ENOENT: ... microsoft-forms.json".
 
-- [ ] **Step 3: Add the map, the fixtures and the routes; change `driver.ts` only where a Microsoft test shows it must**
+- [x] **Step 3: Add the map, the fixtures and the routes; change `driver.ts` only where a Microsoft test shows it must**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts`
 Expected: PASS (14 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/microsoft-forms.json packages/worker/test/fixtures/forms/microsoft packages/worker/test/forms/route.ts packages/worker/src/forms/drivers/driver.ts packages/worker/test/forms-driver.spec.ts

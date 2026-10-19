@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Course feedback</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='button'], [role='option'], button { cursor: pointer; padding: 4px }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div data-automation-id="formTitle">Course feedback</div>
+      
+      <div data-automation-id="userEmail">student@example.edu.my</div>
+      <div data-automation-id="respondentNotice">Hi, Test Student. When you submit this form, the owner will see your name and email address.</div>
+      <div class="page"><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Full name</span><input data-automation-id="textInput" type="text"></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Matric No.</span><input data-automation-id="textInput" type="text"></div><button type="button" data-automation-id="submitButton">Submit</button></div><div class="copy"><label><input type="checkbox" aria-label="Send me an email receipt of my responses"> Send me an email receipt of my responses</label></div>
+    </div>
+    
+    <script src="fixture.js"></script>
+  </body>
+</html>

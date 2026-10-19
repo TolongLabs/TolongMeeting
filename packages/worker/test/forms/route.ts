@@ -7,6 +7,9 @@ process.env.TM_SELECTORS_DIR ??= resolve(import.meta.dirname, '../../../../confi
 
 const FIXTURES = resolve(import.meta.dirname, '../fixtures/forms')
 const GOOGLE_PATH = /^\/forms\/d\/e\/([^/]+)\/(viewform|formResponse|fixture\.js)$/
+const MICROSOFT_FORM_PATH = '/Pages/ResponsePage.aspx' // the id is case-sensitive, as a Microsoft short code is
+const MICROSOFT_SUBMIT_PATH = '/formapi/api/fixture/responses'
+const MICROSOFT_SCRIPT_PATH = '/Pages/fixture.js'
 
 export interface FixtureServer {
   requests: string[] // every form-provider URL requested
@@ -16,7 +19,8 @@ export interface FixtureServer {
     sendCopy: boolean
   }[]
   signedOut: Set<string> // fixture names whose form URL redirects to the provider's sign-in page
-  // What formResponse serves: the provider's pages, or (to test an unconfirmed submit) the form again or a captcha
+  // What the submit endpoint serves (Google: formResponse, Microsoft: formapi): the provider's response, or (to test an
+  // unconfirmed submit) the form again or a captcha
   submitResult: Map<string, 'confirmation' | 'already-responded' | 'still-form' | 'captcha'>
   delayMs: Map<string, number> // delay before serving a fixture
   onFormLoad: ((fixture: string, count: number) => void) | null
@@ -28,7 +32,7 @@ export const microsoftUrl = (fixture: string): string =>
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-async function fixtureFile(provider: 'google', name: string): Promise<string> {
+async function fixtureFile(provider: 'google' | 'microsoft', name: string): Promise<string> {
   return readFile(join(FIXTURES, provider, name), 'utf8')
 }
 
@@ -105,6 +109,57 @@ export async function routeFormFixtures(context: BrowserContext): Promise<Fixtur
   })
   await context.route('https://accounts.google.com/**', async (route) =>
     fulfil(route, html(await fixtureFile('google', 'signin.html')))
+  )
+  await context.route('https://forms.office.com/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (url.pathname === MICROSOFT_SCRIPT_PATH) {
+      return fulfil(route, {
+        status: 200,
+        contentType: 'text/javascript',
+        body: await fixtureFile('microsoft', 'fixture.js')
+      })
+    }
+    if (url.pathname === MICROSOFT_SUBMIT_PATH) {
+      const name = url.searchParams.get('id')
+      if (request.method() !== 'POST' || name === null) return fulfil(route, html('method not allowed', 405))
+      fx.requests.push(request.url())
+      const { answers, sendCopy } = JSON.parse(request.postData() ?? 'null') as Pick<
+        FixtureServer['submissions'][number],
+        'answers' | 'sendCopy'
+      >
+      fx.submissions.push({ fixture: name, answers, sendCopy })
+      const reply = {
+        confirmation: {},
+        'already-responded': { alreadyResponded: true },
+        'still-form': { stillForm: true },
+        captcha: { captcha: true }
+      }[fx.submitResult.get(name) ?? 'confirmation']
+      return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify(reply) })
+    }
+    const name = url.pathname === MICROSOFT_FORM_PATH ? url.searchParams.get('id') : null
+    if (name === null) return fulfil(route, { status: 200, body: '' }) // the captcha frame and other assets
+    fx.requests.push(request.url())
+    if (fx.signedOut.has(name)) {
+      const location = `https://login.microsoftonline.com/common/oauth2/authorize?redirect_uri=${encodeURIComponent(microsoftUrl(name))}`
+      return fulfil(route, html(`<!doctype html><script>location.replace(${JSON.stringify(location)})</script>`))
+    }
+    const delay = fx.delayMs.get(name)
+    if (delay !== undefined) await sleep(delay)
+    let page: string
+    try {
+      page = await fixtureFile('microsoft', `${name}.html`)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      return fulfil(route, html(`no fixture ${name}`, 404))
+    }
+    await fulfil(route, html(page))
+    const count = (loads.get(name) ?? 0) + 1
+    loads.set(name, count)
+    fx.onFormLoad?.(name, count)
+  })
+  await context.route('https://login.microsoftonline.com/**', async (route) =>
+    fulfil(route, html(await fixtureFile('microsoft', 'signin.html')))
   )
   await context.route('https://www.google.com/**', (route) => fulfil(route, { status: 200, body: '' }))
   return fx

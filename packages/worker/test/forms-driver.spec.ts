@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
+import { canonicalFormUrl } from '@tm/core'
 import { orgRestricted } from '../src/forms/rules'
 import { createDriver, driverFor, loadFormSelectors, type FormDriver } from '../src/forms/drivers'
 import type { Answer } from '../src/forms/types'
-import { googleUrl, routeFormFixtures, type FixtureServer } from './forms/route'
+import { googleUrl, microsoftUrl, routeFormFixtures, type FixtureServer } from './forms/route'
 
 const text = (questionId: string, value: string): Answer => ({
   questionId,
@@ -25,11 +26,24 @@ const CASES = [
   {
     provider: 'google' as const,
     url: googleUrl,
+    signin: /accounts\.google\.com/,
+    // What the external fixture's description copies from the provider's own elements.
+    copied: ['This form was created inside of Example University.', 'student@example.edu.my'],
     org: {
       organisation: 'Example University',
       signedInAs: 'student@example.edu.my',
       orgOnly: false
     }
+  },
+  {
+    provider: 'microsoft' as const,
+    url: microsoftUrl,
+    signin: /login\.microsoftonline\.com/,
+    copied: [
+      'Hi, Test Student. When you submit this form, the owner will see your name and email address.',
+      'student@example.edu.my'
+    ],
+    org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: true }
   }
 ]
 
@@ -174,7 +188,7 @@ for (const c of CASES)
       }
       fx.signedOut.add('attendance')
       await page.goto(c.url('attendance'))
-      await page.waitForURL(/accounts\.google\.com/)
+      await page.waitForURL(c.signin)
       expect(await driver.pageKind(page)).toBe('signin')
     })
 
@@ -209,7 +223,7 @@ for (const c of CASES)
       expect(await page.locator('input').first().inputValue()).toBe('')
       fx.signedOut.add('attendance')
       await page.goto(c.url('attendance'))
-      await page.waitForURL(/accounts\.google\.com/)
+      await page.waitForURL(c.signin)
       await expect(driver.next(page)).rejects.toMatchObject({ code: 'not_a_form' })
       await page.goto('about:blank')
       await expect(driver.readPage(page, 1)).rejects.toMatchObject({ code: 'not_a_form' })
@@ -220,12 +234,11 @@ for (const c of CASES)
       await page.goto(c.url('attendance'))
       const own = (await driver.readPage(page, 1)).restriction
       expect(own).toEqual(c.org)
-      expect(orgRestricted(own, ORG)).toBe(c.provider === 'google')
+      expect(orgRestricted(own, ORG)).toBe(true)
       await page.goto(c.url('external'))
       const spoof = await driver.readPage(page, 1)
-      // The description copies the footer sentence, an email and "Switch account": none of it is provider-owned.
-      expect(spoof.description).toContain('This form was created inside of Example University.')
-      expect(spoof.description).toContain('student@example.edu.my')
+      // The description copies the provider's sentence and an email: none of it is provider-owned.
+      for (const copied of c.copied) expect(spoof.description).toContain(copied)
       expect(spoof.restriction).toEqual({ organisation: null, signedInAs: null, orgOnly: false })
       expect(orgRestricted(spoof.restriction, ORG)).toBe(false)
     })
@@ -298,84 +311,144 @@ test.describe('google selector map', () => {
   })
 })
 
+test.describe('microsoft selector map', () => {
+  test('loads and has no organisation footer', async () => {
+    const map = await loadFormSelectors('microsoft')
+    expect(map.formHosts).toEqual(['forms.office.com', 'forms.microsoft.com'])
+    expect([map.orgFooter, map.orgFooterPattern]).toEqual([null, null])
+  })
+
+  test('a notice or account copied into the description or a label is not provider evidence', async ({
+    page,
+    context
+  }) => {
+    await routeFormFixtures(context)
+    const driver = await driverFor('microsoft')
+    await page.goto(microsoftUrl('external'))
+    await page.evaluate(() => {
+      document
+        .querySelector("[data-automation-id='formDescription']")!
+        .append(' Hi. When you submit this form, the owner will see your name and email address.')
+      document.querySelector("span[data-automation-id='questionTitle']")!.append(' student@example.edu.my')
+    })
+    expect((await driver.readPage(page, 1)).restriction).toEqual({
+      organisation: null,
+      signedInAs: null,
+      orgOnly: false
+    })
+    await page.evaluate(() => {
+      const notice = document.createElement('div')
+      notice.dataset.automationId = 'respondentNotice'
+      notice.textContent = 'Hi. When you submit this form, the owner will see your name and email address.'
+      const account = document.createElement('div')
+      account.dataset.automationId = 'userEmail'
+      account.textContent = 'student@example.edu.my'
+      document.body.append(notice, account)
+    })
+    expect((await driver.readPage(page, 1)).restriction).toEqual({
+      organisation: null,
+      signedInAs: 'student@example.edu.my',
+      orgOnly: true
+    })
+  })
+
+  test('forms open at their canonical URL, and a short code is case-sensitive', async ({ page, context }) => {
+    const fx = await routeFormFixtures(context)
+    expect(canonicalFormUrl(microsoftUrl('attendance'))).toBe(microsoftUrl('attendance'))
+    await page.goto(microsoftUrl('attendance'))
+    expect(await (await driverFor('microsoft')).pageKind(page)).toBe('form')
+    await page.goto(microsoftUrl('Attendance'))
+    expect(await (await driverFor('microsoft')).pageKind(page)).toBe('unknown')
+    expect(fx.requests).toEqual([microsoftUrl('attendance'), microsoftUrl('Attendance')])
+  })
+
+  test('a page that is not http(s) is unknown, not a sign-in step', async ({ page }) => {
+    await page.goto('about:blank')
+    expect(await (await driverFor('microsoft')).pageKind(page)).toBe('unknown')
+  })
+})
+
 // The short timeouts make the failure paths fast; the defaults are 10 s a step and 15 s for Submit.
-test.describe('typed failures', () => {
-  let fx: FixtureServer
-  let driver: FormDriver
-  test.beforeEach(async ({ context }) => {
-    fx = await routeFormFixtures(context)
-    driver = createDriver('google', await loadFormSelectors('google'), { stepMs: 700, submitMs: 1500 })
-  })
+for (const c of CASES)
+  test.describe(`${c.provider} typed failures`, () => {
+    let fx: FixtureServer
+    let driver: FormDriver
+    test.beforeEach(async ({ context }) => {
+      fx = await routeFormFixtures(context)
+      driver = createDriver(c.provider, await loadFormSelectors(c.provider), { stepMs: 700, submitMs: 1500 })
+    })
 
-  const widgetAnswers = [text('p1q0', 'abc'), choose('p1q2', 'Present'), choose('p1q4', '01')]
+    const widgetAnswers = [text('p1q0', 'abc'), choose('p1q2', 'Present'), choose('p1q4', '01')]
 
-  test('a dropdown whose options never show fails with dropdown_failed, in readPage and in fill', async ({ page }) => {
-    await page.goto(googleUrl('widgets'))
-    const form = await driver.readPage(page, 1)
-    await page.evaluate(() => (location.hash = '#options-delay=4000'))
-    await expect(driver.readPage(page, 1)).rejects.toMatchObject({ code: 'dropdown_failed' })
-    await expect(driver.fill(page, form, [choose('p1q4', '01')])).rejects.toMatchObject({ code: 'dropdown_failed' })
-  })
+    test('a dropdown whose options never show fails with dropdown_failed, in readPage and in fill', async ({
+      page
+    }) => {
+      await page.goto(c.url('widgets'))
+      const form = await driver.readPage(page, 1)
+      await page.evaluate(() => (location.hash = '#options-delay=4000'))
+      await expect(driver.readPage(page, 1)).rejects.toMatchObject({ code: 'dropdown_failed' })
+      await expect(driver.fill(page, form, [choose('p1q4', '01')])).rejects.toMatchObject({ code: 'dropdown_failed' })
+    })
 
-  test('a Next button under an overlay fails with next_failed', async ({ page }) => {
-    await page.goto(googleUrl('attendance') + '#overlay')
-    await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
-  })
+    test('a Next button under an overlay fails with next_failed', async ({ page }) => {
+      await page.goto(c.url('attendance') + '#overlay')
+      await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
+    })
 
-  test('a Submit button under an overlay fails with submit_failed and sends nothing', async ({ page }) => {
-    await page.goto(googleUrl('widgets') + '#overlay')
-    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_failed' })
-    expect(fx.submissions).toHaveLength(0)
-    expect(await page.evaluate(() => (window as unknown as { mouseEvents: number }).mouseEvents)).toBe(0)
-  })
+    test('a Submit button under an overlay fails with submit_failed and sends nothing', async ({ page }) => {
+      await page.goto(c.url('widgets') + '#overlay')
+      await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_failed' })
+      expect(fx.submissions).toHaveLength(0)
+      expect(await page.evaluate(() => (window as unknown as { mouseEvents: number }).mouseEvents)).toBe(0)
+    })
 
-  test('an error banner outside every question after the click is submit_unconfirmed', async ({ page }) => {
-    await page.goto(googleUrl('widgets') + '#banner')
-    await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
-    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
-  })
+    test('an error banner outside every question after the click is submit_unconfirmed', async ({ page }) => {
+      await page.goto(c.url('widgets') + '#banner')
+      await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+      await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+    })
 
-  test('a second submit() on a page that was clicked never clicks again', async ({ page }) => {
-    fx.submitResult.set('widgets', 'still-form')
-    await page.goto(googleUrl('widgets'))
-    await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
-    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
-    expect(fx.submissions).toHaveLength(1)
-    // The provider shows the form again, ready to submit: a second click would post a second response.
-    await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
-    await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
-    expect(fx.submissions).toHaveLength(1)
-  })
-
-  test('a question that vanishes during a fill is not_a_form', async ({ page }) => {
-    await page.goto(googleUrl('widgets'))
-    const form = await driver.readPage(page, 1)
-    const gone = { ...form, questions: [...form.questions, { ...form.questions[0]!, id: 'p1q9' }] }
-    await expect(driver.fill(page, gone, [text('p1q9', 'x')])).rejects.toMatchObject({ code: 'not_a_form' })
-  })
-
-  for (const [name, result] of [
-    ['still on the form', 'still-form'],
-    ['on a captcha', 'captcha']
-  ] as const)
-    test(`a submit that ends ${name} is submit_unconfirmed`, async ({ page }) => {
-      fx.submitResult.set('widgets', result)
-      await page.goto(googleUrl('widgets'))
+    test('a second submit() on a page that was clicked never clicks again', async ({ page }) => {
+      fx.submitResult.set('widgets', 'still-form')
+      await page.goto(c.url('widgets'))
+      await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+      await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+      expect(fx.submissions).toHaveLength(1)
+      // The provider shows the form again, ready to submit: a second click would post a second response.
       await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
       await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
       expect(fx.submissions).toHaveLength(1)
     })
 
-  test('a stale alert does not fail a Next that moves on', async ({ page }) => {
-    await page.goto(googleUrl('attendance'))
-    await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
-    await driver.fill(page, await driver.readPage(page, 1), [
-      text('p1q0', 'Test Student'),
-      text('p1q1', 'A00000000'),
-      text('p1q2', 'ABC1234'),
-      choose('p1q3', '02')
-    ])
-    await driver.next(page)
-    expect((await driver.readPage(page, 2)).questions[0]!.label).toBe('Attendance')
+    test('a question that vanishes during a fill is not_a_form', async ({ page }) => {
+      await page.goto(c.url('widgets'))
+      const form = await driver.readPage(page, 1)
+      const gone = { ...form, questions: [...form.questions, { ...form.questions[0]!, id: 'p1q9' }] }
+      await expect(driver.fill(page, gone, [text('p1q9', 'x')])).rejects.toMatchObject({ code: 'not_a_form' })
+    })
+
+    for (const [name, result] of [
+      ['still on the form', 'still-form'],
+      ['on a captcha', 'captcha']
+    ] as const)
+      test(`a submit that ends ${name} is submit_unconfirmed`, async ({ page }) => {
+        fx.submitResult.set('widgets', result)
+        await page.goto(c.url('widgets'))
+        await driver.fill(page, await driver.readPage(page, 1), widgetAnswers)
+        await expect(driver.submit(page)).rejects.toMatchObject({ code: 'submit_unconfirmed' })
+        expect(fx.submissions).toHaveLength(1)
+      })
+
+    test('a stale alert does not fail a Next that moves on', async ({ page }) => {
+      await page.goto(c.url('attendance'))
+      await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
+      await driver.fill(page, await driver.readPage(page, 1), [
+        text('p1q0', 'Test Student'),
+        text('p1q1', 'A00000000'),
+        text('p1q2', 'ABC1234'),
+        choose('p1q3', '02')
+      ])
+      await driver.next(page)
+      expect((await driver.readPage(page, 2)).questions[0]!.label).toBe('Attendance')
+    })
   })
-})

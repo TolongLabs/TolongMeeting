@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign in</title>
+  </head>
+  <body>
+    <h1>Sign in to continue</h1>
+    <input type="email" name="email" />
+    <button type="button">Next</button>
+    <a id="continue" href="#">Continue</a>
+    <script>
+      document.getElementById('continue').href = new URL(location.href).searchParams.get('redirect_uri')
+    </script>
+  </body>
+</html>
