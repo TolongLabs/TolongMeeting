@@ -7,6 +7,9 @@ google-chrome --version | grep -q " $CHROME_VERSION" || { echo "chrome mismatch"
 [ "$(bun --version)" = "$BUN_VERSION" ] || { echo "bun mismatch"; exit 1; }
 [ "$(dpkg-query -W -f='${Version}' ffmpeg)" = "$FFMPEG_VERSION" ] || { echo "ffmpeg mismatch"; exit 1; }
 [ "$(node -p "require('/app/node_modules/playwright/package.json').version")" = "$PLAYWRIGHT_VERSION" ] || { echo "playwright mismatch"; exit 1; }
+[ "$(dpkg-query -W -f='${Version}' x11vnc)" = "$X11VNC_VERSION" ] || { echo "x11vnc mismatch"; exit 1; }
+[ "$(dpkg-query -W -f='${Version}' websockify)" = "$WEBSOCKIFY_VERSION" ] || { echo "websockify mismatch"; exit 1; }
+[ "$(dpkg-query -W -f='${Version}' xprintidle)" = "$XPRINTIDLE_VERSION" ] || { echo "xprintidle mismatch"; exit 1; }
 command -v x11vnc >/dev/null || { echo "x11vnc missing"; exit 1; }
 command -v websockify >/dev/null || { echo "websockify missing"; exit 1; }
 command -v xprintidle >/dev/null || { echo "xprintidle missing"; exit 1; }

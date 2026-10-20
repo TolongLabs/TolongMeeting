@@ -93,7 +93,8 @@ run_job() {
 case "$mode" in
   selfcheck) run /app/docker/worker/selfcheck.sh ;;
   test) shift; run bunx playwright test -c packages/worker/playwright.config.ts "$@" ;;
-  unit) shift; run bun test "$@" ;;
+  # The image config does not ignore test/image/**, which the root bunfig.toml hides from host runs.
+  unit) shift; run bun test --config=/app/docker/worker/bunfig.image.toml "$@" ;;
   seed) run node packages/worker/dist/cli.js --seed --job "$3" ;;
   smoke) run node packages/worker/dist/cli.js --smoke --job "$3" ;;
   --job) run_job "$2" ;;

@@ -1,0 +1,4 @@
+[test]
+# The root bunfig.toml also ignores test/image/**; those bun tests run only in this image (TM_IN_IMAGE=1).
+pathIgnorePatterns = ["**/*.spec.ts"]
+preload = ["./test/preload.ts"]

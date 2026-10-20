@@ -6,6 +6,9 @@ FROM node:${NODE_VERSION}-bookworm-slim
 
 ARG CHROME_VERSION
 ARG FFMPEG_VERSION
+ARG X11VNC_VERSION
+ARG WEBSOCKIFY_VERSION
+ARG XPRINTIDLE_VERSION
 ARG BUN_VERSION
 # SHA-256 of bun-linux-x64.zip for BUN_VERSION, pinned in versions.env (not read from the download origin).
 ARG BUN_SHA256
@@ -23,7 +26,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xvfb openbox pulseaudio pulseaudio-utils x11vnc websockify xprintidle x11-utils \
+      xvfb openbox pulseaudio pulseaudio-utils \
+      "x11vnc=${X11VNC_VERSION}" "websockify=${WEBSOCKIFY_VERSION}" "xprintidle=${XPRINTIDLE_VERSION}" x11-utils \
       "ffmpeg=${FFMPEG_VERSION}" libgl1-mesa-dri \
       fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
       jq curl ca-certificates unzip iptables \
@@ -40,6 +44,7 @@ RUN [ -n "${BUN_SHA256}" ] \
  && echo "${BUN_SHA256}  bun-linux-x64.zip" | sha256sum -c - \
  && unzip -q -j bun-linux-x64.zip bun-linux-x64/bun -d /usr/local/bin \
  && chmod 755 /usr/local/bin/bun \
+ && ln -s bun /usr/local/bin/bunx \
  && rm -f bun-linux-x64.zip \
  && [ "$(bun --version)" = "${BUN_VERSION}" ]
 
