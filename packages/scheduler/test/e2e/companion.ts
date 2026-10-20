@@ -191,6 +191,113 @@ export class FakePc {
       { params: Promise.resolve({}) } as never
     )
   }
+
+  async secrets(jobId: string): Promise<Response> {
+    const { GET } = await import('../../../web/app/api/companion/jobs/[id]/secrets/route')
+    return GET(this.request(`/api/companion/jobs/${jobId}/secrets`), {
+      params: Promise.resolve({ id: jobId })
+    })
+  }
+
+  async release(jobId: string): Promise<Response> {
+    const { POST } = await import('../../../web/app/api/companion/jobs/[id]/release/route')
+    return POST(this.request(`/api/companion/jobs/${jobId}/release`, { method: 'POST' }), {
+      params: Promise.resolve({ id: jobId })
+    })
+  }
+
+  async heartbeat(jobId: string, body?: unknown): Promise<Response> {
+    const { POST } = await import('../../../web/app/api/companion/jobs/[id]/heartbeat/route')
+    const payload = body === undefined ? undefined : JSON.stringify(body)
+    return POST(
+      this.request(`/api/companion/jobs/${jobId}/heartbeat`, {
+        method: 'POST',
+        headers: payload !== undefined ? { 'content-type': 'application/json' } : {},
+        body: payload
+      }),
+      {
+        params: Promise.resolve({ id: jobId })
+      }
+    )
+  }
+
+  async preflight(jobId: string, body?: unknown): Promise<Response> {
+    const { POST } = await import('../../../web/app/api/companion/jobs/[id]/preflight/route')
+    const payload = body === undefined ? undefined : JSON.stringify(body)
+    return POST(
+      this.request(`/api/companion/jobs/${jobId}/preflight`, {
+        method: 'POST',
+        headers: payload !== undefined ? { 'content-type': 'application/json' } : {},
+        body: payload
+      }),
+      {
+        params: Promise.resolve({ id: jobId })
+      }
+    )
+  }
+
+  async head(jobId: string, path: string | string[]): Promise<Response> {
+    const pathParts = Array.isArray(path) ? path : path.split('/')
+    const pathStr = pathParts.join('/')
+    const { HEAD } = await import('../../../web/app/api/companion/jobs/[id]/files/[...path]/route')
+    return HEAD(this.request(`/api/companion/jobs/${jobId}/files/${pathStr}`, { method: 'HEAD' }), {
+      params: Promise.resolve({ id: jobId, path: pathParts })
+    })
+  }
+
+  async put(jobId: string, path: string | string[], range: string, bytes?: Uint8Array | BodyInit): Promise<Response> {
+    const pathParts = Array.isArray(path) ? path : path.split('/')
+    const pathStr = pathParts.join('/')
+    const { PUT } = await import('../../../web/app/api/companion/jobs/[id]/files/[...path]/route')
+    const headers: Record<string, string> = {
+      'content-range': range,
+      'content-type': 'application/octet-stream'
+    }
+    let body: BodyInit | undefined = undefined
+    if (bytes !== undefined) {
+      body = bytes instanceof Uint8Array ? new Blob([bytes as BlobPart]) : bytes
+    }
+    return PUT(
+      this.request(`/api/companion/jobs/${jobId}/files/${pathStr}`, {
+        method: 'PUT',
+        headers,
+        body
+      }),
+      {
+        params: Promise.resolve({ id: jobId, path: pathParts })
+      }
+    )
+  }
+
+  async complete(jobId: string, body?: unknown): Promise<Response> {
+    const { POST } = await import('../../../web/app/api/companion/jobs/[id]/complete/route')
+    const payload = body === undefined ? undefined : JSON.stringify(body)
+    return POST(
+      this.request(`/api/companion/jobs/${jobId}/complete`, {
+        method: 'POST',
+        headers: payload !== undefined ? { 'content-type': 'application/json' } : {},
+        body: payload
+      }),
+      {
+        params: Promise.resolve({ id: jobId })
+      }
+    )
+  }
+
+  async fail(jobId: string, body?: unknown): Promise<Response> {
+    const { POST } = await import('../../../web/app/api/companion/jobs/[id]/fail/route')
+    const payload = body === undefined ? { error: 'pc_failed' } : typeof body === 'string' ? { error: body } : body
+    return POST(
+      this.request(`/api/companion/jobs/${jobId}/fail`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      }),
+      {
+        params: Promise.resolve({ id: jobId })
+      }
+    )
+  }
 }
 
 /** Reads a server-sent-event response for `ms` milliseconds (or until `until` says stop) and returns the text. */
