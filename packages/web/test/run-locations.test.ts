@@ -14,7 +14,7 @@ import {
   type Db
 } from '../db'
 import { claimJob, createCompanionJob, listCompanionEvents } from '../db/companion'
-import { seedCompanionFixture } from '../db/companion.fixtures'
+import { seedCompanionFixture, seedOccurrence } from '../db/companion.fixtures'
 import { dbHomeNodeStore } from '../db/home-route'
 import { deviceName, isDeviceOnline, listLocalIdentities } from '../db/local-runs'
 import { bossQueue, QUEUES, type Queue } from '../db/queues'
@@ -357,19 +357,22 @@ describe('revoking the PC', () => {
       payload: localRun(f.occA, identityA),
       targetDeviceId: f.a1.deviceId
     })
+    // One live local_run per occurrence (migration 0008), so each job has its own meeting.
+    const occ2 = await seedOccurrence(db, f.a1.memberId, identityA)
+    const occ3 = await seedOccurrence(db, f.a1.memberId, identityA)
     const claimed = await createCompanionJob(db, {
       memberId: f.a1.memberId,
-      occurrenceId: f.occA,
+      occurrenceId: occ2,
       kind: 'local_run',
-      payload: localRun(f.occA, identityA),
+      payload: localRun(occ2, identityA),
       targetDeviceId: f.a1.deviceId
     })
     await claimJob(db, f.a1, claimed, t0)
     const other = await createCompanionJob(db, {
       memberId: f.a1.memberId,
-      occurrenceId: f.occA,
+      occurrenceId: occ3,
       kind: 'local_run',
-      payload: localRun(f.occA, identityA),
+      payload: localRun(occ3, identityA),
       targetDeviceId: f.a2.deviceId
     })
 

@@ -15,7 +15,7 @@ async function seedDevice(db: Db, memberId: string, name: string): Promise<Devic
   return { deviceId: device!.id, memberId }
 }
 
-async function seedOccurrence(db: Db, memberId: string, identityId: string): Promise<string> {
+export async function seedOccurrence(db: Db, memberId: string, identityId: string): Promise<string> {
   const [entry] = await db
     .insert(timetableEntries)
     .values({
