@@ -44,7 +44,7 @@ export function createDeviceScope(db: Db, device: DeviceAuth): DeviceScope {
 }
 
 const unauthorised = () =>
-  Response.json({ error: 'unauthorized' }, { status: 401, headers: { 'cache-control': 'no-store' } })
+  Response.json({ error: 'device_revoked_or_unknown' }, { status: 401, headers: { 'cache-control': 'no-store' } })
 
 /**
  * Wraps a `/api/companion/*` handler. The request is authenticated by its `Authorization: Bearer tmd_...` header and

@@ -247,6 +247,8 @@ describe('device routes', () => {
       bodies.add(await res.text())
     }
     expect(bodies.size).toBe(1)
+    // The companion clears its stored token on exactly this body (preflight N14).
+    expect(JSON.parse([...bodies][0]!)).toEqual({ error: 'device_revoked_or_unknown' })
   })
 
   test('a revoked token is refused on the very next request', async () => {
