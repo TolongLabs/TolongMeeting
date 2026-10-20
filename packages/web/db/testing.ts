@@ -89,7 +89,7 @@ async function sweepLeaked(): Promise<void> {
   if (stale.length === 0) return
   let failed = 0
   await onAdmin((admin) =>
-    inPool(stale, DROP_CONCURRENCY, async (name) => {
+    inPool(stale, 2, async (name) => {
       try {
         await admin.query(dropSql(name))
       } catch {
@@ -116,19 +116,14 @@ function migrationsHash(): string {
 
 interface Template {
   name: string
-  /** Resolves when the sweep of leaked databases is done. */
-  sweep: Promise<void>
 }
 
+let swept = false
 let template: Promise<Template> | undefined
 /** Copies from the template run one at a time: Postgres refuses to copy a template that has other connections. */
 let copyQueue: Promise<unknown> = Promise.resolve()
 
 async function makeTemplate(): Promise<Template> {
-  // The sweep runs beside the migrations, so the first test does not wait for it.
-  const sweep = sweepLeaked().catch((error) =>
-    console.warn(`[testing] sweep of leaked test databases failed: ${error}`)
-  )
   const name = `tm_tpl_${process.pid}_${Date.now().toString(36)}_${migrationsHash()}`
   try {
     await onAdmin((admin) => admin.query(`create database "${name}"`))
@@ -144,7 +139,13 @@ async function makeTemplate(): Promise<Template> {
     await onAdmin((admin) => admin.query(dropSql(name)))
     throw error
   }
-  return { name, sweep }
+  // Once per process, and only after the template exists: a sweep running beside the build made the first test time out.
+  // Nothing waits for it; a sweep cut short by the end of the run is finished by the next one.
+  if (!swept) {
+    swept = true
+    void sweepLeaked().catch((error) => console.warn(`[testing] sweep of leaked test databases failed: ${error}`))
+  }
+  return { name }
 }
 
 /**
@@ -218,7 +219,6 @@ export async function dropAllTestDbs(): Promise<void> {
     )
     const made = await tpl?.catch(() => undefined) // a template that failed to build already dropped itself
     if (made) {
-      await made.sweep
       await drop(made.name)
     }
     if (dropped) throw dropped
