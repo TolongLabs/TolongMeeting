@@ -271,6 +271,9 @@ class OccurrenceRun {
 
   // The chat watcher of a chat entry: its tab and what stops it. Null without one, and after it stopped.
   private watcher: { app: ChatApp; tab: Page; stopper: Stopper } | null = null
+  // The tab a watcher is starting in, and later runs in. Set before `start()`, which can take minutes: a sign-in pause
+  // meanwhile must still keep its tabs off the chat app's host.
+  private watcherTab: { app: ChatApp; tab: Page } | null = null
   private watchPhase: WatchPhase = 'before'
   private watchersConfigured = false
   /** The chat app signed the bot out and the watcher is not running (or the loop saw it signed out). */
@@ -1016,12 +1019,13 @@ class OccurrenceRun {
     })
   }
 
-  // Accounts first, then the forms: the chat watcher starts before the sign-in check, so a chat app that is signed out
-  // is found by the same check as a form provider.
+  // The form dispatcher first: a restarted attempt's watcher offers the forms already in the chat as soon as it starts,
+  // and an offer needs the dispatcher. Then the chat watcher, before the sign-in check, so a chat app that is signed
+  // out is found by the same check as a form provider.
   private async verifyAccounts(): Promise<void> {
+    if (this.lecture) await this.startForms()
     await this.startWatching()
     await this.checkAccounts()
-    if (this.lecture) await this.startForms()
   }
 
   // Checks that each form provider (a lecture's) and the chat app (a chat entry's) is signed in on the desk. One that
@@ -1135,9 +1139,9 @@ class OccurrenceRun {
   // The tabs a sign-in pause opens. A live watcher already holds the chat app's tab, and WhatsApp Web allows one live
   // window per profile: no second tab on its host. A watcher that is signed out has its tab brought to the front.
   private signinTabOptions(): SigninTabOptions {
-    const watcher = this.watcher
+    const watcher = this.watcherTab
     if (watcher === null) return {}
-    return { exclude: [CHAT_HOST[watcher.app]], ...(this.chatSignedOut ? { front: watcher.tab } : {}) }
+    return { exclude: CHAT_HOST[watcher.app], ...(this.chatSignedOut ? { front: watcher.tab } : {}) }
   }
 
   // A restarted attempt rejoins the link an earlier attempt took from a chat: no watch wait, and a watcher that starts
@@ -1178,6 +1182,7 @@ class OccurrenceRun {
     try {
       const opened = await this.deskStep(() => this.deps.openDeskTab(this.deskPage()))
       tab = opened
+      this.watcherTab = { app: chat.app, tab: opened }
       const stopper = await start(opened, chat, (c) => this.onWatched(c))
       this.watcher = { app: chat.app, tab: opened, stopper }
       this.chatSignedOut = false
@@ -1185,6 +1190,7 @@ class OccurrenceRun {
       // Started after the stop signal (the setup abandoned it): nothing will use it, and teardown may be past its step.
       if (this.isAborted) await this.stopWatching()
     } catch (error) {
+      this.watcherTab = null
       if (tab !== null && !tab.isClosed()) {
         const failed = tab
         await failed.close().catch((e: unknown) => this.report('watcher tab', e))
@@ -1209,6 +1215,7 @@ class OccurrenceRun {
   private async stopWatching(): Promise<void> {
     const watcher = this.watcher
     this.watcher = null
+    this.watcherTab = null
     if (watcher !== null) {
       await this.bounded('watcher.stop', BOUND.stopWatcher, () => watcher.stopper.stop())
       await this.bounded('watcher tab', BOUND.stopWatcher, async () => {

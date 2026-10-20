@@ -358,3 +358,55 @@ test('a sign-in pause opens no second tab on the watcher host and keeps the watc
   expect(opened[0]!.some((u) => u.includes('web.whatsapp.com'))).toBe(false)
   expect(opened[0]).toHaveLength(5)
 })
+
+test('a sign-in pause while the watcher is still starting keeps its tabs off the chat host', async () => {
+  pollFast()
+  const opening = Promise.withResolvers<void>()
+  const pauseSent = Promise.withResolvers<void>()
+  let sentPause = false
+  let sentResume = false
+  const c = control((b, events) => {
+    if (!sentPause && b.state === 'verifying_accounts')
+      return ((sentPause = true), pauseSent.resolve(), ['pause_for_signin'])
+    const paused = events.some((e) => e.type === 'state' && e.data.signin === 'paused')
+    if (paused && !sentResume) return ((sentResume = true), ['resume_after_signin'])
+    return []
+  })
+  // The chat opens slowly (up to a minute in a real run): the pause comes while `open` is still in flight, and the
+  // watcher is not set yet.
+  const slow: ChatSourceReader = {
+    ...reader([message('1', 'Lecturer', [LINK])]),
+    open: async () => {
+      await opening.promise
+    }
+  }
+  const d = fake({ states: ['ended'], watcher: { reader: slow } }, 10)
+  const opened: string[][] = []
+  const inner = d.openSigninTabs
+  d.openSigninTabs = async (...args) => {
+    const close = await inner(...args)
+    opened.push([...d.tabs])
+    return close
+  }
+  const run = runOccurrence(withControl(c.url), d)
+  await pauseSent.promise
+  await Bun.sleep(100)
+  opening.resolve()
+  expect(await run).toMatchObject({ result: 'completed' })
+  expect(d.signinOptions[0]?.exclude).toEqual(['web.whatsapp.com'])
+  expect(opened).toHaveLength(1)
+  expect(opened[0]!.some((u) => u.includes('web.whatsapp.com'))).toBe(false)
+  expect(d.watcherTabs).toEqual([{ closed: true }])
+})
+
+test('a restarted attempt hands the forms in the chat to a dispatcher that already exists', async () => {
+  configureWatchers({ sleep: async () => void (await Bun.sleep(4)) })
+  await mkdir(base.dataDir, { recursive: true })
+  await writeFile(join(base.dataDir, 'joined-link'), LINK, { mode: 0o600 })
+  const d = fakeDeps({ states: ['ended'], watcher: { reader: reader([message('1', 'Lecturer', [FORM])]) } })
+  await runOccurrence({ ...base, attempt: 2 }, d)
+  expect(d.calls.indexOf('startFormDispatcher')).toBeLessThan(d.calls.indexOf('startWatcher'))
+  expect(d.forms?.offers.map((f) => f.url)).toEqual([FORM])
+  // No "link seen, not checked" ping: the form went to the dispatcher.
+  expect(d.pings.filter((p) => p.title.startsWith('Form') || p.title.startsWith('Link'))).toEqual([])
+})
