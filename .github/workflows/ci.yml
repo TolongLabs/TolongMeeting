@@ -56,6 +56,10 @@ jobs:
         run: docker pull "$(grep -oP 'image:\s*\Kcaddy:\S+' docker/compose.yaml)"
       - name: Caddy remote view contract
         run: bun test packages/web/test/caddy-vnc.test.ts
+      - name: Enable unprivileged user namespaces and iptables
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          command -v iptables >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends iptables; }
       - run: bun run test
 
   # Playwright specs are not part of `bun run test` (bunfig.toml ignores *.spec.ts). The image and host projects need the

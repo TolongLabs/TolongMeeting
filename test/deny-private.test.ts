@@ -103,11 +103,16 @@ const inNamespace = (script: string, env: Record<string, string> = {}) => {
   const p = Bun.spawnSync(['unshare', '-Urn', 'sh', '-c', script], { env: { ...process.env, ...env } })
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() }
 }
-const namespaces =
-  Bun.spawnSync(['unshare', '-Urn', 'iptables', '-w', '30', '-L', '-n'], { stdout: 'ignore', stderr: 'ignore' })
-    .exitCode === 0
-if (!namespaces && !process.env.CI)
-  console.warn('deny-private: unshare -Urn with iptables is unavailable; real-rule tests skipped')
+const checkNamespaces = Bun.spawnSync(['unshare', '-Urn', 'iptables', '-w', '30', '-L', '-n'], {
+  stdout: 'ignore',
+  stderr: 'pipe'
+})
+const namespaces = checkNamespaces.exitCode === 0
+if (!namespaces) {
+  const msg = `deny-private: unshare -Urn with iptables is unavailable (exit ${checkNamespaces.exitCode}): ${checkNamespaces.stderr.toString().trim()}`
+  if (!process.env.CI) console.warn(`${msg}; real-rule tests skipped`)
+  else console.error(`${msg}; forced in CI`)
+}
 const real = namespaces || process.env.CI ? describe : describe.skip
 
 const scratch = mkdtempSync(join(tmpdir(), 'tm-deny-private-'))
@@ -120,12 +125,19 @@ const dump = (commands: string) =>
     `${commands} && iptables -S ${CHAIN} && echo '#6' && ip6tables -S ${CHAIN} && echo '#out' && iptables -S OUTPUT && ip6tables -S OUTPUT`
   )
 
+const expectSuccess = (res: { code: number; err: string; out: string }) => {
+  if (res.code !== 0 && res.err.trim()) {
+    console.error(`Command failed with exit ${res.code}:\n${res.err}`)
+  }
+  expect(res.code, res.err).toBe(0)
+}
+
 real('real iptables in a throwaway namespace', () => {
   test('applies the ranges for IPv4 and IPv6, hooks OUTPUT first, and is unchanged by a re-run', () => {
     const once = dump(`${apply} --allow-tcp 192.168.65.254:41234`)
-    expect(once.code).toBe(0)
+    expectSuccess(once)
     const twice = dump(`${apply} --allow-tcp 192.168.65.254:41234 && ${apply} --allow-tcp 192.168.65.254:41234`)
-    expect(twice.code).toBe(0)
+    expectSuccess(twice)
     expect(twice.out).toBe(once.out)
 
     const [v4, rest] = once.out.split('#6\n')
@@ -143,7 +155,7 @@ real('real iptables in a throwaway namespace', () => {
 
   test('a re-run with other options replaces the chain: the old relay rule is gone, the new one is there', () => {
     const r = dump(`${apply} --allow-tcp 192.168.65.254:41234 && ${apply} --allow-tcp 192.168.65.1:5555`)
-    expect(r.code).toBe(0)
+    expectSuccess(r)
     expect(r.out).not.toContain('41234')
     expect(r.out).toContain('-d 192.168.65.1/32 -p tcp -m tcp --dport 5555 -j ACCEPT')
     expect(r.out.match(/--dport/g)).toHaveLength(1)
@@ -151,7 +163,7 @@ real('real iptables in a throwaway namespace', () => {
 
   test('--out-iface limits every rule to that interface and leaves loopback alone', () => {
     const r = dump(`${apply} --out-iface tailscale0`)
-    expect(r.code).toBe(0)
+    expectSuccess(r)
     const rules = r.out
       .split('#out\n')[0]!
       .split('\n')
@@ -166,7 +178,7 @@ real('real iptables in a throwaway namespace', () => {
     const r = inNamespace(
       `ip link set lo up && ip addr add 10.77.0.1/32 dev lo && ${apply} --allow-tcp localhost:5 && iptables -S ${CHAIN}`
     )
-    expect(r.code).toBe(0)
+    expectSuccess(r)
     expect(r.out).toContain('-A TM-DENY-PRIVATE -d 127.0.0.1/32 -p tcp -m tcp --dport 5 -j ACCEPT')
   })
 
@@ -174,7 +186,10 @@ real('real iptables in a throwaway namespace', () => {
     const r = inNamespace(
       `${apply} --allow-tcp no-such-host.invalid:5 --hold; echo "code=$?"; iptables -S OUTPUT; iptables -S ${CHAIN} 2>&1`
     )
-    expect(r.out).toMatch(/code=[1-9]/)
+    if (!r.out.match(/code=[1-9]/) && r.err.trim()) {
+      console.error(`Command unexpected failure:\n${r.err}`)
+    }
+    expect(r.out, r.err).toMatch(/code=[1-9]/)
     expect(r.err).toContain('cannot resolve no-such-host.invalid')
     expect(r.out).not.toContain(CHAIN + ' ')
     expect(r.out).not.toContain('-j TM-DENY-PRIVATE')
@@ -189,14 +204,20 @@ real('real iptables in a throwaway namespace', () => {
     }
     const path = `${stub}:${process.env.PATH}`
     const fatal = inNamespace(`${apply}; echo "code=$?"`, { PATH: path })
-    expect(fatal.out).toMatch(/code=[1-9]/)
+    if (!fatal.out.match(/code=[1-9]/) && fatal.err.trim()) {
+      console.error(`Command unexpected failure:\n${fatal.err}`)
+    }
+    expect(fatal.out, fatal.err).toMatch(/code=[1-9]/)
     expect(fatal.err).toContain('IPv6 is not disabled')
 
     const disabled = inNamespace(
       `echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6 && ${apply}; echo "code=$?"; iptables -S ${CHAIN} | tail -n 1`,
       { PATH: path }
     )
-    expect(disabled.out).toContain('code=0')
+    if (!disabled.out.includes('code=0') && disabled.err.trim()) {
+      console.error(`Command unexpected failure:\n${disabled.err}`)
+    }
+    expect(disabled.out, disabled.err).toContain('code=0')
     expect(disabled.out).toContain('-d 224.0.0.0/3 -j REJECT')
     expect(disabled.err).toContain('IPv6 rules skipped')
   })
@@ -210,7 +231,7 @@ real('real iptables in a throwaway namespace', () => {
         `iptables -S ${CHAIN} | grep -c '^-A'; ip6tables -S ${CHAIN} | grep -c '^-A'; ` +
         `iptables -S OUTPUT | sed -n 2p; ip6tables -S OUTPUT | sed -n 2p; kill $pid`
     )
-    expect(r.code).toBe(0)
+    expectSuccess(r)
     const [v4, v6, hook4, hook6] = r.out.trim().split('\n')
     expect(Number(v4)).toBe(1 + 1 + 1 + V4.length) // relay, replies, loopback, ranges
     expect(Number(v6)).toBe(1 + 1 + V6.length)
@@ -220,7 +241,10 @@ real('real iptables in a throwaway namespace', () => {
 
   test('a failing --hold run never prints the ready line and never holds', () => {
     const unresolved = inNamespace(`timeout 10 ${apply} --allow-tcp no-such-host.invalid:5 --hold; echo "code=$?"`)
-    expect(unresolved.out).toMatch(/code=1\b/)
+    if (!unresolved.out.match(/code=1\b/) && unresolved.err.trim()) {
+      console.error(`Command unexpected failure:\n${unresolved.err}`)
+    }
+    expect(unresolved.out, unresolved.err).toMatch(/code=1\b/)
     expect(unresolved.out).not.toContain('ready')
 
     const stub = join(scratch, 'bin-fail')
@@ -231,7 +255,10 @@ real('real iptables in a throwaway namespace', () => {
     }
     // IPv4 rules go in, then IPv6 is fatal: the ready line must not have been printed before that.
     const late = inNamespace(`timeout 10 ${apply} --hold; echo "code=$?"`, { PATH: `${stub}:${process.env.PATH}` })
-    expect(late.out).toMatch(/code=1\b/)
+    if (!late.out.match(/code=1\b/) && late.err.trim()) {
+      console.error(`Command unexpected failure:\n${late.err}`)
+    }
+    expect(late.out, late.err).toMatch(/code=1\b/)
     expect(late.out).not.toContain('ready')
     expect(late.err).toContain('IPv6 is not disabled')
   })
@@ -242,8 +269,13 @@ real('real iptables in a throwaway namespace', () => {
       { stdout: 'pipe', stderr: 'pipe' }
     )
     const out = await new Response(p.stdout).text()
-    await p.exited
+    const err = await new Response(p.stderr).text()
+    const code = await p.exited
+    const lines = out.trim().split('\n')
+    if (lines[0] !== 'deny-private: ready' && err.trim()) {
+      console.error(`--hold failed (exit ${code}):\n${err}`)
+    }
     // stdout is the ready line, then the rule count.
-    expect(out.trim().split('\n')).toEqual(['deny-private: ready', String(1 + 2 + V4.length)])
+    expect(lines, err).toEqual(['deny-private: ready', String(1 + 2 + V4.length)])
   })
 })
