@@ -1,4 +1,4 @@
-import { oauthRedirectUri } from './connections/oauth'
+import { oauthClientFromEnv } from './connections/oauth'
 import { createGdocsTarget } from './targets/gdocs'
 import { githubTarget } from './targets/github'
 import { createNotionTarget } from './targets/notion'
@@ -6,24 +6,8 @@ import { pdfTarget } from './targets/pdf'
 import { zipTarget } from './targets/zip'
 import type { ExportTarget, ExportTargetId, OAuthClient } from './types'
 
-/**
- * The OAuth client of a provider from `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` or `NOTION_CLIENT_ID` /
- * `NOTION_CLIENT_SECRET`, or null when either is unset or empty (Compose passes an unset variable as ''). The redirect
- * address is `<TM_PUBLIC_URL origin>/api/connections/<kind>/callback`, built by `oauthRedirectUri` (a trailing slash is
- * dropped; a path, query or user name in `TM_PUBLIC_URL` is refused).
- */
-export function oauthClientFromEnv(
-  kind: 'google' | 'notion',
-  env: Record<string, string | undefined> = process.env
-): OAuthClient | null {
-  const prefix = kind.toUpperCase()
-  const clientId = env[`${prefix}_CLIENT_ID`]
-  const clientSecret = env[`${prefix}_CLIENT_SECRET`]
-  if (!clientId || !clientSecret) return null
-  const base = env.TM_PUBLIC_URL
-  if (!base) throw new Error('TM_PUBLIC_URL is not set')
-  return { clientId, clientSecret, redirectUri: oauthRedirectUri(base, kind) }
-}
+// The web routes import this from `./connections/oauth` (through the `api` entry), which has no renderers.
+export { oauthClientFromEnv }
 
 /**
  * The targets this server can run. The downloads are always there. A remote target is added when its provider has an

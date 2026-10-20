@@ -7,7 +7,7 @@ import {
   saveGitHubConnection,
   type ApiResult,
   type ConnectionKind
-} from '@tm/exports'
+} from '@tm/exports/api'
 import { memberExportStores, type MemberExportStores } from '../db/exports'
 import { loadMasterKey } from '../db/secrets'
 import { providerFetch } from './provider-fetch'

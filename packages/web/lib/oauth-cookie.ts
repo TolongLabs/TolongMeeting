@@ -1,4 +1,4 @@
-import { OAUTH_STATE_TTL_MS } from '@tm/exports'
+import { OAUTH_STATE_TTL_MS } from '@tm/exports/api'
 
 // The sealed sign-in state travels in a cookie: HttpOnly, Secure, SameSite=Lax (the provider's redirect back is a
 // top-level GET, which Lax allows) and only sent to that provider's own routes. The value is sealed for the member and

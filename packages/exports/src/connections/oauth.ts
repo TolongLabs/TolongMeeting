@@ -1,5 +1,6 @@
 import { memberKey, openSecret, sealSecret, SecretError } from '@tm/core'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import type { OAuthClient } from '../types'
 
 export type OAuthProvider = 'google' | 'notion'
 
@@ -71,6 +72,25 @@ export function verifyOAuthState(
 export function oauthRedirectUri(publicOrigin: string, provider: OAuthProvider): string {
   const url = parsePublicOrigin(publicOrigin)
   return `${url.origin}/api/connections/${provider}/callback`
+}
+
+/**
+ * The OAuth client of a provider from `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` or `NOTION_CLIENT_ID` /
+ * `NOTION_CLIENT_SECRET`, or null when either is unset or empty (Compose passes an unset variable as ''). The redirect
+ * address is `<TM_PUBLIC_URL origin>/api/connections/<kind>/callback`, built by `oauthRedirectUri` (a trailing slash is
+ * dropped; a path, query or user name in `TM_PUBLIC_URL` is refused).
+ */
+export function oauthClientFromEnv(
+  kind: 'google' | 'notion',
+  env: Record<string, string | undefined> = process.env
+): OAuthClient | null {
+  const prefix = kind.toUpperCase()
+  const clientId = env[`${prefix}_CLIENT_ID`]
+  const clientSecret = env[`${prefix}_CLIENT_SECRET`]
+  if (!clientId || !clientSecret) return null
+  const base = env.TM_PUBLIC_URL
+  if (!base) throw new Error('TM_PUBLIC_URL is not set')
+  return { clientId, clientSecret, redirectUri: oauthRedirectUri(base, kind) }
 }
 
 function oauthAad(provider: OAuthProvider, memberId: string): string {

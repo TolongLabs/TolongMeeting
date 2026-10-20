@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import type { Connection } from '@tm/exports'
+import type { Connection } from '@tm/exports/api'
 import { DELETE as githubDELETE } from '../app/api/connections/github/route'
 import { DELETE as googleDELETE } from '../app/api/connections/google/route'
 import { DELETE as notionDELETE } from '../app/api/connections/notion/route'

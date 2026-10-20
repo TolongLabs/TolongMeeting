@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { open, realpath, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
-import { contentDisposition, downloadFileName, exportDownload } from '@tm/exports'
+import { contentDisposition, downloadFileName, exportDownload } from '@tm/exports/api'
 import type { MemberExportStores } from '../db/exports'
 import { notFound, serveFile, type OpenedFile } from './files'
 

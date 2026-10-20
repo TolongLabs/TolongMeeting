@@ -1,28 +1,3 @@
-export { loadBundle } from './bundle'
-export { contentDisposition, slugify } from './names'
-export * from './types'
-export type * from './store-types'
-export { redact } from './vault'
-export { saveGitHubConnection } from './connections/github'
-export { completeGoogleConnect, pickerToken, setGoogleFolder, startGoogleConnect } from './connections/google'
-export { OAUTH_STATE_TTL_MS } from './connections/oauth'
-export { removeConnection } from './connections/remove'
-export type { RemoveDeps } from './connections/remove'
-export { oauthClientFromEnv } from './registry'
-export {
-  buttonState,
-  connectionsRequest,
-  createExportRequest,
-  downloadFileName,
-  exportDownload,
-  listExportsRequest,
-  toExportView
-} from './api'
-export type { ApiDeps, ApiResult, ExportView } from './api'
-export {
-  beginNotionConnect,
-  completeNotionConnect,
-  notionClientFromEnv,
-  notionParentsRequest,
-  selectNotionParentRequest
-} from './connections/notion'
+// Everything the package offers: the web entry plus the target registry, which pulls in the renderers.
+export * from './api-entry'
+export { buildTargets } from './registry'

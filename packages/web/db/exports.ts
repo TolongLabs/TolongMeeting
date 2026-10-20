@@ -11,7 +11,7 @@ import {
   type MemberConnections,
   type MemberExports,
   type MemberOccurrences
-} from '@tm/exports'
+} from '@tm/exports/api'
 import { safeDbError } from './errors'
 import { connections, exports as exportsTable, occurrences } from './schema'
 import { sealColumn, openColumn } from './secrets'

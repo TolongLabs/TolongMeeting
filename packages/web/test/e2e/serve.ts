@@ -96,10 +96,9 @@ const env = {
   TM_MASTER_KEY_FILE: keyFile
 }
 
-// Every page, plus the sign-in API, and no other route handler. `next build` of the route handlers that import
-// `@tm/exports` fails where Bun cannot load `sharp` while collecting page data; the pages do not need them.
-const buildPaths = process.env.TM_E2E_BUILD_PATHS ?? 'app/**/page.tsx,app/api/auth/**'
-const build = Bun.spawn(['bun', '--bun', 'next', 'build', '--debug-build-paths', buildPaths], {
+// The whole site, as production builds it. TM_E2E_BUILD_PATHS (comma-separated globs) narrows it to speed up a run.
+const buildPaths = process.env.TM_E2E_BUILD_PATHS
+const build = Bun.spawn(['bun', '--bun', 'next', 'build', ...(buildPaths ? ['--debug-build-paths', buildPaths] : [])], {
   cwd: webRoot,
   env,
   stdout: 'inherit',

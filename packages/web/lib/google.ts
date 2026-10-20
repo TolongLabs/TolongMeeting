@@ -5,7 +5,7 @@ import {
   setGoogleFolder,
   startGoogleConnect,
   type ApiResult
-} from '@tm/exports'
+} from '@tm/exports/api'
 import { loadMasterKey } from '../db/secrets'
 import { exportStores } from './exports'
 import { callbackCrashed, clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
