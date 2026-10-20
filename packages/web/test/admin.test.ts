@@ -268,17 +268,27 @@ test('requireAdmin sends a non-admin to not-found and returns scope for an admin
   await db.update(members).set({ authUserId: adminAuthId }).where(eq(members.id, admin.memberId))
 
   let currentAuthId = regularAuthId
-  mock.module('next/headers', () => ({ headers: async () => new Headers() }))
+  const realHeaders = await import('next/headers')
+  const origHeaders = realHeaders.headers
+  const realAuth = await import('../lib/auth')
+  const origGetAuth = realAuth.getAuth
+  mock.module('next/headers', () => ({ ...realHeaders, headers: async () => new Headers() }))
   mock.module('../lib/auth', () => ({
+    ...realAuth,
     getAuth: () => ({ api: { getSession: async () => ({ user: { id: currentAuthId } }) } })
   }))
 
-  const { requireAdmin } = await import('../lib/session')
-  const nonAdminError = await requireAdmin().catch((e: unknown) => e)
-  expect((nonAdminError as { digest?: string })?.digest).toBe('NEXT_HTTP_ERROR_FALLBACK;404')
+  try {
+    const { requireAdmin } = await import('../lib/session')
+    const nonAdminError = await requireAdmin().catch((e: unknown) => e)
+    expect((nonAdminError as { digest?: string })?.digest).toBe('NEXT_HTTP_ERROR_FALLBACK;404')
 
-  currentAuthId = adminAuthId
-  const scope = await requireAdmin()
-  expect(scope.memberId).toBe(admin.memberId)
-  expect((await scope.me()).role).toBe('admin')
+    currentAuthId = adminAuthId
+    const scope = await requireAdmin()
+    expect(scope.memberId).toBe(admin.memberId)
+    expect((await scope.me()).role).toBe('admin')
+  } finally {
+    mock.module('next/headers', () => ({ ...realHeaders, headers: origHeaders }))
+    mock.module('../lib/auth', () => ({ ...realAuth, getAuth: origGetAuth }))
+  }
 })

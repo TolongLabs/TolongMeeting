@@ -582,7 +582,9 @@ function runnerDeps(http: typeof fetch): RunnerDeps {
     publicUrl: PUBLIC_URL,
     http,
     sleep: async () => undefined,
-    log: () => undefined
+    log: (msg) => {
+      if (msg.includes('failed')) console.error('export failed log:', msg)
+    }
   }
 }
 
@@ -756,6 +758,10 @@ describe('exports (plan 07)', () => {
     const [row] = ((await (await listAs(alice, id)).json()) as { exports: any[] }).exports.filter(
       (e) => e.target === 'github'
     )
+    if (row?.status !== 'succeeded') {
+      const [dbRow] = await stack.db.select().from(exportsTable).where(eq(exportsTable.id, row.id))
+      console.error('Export failed row:', { row, dbRow })
+    }
     expect(row).toMatchObject({ status: 'succeeded', downloadUrl: null })
     expect(row.url).toMatch(/^https:\/\/github\.com\/acme\/notes\/tree\/main\/meetings\/[a-z0-9-]+$/)
 

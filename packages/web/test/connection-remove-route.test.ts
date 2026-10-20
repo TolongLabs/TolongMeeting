@@ -134,40 +134,60 @@ test('removeConnectionAction catches provider errors and redirects with fixed pr
   const authUserId = await seedAuthUser(db)
   await db.update(members).set({ authUserId }).where(eq(members.id, a.memberId))
 
+  const realHeaders = await import('next/headers')
+  const origHeaders = realHeaders.headers
+  const realAuth = await import('../lib/auth')
+  const origGetAuth = realAuth.getAuth
+  const realExports = await import('../lib/exports')
+  const origExportStores = realExports.exportStores
+  const origRemoveConnectionResponse = realExports.removeConnectionResponse
+
   let removalRunner: () => Promise<Response> = async () =>
     new Response(JSON.stringify({ error: 'failed' }), { status: 500 })
-  mock.module('next/headers', () => ({ headers: async () => new Headers() }))
+  mock.module('next/headers', () => ({ ...realHeaders, headers: async () => new Headers() }))
   mock.module('../lib/auth', () => ({
+    ...realAuth,
     getAuth: () => ({ api: { getSession: async () => ({ user: { id: authUserId } }) } })
   }))
   mock.module('../lib/exports', () => ({
+    ...realExports,
     exportStores: () => ({}),
     removeConnectionResponse: async () => removalRunner()
   }))
 
-  const { removeConnectionAction } = await import('../app/connections/actions')
+  try {
+    const { removeConnectionAction } = await import('../app/connections/actions')
 
-  const googleForm = new FormData()
-  googleForm.set('kind', 'google')
+    const googleForm = new FormData()
+    googleForm.set('kind', 'google')
 
-  // When removal answers non-200 / provider failure:
-  const res1 = await removeConnectionAction(googleForm).catch((e: unknown) => e)
-  expect((res1 as { digest?: string })?.digest).toBe(
-    'NEXT_REDIRECT;replace;/connections?google=google_unavailable;307;'
-  )
+    // When removal answers non-200 / provider failure:
+    const res1 = await removeConnectionAction(googleForm).catch((e: unknown) => e)
+    expect((res1 as { digest?: string })?.digest).toBe(
+      'NEXT_REDIRECT;replace;/connections?google=google_unavailable;307;'
+    )
 
-  // When removal throws an ExportError:
-  removalRunner = async () => {
-    throw new ExportError('failed', 'provider error')
+    // When removal throws an ExportError:
+    removalRunner = async () => {
+      throw new ExportError('failed', 'provider error')
+    }
+    const res2 = await removeConnectionAction(googleForm).catch((e: unknown) => e)
+    expect((res2 as { digest?: string })?.digest).toBe(
+      'NEXT_REDIRECT;replace;/connections?google=google_unavailable;307;'
+    )
+
+    // When removal throws an unexpected error, it rethrows:
+    removalRunner = async () => {
+      throw new Error('unexpected crash')
+    }
+    await expect(removeConnectionAction(googleForm)).rejects.toThrow('unexpected crash')
+  } finally {
+    mock.module('next/headers', () => ({ ...realHeaders, headers: origHeaders }))
+    mock.module('../lib/auth', () => ({ ...realAuth, getAuth: origGetAuth }))
+    mock.module('../lib/exports', () => ({
+      ...realExports,
+      exportStores: origExportStores,
+      removeConnectionResponse: origRemoveConnectionResponse
+    }))
   }
-  const res2 = await removeConnectionAction(googleForm).catch((e: unknown) => e)
-  expect((res2 as { digest?: string })?.digest).toBe(
-    'NEXT_REDIRECT;replace;/connections?google=google_unavailable;307;'
-  )
-
-  // When removal throws an unexpected error, it rethrows:
-  removalRunner = async () => {
-    throw new Error('unexpected crash')
-  }
-  await expect(removeConnectionAction(googleForm)).rejects.toThrow('unexpected crash')
 })
