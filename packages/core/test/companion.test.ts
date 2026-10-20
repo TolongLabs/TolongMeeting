@@ -211,6 +211,20 @@ describe('summaries, run locations', () => {
     const item = { occurrenceId: 'occ_1', fileName: '2026-10-21 1400 Data Mining.md', readyAt: '2026-10-21T08:00:00Z' }
     expect(SummaryListItemSchema.parse(item).fileName).toBe(item.fileName)
     expect(() => SummaryListItemSchema.parse({ ...item, fileName: '' })).toThrow()
+    for (const fileName of [
+      'evil.bat',
+      'a.cmd',
+      'a.vbs',
+      'a.js',
+      'a.hta',
+      'a.lnk',
+      'a.url',
+      'a.scr',
+      'noext',
+      'a.md.exe'
+    ]) {
+      expect(() => SummaryListItemSchema.parse({ ...item, fileName })).toThrow()
+    }
     expect(() => SummaryListItemSchema.parse({ ...item, readyAt: 'soon' })).toThrow()
   })
   test('a run-location choice names a PC only for local', () => {

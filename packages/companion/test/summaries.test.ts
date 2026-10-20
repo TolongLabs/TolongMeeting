@@ -3,7 +3,8 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeF
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CompanionApi } from '../src/api'
-import { showSummaryNotification, syncSummaries, windowsSafeFileName } from '../src/summaries'
+import { existsSync } from 'node:fs'
+import { isOpenableSummary, showSummaryNotification, syncSummaries, windowsSafeFileName } from '../src/summaries'
 import { StateStore } from '../src/state'
 
 const dirs: string[] = []
@@ -71,29 +72,42 @@ describe('windowsSafeFileName', () => {
   })
 
   test('prefixes reserved device names, with or without an extension, in any case', () => {
-    for (const device of ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM9', 'LPT1', 'LPT9', 'nul', 'Com3', 'COM\u00B9']) {
+    const devices = ['CON', 'PRN', 'AUX', 'NUL', 'COM0', 'COM1', 'COM9', 'LPT0', 'LPT1', 'LPT9', 'nul', 'Com3']
+    for (const device of [...devices, 'COM\u00B9', 'CONIN$', 'CONOUT$', 'CLOCK$', 'clock$']) {
       expect(windowsSafeFileName(`${device}.md`)).toBe(`_${device}.md`)
-      expect(windowsSafeFileName(device)).toBe(`_${device}`)
+      expect(windowsSafeFileName(device)).toBe(`_${device}.md`)
     }
     expect(windowsSafeFileName('NUL .md')).toBe('_NUL.md')
-    expect(windowsSafeFileName('CON.tar.gz')).toBe('_CON.tar.gz')
+    expect(windowsSafeFileName('CON.bat')).toBe('_CON.md')
   })
 
   test('leaves names that only start like a device name alone', () => {
     expect(windowsSafeFileName('CONSOLE.md')).toBe('CONSOLE.md')
     expect(windowsSafeFileName('COM10.md')).toBe('COM10.md')
-    expect(windowsSafeFileName('LPT0.md')).toBe('LPT0.md')
+    expect(windowsSafeFileName('CONIN.md')).toBe('CONIN.md')
     expect(windowsSafeFileName('NUL-x.md')).toBe('NUL-x.md')
   })
 
   test('never keeps a path separator or a dot run', () => {
     expect(windowsSafeFileName('../../escape.md')).toBe('----escape.md')
-    expect(windowsSafeFileName('/etc/passwd')).toBe('-etc-passwd')
-    expect(windowsSafeFileName('C:\\Windows\\win.ini')).toBe('C--Windows-win.ini')
+    expect(windowsSafeFileName('/etc/passwd')).toBe('-etc-passwd.md')
+    expect(windowsSafeFileName('C:\\Windows\\win.ini')).toBe('C--Windows-win.md')
+  })
+
+  test('always ends in .md: the server never picks the extension (a click opens the file)', () => {
+    for (const ext of ['bat', 'cmd', 'vbs', 'js', 'hta', 'lnk', 'url', 'scr', 'exe', 'ps1', 'BAT', 'md', 'MD']) {
+      expect(windowsSafeFileName(`evil.${ext}`)).toBe('evil.md')
+    }
+    expect(windowsSafeFileName('evil.bat ')).toBe('evil.md')
+    expect(windowsSafeFileName('evil.bat.')).toBe('evil.md')
+    expect(windowsSafeFileName('noext')).toBe('noext.md')
+    expect(windowsSafeFileName('.bat')).toBe('Summary.md')
+    expect(windowsSafeFileName('x.txt.bat')).toBe('x.txt.md')
   })
 
   test('falls back to Summary when nothing is left of the stem', () => {
     expect(windowsSafeFileName('   .md')).toBe('Summary.md')
+    expect(windowsSafeFileName('')).toBe('Summary.md')
   })
 
   test('caps the length at 200 and keeps the extension', () => {
@@ -219,7 +233,8 @@ describe('syncSummaries', () => {
 })
 
 describe('showSummaryNotification', () => {
-  test('shows the notification without opening anything; a click opens the file', () => {
+  /** A notifier that keeps the click handler, and an `openPath` that records what the system would open. */
+  function rig() {
     const opened: string[] = []
     const shown: { title: string; body: string }[] = []
     let click = () => {}
@@ -231,29 +246,87 @@ describe('showSummaryNotification', () => {
         }
       },
       openPath: async (p: string) => (opened.push(p), ''),
-      exists: () => true
+      exists: (p: string) => existsSync(p)
     }
-    showSummaryNotification('C:\\S\\2026-10-21 1400 Data Mining.md', 'C:\\S', d)
+    const clicked = async () => {
+      click()
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    return { opened, shown, d, clicked }
+  }
+
+  test('shows the notification without opening anything; a click opens the file', async () => {
+    const dir = await tmpDir()
+    const file = join(dir, '2026-10-21 1400 Data Mining.md')
+    await writeFile(file, 'x')
+    const { opened, shown, d, clicked } = rig()
+    showSummaryNotification(file, dir, d)
     expect(opened).toEqual([])
     expect(shown[0]).toEqual(expect.objectContaining({ title: 'Summary ready', body: '2026-10-21 1400 Data Mining' }))
-    click()
-    expect(opened).toEqual(['C:\\S\\2026-10-21 1400 Data Mining.md'])
+    await clicked()
+    expect(opened).toEqual([file])
   })
 
-  test('a click on a summary whose file was moved opens the folder', () => {
-    const opened: string[] = []
-    let click = () => {}
-    showSummaryNotification('C:\\S\\gone.md', 'C:\\S', {
-      notifier: {
-        show: (_n, on) => {
-          click = on.click
-        }
-      },
-      openPath: async (p) => (opened.push(p), ''),
-      exists: () => false
-    })
-    click()
-    expect(opened).toEqual(['C:\\S'])
+  test('a click on a summary whose file was moved opens the folder', async () => {
+    const dir = await tmpDir()
+    const { opened, d, clicked } = rig()
+    showSummaryNotification(join(dir, 'gone.md'), dir, d)
+    await clicked()
+    expect(opened).toEqual([dir])
+  })
+
+  test('a click never opens a program, a link, or a file outside the folder: it opens the folder', async () => {
+    const dir = await tmpDir()
+    const outside = await tmpDir()
+    await writeFile(join(dir, 'evil.bat'), 'calc')
+    await writeFile(join(dir, 'evil.md.bat'), 'calc')
+    await writeFile(join(outside, 'secret.md'), 'x')
+    await symlink(join(outside, 'secret.md'), join(dir, 'link.md'))
+    await mkdir(join(dir, 'folder.md'))
+    for (const path of [
+      join(dir, 'evil.bat'),
+      join(dir, 'evil.md.bat'),
+      join(dir, 'link.md'),
+      join(dir, 'folder.md')
+    ]) {
+      const { opened, d, clicked } = rig()
+      showSummaryNotification(path, dir, d)
+      await clicked()
+      expect(opened).toEqual([dir])
+    }
+    const { opened, d, clicked } = rig()
+    showSummaryNotification(join(outside, 'secret.md'), dir, d)
+    await clicked()
+    expect(opened).toEqual([dir])
+  })
+})
+
+describe('isOpenableSummary', () => {
+  test('accepts a regular .md file inside the folder only', async () => {
+    const dir = await tmpDir()
+    await writeFile(join(dir, 'a.md'), 'x')
+    await writeFile(join(dir, 'A.MD'), 'x')
+    await mkdir(join(dir, 'sub'))
+    await writeFile(join(dir, 'sub', 'b.md'), 'x')
+    await writeFile(join(dir, 'a.txt'), 'x')
+    expect(await isOpenableSummary(join(dir, 'a.md'), dir)).toBe(true)
+    expect(await isOpenableSummary(join(dir, 'A.MD'), dir)).toBe(true)
+    expect(await isOpenableSummary(join(dir, 'sub', 'b.md'), dir)).toBe(true)
+    expect(await isOpenableSummary(join(dir, 'a.txt'), dir)).toBe(false)
+    expect(await isOpenableSummary(join(dir, 'missing.md'), dir)).toBe(false)
+    expect(await isOpenableSummary(join(dir, 'sub', '..', '..', 'x.md'), dir)).toBe(false)
+  })
+})
+
+describe('syncSummaries with a hostile server', () => {
+  test('a server file name that does not end in .md is refused before anything is written', async () => {
+    const base = await tmpDir()
+    const dir = join(base, 'Meeting summaries')
+    const api = apiFor([
+      { occurrenceId: 'occ-a', fileName: 'evil.bat', readyAt: '2026-10-21T08:00:00.000Z', text: 'calc.exe' }
+    ])
+    await expect(syncSummaries({ api, dir, state: await stateIn(base) })).rejects.toThrow()
+    expect(await readdir(dir)).toEqual([])
   })
 })
 

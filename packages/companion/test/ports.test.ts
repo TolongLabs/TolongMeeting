@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   electronKeepAwake,
   electronNotifier,
@@ -99,12 +102,73 @@ describe('electronKeepAwake', () => {
   })
 })
 
+describe('electronShell openPath refuses what is not a summary', () => {
+  test('only a regular .md file inside the summaries folder, or the folder itself', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tm-shell-'))
+    const outside = await mkdtemp(join(tmpdir(), 'tm-shell-out-'))
+    try {
+      await writeFile(join(dir, 'ok.md'), 'x')
+      for (const name of [
+        'evil.bat',
+        'evil.cmd',
+        'evil.vbs',
+        'evil.js',
+        'evil.hta',
+        'evil.lnk',
+        'evil.url',
+        'evil.scr'
+      ]) {
+        await writeFile(join(dir, name), 'x')
+      }
+      await writeFile(join(outside, 'out.md'), 'x')
+      await symlink(join(outside, 'out.md'), join(dir, 'link.md'))
+      const opened: string[] = []
+      const shell = electronShell(
+        { openPath: async (p) => (opened.push(p), ''), openExternal: async () => {} },
+        () => dir
+      )
+      await shell.openPath(join(dir, 'ok.md'))
+      await shell.openPath(dir)
+      expect(opened).toEqual([join(dir, 'ok.md'), dir])
+      for (const bad of [
+        join(dir, 'evil.bat'),
+        join(dir, 'evil.cmd'),
+        join(dir, 'evil.vbs'),
+        join(dir, 'evil.js'),
+        join(dir, 'evil.hta'),
+        join(dir, 'evil.lnk'),
+        join(dir, 'evil.url'),
+        join(dir, 'evil.scr'),
+        join(dir, 'link.md'),
+        join(outside, 'out.md'),
+        join(dir, 'missing.md'),
+        outside
+      ]) {
+        await expect(shell.openPath(bad)).rejects.toThrow('refusing')
+      }
+      expect(opened).toHaveLength(2)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('electronShell', () => {
   test('openPath throws Electron\u2019s error text', async () => {
-    const ok = electronShell({ openPath: async () => '', openExternal: async () => {} })
-    await ok.openPath('/a.md')
-    const bad = electronShell({ openPath: async () => 'Failed to open path', openExternal: async () => {} })
-    await expect(bad.openPath('/a.md')).rejects.toThrow('Failed to open path')
+    const dir = await mkdtemp(join(tmpdir(), 'tm-shell-'))
+    try {
+      await writeFile(join(dir, 'a.md'), 'x')
+      const ok = electronShell({ openPath: async () => '', openExternal: async () => {} }, () => dir)
+      await ok.openPath(join(dir, 'a.md'))
+      const bad = electronShell(
+        { openPath: async () => 'Failed to open path', openExternal: async () => {} },
+        () => dir
+      )
+      await expect(bad.openPath(join(dir, 'a.md'))).rejects.toThrow('Failed to open path')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   test('openExternal opens only http and https links', async () => {

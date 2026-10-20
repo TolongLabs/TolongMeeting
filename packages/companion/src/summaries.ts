@@ -1,5 +1,5 @@
 import { lstat, mkdir, realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import type { CompanionApi } from './api'
 import { isMissing, writeFileAtomic } from './atomic'
 import type { DesktopNotifier } from './notifier'
@@ -13,28 +13,33 @@ const MAX_NAME = 200
 const MAX_CLASHES = 100
 const FORBIDDEN = /[<>:"/\\|?*\p{Cc}]/gu
 /** A device name by itself, or before the first dot, with or without an extension (`CON.md`, `nul .txt`). */
-const RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/i
+const RESERVED = /^(CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³]|CONIN\$|CONOUT\$|CLOCK\$)$/i
+/** Every summary is saved with this extension, whatever the server called it. */
+const EXT = '.md'
 
 /**
- * Makes a server-supplied file name safe for a Windows folder. Separators, `<>:"|?*` and control characters become `-`;
- * runs of dots become `-`, so no `..` survives; the stem loses leading and trailing dots and spaces; a reserved device
- * name gets a `_` prefix; the name is cut to `MAX_NAME` units, keeping the extension. An empty stem becomes `Summary`.
+ * Makes a server-supplied file name safe for a Windows folder, and always `<stem>.md`. A summary is opened with the
+ * system's default program on a click, so the server never picks the extension: the last one is dropped and `.md` is
+ * put on. Separators, `<>:"|?*` and control characters become `-`; runs of dots become `-`, so no `..` survives; the
+ * stem loses leading and trailing dots and spaces; a reserved device name gets a `_` prefix; the name is cut to
+ * `MAX_NAME` units. An empty stem becomes `Summary`.
  */
 export function windowsSafeFileName(name: string): string {
-  const cleaned = name.replace(FORBIDDEN, '-').replace(/\.{2,}/g, '-')
+  const cleaned = name
+    .replace(FORBIDDEN, '-')
+    .replace(/\.{2,}/g, '-')
+    .replace(/[ .]+$/, '')
   const dot = cleaned.lastIndexOf('.')
   const tail = dot === -1 ? '' : cleaned.slice(dot + 1).replace(/ +$/, '')
   const hasExt = /^[^ .]{1,16}$/.test(tail)
-  const ext = hasExt ? tail : ''
   let stem = (hasExt ? cleaned.slice(0, dot) : cleaned).replace(/^[ .]+|[ .]+$/g, '')
   if (stem === '') stem = 'Summary'
   if (RESERVED.test(stem.split('.')[0]!.replace(/ +$/, ''))) stem = `_${stem}`
-  const room = ext ? MAX_NAME - ext.length - 1 : MAX_NAME
-  stem = stem.slice(0, room)
+  stem = stem.slice(0, MAX_NAME - EXT.length)
   // Never end on half a surrogate pair.
   if (/[\uD800-\uDBFF]$/.test(stem)) stem = stem.slice(0, -1)
   stem = stem.replace(/[ .]+$/, '') || 'Summary'
-  return ext ? `${stem}.${ext}` : stem
+  return `${stem}${EXT}`
 }
 
 export interface SummarySyncDeps {
@@ -117,8 +122,26 @@ export async function syncSummaries(d: SummarySyncDeps): Promise<string[]> {
 }
 
 /**
- * Shows the "Summary ready" notification for a saved file. The click opens the file, or the folder when the file was
- * moved. Nothing is opened here.
+ * Whether `path` is a file the app may hand to the system's default program: a regular file (not a link) whose name
+ * ends in `.md`, and whose real location is inside the real summaries folder. A missing file is not openable.
+ */
+export async function isOpenableSummary(path: string, dir: string): Promise<boolean> {
+  if (!/\.md$/i.test(path)) return false
+  try {
+    if (!(await lstat(path)).isFile()) return false
+    const [real, home] = await Promise.all([realpath(path), realpath(dir)])
+    const fold = process.platform === 'win32' ? (p: string) => p.toLowerCase() : (p: string) => p
+    return fold(dirname(real)) === fold(home) || fold(real).startsWith(fold(home) + sep)
+  } catch (e) {
+    if (isMissing(e)) return false
+    throw e
+  }
+}
+
+/**
+ * Shows the "Summary ready" notification for a saved file. The click opens the file when it is a regular `.md` file
+ * inside the summaries folder, and the folder otherwise (the file was moved, or is something else). Nothing is opened
+ * here.
  */
 export function showSummaryNotification(
   path: string,
@@ -134,7 +157,10 @@ export function showSummaryNotification(
     { title: 'Summary ready', body: file.replace(/\.md$/i, ''), sticky: false, buttons: [] },
     {
       click: () => {
-        void d.openPath(d.exists(path) ? path : dir)
+        void (async () => {
+          const open = d.exists(path) && (await isOpenableSummary(path, dir))
+          await d.openPath(open ? path : dir)
+        })()
       },
       action: () => {}
     }

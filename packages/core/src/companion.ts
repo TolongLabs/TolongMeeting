@@ -259,7 +259,8 @@ export interface SummaryListItem {
 }
 export const SummaryListItemSchema = z.strictObject({
   occurrenceId: OccurrenceIdSchema,
-  fileName: text(200),
+  // A summary is always saved as Markdown, so a name that ends any other way is not one this app saves or opens.
+  fileName: text(200).refine((n) => /\.md$/i.test(n), 'a summary file name must end in .md'),
   readyAt: stamp
 }) satisfies z.ZodType<SummaryListItem>
 
