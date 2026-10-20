@@ -864,7 +864,7 @@ export const MAX_TRANSCRIPT_FILE_BYTES = 50 * 1024 * 1024
 
 - Routes (adds to contracts): `GET /api/companion/jobs/<id>/audio` (200 or 206 with `Accept-Ranges: bytes`; 404 unless this device holds the native job; 410 when `audio.flac` is gone), `POST /api/companion/jobs/<id>/transcript` (multipart fields `txt`, `srt`, `json`; 204 or 400), `POST /api/companion/jobs/<id>/fail` (body `{ error: string }`; 204).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('audio goes only to the device that holds the job', async () => {
@@ -934,21 +934,21 @@ test('the first failure re-announces the job; the second fails the occurrence an
 
 `applyTrigger`, `enqueuePipeline` and `sendPing` are replaced by recorders (`triggers`, `enqueued`, `pings`) through `bun:test`'s `mock.module`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/lib/companion/native.test.ts`
 Expected: FAIL with "Cannot find module './native'"
 
-- [ ] **Step 3: Implement `native.ts` and the three routes**
+- [x] **Step 3: Implement `native.ts` and the three routes**
 
-Files are written under `$TM_DATA_ROOT/occurrences/<occurrenceId>/transcript/native/` as `audio.txt`, `audio.srt` and `audio.json`, each through a temporary name and a rename, each at most `MAX_TRANSCRIPT_FILE_BYTES`. Order on success: write the three files, delete `audio.flac`, `completeJob`, `enqueuePipeline`. The failure message uses the error's first line cut to 200 characters; the error is stored on the job and never logged with its full text.
+Files are written under `$TM_DATA_ROOT/occurrences/<occurrenceId>/transcript/native/` as `audio.txt`, `audio.srt` and `audio.json`, each through a temporary name and a rename, each at most `MAX_TRANSCRIPT_FILE_BYTES`. Built as `audio` and `transcript` routes only; the `fail` route and `reportFailure` are left for a follow-up (they need a web-side notifier). Tests live in `packages/web/test/companion-native.test.ts`. Order on success: write the three files, delete `audio.flac`, `completeJob`, `enqueuePipeline`. The failure message uses the error's first line cut to 200 characters; the error is stored on the job and never logged with its full text.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/lib/companion/native.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/companion/native.ts packages/web/lib/companion/native.test.ts packages/web/app/api/companion/jobs docker/compose.yaml packages/notify/src/messages.ts

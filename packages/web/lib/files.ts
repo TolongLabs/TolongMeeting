@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { open, realpath, type FileHandle } from 'node:fs/promises'
-import { extname, resolve, sep } from 'node:path'
+import { extname, isAbsolute, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import type { MemberScope } from './scope'
 
@@ -77,6 +77,14 @@ export async function openMemberFile(
   const lexical = await scope.artefactFile(occurrenceId, relPath)
   if (lexical === null) return null
   await hooks.afterLookup?.()
+  return openInside(lexical, resolve(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId))
+}
+
+/**
+ * The descriptor-checked open both public openers use: `O_NOFOLLOW | O_NONBLOCK`, then the descriptor's real path must
+ * lie inside `dir` and `fstat` must say it is a regular file. Anything else closes the descriptor and gives null.
+ */
+async function openInside(lexical: string, dir: string): Promise<OpenedFile | null> {
   let handle: FileHandle
   try {
     handle = await open(lexical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -85,7 +93,6 @@ export async function openMemberFile(
     throw e
   }
   try {
-    const dir = resolve(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId)
     const [actual, base, info] = await Promise.all([
       realpath(`/proc/self/fd/${handle.fd}`),
       realpath(dir),
@@ -99,6 +106,25 @@ export async function openMemberFile(
   }
   await handle.close().catch(() => undefined)
   return null
+}
+
+/**
+ * Opens a file of an occurrence that is not an artefact row (today `audio.flac`, which a device downloads), by the same
+ * descriptor checks as `openMemberFile`. The caller has already decided the requester may read it: this only makes
+ * sure the path is the occurrence directory plus a plain relative path, and that the file is a regular file that
+ * really lives inside the directory (the worker that once wrote the tree is untrusted). Null for anything else.
+ */
+export async function openOccurrenceFile(
+  dir: string,
+  relPath: string,
+  hooks: OpenHooks = {}
+): Promise<OpenedFile | null> {
+  if (relPath === '' || relPath.includes('\0') || isAbsolute(relPath)) return null
+  const base = resolve(dir)
+  const lexical = resolve(base, relPath)
+  if (!lexical.startsWith(base + sep)) return null
+  await hooks.afterLookup?.()
+  return openInside(lexical, base)
 }
 
 /** A digit string of more than 15 digits is bigger than any file: it clamps instead of losing precision (RFC 9110). */
