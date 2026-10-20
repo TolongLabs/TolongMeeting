@@ -425,7 +425,7 @@ test('watcher problems: one message each, and sign-in offered only for a sign-ou
     'More than one WhatsApp chat has the name on the timetable entry. Rename one or change the entry, and paste the meeting link on the meeting page this time.'
   )
   expect(ping('not_loaded').message).toBe(
-    "WhatsApp didn't finish loading within 60 seconds, so the bot isn't watching the chat. Paste the meeting link on the meeting page if one is posted."
+    "WhatsApp didn't finish loading, so the bot isn't watching the chat. Paste the meeting link on the meeting page if one is posted."
   )
   expect(ping('lost').message).toBe(
     "The bot lost the chat and stopped watching it. Paste the meeting link on the meeting page if one is posted; forms posted there won't be seen."
@@ -472,7 +472,7 @@ test('watching-off copy for the home-only and switched-off gates', () => {
   ).toEqual({
     title: 'Not watching Discord: Data Mining',
     message:
-      "Discord is watched only for identities that run at home or on your PC, so the bot won't watch it for Data Mining. Paste the meeting link on the meeting page, or change where this identity runs.",
+      "Discord is watched only for accounts that run at home or on your PC, so the bot won't watch it for Data Mining. Paste the meeting link on the meeting page, or change where this account runs.",
     priority: 'high'
   })
 })

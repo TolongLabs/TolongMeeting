@@ -147,7 +147,7 @@ function watcherProblemMessage(app: ChatApp, problem: WatcherProblem): string {
     case 'ambiguous':
       return `More than one ${name} chat has the name on the timetable entry. Rename one or change the entry, and paste the meeting link on the meeting page this time.`
     case 'not_loaded':
-      return `${name} didn't finish loading within 60 seconds, so the bot isn't watching the chat. Paste the meeting link on the meeting page if one is posted.`
+      return `${name} didn't finish loading, so the bot isn't watching the chat. Paste the meeting link on the meeting page if one is posted.`
     case 'lost':
       return "The bot lost the chat and stopped watching it. Paste the meeting link on the meeting page if one is posted; forms posted there won't be seen."
     case 'signed_out':
@@ -328,7 +328,7 @@ export const pings = {
     const message =
       p.gate === 'none'
         ? `${name} watching is switched off, so the bot won't watch it for ${p.entry}. Paste the meeting link on the meeting page.`
-        : `${name} is watched only for identities that run at home or on your PC, so the bot won't watch it for ${p.entry}. Paste the meeting link on the meeting page, or change where this identity runs.`
+        : `${name} is watched only for accounts that run at home or on your PC, so the bot won't watch it for ${p.entry}. Paste the meeting link on the meeting page, or change where this account runs.`
     return {
       title: `Not watching ${name}: ${p.entry}`,
       message,

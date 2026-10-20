@@ -26,7 +26,7 @@ test('app options follow the gate and the run location', () => {
     {
       app: 'whatsapp',
       enabled: false,
-      note: 'WhatsApp is watched only for identities that run at home or on your PC. Change where this identity runs, or choose another link source.'
+      note: 'WhatsApp is watched only for accounts that run at home or on your PC. Change where this account runs, or choose another link source.'
     },
     { app: 'discord', enabled: true, note: null }
   ])
@@ -41,7 +41,7 @@ test('app options follow the gate and the run location', () => {
 
 test('a refusal carries the gate message', () => {
   const gate = { whatsapp: 'home_only', discord: 'home_only' } as const
-  expect(watchingNotAllowedMessage('discord', gate)).toStartWith('Discord is watched only for identities')
+  expect(watchingNotAllowedMessage('discord', gate)).toStartWith('Discord is watched only for accounts')
   const error = new WatchingNotAllowedError('whatsapp', gate)
   expect(error.message).toBe(watchingNotAllowedMessage('whatsapp', gate))
   expect(error).toBeInstanceOf(Error)
@@ -59,7 +59,7 @@ test('sign-in notes follow the gate', () => {
   expect(signinNotes('server', { whatsapp: 'none', discord: 'home_only' })).toEqual({
     whatsapp: "WhatsApp watching is switched off, so there's no need to link it.",
     discord:
-      "Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC."
+      "Don't sign in to Discord here: this account runs on the server, and Discord is watched only for accounts that run at home or on your PC."
   })
   expect(signinNotes('local', { whatsapp: 'none', discord: 'home_only' }).whatsapp).toBe(
     "WhatsApp watching is switched off, so there's no need to link it."

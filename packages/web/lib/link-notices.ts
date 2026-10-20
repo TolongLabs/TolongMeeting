@@ -30,7 +30,7 @@ export function showsBanRiskNotice(link: LinkSource): boolean {
 export function watchingNotAllowedMessage(app: ChatApp, gate: WatchGate): string {
   if (app === 'teams') throw new Error('Teams watching is never refused by the gate')
   if (gate[app] === 'none') return `${APP_NAME[app]} watching is switched off. Choose another link source.`
-  return `${APP_NAME[app]} is watched only for identities that run at home or on your PC. Change where this identity runs, or choose another link source.`
+  return `${APP_NAME[app]} is watched only for accounts that run at home or on your PC. Change where this account runs, or choose another link source.`
 }
 
 export class WatchingNotAllowedError extends Error {
@@ -55,12 +55,12 @@ const SIGNIN_NOTES = {
   whatsappAllowed:
     'WhatsApp Web: on your phone, open WhatsApp, then Settings, Linked devices, Link a device, and scan the code shown here. WhatsApp allows 4 linked devices and this uses one. Wait until your chats appear before pressing Done. If WhatsApp later unlinks the bot, you\'ll get a "Sign in again" ping.',
   whatsappHomeOnly:
-    "Don't link WhatsApp here: this identity runs on the server, and WhatsApp is watched only for identities that run at home or on your PC.",
+    "Don't link WhatsApp here: this account runs on the server, and WhatsApp is watched only for accounts that run at home or on your PC.",
   whatsappNone: "WhatsApp watching is switched off, so there's no need to link it.",
   discordAllowed:
     'Discord: sign in at discord.com in this view. If Discord asks for a code from your phone or email, enter it here; the bot never signs in for you.',
   discordHomeOnly:
-    "Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC."
+    "Don't sign in to Discord here: this account runs on the server, and Discord is watched only for accounts that run at home or on your PC."
 } as const
 
 /** The WhatsApp and Discord lines of the sign-in page's list; the page follows them with `BAN_RISK_NOTICE`. */
