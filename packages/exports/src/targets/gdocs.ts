@@ -23,6 +23,12 @@ import { ExportError, type ExportBundle, type ExportResult, type ExportTarget, t
 // property (visible to this OAuth client only). A re-export looks for a live Doc with that mark and replaces its content;
 // it never touches a file without the mark. With the `drive.file` scope Drive shows this app only files it created or
 // that the member picked, which is a second fence.
+//
+// The replace is a resumable PATCH of the Doc with the .docx as media. Drive's upload guide says "When you upload and
+// convert media during an `update` request to a Docs, Sheets, or Slides file, the full contents of the document are
+// replaced" (developers.google.com/workspace/drive/api/guides/manage-uploads, "Import to Google Docs types"), and the
+// `files` resource says `mimeType` "cannot be changed unless a new revision is uploaded" (it is not changed here: the
+// Doc's own type is sent again together with a new revision). The reply's `mimeType` is still checked after the write.
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const MARK_KEY = 'tmMeeting'
@@ -132,7 +138,7 @@ export function createGdocsTarget(client: OAuthClient): ExportTarget {
         metadata:
           existing === null
             ? { name: bundle.title, mimeType: DOC_MIME, parents: [folderId], appProperties: { [MARK_KEY]: mark } }
-            : { name: bundle.title },
+            : { name: bundle.title, mimeType: DOC_MIME },
         bytes
       })
       return { url: `https://docs.google.com/document/d/${docId}/edit`, filePath: null, note: null }

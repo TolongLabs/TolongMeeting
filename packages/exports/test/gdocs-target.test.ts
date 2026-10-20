@@ -74,7 +74,7 @@ test('a re-export updates the Doc it made and never creates or deletes another',
   const search = new URL(f.calls.find((c) => c.method === 'GET' && c.url.includes('appProperties'))!.url)
   expect(search.searchParams.get('q')).toContain(`appProperties has { key='tmMeeting' and value='${mark}' }`)
   const patch = f.call('PATCH', new RegExp(`/upload/drive/v3/files/${DOC}\\?`))
-  expect(JSON.parse(patch.body)).toEqual({ name: expect.any(String) })
+  expect(JSON.parse(patch.body)).toEqual({ name: expect.any(String), mimeType: DOC_MIME })
   expect(f.count('POST', 'https://www.googleapis.com/upload/drive/v3/files')).toBe(0)
   expect(f.calls.some((c) => c.method === 'DELETE')).toBe(false)
   expectSafeCalls(f)

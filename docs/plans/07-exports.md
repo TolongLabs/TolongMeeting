@@ -2186,6 +2186,7 @@ Pass: a classic `ghp_` token is refused when saving; the first export makes one 
 
 Procedure: connect Google; export; pick a different folder with the Picker; export again; open the Google Account's third-party access page.
 Pass: "TolongMeeting Exports" appears in Drive with one document holding the summary, slides with images, transcript and chat; the second export lands in the picked folder as a new document and the first is unchanged; the access page lists only access to files the app uses. Eight or more days after connecting, a further export still succeeds (proving the client is in production).
+Also export the same meeting a second time to the same folder: the Google Doc keeps its address, its content shows the new export (not an old one, not a `.docx` file), and Drive lists it as a Google Doc, not a Word file. This checks that a resumable `PATCH` with `mimeType` set to the Docs type converts the Word media on update, which only a live account can prove.
 
 - [ ] **Step 5: Notion**
 
