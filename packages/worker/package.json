@@ -15,7 +15,9 @@
     "@playwright/test": "1.64.1",
     "@types/node": "^24.0.0",
     "@types/qrcode": "^1.5.6",
-    "qrcode": "^1.5.4"
+    "@types/ws": "^8.18.2",
+    "qrcode": "^1.5.4",
+    "ws": "^8.22.0"
   },
   "dependencies": {
     "@tm/ai": "workspace:*",
