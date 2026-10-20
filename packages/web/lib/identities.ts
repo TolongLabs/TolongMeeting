@@ -1,4 +1,4 @@
-import { and, eq, notInArray } from 'drizzle-orm'
+import { and, eq, lte, notInArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { ACCOUNT_KINDS, type AccountKind } from '@tm/core/control'
 import { safeDbError } from '../db/errors'
@@ -137,7 +137,7 @@ export async function updateIdentity(scope: MemberScope, id: string, input: unkn
 /**
  * Refuses (`InUseError`) while an occurrence of the identity is not finished (every state except `FINISHED_STATES`: a
  * meeting still to start, running, uploading, transcribing or summarising) or a meeting or sign-in holds its profile.
- * Deleting an identity and changing where it runs (`setRunLocation`) share this rule.
+ * Deleting an identity uses this rule. Changing where it runs uses the looser `assertIdentityMovable`.
  */
 export async function assertIdentityIdle(
   s: MemberScope,
@@ -149,6 +149,45 @@ export async function assertIdentityIdle(
     and(eq(occurrences.identityId, identityId), notInArray(occurrences.state, FINISHED_STATES))
   )
   if (open) throw new InUseError('This identity has a meeting or sign-in that has not finished.')
+  if (profile.heldBy !== null) throw new InUseError('This identity is in use by a meeting or a sign-in.')
+}
+
+/** The scheduler launches a meeting at T-60; 15 minutes more cover a late job and the time a move takes. */
+export const MOVE_BLOCK_WINDOW_MS = 75 * 60_000
+
+/**
+ * Refuses (`InUseError`) a change of run location while the identity is busy: an occurrence is past `scheduled` and not
+ * finished (starting, running, uploading, transcribing, post-processing and so on), a `scheduled` one starts within 75
+ * minutes of `now` (or already should have), or a meeting or sign-in holds the profile. A `scheduled` occurrence further
+ * out does not block: its launch job reads the identity when it runs, so it starts at the new location.
+ *
+ * Call it inside a transaction. The launcher moves `scheduled` to `starting` after `select ... for update` on the
+ * occurrence row, then reads the identity. This function locks the imminent `scheduled` rows first, and only then looks
+ * for occurrences past `scheduled`, so a launch and a move cannot both win: a launch that got the row first has
+ * committed `starting` by the time our lock is granted and the second query refuses; a move that got the rows first
+ * makes the launcher wait on its `for update`, and it then reads the new run location.
+ */
+export async function assertIdentityMovable(
+  s: MemberScope,
+  identityId: string,
+  profile: { heldBy: string | null },
+  now: Date
+): Promise<void> {
+  const soon = new Date(now.getTime() + MOVE_BLOCK_WINDOW_MS)
+  const imminent = await s.selectForUpdate(
+    occurrences,
+    and(
+      eq(occurrences.identityId, identityId),
+      eq(occurrences.state, 'scheduled'),
+      lte(occurrences.scheduledStart, soon)
+    )!
+  )
+  const [started] = await s.select(
+    occurrences,
+    and(eq(occurrences.identityId, identityId), notInArray(occurrences.state, [...FINISHED_STATES, 'scheduled']))
+  )
+  if (imminent.length > 0 || started)
+    throw new InUseError('This identity has a meeting or sign-in that has not finished.')
   if (profile.heldBy !== null) throw new InUseError('This identity is in use by a meeting or a sign-in.')
 }
 

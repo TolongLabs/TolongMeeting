@@ -5,7 +5,7 @@ import type { PgTable } from 'drizzle-orm/pg-core'
 import { ACTIVE_STATES, ControlCommandSchema, type ControlCommand } from '@tm/core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
-import type { Queue } from '../db/queues'
+import { queueDbOf, type Queue, type QueueDb } from '../db/queues'
 import {
   artefacts,
   auth_account,
@@ -40,6 +40,10 @@ export interface MemberScope {
   transaction<R>(fn: (s: MemberScope) => Promise<R>): Promise<R>
   /** Takes a transaction-level advisory lock named `name` for this member. Throws outside `transaction`. */
   lock(name: string): Promise<void>
+  /** Like `select`, but locks the rows it returns (`for update`) until the transaction ends. Throws outside `transaction`. */
+  selectForUpdate<T extends MemberOwnedTable>(table: T, where: SQL): Promise<T['$inferSelect'][]>
+  /** The connection of this transaction for `SendOpts.db`, so a queued job commits or rolls back with it. Throws outside `transaction`. */
+  queueDb(): QueueDb
   /**
    * Queues a command for this member's running worker, to be returned by its next heartbeat. The append is one
    * statement, so a heartbeat that clears the queue at the same moment can't lose it or replay an old command. Does
@@ -128,6 +132,20 @@ export function createScope(db: Db, memberId: string, inTransaction = false): Me
     async lock(name) {
       if (!inTransaction) throw new Error('lock() is only valid inside scope.transaction()')
       await db.execute(sql`select pg_advisory_xact_lock(hashtextextended(${name + ':' + memberId}, 0))`)
+    },
+
+    async selectForUpdate(table, where) {
+      if (!inTransaction) throw new Error('selectForUpdate() is only valid inside scope.transaction()')
+      return (await db
+        .select()
+        .from(table as PgTable)
+        .where(ownedBy(table, memberId, where))
+        .for('update')) as never
+    },
+
+    queueDb() {
+      if (!inTransaction) throw new Error('queueDb() is only valid inside scope.transaction()')
+      return queueDbOf(db)
     },
 
     async sendCommand(occurrenceId, command) {

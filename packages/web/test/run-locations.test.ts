@@ -2,15 +2,25 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { randomUUID } from 'node:crypto'
 import { DEVICE_ONLINE_WINDOW_MS, type LocalRunPayload } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { companionEvents, companionJobs, deviceTokens, identities, occurrences, profiles, type Db } from '../db'
+import { PgBoss } from 'pg-boss'
+import {
+  companionEvents,
+  companionJobs,
+  deviceTokens,
+  identities,
+  occurrences,
+  profiles,
+  timetableEntries,
+  type Db
+} from '../db'
 import { claimJob, createCompanionJob, listCompanionEvents } from '../db/companion'
 import { seedCompanionFixture } from '../db/companion.fixtures'
 import { dbHomeNodeStore } from '../db/home-route'
 import { deviceName, isDeviceOnline, listLocalIdentities } from '../db/local-runs'
-import { QUEUES } from '../db/queues'
+import { bossQueue, QUEUES, type Queue } from '../db/queues'
 import { createTestDb, dropAllTestDbs, FakeQueue, testDbUrl } from '../db/testing'
 import { newDeviceToken, revokeDevice } from '../lib/companion/tokens'
-import { updateIdentity, type IdentityRow } from '../lib/identities'
+import { deleteIdentity, InUseError, updateIdentity, type IdentityRow } from '../lib/identities'
 import {
   handleCompanionIdentities,
   handleRunLocationRequest,
@@ -22,6 +32,9 @@ import { GET as companionIdentities } from '../app/api/companion/identities/rout
 
 afterAll(dropAllTestDbs, 60_000)
 
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
 const t0 = new Date('2026-10-21T08:00:00Z')
 const plus = (ms: number) => new Date(t0.getTime() + ms)
 
@@ -129,7 +142,7 @@ describe('setRunLocation', () => {
   })
 
   test('refused while a meeting of the identity is unfinished, and nothing changes', async () => {
-    await db.update(occurrences).set({ state: 'scheduled' }).where(eq(occurrences.id, f.occA))
+    await db.update(occurrences).set({ state: 'starting' }).where(eq(occurrences.id, f.occA))
     await expect(setRunLocation(scope, queue, identityA, local(f.a1.deviceId))).rejects.toThrow(
       'meeting or sign-in that has not finished'
     )
@@ -141,6 +154,96 @@ describe('setRunLocation', () => {
     await db.update(occurrences).set({ state: 'failed' }).where(eq(occurrences.id, f.occA))
     expect(await setRunLocation(scope, queue, identityA, local(f.a1.deviceId))).toEqual({ ok: true })
   })
+
+  // Rows for identity A with no timetable entry, so they never clash with the fixture's occurrence on the unique key.
+  const scheduledAt = async (starts: Date[], state: (typeof occurrences.$inferInsert)['state'] = 'scheduled') => {
+    for (const start of starts)
+      await db.insert(occurrences).values({
+        memberId: f.a1.memberId,
+        identityId: identityA,
+        entryName: 'Weekly lecture',
+        entryType: 'lecture',
+        transcription: 'live',
+        state,
+        scheduledStart: start,
+        scheduledEnd: new Date(start.getTime() + 2 * HOUR),
+        deleteAfter: new Date(start.getTime() + 30 * DAY)
+      })
+  }
+
+  test('scheduled meetings 2 to 14 days out do not block a move; they launch at the new place', async () => {
+    await scheduledAt([2, 3, 7, 9, 14].map((d) => plus(d * DAY)))
+    expect(await setRunLocation(scope, queue, identityA, local(f.a1.deviceId), t0)).toEqual({ ok: true })
+    expect(await identityRow()).toMatchObject({ runLocation: 'local', localDeviceId: f.a1.deviceId })
+    expect(queue.sent.map((s) => s.name)).toEqual([QUEUES.profileDelete])
+  })
+
+  test('a scheduled meeting that starts within 75 minutes blocks; just beyond does not', async () => {
+    await scheduledAt([plus(30 * MINUTE)])
+    await expect(setRunLocation(scope, queue, identityA, local(f.a1.deviceId), t0)).rejects.toThrow('not finished')
+    await expectUntouched()
+    // A launch that is late (start already past) blocks too.
+    await db
+      .update(occurrences)
+      .set({ scheduledStart: plus(-5 * MINUTE) })
+      .where(eq(occurrences.entryName, 'Weekly lecture'))
+    await expect(setRunLocation(scope, queue, identityA, local(f.a1.deviceId), t0)).rejects.toThrow('not finished')
+    await db
+      .update(occurrences)
+      .set({ scheduledStart: plus(76 * MINUTE) })
+      .where(eq(occurrences.entryName, 'Weekly lecture'))
+    expect(await setRunLocation(scope, queue, identityA, local(f.a1.deviceId), t0)).toEqual({ ok: true })
+  })
+
+  test('a meeting past scheduled blocks, whatever its start', async () => {
+    for (const state of ['starting', 'in_meeting', 'uploading', 'transcribing', 'post_processing'] as const) {
+      await db.delete(occurrences).where(eq(occurrences.entryName, 'Weekly lecture'))
+      await scheduledAt([plus(5 * DAY)], state)
+      await expect(setRunLocation(scope, queue, identityA, { location: 'server_via_home' }, t0)).rejects.toThrow(
+        'not finished'
+      )
+    }
+    await expectUntouched()
+  })
+
+  test('deleting the identity is still refused while it has future scheduled meetings', async () => {
+    await scheduledAt([plus(5 * DAY)])
+    await db.delete(timetableEntries).where(eq(timetableEntries.memberId, f.a1.memberId))
+    const error = await deleteIdentity(scope, identityA).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(InUseError)
+    expect((error as Error).message).toBe('This identity has a meeting or sign-in that has not finished.')
+    expect(await identityRow()).toMatchObject({ id: identityA })
+  })
+
+  test('a failed move leaves no profile-delete job, a committed one leaves exactly one', async () => {
+    const boss = new PgBoss(testDbUrl(db))
+    boss.on('error', (error) => {
+      throw error
+    })
+    await boss.start()
+    try {
+      await boss.createQueue(QUEUES.profileDelete)
+      const real = bossQueue(boss)
+      const queued = async () => (await boss.findJobs(QUEUES.profileDelete)).length
+      // The job is inserted on the move's connection, then the send fails: everything rolls back, the job with it.
+      const failing: Queue = {
+        async send(name, data, opts) {
+          await real.send(name, data, opts)
+          throw new Error('queue down')
+        }
+      }
+      await expect(setRunLocation(scope, failing, identityA, local(f.a1.deviceId))).rejects.toThrow('queue down')
+      expect(await queued()).toBe(0)
+      expect(await identityRow()).toMatchObject({ runLocation: 'server', localDeviceId: null })
+      expect((await profileRow()).location).toBe('server')
+      expect(await allEvents()).toEqual([])
+
+      expect(await setRunLocation(scope, real, identityA, local(f.a1.deviceId))).toEqual({ ok: true })
+      expect(await queued()).toBe(1)
+    } finally {
+      await boss.stop({ graceful: false })
+    }
+  }, 60_000)
 
   test('refused while a sign-in or a meeting holds the profile', async () => {
     await db.update(profiles).set({ heldBy: 'signin:abc' }).where(eq(profiles.identityId, identityA))
@@ -190,7 +293,7 @@ describe('setRunLocation', () => {
     expect(await listLocalIdentities(db, f.b1)).toEqual([])
   })
 
-  test('the delete is queued only after the move commits: a refused move queues nothing', async () => {
+  test('a refused move queues nothing', async () => {
     await db.update(profiles).set({ heldBy: 'occ:x' }).where(eq(profiles.identityId, identityA))
     await expect(setRunLocation(scope, queue, identityA, local(f.a1.deviceId))).rejects.toThrow()
     expect(queue.sent).toEqual([])
@@ -350,7 +453,7 @@ describe('PUT /api/identities/<id>/run-location', () => {
       { error: 'home_route_not_set_up' },
       'no-store'
     ])
-    await db.update(occurrences).set({ state: 'scheduled' }).where(eq(occurrences.id, f.occA))
+    await db.update(occurrences).set({ state: 'starting' }).where(eq(occurrences.id, f.occA))
     expect(await answer(await put({ location: 'local', deviceId: f.a1.deviceId }))).toEqual([
       409,
       { error: 'identity_in_use' },
