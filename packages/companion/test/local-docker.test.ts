@@ -251,7 +251,9 @@ describe('bind sources (allowedRoots)', () => {
   })
   test('a posix tree works the same (Linux development)', () => {
     const root = tmpdir()
-    expect(normalizeHostPath(`${root}/Local/TolongMeeting/data`)).toBe(`${root}/local/tolongmeeting/data`.toLowerCase())
+    expect(normalizeHostPath(`${root}/Local/TolongMeeting/data`)).toBe(
+      `${root}/local/tolongmeeting/data`.replaceAll('\\', '/').toLowerCase()
+    )
     expect(() => bind(`${root}/Local/data`, [root, ...ROOTS])).not.toThrow()
     expect(() => bind('/etc', [root, ...ROOTS])).toThrow(UnsafeDockerInput)
   })

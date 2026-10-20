@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { CompanionApi } from '../src/api'
 import { existsSync } from 'node:fs'
 import { isOpenableSummary, showSummaryNotification, syncSummaries, windowsSafeFileName } from '../src/summaries'
@@ -380,7 +380,7 @@ describe('syncSummaries name clashes (N17)', () => {
       { occurrenceId: 'occ-b', fileName: long, readyAt: '2026-10-21T08:00:30.000Z', text: 'b' }
     ])
     const written = await syncSummaries({ api, dir, state: await stateIn(base) })
-    const second = written[1]!.slice(written[1]!.lastIndexOf('/') + 1)
+    const second = basename(written[1]!)
     expect(second.length).toBe(200)
     expect(second.endsWith(' (2).md')).toBe(true)
   })

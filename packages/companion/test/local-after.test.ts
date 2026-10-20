@@ -99,8 +99,10 @@ async function probe(file: string): Promise<{ codec: string; channels: number; r
   return { codec: s.codec_name, channels: s.channels, rate: Number(s.sample_rate) }
 }
 
-let sample: Buffer
+let sample: Buffer = Buffer.from('placeholder recording sample for environments without ffmpeg')
+const hasFfmpeg = Bun.which('ffmpeg') !== null
 beforeAll(async () => {
+  if (!hasFfmpeg) return
   // Two seconds of stereo 44.1 kHz sound and a small picture, as a Matroska file (not what the FLAC must look like).
   const file = join(await tmp(), 'sample.mkv')
   const code = await ffmpeg([
@@ -166,7 +168,7 @@ describe('flacArgs', () => {
     expect(flacArgs(o).slice(-mine.length)).toEqual(mine)
   })
 
-  test('real ffmpeg cuts a 48 kHz mono FLAC from those flags', async () => {
+  test.skipIf(!hasFfmpeg)('real ffmpeg cuts a 48 kHz mono FLAC from those flags', async () => {
     const dir = await tmp()
     await mkdir(join(dir, 'recording'))
     await writeFile(join(dir, 'recording', 'meeting.mkv'), sample)
