@@ -441,11 +441,11 @@ git commit -m "feat(worker): join meet calls with devices off"
 - Consumes: `MeetSelectors` (Task 1); `meetTextSignal`, `serveMeet`, `setMeetScene`, `meetClicks` (Task 3); `MeetingState`, `AdmissionResult` from `packages/worker/src/adapters/types.ts`.
 - Produces: `meetMeetingState(page: Page, sel: MeetSelectors): Promise<MeetingState>` and `waitMeetAdmitted(page: Page, sel: MeetSelectors, deadline: Date, pollMs = 2_000): Promise<AdmissionResult>` in `packages/worker/src/adapters/meet/state.ts`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add scenes `lobby-review` ("Your request to join is being reviewed"), `lobby-denied` ("Someone in the call denied your request to join"), `lobby-expired` ("No one responded to your request to join the call", with an "Ask to join" button), `ended` ("The call has ended" and "Return to home screen"), `left` ("You left the meeting", "Rejoin" and "Return to home screen") and `removed` ("You've been removed from the meeting"). Add `MeetFixtureConfig.breakout: boolean` (a `role="dialog"` "You've been invited to join breakout room 1" with "Join" and "Cancel"), `sidePanel: 'chat' | 'people' | 'closed'` (a `role="complementary"` panel holding the chat or the participant list), `messages: { id: string; sender: string; time: string; text: string; href?: string }[]` (rendered in the chat panel as `[data-sender-id]` groups, each with `[data-sender-name]`, `[data-formatted-timestamp]` and one `[data-message-id]` per message; consecutive messages from one sender share a group) and `captions: string | null` (a `[aria-label='Captions']` region with that text).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -525,21 +525,21 @@ test('denied, expired and deadline outcomes', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/state.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/state`.
 
-- [ ] **Step 4: Implement `meetMeetingState` and `waitMeetAdmitted` in `packages/worker/src/adapters/meet/state.ts`**
+- [x] **Step 4: Implement `meetMeetingState` and `waitMeetAdmitted` in `packages/worker/src/adapters/meet/state.ts`**
 
 `meetMeetingState` returns the first match, with every text check through `meetTextSignal`: `texts.removed` → `removed`; `texts.ended` or `texts.endScreen` → `ended`; `texts.breakoutPrompt` → `breakout_prompt`; any lobby text → `lobby`; `leaveButton` visible → `in_meeting`; otherwise `unknown` (a missing Leave button without an end signal is left to 01a's drop handling). `waitMeetAdmitted` polls every `pollMs`: `texts.lobbyDenied` → `lobby_denied`; `texts.lobbyExpired` → `lobby_expired`; `leaveButton` visible with no lobby text → `admitted`; past `deadline` → `lobby_expired`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/state.spec.ts`
 Expected: PASS (11 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/state.ts
