@@ -7,12 +7,15 @@ export interface CompanionState {
   ntfyLastId: string | null
   summariesAfter: string | null
   lastEventId: number
+  /** Where to follow the member's ntfy topic. Set by pairing; the ntfy token lives in the `SecretStore`, not here. */
+  ntfy?: { url: string; topic: string }
 }
 
 const StateSchema = z.strictObject({
   ntfyLastId: z.string().min(1).max(256).nullable(),
   summariesAfter: z.iso.datetime({ offset: true }).nullable(),
-  lastEventId: z.int().min(0).max(Number.MAX_SAFE_INTEGER)
+  lastEventId: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  ntfy: z.strictObject({ url: z.url().max(2048), topic: z.string().min(1).max(256) }).optional()
 }) satisfies z.ZodType<CompanionState>
 
 const INITIAL: CompanionState = { ntfyLastId: null, summariesAfter: null, lastEventId: 0 }
