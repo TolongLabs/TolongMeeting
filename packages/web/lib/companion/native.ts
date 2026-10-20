@@ -4,18 +4,26 @@ import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   IllegalTransition,
+  JobFailureReportSchema,
   NATIVE_UPLOAD_FIELDS,
   NATIVE_UPLOAD_MAX_BODY_BYTES,
   NATIVE_UPLOAD_MAX_FILE_BYTES,
-  WhisperJsonSchema
+  WhisperJsonSchema,
+  meetingUrl,
+  shortDate
 } from '@tm/core'
-import { completeJob } from '../../db/companion'
+import { pings, type Ping, type WorkerFailureReason } from '@tm/notify'
+import { and, eq } from 'drizzle-orm'
+import { completeJob, emitCompanionEvent, failJobAttempt } from '../../db/companion'
+import { appNotifier, type Notifier } from '../../db/notifier'
+import { companionJobs, occurrences } from '../../db/schema'
 import { QUEUES, queueDbOf, type Queue } from '../../db/queues'
 import { applyTrigger } from '../../db/transitions'
 import { notFound, openOccurrenceFile, serveFile } from '../files'
 import { getQueue } from '../queue'
 import { companionDeps } from './deps'
 import type { DeviceDeps, DeviceScope } from './scope'
+import { readCapped } from './tokens'
 
 // The two routes a PC uses to transcribe on its own GPU: it downloads the cut audio of a recording and uploads the
 // Whisper output. Everything the PC sends is untrusted, and so is the occurrence directory (a worker once wrote it).
@@ -348,5 +356,160 @@ export async function handleTranscriptRequest(
   await unlink(join(occDir, AUDIO_FILE)).catch((e: NodeJS.ErrnoException) => {
     if (e.code !== 'ENOENT') console.error(`native transcript: audio.flac not removed (${e.code ?? 'error'})`)
   })
+  return new Response(null, { status: 204, headers: NO_STORE })
+}
+
+// --- A failure the PC reports ---
+
+/** What the failure route runs on: the database, the member's notifier and the public address for the meeting link. */
+export interface FailDeps {
+  db: Db
+  notifier: Notifier
+  publicUrl: string
+}
+
+/** The database, the notifier and `TM_PUBLIC_URL`, read per request. */
+export function failDeps(): FailDeps {
+  const publicUrl = process.env.TM_PUBLIC_URL
+  if (!publicUrl) throw new Error('TM_PUBLIC_URL is not set')
+  return { ...companionDeps(), notifier: appNotifier(), publicUrl }
+}
+
+/** The reasons a local run's PC may give; anything else is recorded as `pc_failed`. A client never picks other text. */
+const LOCAL_FAILURES: Readonly<Record<string, WorkerFailureReason | 'native'>> = {
+  worker_crashed: 'it crashed 3 times',
+  native_transcription_failed: 'native',
+  pc_failed: 'your PC stopped responding'
+}
+
+const FAIL_BODY_MAX_BYTES = 8 * 1024
+const NATIVE_ERROR_STORED = 200
+
+/**
+ * `POST /api/companion/jobs/<id>/fail`: body `{ error }`. 204; 404 unless this device holds the job; 400 for a bad body.
+ * The report is device-bound: the job's `UPDATE` requires this device's live claim.
+ */
+export async function handleFailRequest(
+  request: Request,
+  scope: DeviceScope,
+  deps: FailDeps,
+  jobId: string
+): Promise<Response> {
+  if ((await scope.getClaimedJob(jobId)) === null) return fixed('not_found', 404)
+  const raw = await readCapped(request, FAIL_BODY_MAX_BYTES)
+  if (raw === null) return fixed('invalid_failure', 400)
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) throw e
+    return fixed('invalid_failure', 400)
+  }
+  const report = JobFailureReportSchema.safeParse(body)
+  if (!report.success) return fixed('invalid_failure', 400)
+  return reportFailure(deps, scope, jobId, report.data.error)
+}
+
+/**
+ * The PC could not finish a job it holds.
+ *
+ * - `native_transcription`: the attempt counts (`failJobAttempt`). The first failure returns the job to `pending` and
+ *   tells the device again; the last fails the occurrence (`native_transcription_failed`) and pings the member with the
+ *   first line of the error. Only that line is kept, cut to 200 characters.
+ * - `local_run`: no retry (the PC restarts its own worker). The job fails and the occurrence applies `fail`, both with a
+ *   fixed reason: `worker_crashed`, `native_transcription_failed`, or `pc_failed` for any other text. The member gets
+ *   one ping. Nothing the PC wrote is stored or sent on.
+ *
+ * 204 when it is recorded, 404 when this device does not hold the job.
+ */
+export async function reportFailure(
+  deps: FailDeps,
+  scope: DeviceScope,
+  jobId: string,
+  error: string,
+  now: Date = new Date()
+): Promise<Response> {
+  const job = await scope.getClaimedJob(jobId, now)
+  if (job === null) return fixed('not_found', 404)
+  const url = meetingUrl(deps.publicUrl, job.occurrenceId)
+  let ping: Ping | null = null
+
+  if (job.kind === 'native_transcription') {
+    const line = (error.split('\n')[0] ?? '')
+      .replace(/\p{Cc}/gu, ' ')
+      .trim()
+      .slice(0, NATIVE_ERROR_STORED)
+    const outcome = await deps.db.transaction(async (tx) => {
+      const result = await failJobAttempt(tx, scope.device, jobId, line, now)
+      if (result === 'retry') {
+        await emitCompanionEvent(
+          tx,
+          scope.device.memberId,
+          { type: 'job_available', jobId },
+          scope.device.deviceId,
+          now
+        )
+        return result
+      }
+      try {
+        await applyTrigger(tx, job.occurrenceId, 'fail', { reason: 'native_transcription_failed' })
+      } catch (e) {
+        if (!(e instanceof IllegalTransition)) throw e
+        return 'settled' as const
+      }
+      return result
+    })
+    if (outcome === 'failed') {
+      ping = pings.nativeTranscriptionFailed({
+        entry: job.payload.entryName,
+        date: shortDate(job.payload.start, job.payload.timeZone),
+        error: line,
+        meetingUrl: url
+      })
+    }
+  } else {
+    const code = Object.hasOwn(LOCAL_FAILURES, error) ? error : 'pc_failed'
+    const entry = job.payload.job.entry
+    const moved = await deps.db.transaction(async (tx) => {
+      await tx
+        .select({ id: occurrences.id })
+        .from(occurrences)
+        .where(eq(occurrences.id, job.occurrenceId))
+        .for('update')
+      const rows = await tx
+        .update(companionJobs)
+        .set({ state: 'failed', error: code, updatedAt: now })
+        .where(
+          and(
+            eq(companionJobs.id, jobId),
+            eq(companionJobs.deviceId, scope.device.deviceId),
+            eq(companionJobs.state, 'claimed')
+          )
+        )
+        .returning({ id: companionJobs.id })
+      if (rows.length !== 1) return 'gone' as const
+      try {
+        await applyTrigger(tx, job.occurrenceId, 'fail', { reason: code })
+      } catch (e) {
+        if (!(e instanceof IllegalTransition)) throw e
+        return 'settled' as const
+      }
+      return 'failed' as const
+    })
+    if (moved === 'gone') return fixed('not_found', 404)
+    if (moved === 'failed') {
+      const phrase = LOCAL_FAILURES[code]!
+      ping =
+        phrase === 'native'
+          ? pings.nativeTranscriptionFailed({
+              entry: entry.name,
+              date: shortDate(entry.start, entry.timeZone),
+              error: '',
+              meetingUrl: url
+            })
+          : pings.workerFailed({ entry: entry.name, reason: phrase, meetingUrl: url })
+    }
+  }
+  if (ping !== null) await deps.notifier.notify(scope.device.memberId, ping)
   return new Response(null, { status: 204, headers: NO_STORE })
 }

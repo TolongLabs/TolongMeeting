@@ -398,7 +398,7 @@ export function completeLocalRun(
 
 - Routes (adds to contracts): `POST .../heartbeat` (body `Heartbeat`, answers `HeartbeatReply`); `POST .../preflight` (body `PreflightReport`, 204); `HEAD .../files/<path>` (header `Upload-Offset`); `PUT .../files/<path>` (header `Content-Range: bytes <start>-<end>/<total>`, 204, or 409 with `Upload-Offset`); `POST .../complete` (204, or 400 with `{ missing }`). All under `/api/companion/jobs/<id>/`, for the device holding that `local_run` job.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test.each([
@@ -497,12 +497,12 @@ test('complete needs events.jsonl, and the native transcript when there is a rec
 
 The fixture is Task 2's (entry "Data Mining" at 14:00, PC "DESKTOP-ABC"). `hb(occurrenceId, state)` builds a `Heartbeat` with attempt 1, `recording: true`, `participants: 12`, no events; `applyTrigger` (recording `triggers`), `handleHeartbeat`, `pingRestart`, `pingWorkerFailed`, `enqueuePipeline` and `sendPing` are replaced by recorders through `mock.module`; `uploaded(id, paths)` uploads small files.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/lib/companion/local-runs.test.ts`
 Expected: FAIL with "Cannot find module './local-runs'"
 
-- [ ] **Step 3: Implement `local-runs.ts`, the routes and the `reportFailure` branch**
+- [x] **Step 3: Implement `local-runs.ts`, the routes and the `reportFailure` branch**
 
 `isUploadPath` accepts exactly these patterns and nothing with `..`, a backslash or a leading slash:
 
@@ -518,12 +518,12 @@ Expected: FAIL with "Cannot find module './local-runs'"
 
 Uploads append to `<path>.part` under `$TM_DATA_ROOT/occurrences/<occurrenceId>/` and rename when `end + 1 === total`; a chunk over `UPLOAD_CHUNK_MAX_BYTES` is a 400. `relayHeartbeat` reads the occurrence's state before calling `handleHeartbeat` and calls `pingRestart` when it changes into `restarting`. `recordPreflight`: `ok` clears the job's `error`; `docker_unavailable` and `image_unavailable` store it and ping only when it differs from the stored `error`; `docker_memory_low` marks the job `failed`, calls `applyTrigger(db, occurrenceId, 'fail', { reason: 'docker_memory_low' })` and pings. The three pings' copy goes into `packages/notify/src/messages.ts`. The image ping reads: title `Can't get the meeting worker`, message `<Entry name> (<HH:mm>) can't start on <PC name>: Docker couldn't download the TolongMeeting worker. Run docker login ghcr.io with your GitHub account; the PC tries again every 30 seconds.` All three pings are high priority with the "Open meeting page" action. GB in the memory message is `bytes / 1024 ** 3` to one decimal. `completeLocalRun` calls `completeJob` and `enqueuePipeline`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/lib/companion/local-runs.test.ts`
-Expected: PASS (20 tests)
+Expected: PASS (48 tests in `packages/web/test/local-runs.test.ts`)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib packages/web/app packages/notify/src/messages.ts

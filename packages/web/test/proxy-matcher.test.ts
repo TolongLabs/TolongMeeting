@@ -28,7 +28,32 @@ describe('the proxy matcher', () => {
     expect(runsOn(`https://tm.example/api/companion/jobs/${JOB}/transcript`)).toBe(false)
   })
 
-  test('look-alikes of the upload route stay behind the proxy', () => {
+  test('the proxy does not run on the local-run chunk upload route, whatever the file path', () => {
+    for (const path of [
+      'chat.jsonl',
+      'recording/meeting.mkv',
+      'recording/attempt_2_seg_014.mkv',
+      'forms/f1/record.json',
+      'transcript/native/audio.srt'
+    ]) {
+      expect([path, runsOn(`https://tm.example/api/companion/jobs/${JOB}/files/${path}`)]).toEqual([path, false])
+    }
+  })
+
+  test('look-alikes of the upload routes stay behind the proxy', () => {
+    for (const path of [
+      `/api/companion/jobs/${JOB}/files`,
+      `/api/companion/jobs/${JOB}/files/`,
+      `/api/companion/jobs/${JOB}/filesx/chat.jsonl`,
+      `/api/companion/jobs/not-a-job/files/chat.jsonl`,
+      `/api/companion/jobs/%2e%2e/identities/files/chat.jsonl`,
+      `/api/meetings/${JOB}/files/chat.jsonl`
+    ]) {
+      expect([path, runsOn(`https://tm.example${path}`)]).toEqual([path, true])
+    }
+  })
+
+  test('look-alikes of the transcript upload route stay behind the proxy', () => {
     for (const path of [
       `/api/companion/jobs/${JOB}/transcript/extra`,
       `/api/companion/jobs/${JOB}/transcripts`,

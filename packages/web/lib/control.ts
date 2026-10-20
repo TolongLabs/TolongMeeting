@@ -10,22 +10,26 @@ import {
   canonicalFormUrl,
   isFormPageUrl,
   isPlainHttpsUrl,
+  meetingUrl,
   normaliseMeetingLink,
   stripPasscode,
   triggerFor,
   type ControlCommand,
   type Heartbeat,
   type HeartbeatReply,
+  type DeviceAuth,
   type MeetingEvent,
   type OccurrenceState,
   type SigninEventData,
   type SigninReply
 } from '@tm/core'
+import { pings, type Ping } from '@tm/notify'
 import { and, count, eq, ne, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   FORM_SOURCES,
   FORM_STATES,
+  companionJobs,
   events,
   forms,
   getDb,
@@ -35,6 +39,8 @@ import {
   signinSessions,
   type Db
 } from '../db'
+import { getClaimedJob } from '../db/companion'
+import type { Notifier } from '../db/notifier'
 import { QUEUES, queueDbOf, type Queue } from '../db/queues'
 import { applyTrigger, hashEventData } from '../db/transitions'
 import { getAuth } from './auth'
@@ -251,8 +257,87 @@ export async function handleHeartbeat(
     if (again === 'denied') return unauthorized()
     if (again === 'superseded') return superseded()
     if (parsed.data.attempt !== row!.attempt) return badRequest()
-    return { status: 200, body: await applyHeartbeat(tx, deps, row!, parsed.data) } as const
+    return { status: 200, body: await applyHeartbeat(tx, deps, row!, parsed.data, false) } as const
   })
+}
+
+// --- A heartbeat through the member's PC ------------------------------------------------------------------------
+
+/** A PC may restart its local worker this many times; the next crash fails the run (the scheduler's `MAX_RESTARTS`). */
+const LOCAL_MAX_RESTARTS = 3
+
+export type DeviceHeartbeatDeps = HeartbeatDeps & {
+  /** Sends the member's pings once the heartbeat has committed. */
+  notifier: Notifier
+  publicUrl: string
+}
+
+export type DeviceHeartbeatResult = HeartbeatResult | { status: 404; body: { error: string } }
+
+const notFound = (): DeviceHeartbeatResult => ({ status: 404, body: { error: 'not_found' } })
+
+/**
+ * One heartbeat of a local run, sent by the member's PC for its worker (the container's own relay forwards it). The
+ * device must hold the live `local_run` job `jobId` and the body must name that job's occurrence; anything else is
+ * a 404 that says nothing more. From there it is checked like a server worker's heartbeat (`handleHeartbeat`): the
+ * attempt must be the stored one, the same states may be entered, the server's clock judges event times, and the same
+ * locked `applyHeartbeat` runs. A local run has no launcher-minted token: the PC's device token and its lease on the job
+ * are the credential, and the run is named by the job row, never by the body.
+ *
+ * The PC speaks for the worker's restarts: a `restarting` report for attempt N+1 crashes the run (once), stores the
+ * new attempt and pings the member once; the third restart is the last, the next one fails the run (`worker_unresponsive`)
+ * and tells the PC to stop. A reported `transcribing` is held at `uploading`, so the pipeline never starts before
+ * `complete`.
+ */
+export async function handleDeviceHeartbeat(
+  deps: DeviceHeartbeatDeps,
+  device: DeviceAuth,
+  jobId: string,
+  body: unknown
+): Promise<DeviceHeartbeatResult> {
+  const { db, now } = deps
+  const first = await getClaimedJob(db, device, jobId, now)
+  if (first === null || first.kind !== 'local_run') return notFound()
+  const parsed = HeartbeatSchema.safeParse(body)
+  if (!parsed.success) return badRequest()
+  const hb = parsed.data
+  if (hb.occurrenceId !== first.occurrenceId) return notFound()
+
+  const outbox: { memberId: string; ping: Ping }[] = []
+  const result = await db.transaction(async (tx): Promise<DeviceHeartbeatResult> => {
+    let [row] = await tx.select().from(occurrences).where(eq(occurrences.id, first.occurrenceId)).for('update')
+    // The lease is checked again under the row lock: a release or a failure may have come in meanwhile.
+    const held = await getClaimedJob(tx, device, jobId, now)
+    if (row === undefined || held === null) return notFound()
+    if (row.state === 'deleted') return superseded()
+    const url = meetingUrl(deps.publicUrl, row.id)
+
+    if (hb.state === 'restarting' && hb.attempt === row.attempt + 1 && ACTIVE_STATES.has(row.state)) {
+      const { restarts } = await applyTrigger(tx, row.id, 'crash')
+      await tx.update(occurrences).set({ attempt: hb.attempt }).where(eq(occurrences.id, row.id))
+      if (restarts > LOCAL_MAX_RESTARTS) {
+        await applyTrigger(tx, row.id, 'fail', { reason: 'worker_unresponsive' })
+        await tx
+          .update(companionJobs)
+          .set({ state: 'failed', error: 'worker_unresponsive', updatedAt: now })
+          .where(and(eq(companionJobs.id, jobId), eq(companionJobs.state, 'claimed')))
+        outbox.push({
+          memberId: row.memberId,
+          ping: pings.workerFailed({ entry: row.entryName, reason: 'it crashed 3 times', meetingUrl: url })
+        })
+        return { status: 200, body: { ackedEvents: 0, commands: ['stop'], link: null } }
+      }
+      outbox.push({
+        memberId: row.memberId,
+        ping: pings.workerRestarted({ entry: row.entryName, n: restarts, meetingUrl: url })
+      })
+      ;[row] = await tx.select().from(occurrences).where(eq(occurrences.id, row.id))
+    }
+    if (hb.attempt !== row!.attempt) return badRequest()
+    return { status: 200, body: await applyHeartbeat(tx, deps, row!, hb, true) }
+  })
+  for (const { memberId, ping } of outbox) await deps.notifier.notify(memberId, ping)
+  return result
 }
 
 /**
@@ -303,7 +388,18 @@ async function applySigninEvent(tx: Db, row: OccurrenceRow, data: SigninEventDat
       .where(and(mine, ne(signinSessions.state, 'ended')))
 }
 
-async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, hb: Heartbeat): Promise<HeartbeatReply> {
+/**
+ * Applies one heartbeat to a locked occurrence row. `viaDevice` is a heartbeat the PC forwards for a local run: a
+ * reported `transcribing` is held at `uploading` (the PC has not uploaded anything yet; `complete` moves on and queues
+ * the pipeline), so nothing here ever queues the pipeline for it.
+ */
+async function applyHeartbeat(
+  tx: Db,
+  deps: HeartbeatDeps,
+  row: OccurrenceRow,
+  hb: Heartbeat,
+  viaDevice: boolean
+): Promise<HeartbeatReply> {
   const { now, queue } = deps
   // The worker's clock decides nothing that matters: an event outside this window is dropped, not moved into it.
   const range = { from: row.scheduledStart.getTime() - PAST_SLACK_MS, to: now.getTime() + FUTURE_SLACK_MS }
@@ -382,7 +478,8 @@ async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, h
   if (oversized) await logError({ reason: 'event_too_large' })
   if (all.length > unique.length) await logError({ reason: 'event_cap' })
 
-  const moveTo = async (next: OccurrenceState): Promise<void> => {
+  const moveTo = async (reported: OccurrenceState): Promise<void> => {
+    const next = viaDevice && reported === 'transcribing' ? 'uploading' : reported
     if (next === current) return
     // A restarted worker is back in the meeting flow: when both its state and `resume_state` are on the in-meeting path,
     // it resumes at `resume_state` first, and what it reported is then judged from there. A worker still can't reach a
