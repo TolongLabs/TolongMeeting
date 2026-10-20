@@ -67,7 +67,8 @@ const download = (id: string, token = tokens.a1, range?: string) =>
   AUDIO(authed(`/api/companion/jobs/${id}/audio`, token, range ? { headers: { range } } : {}), { id })
 const formOf = (fields: Record<string, string | Buffer>, filename = (k: string) => `audio.${k}`) => {
   const form = new FormData()
-  for (const [key, value] of Object.entries(fields)) form.append(key, new Blob([value]), filename(key))
+  for (const [key, value] of Object.entries(fields))
+    form.append(key, new Blob([typeof value === 'string' ? value : new Uint8Array(value)]), filename(key))
   return form
 }
 const upload = (id: string, body: BodyInit, token = tokens.a1, headers: Record<string, string> = {}) =>
