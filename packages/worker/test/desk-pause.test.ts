@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { SigninEventData } from '@tm/core'
-import { DeskPause } from '../src/control/desk-pause'
+import { DeskPause, type DeskReopenEvent } from '../src/control/desk-pause'
 import { SIGNIN_START_URLS } from '../src/control/vnc'
 
 // A desk pause with scripted collaborators and a clock the test moves. `idle` is what xprintidle reports; `now` is
@@ -13,7 +13,7 @@ function deskFixture(
     idle: 0,
     now: 0,
     idleFails: false,
-    events: [] as SigninEventData[],
+    events: [] as (SigninEventData | DeskReopenEvent)[],
     openedTabs: [] as string[],
     vncStarted: 0,
     vncStopped: 0,
@@ -210,7 +210,11 @@ test('a pause asked for while the last one ends starts a new pause afterwards', 
   await again
   expect(f.pause.paused).toBe(true)
   expect(f.vncStarted).toBe(2)
-  expect(f.events.map((e) => ('reason' in e ? 'resumed' : e.signin))).toEqual(['paused', 'resumed', 'paused'])
+  expect(f.events.map((e) => ('reason' in e ? 'resumed' : 'signin' in e ? e.signin : e.desk))).toEqual([
+    'paused',
+    'resumed',
+    'paused'
+  ])
 })
 
 test('closing at teardown stops the view and frees waiters without a checkpoint', async () => {
@@ -259,4 +263,39 @@ test('a desk step that fails still lets the next pause start', async () => {
   ).rejects.toThrow('driver failed')
   await f.pause.pause()
   expect(f.pause.paused).toBe(true)
+})
+
+test('when the desk is closed while paused, it is reopened at most 5 times and records state events', async () => {
+  const f = deskFixture()
+  await f.pause.pause()
+  expect(f.anchors).toBe(0)
+
+  // First 5 closes reopen the desk and record state events
+  for (let i = 1; i <= 5; i++) {
+    await f.pause.deskClosed()
+    expect(f.anchors).toBe(i)
+    expect(f.events.at(-1)).toEqual({ desk: 'reopened', count: i })
+    expect(f.pause.paused).toBe(true)
+  }
+
+  // 6th close exceeds the 5-per-session limit: ends the pause via existing failure path (resume idle)
+  await f.pause.deskClosed()
+  expect(f.pause.paused).toBe(false)
+  expect(f.events.at(-1)).toEqual({ signin: 'resumed', reason: 'idle' })
+  expect(f.reported).toHaveLength(1)
+})
+
+test('concurrent close events while paused trigger once per close', async () => {
+  const f = deskFixture()
+  await f.pause.pause()
+  await Promise.all([f.pause.deskClosed(), f.pause.deskClosed(), f.pause.deskClosed()])
+  expect(f.anchors).toBe(1)
+  expect(f.events.at(-1)).toEqual({ desk: 'reopened', count: 1 })
+})
+
+test('desk closed when pause is not active is ignored', async () => {
+  const f = deskFixture()
+  await f.pause.deskClosed()
+  expect(f.anchors).toBe(0)
+  expect(f.events).toEqual([])
 })

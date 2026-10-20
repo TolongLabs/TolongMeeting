@@ -17,6 +17,10 @@ export type SigninDeps = {
     close(): Promise<void>
     /** What the open browser shows of the member's accounts. Called once, after the member finished. */
     checkAccounts?(): Promise<AccountCheckData[]>
+    /** Reopens the desk window when closed. */
+    reopenDesk?(): Promise<void>
+    /** Registers a listener called when the desk window is closed. */
+    onDeskClose?(handler: () => void | Promise<void>): Stopper | (() => void)
   }>
   startVnc(): Promise<Stopper>
   idleMs(): Promise<number>
@@ -25,6 +29,8 @@ export type SigninDeps = {
   clock: { every(ms: number, fn: () => void): Stopper }
   /** Aborted on SIGTERM or SIGINT: the session ends as `done`, inside the stop timeout. */
   signal?: AbortSignal
+  /** Records a state event. */
+  emit?(data: Record<string, unknown>): void
 }
 
 type Reason = NonNullable<SigninHeartbeat['reason']>
@@ -73,35 +79,69 @@ export async function runSignin(job: SigninJob, deps: SigninDeps): Promise<void>
     wake = null
   }
 
+  let deskCloses = 0
+  let deskCloseError: Error | null = null
+  let reopening: Promise<void> | null = null
+
+  const handleDeskClose = async (): Promise<void> => {
+    if (reopening !== null) return reopening
+    deskCloses += 1
+    if (deskCloses > 5) {
+      deskCloseError = new Error('the desk window was closed more than 5 times')
+      wake?.()
+      return
+    }
+    reopening = (async () => {
+      try {
+        await desk?.reopenDesk?.()
+        deps.emit?.({ desk: 'reopened', count: deskCloses })
+      } catch (error) {
+        deskCloseError = error instanceof Error ? error : new Error(String(error))
+        wake?.()
+      } finally {
+        reopening = null
+      }
+    })()
+    return reopening
+  }
+
   try {
     desk = await deps.openDesk()
     await desk.openTabs(SIGNIN_START_URLS)
-    vnc = await deps.startVnc()
-    let failures = 0
-    for (;;) {
-      idle = await deps.idleMs()
-      let reply: SigninReply | null = null
-      try {
-        reply = await deps.post({ sessionId, idleMs: idle, ended: false })
-        failures = 0
-      } catch (error) {
-        failures += 1
-        console.error(`signin: heartbeat not delivered (${error instanceof Error ? error.name : 'error'})`)
-        if (failures >= MAX_POST_FAILURES) throw new Error(`the control server took none of ${failures} heartbeats`)
+    const deskCloseStopper = desk.onDeskClose?.(() => handleDeskClose())
+    try {
+      vnc = await deps.startVnc()
+      let failures = 0
+      for (;;) {
+        if (deskCloseError !== null) throw deskCloseError
+        idle = await deps.idleMs()
+        let reply: SigninReply | null = null
+        try {
+          reply = await deps.post({ sessionId, idleMs: idle, ended: false })
+          failures = 0
+        } catch (error) {
+          failures += 1
+          console.error(`signin: heartbeat not delivered (${error instanceof Error ? error.name : 'error'})`)
+          if (failures >= MAX_POST_FAILURES) throw new Error(`the control server took none of ${failures} heartbeats`)
+        }
+        if (reply?.commands.some((c) => c === 'stop' || c === 'resume_after_signin')) {
+          reason = 'done'
+          break
+        }
+        if (idle >= IDLE_CLOSE_MS) {
+          reason = 'idle'
+          break
+        }
+        await nextTick()
+        if (deskCloseError !== null) throw deskCloseError
+        if (deps.signal?.aborted) {
+          reason = 'done'
+          break
+        }
       }
-      if (reply?.commands.some((c) => c === 'stop' || c === 'resume_after_signin')) {
-        reason = 'done'
-        break
-      }
-      if (idle >= IDLE_CLOSE_MS) {
-        reason = 'idle'
-        break
-      }
-      await nextTick()
-      if (deps.signal?.aborted) {
-        reason = 'done'
-        break
-      }
+    } finally {
+      if (typeof deskCloseStopper === 'function') deskCloseStopper()
+      else await deskCloseStopper?.stop()
     }
   } catch (error) {
     errors.push(error)

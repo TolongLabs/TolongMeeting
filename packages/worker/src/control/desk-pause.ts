@@ -8,6 +8,8 @@ const MAX_IDLE_FAILURES = 2
 
 export type ResumeReason = 'command' | 'idle'
 
+export type DeskReopenEvent = { desk: 'reopened'; count: number }
+
 export type DeskPauseDeps = {
   startVnc(): Promise<Stopper>
   idleMs(): Promise<number>
@@ -16,9 +18,11 @@ export type DeskPauseDeps = {
   /** Puts the desk page's anchor tab back when the member closed it. Runs before the pause tabs close. */
   anchor(): Promise<void>
   checkpoint(): Promise<void>
-  emit(data: SigninEventData): void
+  emit(data: SigninEventData | DeskReopenEvent): void
   /** A failure the pause cannot throw to anyone (the idle check runs on a timer). Never given a secret. */
   report?(error: unknown): void
+  /** Registers a listener called when the desk window/page is closed. */
+  onDeskClose?(handler: () => void | Promise<void>): Stopper | (() => void)
 }
 
 export type DeskPauseClock = { now(): number; every(ms: number, fn: () => void): Stopper }
@@ -54,6 +58,9 @@ export class DeskPause {
   private next: ((reason: ResumeReason) => void)[] = []
   private busy = 0
   private drained: (() => void)[] = []
+  private deskCloses = 0
+  private reopening: Promise<void> | null = null
+  private deskCloseStopper: Stopper | (() => void) | null = null
 
   constructor(
     private readonly deps: DeskPauseDeps,
@@ -107,6 +114,8 @@ export class DeskPause {
     this.isPaused = true
     this.pausedAt = this.clock.now()
     this.idleFailures = 0
+    this.deskCloses = 0
+    this.deskCloseStopper = this.deps.onDeskClose?.(() => void this.deskClosed()) ?? null
     this.timer = this.clock.every(IDLE_CHECK_MS, () => void this.checkIdle())
     this.deps.emit({ signin: 'paused' })
   }
@@ -152,6 +161,10 @@ export class DeskPause {
       }
       await this.timer?.stop()
       this.timer = null
+      const stopper = this.deskCloseStopper
+      this.deskCloseStopper = null
+      if (typeof stopper === 'function') stopper()
+      else await stopper?.stop()
       // The view goes first: nothing else may stay reachable while the rest is slow.
       await attempt(async () => this.vnc?.stop())
       // The anchor first: the desk window must never be left without a tab.
@@ -207,11 +220,42 @@ export class DeskPause {
     this.closed = true
     await this.timer?.stop()
     this.timer = null
+    const stopper = this.deskCloseStopper
+    this.deskCloseStopper = null
+    if (typeof stopper === 'function') stopper()
+    else await stopper?.stop()
     const vnc = this.vnc
     this.vnc = null
     this.isPaused = false
     this.release(null)
     await vnc?.stop()
+  }
+
+  /**
+   * Called when the desk page or window is closed while a pause is active. Reopens the desk with the existing anchor
+   * (openDeskTab), at most 5 times per pause session; exceeding that ends the pause via its failure path.
+   */
+  async deskClosed(): Promise<void> {
+    if (!this.isPaused || this.closed) return
+    if (this.reopening !== null) return this.reopening
+    this.deskCloses += 1
+    if (this.deskCloses > 5) {
+      this.deps.report?.(new Error('the desk window was closed more than 5 times'))
+      await this.resume('idle').catch((error: unknown) => this.deps.report?.(error))
+      return
+    }
+    this.reopening = (async () => {
+      try {
+        await this.deps.anchor()
+        this.deps.emit({ desk: 'reopened', count: this.deskCloses })
+      } catch (error) {
+        this.deps.report?.(error)
+        await this.resume('idle').catch((err: unknown) => this.deps.report?.(err))
+      } finally {
+        this.reopening = null
+      }
+    })()
+    return this.reopening
   }
 
   private release(reason: ResumeReason | null): void {

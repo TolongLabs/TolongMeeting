@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import type { AccountCheckData, SigninJob } from '@tm/core'
 import { SigninJobSchema, controlTokenHash, vncSecret } from '@tm/core'
-import { launchBrowser } from '../chrome/launch'
+import type { Page } from 'playwright'
+import { launchBrowser, openDeskTab } from '../chrome/launch'
 import { openSigninTabs, restoreDeskAnchor } from '../control/desk-tabs'
 import { realClock } from '../control/desk-pause'
 import { idleMs, startVnc } from '../control/vnc'
@@ -64,16 +65,39 @@ export function signinDeps(job: SigninJob, signal?: AbortSignal): SigninDeps {
       }
       screen = display
       profile = ready
+      let deskPage = browser.desk
+      let closeListeners: (() => void | Promise<void>)[] = []
+
+      const hookClose = (page: Page) => {
+        page.once('close', async () => {
+          if (deskPage !== page) return
+          for (const cb of [...closeListeners]) await cb()
+        })
+      }
+      hookClose(deskPage)
+
       return {
         // The tabs close with the browser.
         openTabs: async (urls) => {
-          await openSigninTabs(browser.desk, urls, (e) =>
+          await openSigninTabs(deskPage, urls, (e) =>
             console.error(`signin: a start page did not load: ${e instanceof Error ? e.message : String(e)}`)
           )
         },
+        reopenDesk: async () => {
+          deskPage = await openDeskTab(browser.context)
+          hookClose(deskPage)
+        },
+        onDeskClose: (cb) => {
+          closeListeners.push(cb)
+          return {
+            stop: async () => {
+              closeListeners = closeListeners.filter((l) => l !== cb)
+            }
+          }
+        },
         checkAccounts: async (): Promise<AccountCheckData[]> => {
           // The member may have closed the anchor tab.
-          const desk = await restoreDeskAnchor(browser.desk)
+          const desk = await restoreDeskAnchor(deskPage)
           return checkSigninAccounts(desk, browser.context.pages())
         },
         close: async () => {

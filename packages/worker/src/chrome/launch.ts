@@ -286,6 +286,16 @@ async function discardTab(page: Page, why: string, cause?: unknown): Promise<voi
   if (!page.isClosed()) throw new TabCloseFailedError(`could not close ${why}: it is still open`, { cause })
 }
 
+// Checks whether a CDP window id still belongs to an open window.
+async function isWindowAlive(cdp: CDPSession, windowId: number): Promise<boolean> {
+  try {
+    await cdp.send('Browser.getWindowBounds', { windowId })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Opens a tab in the desk window and returns it already muted. Use it for every tab the worker itself opens on the desk.
 // Two ways in, one code path: pass the context from launchBrowser (the desk window is the one launchBrowser made), or
 // pass a desk Page, with an optional `open` that creates the tab (default: a new tab of the page's context). For a
@@ -294,7 +304,7 @@ async function discardTab(page: Page, why: string, cause?: unknown): Promise<voi
 // the passed Page's own window as the desk. A tab that lands in any other window is closed and TabNotOnDeskError is
 // thrown; if it cannot be closed, TabCloseFailedError is thrown instead. Any other failure after the tab opened closes
 // the tab too, then rethrows. A launchBrowser context also runs the tab through its page guard; any other context only
-// gets the page-level mute.
+// gets the page-level mute. If the desk window was closed, calling openDeskTab with context reopens the desk window.
 export async function openDeskTab(context: BrowserContext): Promise<Page>
 export async function openDeskTab(desk: Page, open?: () => Promise<Page>): Promise<Page>
 export async function openDeskTab(target: BrowserContext | Page, open?: () => Promise<Page>): Promise<Page> {
@@ -302,13 +312,20 @@ export async function openDeskTab(target: BrowserContext | Page, open?: () => Pr
   const context = 'context' in target ? target.context() : target
   const guard = guards.get(context)
   let deskWindow: number
+  let reopeningWindow = false
   if (guard) {
-    if (guard.desk?.windowId == null) throw new Error('openDeskTab: this browser has no desk window')
-    deskWindow = guard.desk.windowId
-    if (deskPage && (await windowIdOf(context, deskPage)) !== deskWindow) {
-      throw new Error('openDeskTab: the page is not in the desk window')
+    if (guard.desk === null) throw new Error('openDeskTab: this browser has no desk window')
+    const windowAlive = guard.desk.windowId !== null && (await isWindowAlive(guard.stage.cdp, guard.desk.windowId))
+    if (!windowAlive) {
+      reopeningWindow = true
+      deskWindow = -1
+    } else {
+      deskWindow = guard.desk.windowId!
+      if (deskPage && !deskPage.isClosed() && (await windowIdOf(context, deskPage)) !== deskWindow) {
+        throw new Error('openDeskTab: the page is not in the desk window')
+      }
     }
-  } else if (deskPage) deskWindow = await windowIdOf(context, deskPage)
+  } else if (deskPage && !deskPage.isClosed()) deskWindow = await windowIdOf(context, deskPage)
   else throw new Error('openDeskTab needs a context from launchBrowser')
   const page = await (open ?? (() => context.newPage()))()
   let onDesk: boolean
@@ -316,7 +333,13 @@ export async function openDeskTab(target: BrowserContext | Page, open?: () => Pr
     if (guard) await track(guard, page)
     else await muteDesk(page)
     if (page.isClosed()) throw new Error('the new desk tab was closed')
-    onDesk = (await windowIdOf(context, page)) === deskWindow
+    const windowId = await windowIdOf(context, page)
+    if (reopeningWindow && guard?.desk) {
+      if (windowId === guard.stage.windowId) throw new Error('the desk opened in the stage window')
+      guard.desk.windowId = windowId
+      deskWindow = windowId
+    }
+    onDesk = windowId === deskWindow
   } catch (error) {
     await discardTab(page, 'a desk tab that could not be set up', error)
     throw error

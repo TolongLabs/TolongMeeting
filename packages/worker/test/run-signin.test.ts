@@ -20,6 +20,7 @@ interface Options {
   idleFails?: boolean
   openFails?: Error
   signal?: AbortSignal
+  reopenFails?: Error
 }
 
 // Scripted collaborators. `order` is the order of the steps; a reply list ends with its last reply repeated. The
@@ -27,8 +28,21 @@ interface Options {
 function signinFixture(opts: Options = {}) {
   const order: string[] = []
   const posts: SigninHeartbeat[] = []
+  const events: Record<string, unknown>[] = []
   const replies = [...(opts.replies ?? [{ commands: [] }])]
-  const f = { order, posts, vncStopped: 0, job, deps: null as unknown as SigninDeps }
+  let closeListener: (() => void | Promise<void>) | null = null
+  const f = {
+    order,
+    posts,
+    events,
+    vncStopped: 0,
+    reopens: 0,
+    job,
+    deps: null as unknown as SigninDeps,
+    async triggerDeskClose() {
+      await closeListener?.()
+    }
+  }
   const deps: SigninDeps = {
     openDesk: async () => {
       order.push('openDesk')
@@ -41,6 +55,19 @@ function signinFixture(opts: Options = {}) {
         close: async () => {
           order.push('close')
           if (opts.closeFails) throw opts.closeFails
+        },
+        reopenDesk: async () => {
+          order.push('reopenDesk')
+          f.reopens += 1
+          if (opts.reopenFails) throw opts.reopenFails
+        },
+        onDeskClose: (cb) => {
+          closeListener = cb
+          return {
+            stop: async () => {
+              closeListener = null
+            }
+          }
         },
         ...(opts.accounts
           ? {
@@ -78,6 +105,7 @@ function signinFixture(opts: Options = {}) {
         return { stop: async () => clearInterval(id) }
       }
     },
+    emit: (data) => events.push(data),
     ...(opts.signal ? { signal: opts.signal } : {})
   }
   f.deps = deps
@@ -176,4 +204,46 @@ test('a server that takes no report for a minute ends the session, and the log n
 
 test('the ending steps fit in 45 s even when each one overruns', () => {
   expect(Object.values(BOUND).reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(45_000)
+})
+
+test('desk closed during sign-in is reopened up to 5 times and records state events', async () => {
+  const abort = new AbortController()
+  const f = signinFixture({ replies: [{ commands: [] }], signal: abort.signal })
+  const running = runSignin(f.job, f.deps)
+  await Bun.sleep(2)
+  for (let i = 1; i <= 5; i++) {
+    await f.triggerDeskClose()
+    expect(f.reopens).toBe(i)
+    expect(f.events.at(-1)).toEqual({ desk: 'reopened', count: i })
+  }
+  abort.abort()
+  await running
+  expect(f.posts.at(-1)).toMatchObject({ ended: true, reason: 'done' })
+})
+
+test('desk closed more than 5 times ends sign-in session with failure path', async () => {
+  const f = signinFixture({ replies: [{ commands: [] }] })
+  const running = runSignin(f.job, f.deps)
+  await Bun.sleep(2)
+  for (let i = 1; i <= 5; i++) {
+    await f.triggerDeskClose()
+  }
+  expect(f.reopens).toBe(5)
+  // 6th close fails session
+  await f.triggerDeskClose()
+  await expect(running).rejects.toThrow('closed more than 5 times')
+  expect(f.posts.at(-1)).toMatchObject({ ended: true, reason: 'error' })
+  expect(f.vncStopped).toBe(1)
+})
+
+test('concurrent close events during sign-in trigger once per close', async () => {
+  const abort = new AbortController()
+  const f = signinFixture({ replies: [{ commands: [] }], signal: abort.signal })
+  const running = runSignin(f.job, f.deps)
+  await Bun.sleep(2)
+  await Promise.all([f.triggerDeskClose(), f.triggerDeskClose(), f.triggerDeskClose()])
+  expect(f.reopens).toBe(1)
+  expect(f.events.at(-1)).toEqual({ desk: 'reopened', count: 1 })
+  abort.abort()
+  await running
 })
