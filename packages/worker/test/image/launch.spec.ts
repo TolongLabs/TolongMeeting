@@ -29,6 +29,11 @@ test('stage and desk split, no automation flag, devices denied, every desk page 
       expect(await windowBounds(context, desk)).toEqual({ left: 1920, top: 0, width: 1920, height: 1080 })
       await expectStageFilled(stage, screen.display)
       expect(browserCmdline(profileDir)).not.toContain('--enable-automation')
+      // navigator.mediaDevices exists only in a secure context, and about:blank is not one: serve an https page locally.
+      await context.route('https://tm-test.example/', (route) =>
+        route.fulfill({ contentType: 'text/html', body: '<title>secure</title>' })
+      )
+      await stage.goto('https://tm-test.example/')
       expect(
         await stage.evaluate(() =>
           navigator.mediaDevices.getUserMedia({ audio: true }).then(

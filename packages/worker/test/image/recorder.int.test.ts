@@ -34,7 +34,8 @@ test.skipIf(process.env.TM_IN_IMAGE !== '1')(
         audio: 'aac'
       })
       expect(gaps.length).toBe(1)
-      expect(+gaps[0]!.to - +gaps[0]!.from).toBeLessThan(3000)
+      // restart delay 1 s + ffmpeg start-up + the 1 s muxer flush; 3 s failed 2 of 4 runs on a loaded host
+      expect(+gaps[0]!.to - +gaps[0]!.from).toBeLessThan(5000)
       expect(JSON.parse(await readFile(join(dir, 'attempts.json'), 'utf8'))[0].stoppedAt).toBeString()
     } finally {
       await screen.stop()

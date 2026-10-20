@@ -87,15 +87,18 @@ export async function expectStageFilled(stage: Page, display: string): Promise<v
   await new Promise((resolve) => setTimeout(resolve, 500))
   const rgb = execFileSync(
     'ffmpeg',
-    ['-loglevel', 'error', '-f', 'x11grab', '-video_size', '1920x1080', '-i', `${display}+0,0`].concat([
-      '-frames:v',
-      '1',
+    [
+      '-loglevel',
+      'error',
       '-f',
-      'rawvideo',
-      '-pix_fmt',
-      'rgb24',
-      '-'
-    ]),
+      'x11grab',
+      '-draw_mouse',
+      '0',
+      '-video_size',
+      '1920x1080',
+      '-i',
+      `${display}+0,0`
+    ].concat(['-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']),
     { maxBuffer: 1920 * 1080 * 3 + 1024 }
   )
   const at = (x: number, y: number) => [...rgb.subarray((y * 1920 + x) * 3, (y * 1920 + x) * 3 + 3)]
