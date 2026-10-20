@@ -344,8 +344,26 @@ describe('finishLocalRun', () => {
     server.completeFailures = 1000
     const abort = new AbortController()
     const { d, dataDir, occ, whisperRuns } = await rig({ server, signal: abort.signal, retryMs: 5 })
-    setTimeout(() => abort.abort(), 60)
-    await expect(finishLocalRun(d, localJob('native'), dataDir, 'ended')).rejects.toThrow('HTTP 503')
+    const origPush = server.requests.push.bind(server.requests)
+    server.requests.push = (...items) => {
+      const res = origPush(...items)
+      if (server.requests.filter((r) => r.url.endsWith('/complete')).length >= 2 && !abort.signal.aborted) {
+        abort.abort()
+      }
+      return res
+    }
+    const interval = setInterval(() => {
+      if (server.requests.filter((r) => r.url.endsWith('/complete')).length >= 2 && !abort.signal.aborted) {
+        abort.abort()
+        clearInterval(interval)
+      }
+    }, 5)
+    try {
+      await expect(finishLocalRun(d, localJob('native'), dataDir, 'ended')).rejects.toThrow('HTTP 503')
+    } finally {
+      clearInterval(interval)
+      server.requests.push = origPush
+    }
     expect(existsSync(join(occ, 'recording', 'meeting.mkv'))).toBe(true)
     const left = readdirSync(occ).filter((n) => n === 'audio.flac' || n.startsWith('.'))
     expect(left).toEqual([])
