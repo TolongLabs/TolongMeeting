@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { removeConnection, type RemoveDeps } from '../src'
-import type { Connection, OAuthClient } from '../src/types'
+import type { Connection, GitHubConnection, OAuthClient } from '../src/types'
 import { memoryStores } from './memory-stores'
 import { routeFetch } from './route-fetch'
 
@@ -17,7 +17,7 @@ const google: Connection = {
   folderName: 'TolongMeeting Exports',
   folderIsDefault: true
 }
-const github: Connection = { kind: 'github', token: GITHUB, owner: 'o', repo: 'r', branch: 'main', folder: '' }
+const github: GitHubConnection = { kind: 'github', token: GITHUB, owner: 'o', repo: 'r', branch: 'main', folder: '' }
 const notion: Connection = { kind: 'notion', accessToken: ACCESS, refreshToken: null, workspace: 'W', parent: null }
 
 /** Deps for one member, over in-memory stores that hold m1's three connections and m2's GitHub one. */

@@ -13,6 +13,7 @@ import {
   handlePairRequest,
   MAX_FAILURES_GLOBAL,
   MAX_FAILURES_PER_IP,
+  MAX_FAILURES_PER_PREFIX,
   revokeDevice,
   type PairDeps
 } from '../../web/lib/companion/tokens'
@@ -48,6 +49,7 @@ beforeAll(async () => {
     db,
     ntfyOf: (memberId) => ntfyConfigOf(db, TEST_MASTER, NTFY_URL, memberId),
     ipLimiter: new AttemptLimiter(MAX_FAILURES_PER_IP, ATTEMPT_WINDOW_MS),
+    prefixLimiter: new AttemptLimiter(MAX_FAILURES_PER_PREFIX, ATTEMPT_WINDOW_MS),
     globalLimiter: new AttemptLimiter(MAX_FAILURES_GLOBAL, ATTEMPT_WINDOW_MS),
     now: () => new Date()
   }

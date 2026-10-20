@@ -64,7 +64,7 @@ function fakeProviders(status = 200) {
 
 test('a cross-origin or origin-less DELETE is refused before anything else', async () => {
   for (const handler of [githubDELETE, googleDELETE, notionDELETE]) {
-    for (const headers of [{ origin: 'https://evil.example' }, {}]) {
+    for (const headers of [{ origin: 'https://evil.example' }, {}] as Record<string, string>[]) {
       const res = await handler(new Request('https://tm.example/api/connections/x', { method: 'DELETE', headers }))
       expect(res.status).toBe(403)
     }
