@@ -1,3 +1,4 @@
+import { githubTarget } from './targets/github'
 import { pdfTarget } from './targets/pdf'
 import { zipTarget } from './targets/zip'
 import type { ExportTarget, ExportTargetId, OAuthClient } from './types'
@@ -30,5 +31,5 @@ export function buildTargets(clients: {
   notion: OAuthClient | null
 }): Partial<Record<ExportTargetId, ExportTarget>> {
   void clients
-  return { zip: zipTarget, pdf: pdfTarget }
+  return { zip: zipTarget, pdf: pdfTarget, github: githubTarget }
 }

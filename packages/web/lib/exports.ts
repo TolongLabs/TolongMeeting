@@ -1,4 +1,10 @@
-import { connectionsRequest, createExportRequest, listExportsRequest, type ApiResult } from '@tm/exports'
+import {
+  connectionsRequest,
+  createExportRequest,
+  listExportsRequest,
+  saveGitHubConnection,
+  type ApiResult
+} from '@tm/exports'
 import { memberExportStores, type MemberExportStores } from '../db/exports'
 import { loadMasterKey } from '../db/secrets'
 import type { MemberScope } from './scope'
@@ -36,4 +42,13 @@ export async function listExportsResponse(stores: MemberExportStores, occurrence
 
 export async function connectionsResponse(stores: MemberExportStores): Promise<Response> {
   return send(await connectionsRequest(stores))
+}
+
+/** Saves the GitHub connection from a `PUT`. `http` is the network seam; the site uses the real `fetch`. */
+export async function saveGitHubResponse(
+  stores: MemberExportStores,
+  request: Request,
+  http: typeof fetch = fetch
+): Promise<Response> {
+  return send(await saveGitHubConnection(await request.text(), { connections: stores.connections, http }))
 }

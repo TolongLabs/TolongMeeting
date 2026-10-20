@@ -5,14 +5,15 @@ import { renderGuard } from './guard'
 
 const TEXT_FILES = new Set(['transcript.md', 'slides.md', 'chat.md'])
 const SLIDE = /^slides\/(\d{2,3})\.webp$/
-const SAFE_DIR = /^[a-z0-9-]+$/
+/** A folder name `slugify` can make: nothing else is used as a folder in a zip or a repository. */
+export const SAFE_DIR = /^[a-z0-9-]+$/
 
 /**
  * The entry name inside the folder. Every name is one this module chooses: the summary is always `summary.md`, and the
  * rest are the pipeline's fixed names or `slides/NN.webp` with the digits checked. A path loadBundle does not produce
  * is refused, so nothing from the occurrence directory is copied into an entry name.
  */
-function entryFor(file: BundleFile, summaryFile: string): string {
+export function zipEntryName(file: BundleFile, summaryFile: string): string {
   if (file.path === summaryFile) return 'summary.md'
   if (TEXT_FILES.has(file.path)) return file.path
   const slide = SLIDE.exec(file.path)
@@ -25,7 +26,7 @@ export function zipBundle(bundle: ExportBundle): Uint8Array {
   if (!SAFE_DIR.test(bundle.dirName)) throw new ExportError('failed', 'This meeting has no usable folder name.')
   const data: Zippable = {}
   for (const file of bundle.files) {
-    const name = `${bundle.dirName}/${entryFor(file, bundle.summaryFile)}`
+    const name = `${bundle.dirName}/${zipEntryName(file, bundle.summaryFile)}`
     if (Object.hasOwn(data, name)) throw new ExportError('failed', `The zip would hold "${name}" twice.`)
     data[name] = [file.bytes, { level: file.path.endsWith('.webp') ? 0 : 6 }]
   }

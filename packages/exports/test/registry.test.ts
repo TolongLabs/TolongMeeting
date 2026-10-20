@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
 import { buildTargets, oauthClientFromEnv } from '../src/registry'
 
-test('downloads are always there; remote targets need their client', () => {
-  expect(Object.keys(buildTargets({ google: null, notion: null })).sort()).toEqual(['pdf', 'zip'])
+test('downloads and GitHub are always there; the other remote targets need their client', () => {
+  expect(Object.keys(buildTargets({ google: null, notion: null })).sort()).toEqual(['github', 'pdf', 'zip'])
   expect(
     oauthClientFromEnv('google', {
       TM_PUBLIC_URL: 'https://tm.example',

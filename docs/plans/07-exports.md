@@ -1252,7 +1252,7 @@ export function fakeFetch(
 
 Route: `PUT /api/connections/github` with `{ owner, repo, branch, folder, token? }` (the token may be left out to keep the stored one). Every GitHub request sends `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and `User-Agent: TolongMeeting`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // connections/github.test.ts
@@ -1384,12 +1384,12 @@ test('a moved branch retries once; a bad token asks to reconnect', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/connections/github.test.ts packages/exports/src/targets/github.test.ts`
 Expected: FAIL with `Cannot find module './github'`.
 
-- [ ] **Step 3: Implement the connection, the target and the route; add `github` to `buildTargets`**
+- [x] **Step 3: Implement the connection, the target and the route; add `github` to `buildTargets`**
 
 `saveGitHubConnection` validates with zod (`owner` and `repo` match `^[A-Za-z0-9_.-]+$`), requires a token starting with `github_pat_` unless one is stored, normalises the folder, then calls `GET /repos/{owner}/{repo}` and `GET /repos/{owner}/{repo}/branches/{branch}` with the messages in the test, and saves. The app can't read a fine-grained token's repository list, so the prefix check and the repository check are the enforcement; the Connections page tells the member to pick "Only select repositories". `commitMessage` is `docs: <verb> <title>`; if that is over 50 characters, the title is cut back to its last whole word that fits (a title without spaces is cut hard). `githubTarget.run`, with base path `<folder>/<dirName>` (or `<dirName>` when the folder is empty) and path segments URL-encoded:
 
@@ -1401,17 +1401,19 @@ Expected: FAIL with `Cannot find module './github'`.
 
 Errors: 401 throws `reconnect_needed`, "GitHub rejected the token. It may have expired; add a new one on the Connections page."; 403 or 404 on the ref or a write throws `not_found`, "TolongMeeting can't write to <owner>/<repo> on branch <branch> with this token. Check its repository access and Contents permission."; 429, or 403 with a `retry-after` header, throws `rate_limited`, "GitHub is limiting requests. Try again later.".
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/connections/github.test.ts packages/exports/src/targets/github.test.ts packages/exports/src/registry.test.ts`
 Expected: PASS (`0 fail`), with the registry test's expected keys updated to `['github', 'pdf', 'zip']`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports packages/web/app/api/connections/github
 git commit -m "feat(exports): add github target"
 ```
+
+> As built: the tests are in `packages/exports/test/` (`github-connection.test.ts`, `github-target.test.ts`, with `route-fetch.ts` for the plan's `fake-fetch.ts`), and the route test is `packages/web/test/github-connection-route.test.ts`. The repository holds the zip layout (the summary is `summary.md`, not `<title>.md`), and only layout files are written or deleted (a file of the member's own in the folder stays). `saveGitHubConnection(rawBody, { connections, http })` takes the member-bound store (no member id). A 403 that is not a rate limit throws `reconnect_needed` (the runner marks the connection), so the member is asked to check the token; every request sets `redirect: 'error'`; the settings are checked again at run time; a response that is not one of the fixed cases adds at most 200 characters of GitHub's text, passed through `redact` with the token.
 
 ### Task 9: Word renderer
 

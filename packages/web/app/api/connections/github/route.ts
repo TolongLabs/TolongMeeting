@@ -1,0 +1,13 @@
+import { exportStores, saveGitHubResponse } from '../../../../lib/exports'
+import { assertSameOrigin } from '../../../../lib/same-origin'
+import { requireMember } from '../../../../lib/session'
+
+/**
+ * Saves the member's GitHub connection: `{ owner, repo, branch, folder, token? }`. Cookie-authenticated, so the request
+ * must be same-origin. The token is checked against GitHub, sealed for this member and never sent back.
+ */
+export async function PUT(request: Request): Promise<Response> {
+  const refused = assertSameOrigin(request)
+  if (refused) return refused
+  return saveGitHubResponse(exportStores(await requireMember()), request)
+}
