@@ -3,6 +3,7 @@
 // Real: Postgres, pg-boss, the Next route functions (called with Request objects), Better Auth sessions, ffmpeg, sharp,
 // the scheduler (launch, monitor, retention) and the pipeline consumer. Fake: Docker (FakeDocker), ntfy (a Bun.serve
 // stub plus a fake admin API), the AI provider (a Bun.serve stub), GitHub (never called) and the key tester.
+import { mock } from 'bun:test'
 import { tmpdir } from 'node:os'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -11,8 +12,9 @@ import { promisify } from 'node:util'
 import { JobConfigSchema, localParts, type JobConfig, type OccurrenceState, type SpecEnv } from '@tm/core'
 import { sampleRecord } from '@tm/core/testing'
 import { eq, sql } from 'drizzle-orm'
-import { closeDb, members, occurrences, schema, type Db } from '@tm/web/db'
+import { closeDb, getDb, members, occurrences, schema, type Db } from '@tm/web/db'
 import { DEFAULT_MODELS } from '@tm/web/db/job-config'
+import { loadMasterKey } from '@tm/web/db/secrets'
 import { memberNotifier, type Notifier } from '@tm/web/db/notifier'
 import { bossQueue, QUEUES, type Queue } from '@tm/web/db/queues'
 import { createTestDb, dropAllTestDbs, seedAuthUser, testDbUrl } from '@tm/web/db/testing'
@@ -33,6 +35,11 @@ import { remuxRecording } from '../../../pipeline/src/remux'
 import { DockerError, FakeDocker, type LaunchDeps } from '../../src/index'
 
 const run = promisify(execFile)
+
+// The website builds its Better Auth once per process, on the first database it sees (`getAuth`). Test files of one
+// `bun test` run share the process but each start a stack of their own, so every stack gets an auth instance of its own.
+const authPath = Bun.resolveSync('../../../web/lib/auth', import.meta.dir)
+const realAuth = await import(authPath)
 
 export const MASTER = Buffer.alloc(32, 9)
 export const MINUTE = 60_000
@@ -280,20 +287,26 @@ export async function startStack(): Promise<Stack> {
     NTFY_URL: ntfy.url
   })
 
+  let auth: ReturnType<typeof realAuth.createAuth> | undefined
+  mock.module(authPath, () => ({
+    ...realAuth,
+    getAuth: () =>
+      (auth ??= realAuth.createAuth({
+        db: getDb(),
+        master: loadMasterKey(),
+        publicUrl: PUBLIC_URL,
+        clientId: 'e2e-client',
+        clientSecret: 'e2e-client-secret',
+        org: 'tolonglabs'
+      }))
+  }))
   const boss = new PgBoss({ connectionString: testDbUrl(db), supervise: false, schedule: false })
   boss.on('error', (e) => console.error(`e2e boss error: ${e.name}`))
   await boss.start()
   // What the scheduler's main creates before the website sends (TASK 21 carry (f)); `workPipeline` configures the two
   // pipeline queues later, when a test starts the consumer.
-  for (const name of [
-    QUEUES.expand,
-    QUEUES.launch,
-    QUEUES.pipeline,
-    PIPELINE_DEAD_QUEUE,
-    QUEUES.deleteOccurrence,
-    QUEUES.retention
-  ])
-    await boss.createQueue(name)
+  // Every queue the website or the scheduler may send to, the native-transcription and home-route ones included.
+  for (const name of [...Object.values(QUEUES), PIPELINE_DEAD_QUEUE]) await boss.createQueue(name)
   const queue = bossQueue(boss)
 
   const docker = new FlakyDocker()
@@ -347,6 +360,7 @@ export async function startStack(): Promise<Stack> {
       await boss.offWork(PIPELINE_DEAD_QUEUE)
     },
     async teardown() {
+      mock.module(authPath, () => realAuth)
       await boss.stop({ graceful: false, close: true })
       await closeDb()
       await dropAllTestDbs()
@@ -428,7 +442,8 @@ export async function saveLecture(
   stack: Stack,
   member: Member,
   inMinutes = 61,
-  name = 'Data Mining'
+  name = 'Data Mining',
+  transcription: 'live' | 'native' = 'live'
 ): Promise<Lecture> {
   const now = new Date()
   const start = new Date(Math.ceil((now.getTime() + inMinutes * MINUTE) / MINUTE) * MINUTE)
@@ -455,7 +470,7 @@ export async function saveLecture(
       end: hhmm(e.hhmm),
       identityId: member.identityId,
       link: { kind: 'fixed', url: ZOOM_LINK },
-      transcription: 'live'
+      transcription
     },
     deps
   )

@@ -1,6 +1,6 @@
 // End-to-end test of the server side: timetable -> queue -> scheduler launch -> worker heartbeats -> monitor ->
 // pipeline consumer -> meeting page -> retention. See ./e2e/harness.ts for what is real and what is faked.
-import { afterAll, afterEach, beforeAll, describe, expect, mock, setDefaultTimeout, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { execFile } from 'node:child_process'
 import { access, readdir, readFile, stat } from 'node:fs/promises'
 import { promisify } from 'node:util'
@@ -24,6 +24,7 @@ import {
   stopJobFileWatchers,
   validateRequest
 } from '../src/index'
+import { installSession, signInAs } from './e2e/companion'
 import {
   DAY,
   FakeWorker,
@@ -55,11 +56,9 @@ const exec = promisify(execFile)
 
 // --- Sign-in for the file route -------------------------------------------------------------------------------------
 // `requireMember` reads the request's cookies through `next/headers`, which only works inside a Next request. The real
-// Better Auth (`getAuth()`, `getSession`, the session row, the signed cookie) runs; only the request context is supplied.
-let currentCookie = ''
-const nextHeaders = Bun.resolveSync('next/headers', `${import.meta.dir}/../../web/lib`)
-const realNextHeaders = await import(nextHeaders)
-mock.module(nextHeaders, () => ({ ...realNextHeaders, headers: async () => new Headers({ cookie: currentCookie }) }))
+// Better Auth (`getAuth()`, `getSession`, the session row, the signed cookie) runs; only the request context is supplied
+// (./e2e/companion.ts, shared with e2e-companion.test.ts, which runs in the same process when the directory is tested).
+const session = installSession()
 
 let stack: Stack
 beforeAll(async () => {
@@ -74,7 +73,7 @@ afterEach(async () => {
 })
 
 afterAll(async () => {
-  mock.module(nextHeaders, () => realNextHeaders)
+  session.restore()
   // The website's own send-only pg-boss (`getQueue`) loses its connections when the database is dropped, and says so.
   const log = console.error
   console.error = (...args: unknown[]) => (String(args[0]).startsWith('queue error:') ? undefined : log(...args))
@@ -91,7 +90,7 @@ const exists = (path: string) =>
 
 async function fileRoute(as: Member | null, id: string, path: string[], range?: string): Promise<Response> {
   const { GET } = await import('../../web/app/api/meetings/[id]/files/[...path]/route')
-  currentCookie = as?.cookie ?? ''
+  signInAs(as)
   return GET(
     new Request(`${PUBLIC_URL}/api/meetings/${id}/files/${path.join('/')}`, range ? { headers: { range } } : {}),
     { params: Promise.resolve({ id, path }) }
