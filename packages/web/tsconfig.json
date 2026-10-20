@@ -4,5 +4,5 @@
     "jsx": "preserve",
     "types": ["bun"]
   },
-  "include": ["app", "lib", "db"]
+  "include": ["app", "components", "lib", "db"]
 }
