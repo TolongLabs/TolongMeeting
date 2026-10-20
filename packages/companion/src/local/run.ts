@@ -1,5 +1,12 @@
 import { mkdir } from 'node:fs/promises'
-import type { CompanionJob, ControlCommand, LocalSecrets, NtfyConfig } from '@tm/core'
+import {
+  controlTokenHash,
+  vncSecret,
+  type CompanionJob,
+  type ControlCommand,
+  type LocalSecrets,
+  type NtfyConfig
+} from '@tm/core'
 import { CompanionApiError, type CompanionApi } from '../api'
 import { writeFileAtomic } from '../atomic'
 import type { KeepAwake } from '../keep-awake'
@@ -174,6 +181,14 @@ export class LocalRunner {
   noVncPort(identityId: string): number | null {
     const a = this.active
     return a !== null && a.identityId === identityId ? a.vncPort : null
+  }
+
+  /** The password of the running meeting's desk view (the worker derives the same one), or null when no run of this identity is up. */
+  deskPassword(identityId: string): string | null {
+    const a = this.active
+    return a !== null && a.relay !== null && a.identityId === identityId
+      ? vncSecret(controlTokenHash(a.relay.token))
+      : null
   }
 
   /** The PC woke from sleep: the workers get a fresh silence window before they count as crashed. */

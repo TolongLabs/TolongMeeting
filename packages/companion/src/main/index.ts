@@ -2,8 +2,9 @@ import { app, Notification, powerSaveBlocker, safeStorage, session, shell } from
 import { APP_USER_MODEL_ID } from '../app-id'
 import { KeepAwake } from '../keep-awake'
 import { dockerCli } from '../local/docker'
+import { sweepPlaintext } from '../local/ephemeral'
 import { nodeSpawn } from '../jobs/whisper'
-import { jobsDir, localDataDir, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
+import { jobsDir, localRunPaths, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
 import { SecretStore } from '../secrets'
 import { loadSettings } from '../settings'
 import { StateStore } from '../state'
@@ -12,6 +13,8 @@ import { electronKeepAwake, electronNotifier, electronShell, secureSafeStorage, 
 
 /** The default server address, injected at build time from `TM_PUBLIC_URL` (see `scripts/build.ts`). */
 declare const TM_PUBLIC_URL: string
+/** The repository whose worker images this PC may pull and run, injected at build time (`scripts/build.ts`). */
+declare const TM_WORKER_IMAGE_PREFIX: string
 
 // TODO(figma-gate): the tray icon and menu (`main/tray.ts`), the preload script, the settings window
 // (`renderer/settings.html`) and `assets/` wait for the Figma design approval (docs/DESIGN.md). Until then the app
@@ -59,6 +62,10 @@ async function main(): Promise<void> {
   await app.whenReady()
   guardWebContents()
 
+  // A crash can leave key files, job files or audio behind: wipe them before anything can start, paired or not.
+  const localPaths = localRunPaths(paths)
+  await sweepPlaintext({ runs: localPaths.runs, jobs: jobsDir(paths) })
+
   const ports: Ports = {
     safe: secureSafeStorage(safeStorage, process.platform),
     notifier: electronNotifier(Notification),
@@ -78,8 +85,15 @@ async function main(): Promise<void> {
     keepAwake: new KeepAwake(powerSaveBlocker),
     shell: ports.shell,
     jobsDir: jobsDir(paths),
-    // On each start, finish the local meetings a restart cut off (after pairing only, inside `loops.start`).
-    local: { docker: dockerCli(nodeSpawn), dataDir: localDataDir(paths) },
+    // Local meetings (after pairing only, inside `loops.start`): the runner takes `local_run` jobs, and each start
+    // finishes the meetings a restart cut off. TODO(figma-gate): `openSigninWindow` comes with the sign-in window; until
+    // then `open_signin` commands are ignored.
+    local: {
+      docker: dockerCli(nodeSpawn, { imagePrefix: TM_WORKER_IMAGE_PREFIX, allowedRoots: [localPaths.root] }),
+      dataDir: localPaths.data,
+      paths: localPaths,
+      imagePrefix: TM_WORKER_IMAGE_PREFIX
+    },
     openPairing: () => console.error('This PC was unpaired. Pair it again (the pairing window is not built yet).'),
     openSettings: () => console.error('Set the whisper folder in settings (the settings window is not built yet).')
   })

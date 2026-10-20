@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import type { LocalPaths } from './local/vault'
 
 /** `%APPDATA%\TolongMeeting`, `%LOCALAPPDATA%\TolongMeeting` and Documents. */
 export interface CompanionPaths {
@@ -34,3 +35,10 @@ export const secretsFile = (p: CompanionPaths): string => join(p.userData, 'secr
 export const jobsDir = (p: CompanionPaths): string => join(p.localData, 'jobs')
 /** Where local runs keep their files: `<dataDir>/occurrences/<occurrenceId>` (`localPaths(...).data` on Windows). */
 export const localDataDir = (p: CompanionPaths): string => join(p.localData, 'data')
+/** The folders of local runs: `root` is the app's tree under `%LOCALAPPDATA%`, `data` is `localDataDir`. */
+export const localRunPaths = (p: CompanionPaths): LocalPaths => ({
+  root: p.localData,
+  data: localDataDir(p),
+  runs: join(p.localData, 'runs'),
+  profiles: join(p.localData, 'profiles')
+})

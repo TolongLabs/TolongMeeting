@@ -207,6 +207,15 @@ async function app(w: World) {
       resume: () => void log.push('native.resume'),
       stop: async () => void log.push('runner.stop')
     }),
+    // These tests are about finishing runs a restart cut off; a pending job would start a run, which they don't model.
+    makeLocal: () => ({
+      run: async () => {},
+      activeIdentity: () => null,
+      inject: () => false,
+      noVncPort: () => null,
+      deskPassword: () => null,
+      stop: async () => {}
+    }),
     sync: async () => []
   }
   const notifier: DesktopNotifier = { show: (n) => void log.push(`note: ${n.title}`) }
@@ -221,7 +230,14 @@ async function app(w: World) {
     openPairing: () => void log.push('openPairing'),
     openSettings: () => {},
     onError: (e) => void errors.push(e.message),
-    local: { docker: w.docker, dataDir: w.paths.data, retryMs: 10, chunkBytes: CHUNK },
+    local: {
+      docker: w.docker,
+      dataDir: w.paths.data,
+      paths: w.paths,
+      imagePrefix: 'ghcr.io/tl/',
+      retryMs: 10,
+      chunkBytes: CHUNK
+    },
     impl,
     restartDelayMs: () => 5
   })

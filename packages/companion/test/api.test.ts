@@ -189,6 +189,23 @@ describe('CompanionApi requests', () => {
   })
 })
 
+describe('local run secrets', () => {
+  test('secrets come from the job route, are checked, and the token stays in the header', async () => {
+    const seen: Request[] = []
+    const api = apiWith(
+      recorder(seen, () => Response.json({ apiKey: 'sk-1', details: [{ key: 'k', value: 'v', labels: [] }] }))
+    )
+    expect(await api.secrets('j1')).toEqual({ apiKey: 'sk-1', details: [{ key: 'k', value: 'v', labels: [] }] })
+    expect(`${seen[0].method} ${new URL(seen[0].url).pathname}`).toBe('GET /api/companion/jobs/j1/secrets')
+    expect(seen[0].url).not.toContain('tmd_x')
+    expect(seen[0].headers.get('authorization')).toBe('Bearer tmd_x')
+    const wrong = apiWith(recorder([], () => Response.json({ apiKey: '', details: [] })))
+    await expect(wrong.secrets('j1')).rejects.toBeInstanceOf(InvalidResponseError)
+    const gone = apiWith(recorder([], () => Response.json({ error: 'not_found' }, { status: 404 })))
+    await expect(gone.secrets('j1')).rejects.toBeInstanceOf(CompanionApiError)
+  })
+})
+
 describe('revoked devices', () => {
   const revoked = () => Response.json({ error: 'device_revoked_or_unknown' }, { status: 401 })
 

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { CompanionJob } from '@tm/core'
 import { DeviceRevokedError, type CompanionApi, type CompanionApiOptions } from '../src/api'
 import { KeepAwake } from '../src/keep-awake'
 import { Loops, type LoopImpl } from '../src/main/loops'
@@ -22,7 +23,30 @@ const safe: SafeStorageLike = {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Fakes for every loop. Each one writes to `log` when it starts and when it stops, so the order can be checked. */
-async function rig(opts: { paired?: boolean; ntfyThrows?: number; runnerStopMs?: number } = {}) {
+const IMAGE_PREFIX = 'ghcr.io/tl/'
+const localJob = (id: string, state: CompanionJob['state'] = 'pending'): CompanionJob => ({
+  id,
+  kind: 'local_run',
+  state,
+  occurrenceId: `occ-${id}`,
+  attempts: 0,
+  payload: {
+    occurrenceId: `occ-${id}`,
+    identityId: 'u1',
+    identityName: 'University',
+    image: 'ghcr.io/tl/worker:1',
+    job: {} as never
+  }
+})
+
+async function rig(
+  opts: {
+    paired?: boolean
+    ntfyThrows?: number
+    runnerStopMs?: number
+    local?: { signin?: boolean; image?: string }
+  } = {}
+) {
   const base = await mkdtemp(join(tmpdir(), 'tm-loops-'))
   dirs.push(base)
   await mkdir(base, { recursive: true })
@@ -52,11 +76,19 @@ async function rig(opts: { paired?: boolean; ntfyThrows?: number; runnerStopMs?:
   let triggers = 0
   let syncs = 0
   const offered: unknown[] = []
+  const localRuns: string[] = []
+  const localEnds: Array<() => void> = []
+  const signinOpened: string[] = []
+  let localStopped = false
+  let signinDeps!: Parameters<LoopImpl['makeSignin']>[0]
+  let localDeps!: Parameters<LoopImpl['makeLocal']>[0]
   const impl: LoopImpl = {
     makeApi: (o) => {
       apiOpts = o
       log.push('api')
-      return {} as CompanionApi
+      return {
+        identities: async () => ({ identities: [], image: opts.local?.image ?? 'ghcr.io/tl/worker:1' })
+      } as unknown as CompanionApi
     },
     startNtfy: (d) => {
       ntfyDeps = d
@@ -93,6 +125,33 @@ async function rig(opts: { paired?: boolean; ntfyThrows?: number; runnerStopMs?:
         }
       }
     },
+    makeLocal: (d) => {
+      localDeps = d
+      log.push('local.create')
+      return {
+        run: (job) =>
+          new Promise<void>((resolve) => {
+            localRuns.push(job.id)
+            localEnds.push(resolve)
+          }),
+        activeIdentity: () => null,
+        inject: () => false,
+        noVncPort: () => null,
+        deskPassword: () => null,
+        stop: async () => {
+          localStopped = true
+          log.push('local.stop')
+          for (const end of localEnds) end()
+        }
+      }
+    },
+    makeSignin: (d) => {
+      signinDeps = d
+      return {
+        open: async (identityId) => void signinOpened.push(identityId),
+        closeAll: async () => void log.push('signin.closeAll')
+      }
+    },
     sync: async () => {
       syncs++
       log.push('sync')
@@ -111,7 +170,18 @@ async function rig(opts: { paired?: boolean; ntfyThrows?: number; runnerStopMs?:
     openSettings: () => {},
     onError: (e) => void errors.push(e.message),
     impl,
-    restartDelayMs: () => 5
+    restartDelayMs: () => 5,
+    ...(opts.local
+      ? {
+          local: {
+            docker: {} as never,
+            dataDir: join(base, 'data'),
+            paths: { root: base, data: join(base, 'data'), runs: join(base, 'runs'), profiles: join(base, 'profiles') },
+            imagePrefix: IMAGE_PREFIX,
+            ...(opts.local.signin ? { openSigninWindow: () => {} } : {})
+          }
+        }
+      : {})
   })
   return {
     loops,
@@ -121,6 +191,18 @@ async function rig(opts: { paired?: boolean; ntfyThrows?: number; runnerStopMs?:
     errors,
     shown,
     offered,
+    localRuns,
+    localEnds,
+    signinOpened,
+    get localStopped() {
+      return localStopped
+    },
+    get signinDeps() {
+      return signinDeps
+    },
+    get localDeps() {
+      return localDeps
+    },
     get apiOpts() {
       return apiOpts
     },
@@ -241,6 +323,87 @@ describe('Loops', () => {
     r.pollerDeps.onError?.(new Error('The website answered with HTTP 503'))
     expect(r.errors).toEqual(['the poller loop: The website answered with HTTP 503'])
     expect(r.errors.join()).not.toContain('tmd_secret')
+    await r.loops.stop()
+  })
+
+  test('a PC with no local setup, or one that is not paired, makes no local runner', async () => {
+    const plain = await rig()
+    await plain.loops.start()
+    expect(plain.log).not.toContain('local.create')
+    await plain.pollerDeps.onJobs([localJob('j1')])
+    expect(plain.localRuns).toEqual([])
+    await plain.loops.stop()
+
+    const unpaired = await rig({ paired: false, local: {} })
+    expect(await unpaired.loops.start()).toBe(false)
+    expect(unpaired.log).toEqual([])
+  })
+
+  test('a pending local_run job goes to the local runner, one at a time, and never a native or claimed one', async () => {
+    const r = await rig({ local: {} })
+    await r.loops.start()
+    expect(r.log.indexOf('runner.create')).toBeLessThan(r.log.indexOf('local.create'))
+    expect(r.log.indexOf('local.create')).toBeLessThan(r.log.indexOf('poller.start'))
+    expect(r.localDeps.imagePrefix).toBe(IMAGE_PREFIX)
+
+    await r.pollerDeps.onJobs([
+      localJob('claimed', 'claimed'),
+      { ...localJob('n'), kind: 'native_transcription' } as never
+    ])
+    expect(r.localRuns).toEqual([])
+    await r.pollerDeps.onJobs([localJob('j1'), localJob('j2')])
+    expect(r.localRuns).toEqual(['j1'])
+    // The same list again while the run goes on starts nothing more, and still reaches the native runner.
+    await r.pollerDeps.onJobs([localJob('j2')])
+    expect(r.localRuns).toEqual(['j1'])
+    expect(r.offered).toHaveLength(3)
+    r.localEnds[0]!()
+    await sleep(5)
+    await r.pollerDeps.onJobs([localJob('j2')])
+    expect(r.localRuns).toEqual(['j1', 'j2'])
+    await r.loops.stop()
+  })
+
+  test('quit ends the local run and closes sign-in views; it waits for both', async () => {
+    const r = await rig({ local: { signin: true } })
+    await r.loops.start()
+    await r.pollerDeps.onJobs([localJob('j1')])
+    r.log.length = 0
+    await r.loops.stop()
+    expect(r.localStopped).toBe(true)
+    expect(r.log).toContain('signin.closeAll')
+    expect(r.log).toContain('local.stop')
+  })
+
+  test('a sign-in request opens the view with the website’s image, and an image outside the prefix is refused', async () => {
+    const r = await rig({ local: { signin: true } })
+    await r.loops.start()
+    await r.streamDeps.onEvent({ id: 1, command: { type: 'open_signin', identityId: 'u1' } })
+    await sleep(5)
+    expect(r.signinOpened).toEqual(['u1'])
+    expect(r.signinDeps.imageRef()).toBe('ghcr.io/tl/worker:1')
+    // The desk password comes from the runner, which has no run.
+    expect(r.signinDeps.deskPassword('u1')).toBeNull()
+    await r.loops.stop()
+
+    const bad = await rig({ local: { signin: true, image: 'ghcr.io/evil/worker:1' } })
+    await bad.loops.start()
+    await bad.streamDeps.onEvent({ id: 1, command: { type: 'open_signin', identityId: 'u1' } })
+    await sleep(5)
+    expect(bad.signinOpened).toEqual([])
+    expect(bad.errors).toEqual([
+      'could not open the sign-in view: the website named a worker image outside the trusted repository'
+    ])
+    await bad.loops.stop()
+  })
+
+  test('without a sign-in window, open_signin is ignored', async () => {
+    const r = await rig({ local: {} })
+    await r.loops.start()
+    await r.streamDeps.onEvent({ id: 1, command: { type: 'open_signin', identityId: 'u1' } })
+    await sleep(5)
+    expect(r.signinOpened).toEqual([])
+    expect(r.errors).toEqual([])
     await r.loops.stop()
   })
 })

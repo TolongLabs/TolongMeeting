@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  controlTokenHash,
   profileKey,
   type CompanionJob,
   type Heartbeat,
@@ -11,7 +12,8 @@ import {
   type JobConfig,
   type LocalRunPayload,
   type NtfyConfig,
-  type PreflightReport
+  type PreflightReport,
+  vncSecret
 } from '@tm/core'
 import { hostnameFor as workerHostnameFor, machineIdFor as workerMachineIdFor } from '../../worker/src/profile/keys'
 import { CompanionApiError } from '../src/api'
@@ -684,6 +686,25 @@ describe('a local run', () => {
     w.runner.inject(ID, 'stop')
     await run
     expect(w.runner.noVncPort(ID)).toBeNull()
+  })
+})
+
+describe('the desk password', () => {
+  test('is null without an active run', () => {
+    const w = build({ behaviours: [{ kind: 'run' }] })
+    expect(w.runner.deskPassword(ID)).toBeNull()
+  })
+
+  test('is the one the worker derives from its control token, for the running identity only', async () => {
+    const w = build({ behaviours: [{ kind: 'run' }] })
+    const run = w.runner.run(localJob)
+    await w.until(() => w.log.includes('first heartbeat 1'))
+    const token = w.jobsSeen[0]!.control!.token
+    expect(w.runner.deskPassword(ID)).toBe(vncSecret(controlTokenHash(token)))
+    expect(w.runner.deskPassword('other')).toBeNull()
+    w.runner.inject(ID, 'stop')
+    await run
+    expect(w.runner.deskPassword(ID)).toBeNull()
   })
 })
 

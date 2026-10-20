@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import type { CompanionJob } from '@tm/core'
+import type { CompanionJob, NtfyConfig } from '@tm/core'
 import { CompanionApi, DeviceRevokedError, type CompanionApiOptions } from '../api'
 import { reconnectDelayMs } from '../backoff'
 import { handleRevoked } from '../pairing'
@@ -14,9 +14,12 @@ import { showSummaryNotification, syncSummaries, type SummarySyncDeps } from '..
 import { NativeRunner, type NativeRunnerDeps } from '../jobs/native-runner'
 import { startJobPoller, type JobPollerDeps } from '../jobs/poller'
 import { nodeSpawn, type SpawnLike } from '../jobs/whisper'
-import type { DockerLike } from '../local/docker'
+import { imageRefOk, type DockerLike } from '../local/docker'
 import { resumeLocalRuns } from '../local/resume'
-import { localAfter } from '../local/run'
+import { startRelay } from '../local/relay'
+import { localAfter, LocalRunner, type LocalRunnerDeps } from '../local/run'
+import { SigninController, type SigninDeps } from '../local/signin'
+import type { LocalPaths } from '../local/vault'
 import type { ShellPort } from './ports'
 
 /** Something that runs until it is stopped. The runner's `stop` waits for its job to let go. */
@@ -27,6 +30,12 @@ interface Stoppable {
 /** What the loops use of the native runner. */
 type NativeRunnerLike = Stoppable & Pick<NativeRunner, 'busy' | 'offer' | 'pause' | 'resume'>
 
+/** What the loops use of the local runner. */
+type LocalRunnerLike = Stoppable & Pick<LocalRunner, 'run' | 'activeIdentity' | 'inject' | 'noVncPort' | 'deskPassword'>
+
+/** What the loops use of the sign-in controller. */
+type SigninLike = Pick<SigninController, 'open' | 'closeAll'>
+
 /** The loops and helpers this module wires. Tests replace them with fakes; the app uses the real ones. */
 export interface LoopImpl {
   makeApi(o: CompanionApiOptions): CompanionApi
@@ -34,6 +43,8 @@ export interface LoopImpl {
   startStream(d: CommandStreamDeps): Stoppable
   startPoller(d: JobPollerDeps): Stoppable & { trigger(): void }
   makeRunner(d: NativeRunnerDeps): NativeRunnerLike
+  makeLocal(d: LocalRunnerDeps): LocalRunnerLike
+  makeSignin(d: SigninDeps): SigninLike
   sync(d: SummarySyncDeps): Promise<string[]>
 }
 
@@ -43,6 +54,8 @@ const REAL: LoopImpl = {
   startStream: startCommandStream,
   startPoller: startJobPoller,
   makeRunner: (d) => new NativeRunner(d),
+  makeLocal: (d) => new LocalRunner(d),
+  makeSignin: (d) => new SigninController(d),
   sync: syncSummaries
 }
 
@@ -70,6 +83,13 @@ export interface LoopsDeps {
     docker: DockerLike
     /** The data root: the folder that holds `occurrences/`. */
     dataDir: string
+    /** Where local runs keep their data, short-lived files and profiles (`data` is `dataDir`). */
+    paths: LocalPaths
+    /**
+     * Shows a sign-in view for a local identity. TODO(figma-gate): until the window exists the app passes nothing, and
+     * `open_signin` commands are ignored.
+     */
+    openSigninWindow?: SigninDeps['openWindow']
     /** Only a worker image under this repository cuts the audio (the app's `TM_WORKER_IMAGE_PREFIX`). */
     imagePrefix: string
     /** Wait between tries of a failed upload request. Default 60000. */
@@ -96,6 +116,13 @@ export class Loops {
   private ntfy: Stoppable | null = null
   private stream: Stoppable | null = null
   private runner: NativeRunnerLike | null = null
+  /** The local runner: made after pairing, with the loops, when this app runs meetings on the PC. */
+  private local: LocalRunnerLike | null = null
+  /** The local run in progress. A job list that arrives meanwhile offers nothing more to the local runner. */
+  private localRun: Promise<void> | null = null
+  private signin: SigninLike | null = null
+  /** The worker image the website named for this PC's identities (already checked against the trusted prefix). */
+  private localImage: string | null = null
   /** Aborted when the loops stop (quit or unpair): an upload in progress ends and its files stay. */
   private halt = new AbortController()
   private resumed = false
@@ -145,6 +172,7 @@ export class Loops {
       openSettings: () => this.d.openSettings(),
       onError: (e) => this.fail('the native runner', e)
     })
+    this.makeLocal(this.api, this.runner)
     await this.launch('poller')
     this.requestSync()
     return true
@@ -251,8 +279,8 @@ export class Loops {
         api,
         state: this.d.state,
         onEvent: (e) => {
-          // `open_signin` and `local_identities_changed` belong to local mode (plan 08).
           if (e.command.type === 'job_available') this.poller?.trigger()
+          else if (e.command.type === 'open_signin') void this.openSignin(api, e.command.identityId)
         },
         // A reconnect may have missed a summary, so sync after every open.
         onStatus: (open) => {
@@ -267,7 +295,9 @@ export class Loops {
       this.poller = this.impl.startPoller({
         api,
         onJobs: (jobs) => {
-          this.resumeLocal(api, runner, jobs)
+          // A resume looks for runs a restart cut off; with a run in progress it would see that run's own files.
+          if (this.localRun === null) this.resumeLocal(api, runner, jobs)
+          this.offerLocal(jobs)
           runner.offer(jobs)
         },
         busy: () => runner.busy,
@@ -285,16 +315,7 @@ export class Loops {
     const local = this.d.local
     if (local === undefined || this.resumed || this.resuming !== null || !this.running) return
     const signal = this.halt.signal
-    const after = localAfter({
-      api,
-      docker: local.docker,
-      imagePrefix: local.imagePrefix,
-      settings: () => this.d.settings,
-      spawn: this.d.spawn ?? nodeSpawn,
-      retryMs: local.retryMs,
-      chunkBytes: local.chunkBytes,
-      signal
-    })
+    const after = this.afterFor(api)
     this.resuming = resumeLocalRuns({
       jobs,
       docker: local.docker,
@@ -312,6 +333,98 @@ export class Loops {
       .finally(() => {
         this.resuming = null
       })
+  }
+
+  /** `localAfter` for this start of the loops: sends a finished local run, then deletes it. */
+  private afterFor(api: CompanionApi): LocalRunnerDeps['after'] {
+    const local = this.d.local!
+    return localAfter({
+      api,
+      docker: local.docker,
+      imagePrefix: local.imagePrefix,
+      settings: () => this.d.settings,
+      spawn: this.d.spawn ?? nodeSpawn,
+      retryMs: local.retryMs,
+      chunkBytes: local.chunkBytes,
+      signal: this.halt.signal
+    })
+  }
+
+  /** The member's ntfy address and token, which a local worker gets so it can ping. Needs a paired PC. */
+  private async ntfyConfig(): Promise<NtfyConfig> {
+    const ntfy = this.d.state.get().ntfy
+    const token = await this.d.secrets.get('ntfyToken')
+    if (ntfy === undefined || token === null) throw new Error('this PC has no ntfy address or token; pair it again')
+    return { url: ntfy.url, topic: ntfy.topic, token }
+  }
+
+  /**
+   * Makes the local runner (and the sign-in controller when a window can be shown). Only `start` calls it, which runs
+   * only for a paired PC, so nothing of a local run exists before pairing.
+   */
+  private makeLocal(api: CompanionApi, native: NativeRunnerLike): void {
+    const local = this.d.local
+    if (local === undefined) return
+    const runner = this.impl.makeLocal({
+      api,
+      docker: local.docker,
+      secrets: this.d.secrets,
+      state: this.d.state,
+      paths: local.paths,
+      keepAwake: this.d.keepAwake,
+      native,
+      ntfy: () => this.ntfyConfig(),
+      relay: (o) => startRelay({ api, jobId: o.jobId, occurrenceId: o.occurrenceId }),
+      after: this.afterFor(api),
+      imagePrefix: local.imagePrefix,
+      onError: (e) => this.fail('a local meeting', e)
+    })
+    this.local = runner
+    const openWindow = local.openSigninWindow
+    if (openWindow === undefined) return
+    this.signin = this.impl.makeSignin({
+      runner,
+      docker: local.docker,
+      secrets: this.d.secrets,
+      paths: local.paths,
+      imageRef: () => {
+        if (this.localImage === null) throw new Error('the worker image is not known yet')
+        return this.localImage
+      },
+      openWindow,
+      deskPassword: (identityId) => runner.deskPassword(identityId),
+      onError: (e) => this.fail('a sign-in view', e)
+    })
+  }
+
+  /** Starts the first pending `local_run` job the website lists, unless a local run is going on. The runner claims it. */
+  private offerLocal(jobs: CompanionJob[]): void {
+    const local = this.local
+    if (local === null || this.localRun !== null || !this.running) return
+    const job = jobs.find((j) => j.kind === 'local_run' && j.state === 'pending')
+    if (job === undefined) return
+    this.localRun = local
+      .run(job)
+      .catch((e: unknown) => this.fail('the local meeting', e))
+      .finally(() => {
+        this.localRun = null
+        this.poller?.trigger()
+      })
+  }
+
+  /** Opens the sign-in view of a local identity the member asked for. A refusal or a failure is reported, not thrown. */
+  private async openSignin(api: CompanionApi, identityId: string): Promise<void> {
+    const signin = this.signin
+    const prefix = this.d.local?.imagePrefix
+    if (signin === null || prefix === undefined) return
+    try {
+      const { image } = await api.identities()
+      if (!imageRefOk(image, prefix)) throw new Error('the website named a worker image outside the trusted repository')
+      this.localImage = image
+      await signin.open(identityId)
+    } catch (e) {
+      this.fail('could not open the sign-in view', e)
+    }
   }
 
   /** Shows a ntfy message. A click or button opens its link only if it is still an https link. */
@@ -338,6 +451,9 @@ export class Loops {
     this.restarts.clear()
     const loops = [this.runner, this.poller, this.stream, this.ntfy]
     this.runner = this.poller = this.stream = this.ntfy = null
+    const local = this.local
+    const signin = this.signin
+    this.local = this.signin = null
     // The runner is asked first and waited for last: it ends its job and lets the PC sleep again meanwhile.
     const runnerDone = (async () => loops[0]?.stop())().catch((e: unknown) => this.fail('the runner did not stop', e))
     for (const loop of loops.slice(1)) {
@@ -348,6 +464,13 @@ export class Loops {
       }
     }
     await runnerDone
-    await this.resuming
+    await Promise.all([
+      (async () => {
+        await signin?.closeAll()
+        await local?.stop()
+        await this.localRun
+      })().catch((e: unknown) => this.fail('the local runner did not stop', e)),
+      this.resuming
+    ])
   }
 }

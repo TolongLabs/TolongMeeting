@@ -4,6 +4,7 @@ import {
   CompanionJobSchema,
   JobFailureReportSchema,
   LocalIdentitiesResponseSchema,
+  LocalSecretsSchema,
   MAX_LIST_ITEMS,
   NATIVE_UPLOAD_FIELDS,
   NATIVE_UPLOAD_MAX_FILE_BYTES,
@@ -17,6 +18,7 @@ import {
   type Heartbeat,
   type HeartbeatReply,
   type LocalIdentitiesResponse,
+  type LocalSecrets,
   type PreflightReport,
   type SummaryListItem
 } from '@tm/core'
@@ -218,6 +220,12 @@ export class CompanionApi {
   async identities(): Promise<LocalIdentitiesResponse> {
     const res = await this.call('GET', '/api/companion/identities', { expect: [200] })
     return readJson(res, LocalIdentitiesResponseSchema)
+  }
+
+  /** The AI key and saved details of the local run this PC holds. Close to the meeting only; the website says 404 otherwise. */
+  async secrets(jobId: string): Promise<LocalSecrets> {
+    const res = await this.call('GET', `/api/companion/jobs/${id(jobId)}/secrets`, { expect: [200] })
+    return readJson(res, LocalSecretsSchema)
   }
 
   /** Tells the website whether this PC can start the job's meeting (Docker running, enough memory, image pulled). */
