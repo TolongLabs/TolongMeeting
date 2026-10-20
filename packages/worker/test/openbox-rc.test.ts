@@ -26,6 +26,11 @@ test('the window manager binds no key', async () => {
   expect(all.some((t) => t.name === 'keyboard')).toBe(true) // present and empty: openbox then adds no default
 })
 
+test('undecorated windows keep no border, which would cover the last stage column', async () => {
+  const xml = (await readFile(RC, 'utf8')).replace(/<!--[\s\S]*?-->/g, '')
+  expect(xml).toMatch(/<keepBorder>no<\/keepBorder>/)
+})
+
 test('no mouse bind moves, resizes, opens a menu or switches desktops; only a click on a window focuses and raises', async () => {
   const all = await tags()
   const contexts = all.filter((t) => t.name === 'context' && !t.closing).map((t) => t.attrs.name)

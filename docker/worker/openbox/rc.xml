@@ -65,7 +65,8 @@
       S: shade (roll up/down)
       D: omnipresent (on all desktops).
   -->
-  <keepBorder>yes</keepBorder>
+  <keepBorder>no</keepBorder>
+  <!-- yes would keep a 1 px border on undecorated windows; the desk border then covers the last stage column -->
   <animateIconify>yes</animateIconify>
   <font place="ActiveWindow">
     <name>sans</name>
