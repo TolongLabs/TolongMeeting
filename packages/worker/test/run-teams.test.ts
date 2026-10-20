@@ -50,7 +50,7 @@ test('a Teams sign-in wall records the Microsoft account and pings once', async 
   expect(d.pings).toHaveLength(1)
   expect(d.pings[0]!.message).toContain('Teams asked to sign in')
   const accounts = (await events()).filter((e) => e.type === 'state' && e.data.signedIn === false)
-  expect(accounts.map((e) => e.data)).toEqual([{ account: 'microsoft', signedIn: false }])
+  expect(accounts.map((e) => e.data)).toEqual([{ account: 'teams', signedIn: false }])
 })
 
 test('a Zoom sign-in wall still records the Zoom account', async () => {

@@ -1254,7 +1254,7 @@ class OccurrenceRun {
         case 'signin_required':
           // Teams signs in with a Microsoft account.
           await this.ev('state', {
-            account: adapter!.platform === 'teams' ? 'microsoft' : 'zoom',
+            account: adapter!.platform === 'teams' ? 'teams' : 'zoom',
             signedIn: false
           } satisfies AccountCheckData)
           this.alerter.alert(adapter!.platform === 'teams' ? 'teams_signin' : 'zoom_signin')
