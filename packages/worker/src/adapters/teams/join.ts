@@ -20,13 +20,26 @@ export function logStep(step: string): void {
 // Re-exported for the watchers, which look at the Teams page too.
 export { shown }
 
-// "On" for a toggle or radio: aria-checked="true", or a checked input.
-function readsOn(locator: Locator, timeout: number): Promise<boolean> {
+// What a toggle or radio says about itself: aria-checked="true"/"false", or a checkbox or radio input's checked state.
+// Anything else (the attribute stripped, "mixed", a plain button) is `unknown`: it is never read as off.
+type ToggleState = 'on' | 'off' | 'unknown'
+
+const TOGGLES = ['prejoinCameraToggle', 'prejoinMicToggle'] as const
+type ToggleName = (typeof TOGGLES)[number]
+
+function readToggle(locator: Locator, timeout: number): Promise<ToggleState> {
   return locator.evaluate(
-    (el) => el.getAttribute('aria-checked') === 'true' || (el as HTMLInputElement).checked === true,
-    {
-      timeout
-    }
+    (el): ToggleState => {
+      const aria = el.getAttribute('aria-checked')
+      if (aria === 'true') return 'on'
+      if (aria === 'false') return 'off'
+      if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) {
+        return el.checked ? 'on' : 'off'
+      }
+      return 'unknown'
+    },
+    undefined,
+    { timeout }
   )
 }
 
@@ -42,38 +55,41 @@ export async function joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_
   let permissionClicks = 0
   let joinClicked = false
 
-  // The toggles must read off before Join is clicked. Returns the names of those that do not.
-  async function togglesOn(): Promise<string[]> {
-    const on: string[] = []
-    for (const [name, css] of [
-      ['prejoinCameraToggle', selectors.prejoinCameraToggle],
-      ['prejoinMicToggle', selectors.prejoinMicToggle]
-    ] as const) {
-      if (!(await shown(page, css).isVisible())) throw new DeviceControlMissing('teams', name)
-      if (await readsOn(shown(page, css), stepTimeout(deadline))) on.push(name)
+  // How each device toggle reads now. Throws DeviceControlMissing when one is not on screen.
+  async function readToggles(): Promise<Record<ToggleName, ToggleState>> {
+    const states: Record<ToggleName, ToggleState> = { prejoinCameraToggle: 'unknown', prejoinMicToggle: 'unknown' }
+    for (const name of TOGGLES) {
+      const toggle = shown(page, selectors[name])
+      if (!(await toggle.isVisible())) throw new DeviceControlMissing('teams', name)
+      states[name] = await readToggle(toggle, stepTimeout(deadline))
     }
-    return on
+    return states
   }
 
+  // Both devices must read off before Join is clicked. A toggle that cannot be read is never guessed at: nothing is
+  // clicked and the join fails as unreadable.
   async function turnDevicesOff(): Promise<JoinResult | null> {
-    for (const name of ['prejoinCameraToggle', 'prejoinMicToggle'] as const) {
-      const toggle = shown(page, selectors[name])
-      if (!(await toggle.isVisible())) return { kind: 'failed', reason: 'device_toggle_missing' }
-      if (await readsOn(toggle, stepTimeout(deadline))) {
-        await toggle.click({ timeout: stepTimeout(deadline) })
+    const first = await readToggles()
+    if (TOGGLES.some((name) => first[name] === 'unknown')) return { kind: 'failed', reason: 'device_toggle_unreadable' }
+    for (const name of TOGGLES) {
+      if (first[name] === 'on') {
+        await shown(page, selectors[name]).click({ timeout: stepTimeout(deadline) })
         logStep(`click ${name}`)
       }
     }
+    // The computer-audio option is a radio: clicking one that is already selected changes nothing.
     const audio = shown(page, selectors.prejoinComputerAudio)
     if (!(await audio.isVisible())) return { kind: 'failed', reason: 'audio_option_missing' }
-    if (!(await readsOn(audio, stepTimeout(deadline)))) {
+    if ((await readToggle(audio, stepTimeout(deadline))) !== 'on') {
       await audio.click({ timeout: stepTimeout(deadline) })
       logStep('click prejoinComputerAudio')
     }
     // Re-read: a toggle that still reads on is never followed by a Join click.
     const settleUntil = Math.min(deadline, Date.now() + TOGGLE_SETTLE_MS)
     for (;;) {
-      if ((await togglesOn()).length === 0) return null
+      const now = await readToggles()
+      if (TOGGLES.some((name) => now[name] === 'unknown')) return { kind: 'failed', reason: 'device_toggle_unreadable' }
+      if (TOGGLES.every((name) => now[name] === 'off')) return null
       if (Date.now() >= settleUntil) return { kind: 'failed', reason: 'device_toggle_stuck' }
       await sleep(100)
     }
@@ -88,6 +104,15 @@ export async function joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_
       return { kind: 'signin_required', host }
     }
     if (await teamsTextSignal(page, sel, texts.invalidLink)) return { kind: 'failed', reason: 'invalid_link' }
+    // A link whose meeting is over (or one the member just left) shows the end screen instead of the pre-join screen. With
+    // Leave showing the meeting is live, and end text counts only inside a notice container (as in teamsMeetingState).
+    const live = await shown(page, selectors.hangupButton).isVisible()
+    if (
+      (await shown(page, selectors.endScreen).isVisible()) ||
+      (await teamsTextSignal(page, sel, texts.ended, live ? selectors.noticeContainers : undefined))
+    ) {
+      return { kind: 'failed', reason: 'meeting_ended' }
+    }
 
     if (!joinClicked) {
       const permissionButton = page

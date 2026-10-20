@@ -2,11 +2,11 @@ import type { Page } from 'playwright'
 import type { ChatMessage, SenderRole } from '@tm/core'
 import { extractLinks } from '../../forms/links'
 import type { ChatCursor } from '../types'
+import { shown, withPanel } from '../common'
 import { navigationGuard } from '../zoom/root'
 import { teamsChatProbe, type RawTeamsMessage, type TeamsProbeResult } from './chat-dom'
-import { shown } from './join'
 import { teamsState } from './page-state'
-import { readTeamsRoles } from './roles'
+import { readRolesNow, readTeamsRoles } from './roles'
 import type { TeamsSelectors } from './selectors'
 
 // A recurring meeting keeps one chat thread for all its occurrences: only messages from the hour before the join on
@@ -97,7 +97,8 @@ export async function readTeamsChat(
 
 // Reads the roster, then scrolls the whole list so every row renders once, and returns every message met, in list
 // order and after the same cutoff (not only new ones). Stops after `budgetMs`: the log then says how far it
-// got, and the next sweep starts again from the top. A caller that arrives during a sweep gets that sweep's result.
+// got, and the next sweep starts again from the top. A caller that arrives during a sweep gets that sweep's result. It
+// holds the panel lock, so no layout pass or role read opens another pane under it.
 export function sweepTeamsChat(
   page: Page,
   sel: TeamsSelectors,
@@ -105,11 +106,11 @@ export function sweepTeamsChat(
 ): Promise<ChatMessage[]> {
   const running = sweeps.get(page)
   if (running) return running
-  const run = (async () => {
+  const run = withPanel(page, async () => {
     if (!(await shown(page, sel.selectors.chatPane).isVisible())) return []
     const state = teamsState(page)
     state.joinedAt ??= Date.now()
-    const roles = await readTeamsRoles(page, sel)
+    const roles = await readRolesNow(page, sel)
     const result = await probe(page, sel, 'sweep', budgetMs)
     if (!result) return []
     if (!result.complete) {
@@ -120,7 +121,7 @@ export function sweepTeamsChat(
       cutoffMs: state.joinedAt - TEAMS_CHAT_HISTORY_MS,
       seenAt: new Date().toISOString()
     })
-  })().finally(() => sweeps.delete(page))
+  }).finally(() => sweeps.delete(page))
   sweeps.set(page, run)
   return run
 }

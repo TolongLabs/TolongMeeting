@@ -1,6 +1,7 @@
 import type { SenderRole } from '@tm/core'
 import type { Page } from 'playwright'
 import { shown, withPanel } from '../common'
+import { rolesByName } from '../roles'
 import { meetState } from './page-state'
 import type { MeetSelectors } from './selectors'
 
@@ -12,20 +13,9 @@ export function roleFromMeetLabel(label: string): SenderRole {
   return 'participant'
 }
 
-// People panel rows (each a list of text lines: the name first, the labels after it) to a role per trimmed, lower-cased
-// name. Only the lines after the name count as a label, so a participant named "Host" is not one. A name that appears
-// more than once with different roles (a student who renamed themselves to the lecturer's name) is `unknown`, so
-// neither entry is trusted.
+// People panel rows to a role per trimmed, lower-cased name (see rolesByName).
 export function rolesFromPeople(rows: string[][]): Map<string, SenderRole> {
-  const roles = new Map<string, SenderRole>()
-  for (const lines of rows) {
-    const name = lines[0]?.trim().toLowerCase()
-    if (!name) continue
-    const role = roleFromMeetLabel(lines.slice(1).join('\n'))
-    const earlier = roles.get(name)
-    roles.set(name, earlier === undefined || earlier === role ? role : 'unknown')
-  }
-  return roles
+  return rolesByName(rows, roleFromMeetLabel)
 }
 
 // The caller holds `withPanel`. Opens People unless it is open, reads it, and brings Chat back.

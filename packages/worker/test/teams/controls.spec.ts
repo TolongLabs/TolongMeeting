@@ -1,13 +1,14 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import {
   assertTeamsDevicesOff,
   connectTeamsOutputAudio,
   dismissTeamsNotices,
   leaveTeams
 } from '../../src/adapters/teams/controls'
+import { joinTeams } from '../../src/adapters/teams/join'
 import { teamsSelectors } from '../../src/adapters/teams/selectors'
 import { DevicesOnError } from '../../src/adapters/types'
-import { serveTeams, teamsClicks, teamsForbiddenClicks } from './serve'
+import { serveTeams, teamsClicks, teamsForbiddenClicks, test } from './serve'
 
 // Runs against test/fixtures/teams/app.html, an imitation of the Teams web client that has NOT been checked against
 // the real one.
@@ -54,6 +55,9 @@ test('clicks only allowlisted buttons inside notices, never the breakout prompt'
       { role: 'status', text: 'Recording has started.', button: 'Dismiss' },
       { role: 'dialog', text: 'New ways to react', button: 'Got it' },
       { role: 'dialog', text: 'Consent is required to unmute', button: 'Confirm' },
+      { role: 'dialog', text: 'Teams wants to use your camera', button: 'Allow' },
+      { role: 'dialog', text: 'Allow Teams to use your camera', button: 'OK' },
+      { role: 'dialog', text: 'Turn on your camera to continue', button: 'Got it' },
       { role: 'dialog', text: 'The organiser wants you to share your screen', button: 'OK' },
       { role: 'alert', text: 'Waiting in the lobby: Visitor', button: 'Admit' }
     ]
@@ -79,6 +83,40 @@ test('an allowlisted button outside any notice is left alone', async ({ page }) 
   })
   expect(await dismissTeamsNotices(page, sel)).toEqual([])
   expect(await teamsClicks(page)).toEqual([])
+})
+
+test('page text is never logged', async ({ page }) => {
+  const info = console.info
+  const lines: string[] = []
+  console.info = (...args: unknown[]) => void lines.push(args.join(' '))
+  try {
+    await serveTeams(page, {
+      scene: 'launcher',
+      mic: 'on',
+      camera: 'on',
+      audio: 'none',
+      chatOpen: true,
+      notices: [
+        { role: 'dialog', text: 'Quarterly numbers are confidential', button: 'Got it' },
+        { role: 'dialog', text: 'Please share Quarterly numbers', button: 'OK' }
+      ]
+    })
+    await page.goto(JOIN)
+    await joinTeams(page, sel)
+    await dismissTeamsNotices(page, sel)
+    await leaveTeams(page, sel)
+  } finally {
+    console.info = info
+  }
+  expect(lines.length).toBeGreaterThan(5)
+  for (const line of lines) {
+    expect(line).toMatch(
+      /^teams: (click \w+|click notice (Got it|OK|Dismiss)|skip notice (Got it|OK|Dismiss): dialog mentions \w+( \w+)?|notice closed before it was clicked)$/
+    )
+  }
+  expect(lines.join('\n')).not.toMatch(/Quarterly|confidential|TESTTHREAD|meetup-join|microsoft/i)
+  expect(lines).toContain('teams: click notice Got it')
+  expect(lines).toContain('teams: skip notice OK: dialog mentions share')
 })
 
 test('turns incoming audio back on and nothing else', async ({ page }) => {

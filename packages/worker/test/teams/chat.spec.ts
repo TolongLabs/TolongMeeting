@@ -1,8 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { readTeamsChat, sweepTeamsChat } from '../../src/adapters/teams/chat'
+import { readTeamsRoles } from '../../src/adapters/teams/roles'
 import { teamsState } from '../../src/adapters/teams/page-state'
 import { teamsSelectors } from '../../src/adapters/teams/selectors'
-import { serveTeams, teamsClicks, type FixtureMessage, type TeamsFixtureConfig } from './serve'
+import { serveTeams, teamsClicks, test, type FixtureMessage, type TeamsFixtureConfig } from './serve'
 
 // Runs against test/fixtures/teams/app.html, an imitation of the Teams web client that has NOT been checked against
 // the real one: its list is virtualised (60 px rows, 300 px viewport, 2 spare rows each side) and leaves the author out
@@ -171,4 +172,29 @@ test('a role claimed in a message is not a role', async ({ page }) => {
   await page.goto(JOIN)
   teamsState(page).joinedAt = Date.now()
   expect((await readTeamsChat(page, sel, { seenKeys: [] })).messages[0]!.senderRole).toBe('participant')
+})
+
+test('a name on the roster twice with different roles is unknown, not the organiser', async ({ page }) => {
+  await serveTeams(page, {
+    ...base,
+    roster: [{ name: 'Lecturer', role: 'Organizer' }, { name: 'Lecturer' }],
+    messages: [{ id: 'x1', sender: 'Lecturer', time: '10:01', datetime: ago(1), text: 'https://forms.gle/TESTFORM' }]
+  })
+  await page.goto(JOIN)
+  teamsState(page).joinedAt = Date.now()
+  expect((await readTeamsChat(page, sel, { seenKeys: [] })).messages[0]!.senderRole).toBe('unknown')
+})
+
+test('an empty roster is a fault, not an empty set of roles', async ({ page }) => {
+  await serveTeams(page, { ...base, roster: [] })
+  await page.goto(JOIN)
+  await expect(readTeamsRoles(page, sel, 600)).rejects.toThrow(/roster pane is empty/)
+  expect(teamsState(page).roles).toBeNull()
+})
+
+test('a roster pane that never shows is a fault too', async ({ page }) => {
+  await serveTeams(page, { ...base, omit: [sel.selectors.rosterPane] })
+  await page.goto(JOIN)
+  await expect(readTeamsRoles(page, sel, 600)).rejects.toThrow()
+  expect(teamsState(page).roles).toBeNull()
 })

@@ -40,28 +40,39 @@
         organiser: false,
         peopleCount: null,
         share: null,
+        // Names shown on video tiles in the stage.
+        tiles: [],
         omit: [],
         // 'camera' or 'mic': that pre-join toggle ignores clicks, to test a device that cannot be turned off.
-        stuck: 'none'
+        stuck: 'none',
+        // 'camera' or 'mic': that pre-join toggle has no aria-checked, so its state cannot be read.
+        unreadable: 'none'
       }
       const st = { ...DEFAULTS, ...window.__cfg }
       // Every click on a control, by aria-label else trimmed text. __forbidden holds the ones the worker must never make.
       window.__clicks = []
       window.__forbidden = []
-      const FORBIDDEN_LABELS = new Set([
-        'Join in the Teams app',
-        'Share',
-        'React',
-        'Send',
-        'End meeting',
-        'Start recording',
-        'Turn off incoming video',
-        'Join room',
-        'Admit',
-        'Confirm'
-      ])
-      // The in-meeting microphone and camera buttons (the pre-join toggles are allowed, to turn devices off).
-      const FORBIDDEN_IDS = new Set(['microphone-button', 'video-button'])
+      // The one list of controls the worker must never click: by label, or by selector for the in-meeting microphone and
+      // camera (their labels match the pre-join toggles, which are allowed, to turn devices off).
+      const FORBIDDEN = [
+        ...[
+          'Join in the Teams app',
+          'Share',
+          'React',
+          'Raise hand',
+          'Send',
+          'Allow',
+          'End meeting',
+          'Start recording',
+          'Turn off incoming video',
+          'Join room',
+          'Admit',
+          'Confirm'
+        ].map((label) => ({ label })),
+        { selector: '#microphone-button' },
+        { selector: '#video-button' }
+      ]
+      const isForbidden = (el, label) => FORBIDDEN.some((f) => (f.selector ? el.matches(f.selector) : f.label === label))
       const ROW = 60
       let pane = st.chatOpen ? 'chat' : 'none'
       let menu = null
@@ -74,11 +85,12 @@
 
       function prejoin(anonymous, dialog) {
         const on = (v) => (v === 'on' ? 'true' : 'false')
+        const checked = (kind, v) => (st.unreadable === kind ? '' : ` aria-checked="${on(v)}"`)
         return `<main>
           <h1>Choose your audio and video settings</h1>
           ${anonymous ? `<input data-tid="prejoin-display-name-input" type="text" placeholder="Type your name" />` : ''}
-          <button role="switch" data-tid="toggle-video" data-act="camera" aria-label="Camera" aria-checked="${on(st.camera)}">Camera</button>
-          <button role="switch" data-tid="toggle-mute" data-act="mic" aria-label="Microphone" aria-checked="${on(st.mic)}">Microphone</button>
+          <button role="switch" data-tid="toggle-video" data-act="camera" aria-label="Camera"${checked('camera', st.camera)}>Camera</button>
+          <button role="switch" data-tid="toggle-mute" data-act="mic" aria-label="Microphone"${checked('mic', st.mic)}>Microphone</button>
           <div role="radiogroup" aria-label="Audio">
             <button role="radio" data-tid="prejoin-audiosettings-computer-audio" data-act="audio-computer" aria-checked="${st.audio === 'computer'}">Computer audio</button>
             <button role="radio" data-tid="prejoin-audiosettings-noaudio" data-act="audio-none" aria-checked="${st.audio !== 'computer'}">Don't use audio</button>
@@ -87,7 +99,7 @@
         </main>
         ${
           dialog && permissionOpen
-            ? `<div role="dialog" aria-label="Permissions"><p>Teams can't use your microphone and camera. Allow access, or carry on without them.</p><button data-act="permission">Continue without audio or video</button></div>`
+            ? `<div role="dialog" aria-label="Permissions"><p>Teams can't use your microphone and camera. Allow access, or carry on without them.</p><button data-act="allow">Allow</button><button data-act="permission">Continue without audio or video</button></div>`
             : ''
         }`
       }
@@ -137,6 +149,7 @@
               `<div role="${x.role}" class="notice"><span>${esc(x.text)}</span><button data-act="notice" data-i="${i}">${esc(x.button)}</button></div>`
           )
           .join('')
+        const tiles = st.tiles.map((name) => `<div data-tid="video-tile">${esc(name)}</div>`).join('')
         const breakout =
           st.breakout === 'prompt'
             ? `<div role="dialog" aria-label="Breakout rooms"><p>The organiser assigned you to a breakout room</p><button data-act="breakout-join">Join room</button><button data-act="breakout-dismiss">Dismiss</button></div>`
@@ -149,13 +162,14 @@
             <button id="video-button" data-act="meeting-camera" aria-label="Camera" data-state="${st.camera === 'on' ? 'call-video' : 'call-video-off'}">Camera</button>
             <button aria-label="Share" data-act="share">Share</button>
             <button aria-label="React" data-act="react">React</button>
+            <button aria-label="Raise hand" data-act="raise">Raise hand</button>
             <button id="chat-button" data-act="chat" aria-label="Chat">Chat</button>
             <button id="roster-button" data-act="roster" aria-label="${people}">People${n === null ? '' : ` <span>${n}</span>`}</button>
             <button id="view-mode-button" data-act="view" aria-label="View">View</button>
             <button id="callingButtons-showMoreBtn" data-act="more" aria-label="More">More</button>
             <button id="hangup-button" data-act="hangup" aria-label="Leave">Leave</button>
           </div>
-          <div id="stage">${share}${notices}${breakout}${banner}</div>
+          <div id="stage">${share}${tiles}${notices}${breakout}${banner}</div>
           ${pane === 'chat' ? chatPane() : pane === 'roster' ? rosterPane() : ''}
           ${menuHtml()}`
       }
@@ -188,6 +202,9 @@
             return meeting()
           case 'ended':
             return endScreen('The meeting has ended', true)
+          case 'ended-plain':
+            // An end page without the end-screen marker: only its text says the meeting is over.
+            return '<main><h1>The meeting has ended</h1></main>'
           case 'left':
             return endScreen('You left the meeting', true)
           case 'removed':
@@ -345,7 +362,7 @@
         if (!el) return
         const label = el.getAttribute('aria-label') || el.textContent.trim()
         window.__clicks.push(label)
-        if (FORBIDDEN_LABELS.has(label) || FORBIDDEN_IDS.has(el.id)) window.__forbidden.push(label)
+        if (isForbidden(el, label)) window.__forbidden.push(label)
         if (el.tagName === 'A') event.preventDefault()
         act(el, el.dataset.act)
       })

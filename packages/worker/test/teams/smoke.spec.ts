@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { runSmokeEntry } from '../../src/smoke/run'
 import { teamsSmoke } from '../../src/smoke/teams'
-import { serveTeams, type TeamsFixtureConfig } from './serve'
+import { type TeamsFixtureConfig, serveTeams, test } from './serve'
 
 // Runs against test/fixtures/teams/app.html, an imitation of the Teams web client that has NOT been checked against
 // the real one.

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import type { Page, Route } from '@playwright/test'
+import { expect, test as base, type Page, type Route } from '@playwright/test'
 
 declare global {
   interface Window {
@@ -26,6 +26,7 @@ export type TeamsScene =
   | 'lobby-expired'
   | 'meeting'
   | 'ended'
+  | 'ended-plain'
   | 'left'
   | 'removed'
   | 'blank'
@@ -58,6 +59,8 @@ export interface TeamsFixtureConfig {
   afterJoin?: TeamsScene
   // A pre-join toggle that ignores clicks.
   stuck?: 'none' | 'camera' | 'mic'
+  // A pre-join toggle with no aria-checked: its state cannot be read.
+  unreadable?: 'none' | 'camera' | 'mic'
   breakout?: 'none' | 'prompt' | 'moved'
   chatOpen?: boolean
   messages?: FixtureMessage[]
@@ -68,6 +71,8 @@ export interface TeamsFixtureConfig {
   organiser?: boolean
   peopleCount?: number | null
   share?: { box: FixtureRect; width: number; height: number } | null
+  // Names on the video tiles in the stage.
+  tiles?: string[]
   // Selectors whose elements the fixture leaves out.
   omit?: string[]
 }
@@ -123,8 +128,20 @@ export function teamsClicks(page: Page): Promise<string[]> {
   return page.evaluate(() => window.__clicks)
 }
 
-// The clicks the worker must never make (the Teams app launcher, in-meeting microphone and camera, share, react, send,
-// End meeting, recording, breakout join, admit). A correct run leaves this empty.
+// The clicks the worker must never make (the Teams app launcher, in-meeting microphone and camera, share, react, raise
+// hand, send, allow, End meeting, recording, breakout join, admit). A correct run leaves this empty. A page that is not
+// the imitation (the sign-in page) has no log and reads as empty.
 export function teamsForbiddenClicks(page: Page): Promise<string[]> {
-  return page.evaluate(() => window.__forbidden)
+  return page.evaluate(() => window.__forbidden ?? [])
 }
+
+// `test` for every Teams spec: when a test ends, the forbidden-click log must be empty (a page the test closed has none).
+export const test = base.extend<{ noForbiddenClicks: undefined }>({
+  noForbiddenClicks: [
+    async ({ page }, use) => {
+      await use(undefined)
+      if (!page.isClosed()) expect(await teamsForbiddenClicks(page)).toEqual([])
+    },
+    { auto: true }
+  ]
+})

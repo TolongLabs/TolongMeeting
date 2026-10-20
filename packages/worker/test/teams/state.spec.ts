@@ -1,8 +1,8 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { teamsSelectors } from '../../src/adapters/teams/selectors'
 import { teamsMeetingState, waitTeamsAdmitted } from '../../src/adapters/teams/state'
 import { teamsState } from '../../src/adapters/teams/page-state'
-import { serveTeams, setTeamsScene, teamsClicks, teamsForbiddenClicks } from './serve'
+import { serveTeams, setTeamsScene, teamsClicks, teamsForbiddenClicks, test } from './serve'
 
 // Runs against test/fixtures/teams/app.html, an imitation of the Teams web client that has NOT been checked against
 // the real one.
@@ -14,6 +14,7 @@ for (const [scene, state] of [
   ['lobby', 'lobby'],
   ['meeting', 'in_meeting'],
   ['ended', 'ended'],
+  ['ended-plain', 'ended'],
   ['left', 'ended'],
   ['removed', 'removed'],
   ['blank', 'unknown']
@@ -92,6 +93,19 @@ test('a breakout prompt and an automatic move both read as breakout_prompt, unto
   expect(await teamsForbiddenClicks(page)).toEqual([])
 })
 
+test('"Join room" in a participant tile is not a breakout prompt while Leave shows', async ({ page }) => {
+  await serveTeams(page, { scene: 'meeting', mic: 'off', camera: 'off', tiles: ['Join room 1 (Ali)'] })
+  await page.goto(JOIN)
+  await expect(page.getByText('Join room 1 (Ali)')).toBeVisible()
+  expect(await teamsMeetingState(page, sel)).toBe('in_meeting')
+  // The same words in a dialog, or in the breakout banner, still are.
+  await setTeamsScene(page, 'meeting', { breakout: 'prompt' })
+  expect(await teamsMeetingState(page, sel)).toBe('breakout_prompt')
+  await setTeamsScene(page, 'meeting', { breakout: 'moved' })
+  expect(await teamsMeetingState(page, sel)).toBe('breakout_prompt')
+  expect(await teamsClicks(page)).toEqual([])
+})
+
 test('admitted when the organiser lets the bot in', async ({ page }) => {
   await serveTeams(page, { scene: 'lobby', mic: 'off', camera: 'off' })
   await page.goto(JOIN)
@@ -115,6 +129,8 @@ test('the deadline ends the wait as lobby_expired', async ({ page }) => {
   await page.goto(JOIN)
   const started = Date.now()
   expect(await waitTeamsAdmitted(page, sel, soon(2_000), 500)).toBe('lobby_expired')
-  expect(Date.now() - started).toBeLessThan(3_500)
+  // It waits for the deadline; the upper bound is loose, for a slow CI host.
+  expect(Date.now() - started).toBeGreaterThanOrEqual(1_900)
+  expect(Date.now() - started).toBeLessThan(8_000)
   expect(teamsState(page).joinedAt).toBeNull()
 })

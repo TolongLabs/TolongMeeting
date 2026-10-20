@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { toTeamsChatMessages } from '../src/adapters/teams/chat'
-import { roleFromTeamsLabel } from '../src/adapters/teams/roles'
+import { roleFromTeamsLabel, rolesFromRoster } from '../src/adapters/teams/roles'
 
 const joinedAt = Date.parse('2026-11-02T10:00:00Z')
 const seenAt = '2026-11-02T10:06:30.000Z'
@@ -75,4 +75,31 @@ test.each([
   ['', 'participant']
 ] as const)('roster label %s is %s', (label, role) => {
   expect(roleFromTeamsLabel(label)).toBe(role)
+})
+
+test('a roster name is a role only from the lines after it', () => {
+  const roles = rolesFromRoster([
+    ['Organizer'],
+    ['Ms Tan', 'Organizer'],
+    ['Ali', 'Attendee'],
+    ['Bo', 'Co-organizer'],
+    []
+  ])
+  expect([...roles.entries()]).toEqual([
+    ['organizer', 'participant'],
+    ['ms tan', 'host'],
+    ['ali', 'participant'],
+    ['bo', 'co_host']
+  ])
+})
+
+test('a name listed twice with different roles is unknown, whichever row comes first', () => {
+  for (const rows of [
+    [['Lecturer', 'Organizer'], ['Lecturer']],
+    [['Lecturer'], ['Lecturer', 'Organizer']],
+    [['Lecturer', 'Organizer'], [' lecturer '], ['LECTURER', 'Organizer']]
+  ]) {
+    expect(rolesFromRoster(rows).get('lecturer')).toBe('unknown')
+  }
+  expect(rolesFromRoster([['Ali', 'Attendee'], ['ali']]).get('ali')).toBe('participant')
 })

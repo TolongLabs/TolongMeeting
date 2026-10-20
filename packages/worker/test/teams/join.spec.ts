@@ -1,9 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { joinTeams } from '../../src/adapters/teams/join'
 import { teamsState } from '../../src/adapters/teams/page-state'
 import { teamsSelectors } from '../../src/adapters/teams/selectors'
 import { teamsTextSignal } from '../../src/adapters/teams/text'
-import { serveTeams, teamsClicks, teamsForbiddenClicks } from './serve'
+import { serveTeams, teamsClicks, teamsForbiddenClicks, test } from './serve'
 
 // Runs against test/fixtures/teams/app.html, an imitation of the Teams web client that has NOT been checked against
 // the real one.
@@ -128,6 +128,26 @@ test('a toggle that stays on blocks the join: Join is never clicked', async ({ p
   expect(await teamsClicks(page)).toEqual(['Microphone'])
 })
 
+for (const device of ['mic', 'camera'] as const) {
+  test(`a ${device} toggle whose state cannot be read is never guessed at: nothing is clicked, Join is not`, async ({
+    page
+  }) => {
+    await serveTeams(page, { scene: 'prejoin', mic: 'on', camera: 'on', audio: 'computer', unreadable: device })
+    await page.goto(JOIN)
+    expect(await joinTeams(page, sel)).toEqual({ kind: 'failed', reason: 'device_toggle_unreadable' })
+    expect(await teamsClicks(page)).toEqual([])
+  })
+}
+
+for (const scene of ['ended', 'ended-plain', 'left'] as const) {
+  test(`the ${scene} page is meeting_ended, with nothing clicked`, async ({ page }) => {
+    await serveTeams(page, { scene })
+    await page.goto(JOIN)
+    expect(await joinTeams(page, sel)).toEqual({ kind: 'failed', reason: 'meeting_ended' })
+    expect(await teamsClicks(page)).toEqual([])
+  })
+}
+
 test('a pre-join without a microphone toggle is not joined', async ({ page }) => {
   await serveTeams(page, {
     scene: 'prejoin',
@@ -167,6 +187,8 @@ test('chat text never counts as a page signal', async ({ page }) => {
     ]
   })
   await page.goto(JOIN)
+  // The message is on screen, so it is the pane that keeps it out of the signal.
+  await expect(page.locator(sel.selectors.chatMessage).first()).toContainText('This meeting link is invalid')
   expect(await teamsTextSignal(page, sel, sel.texts.invalidLink)).toBe(false)
   expect(await joinTeams(page, sel)).toEqual({ kind: 'in_meeting' })
 })

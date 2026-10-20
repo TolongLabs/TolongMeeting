@@ -1,6 +1,7 @@
 import type { Page } from 'playwright'
 import type { Rect } from '../types'
-import { logStep, shown } from './join'
+import { shown, withPanel } from '../common'
+import { logStep } from './join'
 import { teamsState } from './page-state'
 import type { TeamsSelectors } from './selectors'
 
@@ -19,7 +20,12 @@ export async function teamsParticipantCount(page: Page, sel: TeamsSelectors): Pr
 
 // Opens the chat panel when it is not on screen, then, once per share, switches the View menu to "Focus on content" so
 // the shared screen fills the stage. It clicks nothing else: a missing menu item is a fault, not a reason to pick another.
-export async function ensureTeamsLayout(page: Page, sel: TeamsSelectors): Promise<void> {
+// It runs under the page's panel lock, so it never interleaves with a role read or a chat sweep.
+export function ensureTeamsLayout(page: Page, sel: TeamsSelectors): Promise<void> {
+  return withPanel(page, () => layoutNow(page, sel))
+}
+
+async function layoutNow(page: Page, sel: TeamsSelectors): Promise<void> {
   const { selectors, texts } = sel
   const state = teamsState(page)
   if (!(await shown(page, selectors.chatPane).isVisible())) {

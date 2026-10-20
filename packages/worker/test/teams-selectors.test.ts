@@ -18,7 +18,7 @@ afterAll(async () => {
 })
 
 // Writes a copy of the shipped teams.json, edited by `edit`, into a fresh directory.
-type RawMap = { selectors: Record<string, string>; texts: Record<string, string> }
+type RawMap = { selectors: Record<string, string>; texts: Record<string, string>; noticeDanger: unknown }
 
 async function mapDir(edit: (map: RawMap) => void): Promise<string> {
   const map: RawMap = JSON.parse(await readFile(join(SHIPPED, 'teams.json'), 'utf8'))
@@ -50,6 +50,18 @@ test('a key the schema does not know fails loudly and names it', async () => {
 test('an invalid regular expression fails at load and names the text', async () => {
   process.env.TM_SELECTORS_DIR = await mapDir((map) => (map.texts.removed = '([unclosed'))
   await expect(teamsSelectors()).rejects.toThrow(/removed/)
+})
+
+test('a notice danger pattern that is not a regular expression fails at load', async () => {
+  process.env.TM_SELECTORS_DIR = await mapDir((map) => (map.noticeDanger = [{ name: 'join', source: '([bad' }]))
+  await expect(teamsSelectors()).rejects.toThrow(/noticeDanger/)
+})
+
+test('a notice danger item with a key the schema does not know fails at load', async () => {
+  process.env.TM_SELECTORS_DIR = await mapDir(
+    (map) => (map.noticeDanger = [{ name: 'join', source: '\\bjoin\\b', sourse: 'typo' }])
+  )
+  await expect(teamsSelectors()).rejects.toThrow(/sourse/)
 })
 
 test('a changed TM_SELECTORS_DIR is picked up on the next call', async () => {

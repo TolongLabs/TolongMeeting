@@ -1,8 +1,7 @@
-import { setTimeout as sleep } from 'node:timers/promises'
 import type { Page } from 'playwright'
+import { pollAdmission, shown } from '../common'
 import { navigationGuard } from '../zoom/root'
 import type { AdmissionResult, MeetingState } from '../types'
-import { shown } from './join'
 import { teamsState } from './page-state'
 import type { TeamsSelectors } from './selectors'
 import { teamsTextSignal } from './text'
@@ -18,15 +17,16 @@ async function lobbyShowing(page: Page, sel: TeamsSelectors): Promise<boolean> {
 
 async function readState(page: Page, sel: TeamsSelectors): Promise<MeetingState> {
   const { selectors, texts } = sel
-  // With Leave showing the meeting is live: ended and removed count only inside a notice container, so toolbar or
-  // other page text cannot end it. Without Leave, an end screen counts wherever it is on the page.
+  // With Leave showing the meeting is live: ended, removed and breakout text count only inside a notice container, so
+  // toolbar, tile or other page text ("Join room" in a participant's name) cannot end it or pose as a prompt. Without
+  // Leave, they count wherever they are on the page. The breakout banner is its own element and always counts.
   const live = await shown(page, selectors.hangupButton).isVisible()
   const within = live ? selectors.noticeContainers : undefined
   if (await teamsTextSignal(page, sel, texts.removed, within)) return 'removed'
   if ((await shown(page, selectors.endScreen).isVisible()) || (await teamsTextSignal(page, sel, texts.ended, within)))
     return 'ended'
   if (
-    (await teamsTextSignal(page, sel, texts.breakoutPrompt)) ||
+    (await teamsTextSignal(page, sel, texts.breakoutPrompt, within)) ||
     (await shown(page, selectors.breakoutRoomBanner).isVisible())
   )
     return 'breakout_prompt'
@@ -40,14 +40,14 @@ export async function teamsMeetingState(page: Page, sel: TeamsSelectors): Promis
   return (await navigationGuard('meetingState', 'teams').run(() => readState(page, sel))) ?? 'unknown'
 }
 
-// Polls every `pollMs` until the bot is let in, refused, or `deadline` passes (reported as an expired lobby).
-export async function waitTeamsAdmitted(
+// Polls every `pollMs` until the bot is let in, refused, or `deadline` passes (reported as an expired lobby). A poll that
+// hangs is cut at the deadline.
+export function waitTeamsAdmitted(
   page: Page,
   sel: TeamsSelectors,
   deadline: Date,
   pollMs = 2_000
 ): Promise<AdmissionResult> {
-  const guard = navigationGuard('admission', 'teams')
   const poll = async (): Promise<AdmissionResult | null> => {
     if (await teamsTextSignal(page, sel, sel.texts.lobbyDenied)) return 'lobby_denied'
     if (await teamsTextSignal(page, sel, sel.texts.lobbyExpired)) return 'lobby_expired'
@@ -57,11 +57,5 @@ export async function waitTeamsAdmitted(
     }
     return null
   }
-  for (;;) {
-    const result = await guard.run(poll)
-    if (result) return result
-    const left = deadline.getTime() - Date.now()
-    if (left <= 0) return 'lobby_expired'
-    await sleep(Math.min(pollMs, left))
-  }
+  return pollAdmission(navigationGuard('admission', 'teams'), poll, deadline, pollMs)
 }

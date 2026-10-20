@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { teamsAdapter } from '../../src/adapters/teams'
 import { DevicesOnError } from '../../src/adapters/types'
-import { serveTeams, teamsForbiddenClicks } from './serve'
+import { serveTeams, teamsForbiddenClicks, test } from './serve'
 
 // Runs against test/fixtures/teams/app.html, an imitation of the Teams web client that has NOT been checked against
 // the real one.
@@ -11,7 +11,13 @@ const soon = () => new Date(Date.now() + 5_000)
 test.use({ viewport: { width: 1920, height: 1080 } })
 
 test('joins, reads the meeting and leaves through the adapter alone', async ({ page }) => {
-  await serveTeams(page, { scene: 'launcher', afterLauncher: 'prejoin', afterJoin: 'meeting', peopleCount: 7 })
+  await serveTeams(page, {
+    scene: 'launcher',
+    afterLauncher: 'prejoin',
+    afterJoin: 'meeting',
+    peopleCount: 7,
+    roster: [{ name: 'Member' }]
+  })
   await page.goto(JOIN)
   expect(await teamsAdapter.join(page, { guestName: null })).toEqual({ kind: 'in_meeting' })
   expect(await teamsAdapter.waitUntilAdmitted(page, soon())).toBe('admitted')
