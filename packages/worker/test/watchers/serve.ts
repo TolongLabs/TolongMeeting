@@ -22,15 +22,44 @@ export interface DiscordFixture {
   loginRequired?: boolean
 }
 
-// Task 5 adds `whatsapp?: WhatsAppFixture`; plan 04 adds `teams?`.
+/** One message of the WhatsApp fixture. `at` is an ISO time; the page shows it in its own locale. */
+export interface WhatsAppMessage {
+  id: string
+  sender: string
+  at: string
+  text: string
+  href?: string
+}
+
+export interface WhatsAppChat {
+  name: string
+  messages: WhatsAppMessage[]
+}
+
+export interface WhatsAppFixture {
+  /** `qr` shows only the link-device code, as a profile with no linked phone does. */
+  mode: 'chats' | 'qr'
+  chats: WhatsAppChat[]
+}
+
+// Plan 04 adds `teams?`.
 export interface WatcherFixtures {
   discord?: DiscordFixture
+  whatsapp?: WhatsAppFixture
 }
 
 /** What the fixture pages put on `window`. Cast to it in `page.evaluate`: other specs declare their own `__fixture`. */
 export interface DiscordWindow {
   __fixture: DiscordFixture
   __addMessage: (m: DiscordMessage) => void
+  __touched?: boolean
+}
+
+/** What the WhatsApp fixture page puts on `window`. `__switchChat` is the member opening another chat. */
+export interface WhatsAppWindow {
+  __fixture: WhatsAppFixture
+  __addMessage: (chatName: string, m: WhatsAppMessage) => void
+  __switchChat: (name: string) => void
   __touched?: boolean
 }
 
@@ -49,19 +78,32 @@ const redirect = (route: Route, path: string) =>
  * unchanged. Each page gets its fixture as `window.__fixture` from an init script.
  */
 export async function serveWatcherFixtures(context: BrowserContext, f: WatcherFixtures): Promise<void> {
-  const { discord } = f
-  if (discord === undefined) return
-  await context.addInitScript((fixture) => {
-    ;(window as unknown as DiscordWindow).__fixture = fixture
-  }, discord)
-  await context.route('https://discord.com/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
-    if (path === '/login') return page(route, 'discord/login.html')
-    if (path === discord.channelPath)
-      return discord.loginRequired ? redirect(route, '/login') : page(route, 'discord/channel.html')
-    if (path === '/channels/@me')
-      return route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Discord</title>' })
-    if (path.startsWith('/channels/')) return redirect(route, '/channels/@me')
-    return route.fulfill({ status: 404, body: '' })
-  })
+  const { discord, whatsapp } = f
+  if (discord === undefined && whatsapp === undefined) return
+  // Each host's page reads only its own fixture.
+  const byHost: Record<string, DiscordFixture | WhatsAppFixture | undefined> = {
+    'discord.com': discord,
+    'web.whatsapp.com': whatsapp
+  }
+  await context.addInitScript((fixtures) => {
+    const fixture = fixtures[location.hostname]
+    if (fixture !== undefined) (window as unknown as { __fixture: unknown }).__fixture = fixture
+  }, byHost)
+  if (discord !== undefined)
+    await context.route('https://discord.com/**', async (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/login') return page(route, 'discord/login.html')
+      if (path === discord.channelPath)
+        return discord.loginRequired ? redirect(route, '/login') : page(route, 'discord/channel.html')
+      if (path === '/channels/@me')
+        return route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Discord</title>' })
+      if (path.startsWith('/channels/')) return redirect(route, '/channels/@me')
+      return route.fulfill({ status: 404, body: '' })
+    })
+  if (whatsapp !== undefined)
+    await context.route('https://web.whatsapp.com/**', async (route) =>
+      new URL(route.request().url()).pathname === '/'
+        ? page(route, 'whatsapp/web.html')
+        : route.fulfill({ status: 404, body: '' })
+    )
 }

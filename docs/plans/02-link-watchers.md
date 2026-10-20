@@ -768,7 +768,7 @@ Reader behaviour:
 
 Fixture `web.html` reads `window.__fixture = { mode: 'chats' | 'qr', chats: { name, messages: { id, sender, at, text, href? }[] }[] }`. It renders the chat list, a search box that lists chats whose name contains the typed text (as `searchResultTitle` elements), and on a click the conversation with `headerTitle` and rows whose `data-pre-plain-text` is `[<time>, <date>] <sender>: `, formatted from `at` with the page locale (`en-GB` gives `14:05, 21/10/2026`; `en-US` gives `2:05 PM, 10/21/2026`). It virtualises the rows as Discord's fixture does, and offers `__addMessage(chatName, m)`, `__switchChat(name)` (the member opening another chat) and `__touched` (composer and `[data-action]` buttons only; the search box doesn't count). Mode `qr` shows only the `linkQr` canvas. `serveWatcherFixtures` routes `https://web.whatsapp.com/**` to it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/watchers/whatsapp-time.test.ts
@@ -925,21 +925,21 @@ test.describe('US date order', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/watchers/whatsapp-time.test.ts && bunx playwright test -c packages/worker/playwright.config.ts test/watchers/whatsapp.spec.ts`
 Expected: FAIL with `Cannot find module './whatsapp-time'`.
 
-- [ ] **Step 3: Implement `whatsapp-time.ts`, `whatsapp.ts`, the selectors, the fixture and the route**
+- [x] **Step 3: Implement `whatsapp-time.ts`, `whatsapp.ts`, the selectors, the fixture and the route**
 
 `parseWhatsAppPrePlain` matches `^\[(\d{1,2}):(\d{2})(?:[\s ]*([ap])\.?m\.?)?, (\d{1,2})/(\d{1,2})/(\d{4})\] (.+): $` (case-insensitive), maps 12 am to 0 and 12 pm to 12, rejects impossible dates by round-tripping through `Date.UTC`, and subtracts `offsetMinutes`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/watchers/whatsapp-time.test.ts && bunx playwright test -c packages/worker/playwright.config.ts test/watchers/whatsapp.spec.ts`
 Expected: PASS, `7 pass, 0 fail`, then `6 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/whatsapp.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/whatsapp docs/TRD.md

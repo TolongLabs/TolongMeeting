@@ -1,0 +1,13 @@
+{
+  "_unverified": "Starting values from the plan, not checked against the live WhatsApp Web app until acceptance (plan 02 task 9); the fixture in packages/worker/test/fixtures/whatsapp mirrors them.",
+  "chatList": "#pane-side",
+  "searchBox": "#side [contenteditable=\"true\"][role=\"textbox\"]",
+  "searchResultTitle": "#pane-side [role=\"listitem\"] span[dir=\"auto\"][title]",
+  "headerTitle": "#main header span[dir=\"auto\"]",
+  "scroller": "#main [role=\"application\"]",
+  "messageRow": "#main div[data-id]",
+  "prePlain": ".copyable-text[data-pre-plain-text]",
+  "messageText": "span.selectable-text",
+  "linkQr": "canvas[aria-label*=\"QR\"]",
+  "composer": "footer [contenteditable=\"true\"]"
+}

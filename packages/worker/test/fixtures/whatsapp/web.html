@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WhatsApp</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #111b21;
+        color: #e9edef;
+      }
+      #app {
+        display: flex;
+        height: 560px;
+      }
+      #side {
+        width: 300px;
+      }
+      #pane-side {
+        height: 480px;
+        overflow-y: auto;
+      }
+      #main {
+        flex: 1;
+      }
+      #main [role='application'] {
+        height: 440px;
+        overflow-y: auto;
+      }
+      [role='listitem'] {
+        padding: 8px 16px;
+        cursor: pointer;
+      }
+      #main div[data-id] {
+        min-height: 44px;
+        padding: 4px 16px;
+        box-sizing: border-box;
+      }
+      [contenteditable] {
+        min-height: 24px;
+        background: #202c33;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- The markup the selectors in config/selectors/whatsapp.json match. Starting values, unverified against the live site. -->
+    <div id="qr" hidden>
+      <canvas aria-label="Scan this QR code to link a device" width="200" height="200"></canvas>
+    </div>
+    <div id="app">
+      <div id="side">
+        <div role="textbox" contenteditable="true" aria-label="Search or start a new chat"></div>
+        <div id="pane-side"></div>
+      </div>
+      <div id="main" hidden>
+        <header><span dir="auto" id="header-title"></span></header>
+        <div role="application" id="scroller"></div>
+        <footer>
+          <div role="textbox" contenteditable="true" aria-label="Type a message"></div>
+          <button data-action="react">React</button>
+          <button data-action="reply">Reply</button>
+          <button data-action="mark-read">Mark as read</button>
+        </footer>
+      </div>
+    </div>
+    <script>
+      const PAGE = 25
+      const KEEP = 50
+      const fixture = window.__fixture
+      const nfc = (s) => s.normalize('NFC')
+      const chats = fixture.chats.map((c) => ({
+        name: c.name,
+        model: [...c.messages].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+      }))
+      const app = document.getElementById('app')
+      const paneSide = document.getElementById('pane-side')
+      const search = document.querySelector('#side [contenteditable="true"][role="textbox"]')
+      const main = document.getElementById('main')
+      const header = document.getElementById('header-title')
+      const scroller = document.getElementById('scroller')
+      let open = null
+      let lo = 0
+      let hi = 0
+      let prepending = false
+
+      if (fixture.mode === 'qr') {
+        app.hidden = true
+        document.getElementById('qr').hidden = false
+      }
+
+      // Only the message box and the reaction/reply buttons count; typing in the search box does not.
+      window.__touched = false
+      const touch = (event) => {
+        if (event.target instanceof Element && event.target.closest('footer [contenteditable="true"], [data-action]'))
+          window.__touched = true
+      }
+      for (const type of ['click', 'keydown', 'input']) document.addEventListener(type, touch, true)
+
+      const atBottom = () => scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2
+
+      // The text WhatsApp puts in data-pre-plain-text, in the page's own locale and time zone.
+      function prePlain(m) {
+        const d = new Date(m.at)
+        const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d)
+        const date = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d)
+        return '[' + time + ', ' + date + '] ' + m.sender + ': '
+      }
+
+      function renderList() {
+        const typed = nfc(search.textContent ?? '').trim().toLowerCase()
+        paneSide.replaceChildren()
+        for (const chat of chats) {
+          if (typed !== '' && !nfc(chat.name).toLowerCase().includes(typed)) continue
+          const item = document.createElement('div')
+          item.setAttribute('role', 'listitem')
+          const title = document.createElement('span')
+          title.setAttribute('dir', 'auto')
+          title.setAttribute('title', chat.name)
+          title.textContent = chat.name
+          item.append(title)
+          item.addEventListener('click', () => openChat(chat.name))
+          paneSide.append(item)
+        }
+      }
+
+      function renderMessages() {
+        scroller.replaceChildren()
+        if (open === null) return
+        for (let i = lo; i < hi; i++) {
+          const m = open.model[i]
+          const row = document.createElement('div')
+          row.setAttribute('data-id', open.name + ':' + m.id)
+          const copyable = document.createElement('div')
+          copyable.className = 'copyable-text'
+          copyable.setAttribute('data-pre-plain-text', prePlain(m))
+          const text = document.createElement('span')
+          text.className = 'selectable-text'
+          text.append(m.text)
+          if (m.href) {
+            const a = document.createElement('a')
+            a.href = m.href
+            a.textContent = m.href
+            text.append(' ', a)
+          }
+          copyable.append(text)
+          row.append(copyable)
+          scroller.append(row)
+        }
+      }
+
+      function jumpToPresent() {
+        lo = Math.max(0, open.model.length - PAGE)
+        hi = open.model.length
+        renderMessages()
+        scroller.scrollTop = scroller.scrollHeight
+      }
+
+      function openChat(name) {
+        open = chats.find((c) => c.name === name)
+        main.hidden = false
+        header.textContent = open.name
+        jumpToPresent()
+      }
+
+      function prependOlder() {
+        prepending = false
+        if (open === null || lo === 0) return
+        const height = scroller.scrollHeight
+        lo = Math.max(0, lo - PAGE)
+        hi = Math.min(hi, lo + KEEP)
+        renderMessages()
+        // Keep the view where it was.
+        scroller.scrollTop = scroller.scrollHeight - height
+      }
+
+      scroller.addEventListener('scroll', () => {
+        if (open === null) return
+        if (scroller.scrollTop <= 1 && lo > 0 && !prepending) {
+          prepending = true
+          setTimeout(prependOlder, 100)
+        } else if (hi < open.model.length && atBottom()) jumpToPresent()
+      })
+
+      search.addEventListener('input', renderList)
+
+      window.__addMessage = (chatName, m) => {
+        const chat = chats.find((c) => c.name === chatName)
+        chat.model.push(m)
+        if (open !== chat || hi !== chat.model.length - 1) return
+        const wasAtBottom = atBottom()
+        hi = chat.model.length
+        renderMessages()
+        if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight
+      }
+
+      // The member opens another chat.
+      window.__switchChat = (name) => openChat(name)
+
+      renderList()
+    </script>
+  </body>
+</html>
