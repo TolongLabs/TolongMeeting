@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb openbox pulseaudio pulseaudio-utils x11vnc websockify xprintidle x11-utils \
       "ffmpeg=${FFMPEG_VERSION}" libgl1-mesa-dri \
       fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
-      jq curl ca-certificates unzip \
+      jq curl ca-certificates unzip iptables \
  && curl -fsSLo /tmp/chrome.deb "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}-1_amd64.deb" \
  && echo "${CHROME_DEB_SHA256}  /tmp/chrome.deb" | sha256sum -c - \
  && apt-get install -y --no-install-recommends /tmp/chrome.deb \
@@ -69,6 +69,9 @@ RUN mkdir -p /opt/wechat-models && cd /opt/wechat-models \
 COPY docker/worker/chrome-policy.json /etc/opt/chrome/policies/managed/tm.json
 COPY docker/worker/openbox/rc.xml /etc/xdg/openbox/rc.xml
 COPY docker/worker/pulse/default.pa /etc/pulse/default.pa
+# Private-range egress rules for runs outside the server firewall; the local holder and home-route sidecar run it as root.
+COPY docker/egress/deny-private.sh /usr/local/bin/deny-private.sh
+RUN chmod 0755 /usr/local/bin/deny-private.sh
 
 # uid 1000 matches the usual host user, so the bind-mounted data and profile roots are writable.
 RUN userdel -r node && useradd -m -u 1000 -s /bin/bash tm && mkdir /app && chown tm:tm /app

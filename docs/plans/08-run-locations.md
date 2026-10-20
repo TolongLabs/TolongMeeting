@@ -910,58 +910,30 @@ git commit -m "feat(companion): relay worker heartbeats"
 
 - Create: `docker/egress/deny-private.sh`
 - Modify: `docker/worker/Dockerfile` (install `iptables`; copy the script to `/usr/local/bin/deny-private.sh`, mode 0755)
-- Test: `docker/egress/deny-private.test.ts`
+- Test: `test/deny-private.test.ts`
 
 **Interfaces:**
 
 - Consumes: nothing.
-- Produces: `deny-private.sh [--print] [--out-iface <iface>] [--allow-tcp <host-or-ip>:<port>]... [--hold]`, used by the local network holder (Task 8) and the home-route sidecar (Task 13). Names are resolved with `getent ahostsv4`; `--print` prints the commands instead of running them and doesn't resolve names; `--hold` ends with `exec sleep infinity`.
+- Produces: `deny-private.sh [--print] [--out-iface <iface>] [--allow-tcp <host-or-ip>:<port>]... [--hold]`, used by the local network holder (Task 8) and the home-route sidecar (Task 13). Names are resolved with `getent ahostsv4`; `--print` prints the commands instead of running them and doesn't resolve names; `--hold` ends with `exec sleep infinity`. The rules live in the chain `TM-DENY-PRIVATE`, filled in one `iptables-restore --noflush` transaction (and `ip6tables-restore`), hooked from `OUTPUT` only afterwards and read back (rule count, last rule, hook first), as `docker/firewall/worker-egress.sh` does; any failure exits non-zero before `--hold`. Order: `--allow-tcp` accepts, replies (`ESTABLISHED,RELATED`), loopback (`-o lo`, left out with `--out-iface`), then a REJECT per range: the server firewall's IPv4 list (adds `0.0.0.0/8`, `127.0.0.0/8`, `192.0.0.0/24`, `198.18.0.0/15`, `224.0.0.0/3`) and the IPv6 `::/128`, `fe80::/10`, `fc00::/7`, `fec0::/10`, `::ffff:0:0/96`, `64:ff9b::/96`, `ff00::/8`. IPv6 is skipped only when ip6tables is unavailable and `net.ipv6.conf.all.disable_ipv6` is 1.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
-```ts
-const run = (...args: string[]) =>
-  Bun.spawnSync(['bash', 'docker/egress/deny-private.sh', '--print', ...args])
-    .stdout.toString()
-    .trim()
-    .split('\n')
+The test (`test/deny-private.test.ts`) covers: `--print` order (relay accepted before the first REJECT), the ranges equal `worker-egress.sh`'s `DENY`, `--out-iface` prefixes every rule, host names are printed unresolved, bad arguments fail; and with real iptables in `unshare -Urn`: both families applied, a re-run leaves the same rules, a re-run with other options replaces the relay rule, an unresolvable name leaves no chain or hook, the IPv6 skip rule, and `--hold`.
 
-test('local holder rules: allow the relay, then reject private ranges', () => {
-  expect(run('--allow-tcp', '192.168.65.254:41234')).toEqual([
-    'iptables -A OUTPUT -p tcp -d 192.168.65.254 --dport 41234 -j ACCEPT',
-    'iptables -A OUTPUT -d 10.0.0.0/8 -j REJECT',
-    'iptables -A OUTPUT -d 172.16.0.0/12 -j REJECT',
-    'iptables -A OUTPUT -d 192.168.0.0/16 -j REJECT',
-    'iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT',
-    'iptables -A OUTPUT -d 100.64.0.0/10 -j REJECT',
-    'ip6tables -A OUTPUT -d fe80::/10 -j REJECT',
-    'ip6tables -A OUTPUT -d fc00::/7 -j REJECT'
-  ])
-})
-test('home-route rules apply to the tunnel interface only', () => {
-  const lines = run('--out-iface', 'tailscale0')
-  expect(lines[0]).toBe('iptables -A OUTPUT -o tailscale0 -d 10.0.0.0/8 -j REJECT')
-  expect(lines).toHaveLength(7)
-  expect(lines.every((l) => l.includes('-o tailscale0'))).toBe(true)
-})
-test('an unknown option fails', () => {
-  expect(Bun.spawnSync(['bash', 'docker/egress/deny-private.sh', '--print', '--allow-all']).exitCode).not.toBe(0)
-})
-```
+- [x] **Step 2: Run test to verify it fails**
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `bun test docker/egress/deny-private.test.ts`
+Run: `bun test test/deny-private.test.ts`
 Expected: FAIL (bash: docker/egress/deny-private.sh: No such file or directory)
 
-- [ ] **Step 3: Write `deny-private.sh` (`set -eu`, POSIX `sh`-compatible so it runs on Alpine and Debian) and update the worker Dockerfile**
+- [x] **Step 3: Write `deny-private.sh` (`set -eu`, POSIX `sh`-compatible so it runs on Alpine and Debian) and update the worker Dockerfile**
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test docker/egress/deny-private.test.ts`
-Expected: PASS (3 tests)
+Run: `bun test test/deny-private.test.ts`
+Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docker/egress docker/worker/Dockerfile
