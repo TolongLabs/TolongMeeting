@@ -646,8 +646,8 @@ git commit -m "feat(companion): check Docker before local runs"
 **Files:**
 
 - Create: `packages/companion/src/local/vault.ts`, `packages/companion/src/local/ephemeral.ts`
-- Modify: `packages/companion/src/secrets.ts` (`SecretName` adds `'profileKey'`); `packages/worker/src/profile/key.ts` (add `profileKeyOnce`); `packages/worker/src/run.ts` (call `profileKeyOnce` before the first heartbeat and use it for every checkpoint, in place of plan 01c's `loadProfileKey` call); `packages/worker/src/profile/profile.ts` (add `restoreProfile` unless plan 01c already exports it there); the worker CLI entry from plan 01a (`tm-worker`): restore the newest checkpoint when `work/` is empty, and add `--checkpoint-only <identityId>` (checkpoint `work/` and exit 0)
-- Test: `packages/companion/src/local/vault.test.ts`, `packages/worker/src/profile/key.test.ts`, `packages/worker/src/profile/restore.test.ts`
+- Modify: `packages/companion/src/secrets.ts` (`SecretName` adds `'profileKey'`); `packages/worker/src/cli.ts` and `docker/worker/entrypoint.sh` (`--checkpoint-only <identityId>` / mode `checkpoint-only <identityId>`: checkpoint `vol/work` and exit 0, starting nothing else); new `packages/worker/src/profile/checkpoint-only.ts`. No `profileKeyOnce` and no `run.ts` change (`setupProfile` already restores the newest checkpoint into an empty profile and reads the key once); `restoreProfile` already exists in `profile/profile.ts`
+- Test: `packages/companion/test/local-vault.test.ts`, `packages/worker/test/checkpoint-only.test.ts`
 
 **Interfaces:**
 
@@ -680,12 +680,11 @@ export function recoverStaleVolumes(d: {
   docker: DockerLike
   checkpoint(identityId: string): Promise<void>
 }): Promise<string[]>
-// worker
-export function profileKeyOnce(identityId: string): Buffer // loadProfileKey on the first call, then the cached buffer
-export function restoreProfile(archive: string, dir: string, key: Buffer): Promise<void>
+// also: profileMounts(p, id) (volume at /tm/profiles/<id>/vol, profile at vol/work), checkpointVolume(d, id)
+// worker: checkpointOnly(identityId, { root }): Promise<string | null> // profile/checkpoint-only.ts
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // vault.test.ts
@@ -761,21 +760,21 @@ test('restoreProfile brings back what checkpointProfile saved', async () => {
 
 `dirWith` writes a temporary folder; `fakeDocker` is Task 4's, recording `removedVolumes`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/companion/src/local/vault.test.ts packages/worker/src/profile`
 Expected: FAIL with "Cannot find module './vault'" and "Export named 'profileKeyOnce' not found"
 
-- [ ] **Step 3: Implement the vault, the short-lived files, `profileKeyOnce`, `restoreProfile` and the CLI changes**
+- [x] **Step 3: Implement the vault, the short-lived files, `profileKeyOnce`, `restoreProfile` and the CLI changes**
 
 `writeEphemeral` creates `<runs>\<random>\` and writes each file with owner-only permissions; `remove` deletes the folder and ignores a missing one. `recoverStaleVolumes` treats a `tm-profile-<id>` volume as stale when no running container carries the label `tm.identity=<id>`. On the PC the worker's checkpoints go to the bind-mounted `checkpointsDir`; `restoreProfile` picks the newest `<timestamp>.tar.enc` there.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/companion/src/local/vault.test.ts packages/worker/src/profile`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src packages/worker/src

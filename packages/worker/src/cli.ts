@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { JobError, parseJob, type JobConfig } from '@tm/core'
+import { checkpointOnly } from './profile/checkpoint-only'
 import { runOccurrence } from './run'
 import { seedProfile } from './seed'
 import { smokeJob } from './smoke/job'
 
-const USAGE = 'usage: tm-worker [--seed | --smoke] --job <path>'
+const USAGE = 'usage: tm-worker [--seed | --smoke] --job <path> | tm-worker --checkpoint-only <identityId>'
 
 // Exit codes: 0 completed (a smoke test with nothing missing), 1 any other outcome or a crash, 64 usage, 65 invalid job, 143 stopped by SIGTERM or SIGINT
 // (128 + 15, the shell's code for a process ended by SIGTERM: a stop is not a normal end and not a failure).
@@ -40,8 +41,23 @@ async function loadJob(file: string): Promise<JobConfig | null> {
   }
 }
 
+// `--checkpoint-only <identityId>`: write one profile checkpoint and exit. It reads no job and starts nothing else.
+async function checkpointMode(identityId: string): Promise<number> {
+  const root = process.env.TM_PROFILE_ROOT
+  if (!root) throw new Error('TM_PROFILE_ROOT is not set')
+  const file = await checkpointOnly(identityId, { root })
+  console.error(file === null ? 'checkpoint-only: no profile to checkpoint' : 'checkpoint-only: checkpoint written')
+  return EXIT.completed
+}
+
 async function main(): Promise<number> {
-  const args = parseArgs(process.argv.slice(2))
+  const argv = process.argv.slice(2)
+  if (argv[0] === '--checkpoint-only') {
+    if (argv.length === 2 && argv[1] !== undefined) return checkpointMode(argv[1])
+    console.error(USAGE)
+    return EXIT.usage
+  }
+  const args = parseArgs(argv)
   if (args === null) {
     console.error(USAGE)
     return EXIT.usage

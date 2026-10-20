@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Modes: selfcheck | test <playwright filter> | unit <bun test path> | seed --job <path> | smoke --job <path> | --job <path> | --signin <path>
+# Modes: selfcheck | test <playwright filter> | unit <bun test path> | seed --job <path> | smoke --job <path> | checkpoint-only <identityId> | --job <path> | --signin <path>
 set -euo pipefail
 
 usage() {
-  echo "usage: entrypoint.sh selfcheck | test <filter> | unit <path> | seed --job <path> | smoke --job <path> | --job <path> | --signin <path>" >&2
+  echo "usage: entrypoint.sh selfcheck | test <filter> | unit <path> | seed --job <path> | smoke --job <path> | checkpoint-only <identityId> | --job <path> | --signin <path>" >&2
   exit 2
 }
 
@@ -13,8 +13,16 @@ case "$mode" in
   selfcheck | test | unit) ;;
   seed | smoke) [ $# -eq 3 ] && [ "$2" = "--job" ] || usage ;;
   --job | --signin) [ $# -eq 2 ] || usage ;;
+  checkpoint-only) [ $# -eq 2 ] || usage ;;
   *) usage ;;
 esac
+
+# Writes one profile checkpoint and exits. No PulseAudio, no job: nothing else may start in this container.
+if [ "$mode" = checkpoint-only ]; then
+  case "$2" in "" | *[!A-Za-z0-9_-]*) usage ;; esac
+  cd /app
+  exec node packages/worker/dist/cli.js --checkpoint-only "$2"
+fi
 
 # PulseAudio keeps its socket under XDG_RUNTIME_DIR; ffmpeg, pactl and Chrome find it through the same variable.
 mkdir -p /tmp/xdg

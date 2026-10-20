@@ -10,7 +10,7 @@ export interface SafeStorageLike {
   decryptString(b: Buffer): string
 }
 
-export const SECRET_NAMES = ['deviceToken', 'ntfyToken'] as const // plan 08 adds 'profileKey'
+export const SECRET_NAMES = ['deviceToken', 'ntfyToken', 'profileKey'] as const
 export type SecretName = (typeof SECRET_NAMES)[number]
 
 /** There is no secure storage on this machine. The store refuses to hold a secret rather than write it as text. */
@@ -23,7 +23,8 @@ export class EncryptionUnavailableError extends Error {
 
 const FileSchema = z.strictObject({
   deviceToken: z.base64().optional(),
-  ntfyToken: z.base64().optional()
+  ntfyToken: z.base64().optional(),
+  profileKey: z.base64().optional()
 }) satisfies z.ZodType<Partial<Record<SecretName, string>>>
 
 /** Secrets live in one file as base64 of `safeStorage` ciphertext (DPAPI on Windows). Never plaintext. */
