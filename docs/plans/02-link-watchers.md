@@ -79,7 +79,7 @@ Assumed from earlier plans (use their real names if they differ, and fix this pl
 
 - Create: `packages/core/src/discord-chat.ts`, `packages/core/src/watch-gate.ts`
 - Modify: `packages/core/src/index.ts` (exports)
-- Test: `packages/core/src/discord-chat.test.ts`, `packages/core/src/watch-gate.test.ts`
+- Test: `packages/core/test/discord-chat.test.ts`, `packages/core/test/watch-gate.test.ts`
 
 **Interfaces:**
 
@@ -108,10 +108,10 @@ export function gateLinkSource(
 
 `normaliseDiscordChannelUrl` accepts `https:` only, hosts `discord.com`, `www.discord.com`, `ptb.discord.com`, `canary.discord.com` and `discordapp.com`, and paths `/channels/<server>/<channel>` with an optional trailing message id, where `<server>` is `@me` or 17 to 20 digits and `<channel>` is 17 to 20 digits; it drops the message id, query and fragment. `chatWatchAllowed` is true for `teams`; for WhatsApp and Discord, `allowed` is true, `home_only` is true unless `runLocation` is `server`, and `none` is false. `gateLinkSource` returns the link unchanged unless it is a chat the gate refuses, which becomes `{ kind: 'paste' }` with `blockedApp` set.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/discord-chat.test.ts
+// packages/core/test/discord-chat.test.ts
 const G = '123456789012345678',
   C = '234567890123456789'
 test.each([
@@ -127,7 +127,7 @@ test.each([
 ```
 
 ```ts
-// packages/core/src/watch-gate.test.ts
+// packages/core/test/watch-gate.test.ts
 test('the gate defaults to WhatsApp at home only and Discord everywhere', () => {
   expect(watchGateFromEnv({})).toEqual({
     whatsapp: 'home_only',
@@ -176,25 +176,25 @@ test('a refused chat becomes a pasted link', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/discord-chat.test.ts packages/core/src/watch-gate.test.ts`
+Run: `bun test packages/core/test/discord-chat.test.ts packages/core/test/watch-gate.test.ts`
 Expected: FAIL with `Cannot find module './discord-chat'`.
 
-- [ ] **Step 3: Implement both modules in `packages/core/src/` and export them from `index.ts`**
+- [x] **Step 3: Implement both modules in `packages/core/src/` and export them from `index.ts`**
 
 Parse with `new URL` inside `try`; a string that doesn't parse gives `null`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/discord-chat.test.ts packages/core/src/watch-gate.test.ts`
-Expected: PASS, `11 pass, 0 fail`.
+Run: `bun test packages/core/test/discord-chat.test.ts packages/core/test/watch-gate.test.ts`
+Expected: PASS, `15 pass, 0 fail` (the plan's 11 cases plus 4 added: userinfo, port, control character, bad value not echoed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/discord-chat* packages/core/src/watch-gate* packages/core/src/index.ts docs/TRD.md
-git commit -m "feat(core): add chat ids and watch gate"
+git add packages/core/src/discord-chat.ts packages/core/src/watch-gate.ts packages/core/test/discord-chat.test.ts packages/core/test/watch-gate.test.ts packages/core/src/index.ts docs/TRD.md
+git commit -m "feat: identify chats and gate watching"
 ```
 
 ### Task 2: Watcher rules
