@@ -261,21 +261,8 @@ test('every queue sets expiry, retention, deletion and retry; a queue that stran
   }
 })
 
-test('plan 03 and 08 stubs have no schedule and fail loudly, naming their task, if a job reaches them', async () => {
-  const stubs = {
-    localClaimCheck: 'plan 08 T2',
-    localStartCheck: 'plan 08 T2',
-    localStartDead: 'plan 08 T2'
-  } as const
-  const handlers = buildHandlers({} as LaunchDeps, {} as SchedulerEnv)
-  for (const [key, task] of Object.entries(stubs) as [keyof typeof stubs, string][]) {
-    expect(JOBS[key].cron, key).toBeUndefined()
-    const error = await handlers[key]({}, new AbortController().signal).catch((e: Error) => e)
-    expect(error, key).toBeInstanceOf(Error)
-    expect((error as Error).message).toContain('not implemented yet')
-    expect((error as Error).message).toContain(task)
-  }
-  // Plan 08 T12's home route jobs are real now: a recheck queues the next one with `startAfter`, so they have no cron.
+test('the local and home route jobs have no schedule: each check chains from the event that needs it', () => {
+  // A recheck queues the next one with `startAfter`, so the home route jobs have no cron.
   expect(JOBS.homeRouteRecheck.cron).toBeUndefined()
   expect(JOBS.homeRouteDead.cron).toBeUndefined()
   expect(KEYS.filter((key) => JOBS[key].cron !== undefined).sort()).toEqual([
@@ -284,6 +271,16 @@ test('plan 03 and 08 stubs have no schedule and fail loudly, naming their task, 
     'orgCheck',
     'retention'
   ])
+})
+
+test('the local run handlers reject a job body without a job id', async () => {
+  const handlers = buildHandlers({} as LaunchDeps, {} as SchedulerEnv)
+  for (const key of ['localClaimCheck', 'localStartCheck', 'localStartDead'] as const) {
+    expect(JOBS[key].cron, key).toBeUndefined()
+    const error = await handlers[key]({}, new AbortController().signal).catch((e: Error) => e)
+    expect(error, key).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toContain('not implemented yet')
+  }
 })
 
 test('the home route handlers reject a job body without an occurrence id', async () => {

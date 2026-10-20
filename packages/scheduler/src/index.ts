@@ -27,6 +27,18 @@ export {
   type DockerClient,
   type DockerTimeouts
 } from './docker'
+export {
+  LOCAL_CLAIM_SECONDS,
+  LOCAL_START_DEADLINE_MS,
+  checkLocalClaim,
+  checkLocalStart,
+  failLocalOccurrence,
+  handleLocalStartDead,
+  localHeartbeatTimeout,
+  startLocalRun,
+  toLocalPayload,
+  type LocalDeps
+} from './local/dispatch'
 export { acquireProfile, releaseProfile } from './locks'
 export { HostDirError, WORKER_UID, removeJobFiles, writeJobFiles } from './job-files'
 export {

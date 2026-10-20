@@ -257,7 +257,7 @@ export function releaseJob(db: Db, device: DeviceAuth, jobId: string): Promise<b
 
 - Routes (adds to contracts): `GET /api/companion/jobs/<id>/secrets` (200 `LocalSecrets` with `Cache-Control: no-store`; 404 outside the active window or for any other job); `POST /api/companion/jobs/<id>/release` (204).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // dispatch.test.ts. Entry "Data Mining", 14:00 to 16:00 Asia/Kuala_Lumpur, identity "University" bound to f.a1 named "DESKTOP-ABC"; T-60 is 13:00.
@@ -341,21 +341,21 @@ test('local runs keep their claim when the lease lapses; release keeps the attem
 
 `at('HH:mm[:ss]')` is that time on 21 October 2026 in Kuala Lumpur; `deps` records `pings`, `transitions`, `failed` and `scheduled`; `claimedLocalRun(device, { error? })` creates and claims a `local_run` job, setting its `error` column.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/scheduler/src/local packages/web/lib/companion/local.test.ts`
 Expected: FAIL with "Cannot find module './dispatch'" and "Cannot find module './local'"
 
-- [ ] **Step 3: Implement dispatch, the secrets and release routes, and the plan 01c hooks**
+- [x] **Step 3: Implement dispatch, the secrets and release routes, and the plan 01c hooks**
 
 `startLocalRun`: identity lock and clash rules have already run (plan 01c). If the identity has no bound device, or `isDeviceOnline` is false, apply `skip_pc_offline` and ping as above; otherwise create the job with `targetDeviceId`, payload `toLocalPayload(cfg, identityName, process.env.TM_WORKER_IMAGE_REF)`, emit `job_available` to that device, and schedule `local-claim-check` after 120 seconds and `local-start-check` at T-10. `checkLocalClaim` cancels a still-`pending` job and applies `skip_pc_offline` with the same ping. `checkLocalStart` fails the occurrence and marks the job `failed` when the occurrence is still `starting` at T-10, with the job's `error` or `pc_lost`; the companion then gets 404s and stops retrying. `localHeartbeatTimeout` answers `pc_lost` only for states before `uploading` and after `LOCAL_HEARTBEAT_TIMEOUT_MS`. `localSecrets` reads the AI key and saved details the way `buildJobConfig` does, only for a `local_run` job this device holds, between the entry's start minus 70 minutes and its end plus 30 minutes.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/scheduler/src/local packages/web/lib/companion/local.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src packages/web packages/notify/src/messages.ts

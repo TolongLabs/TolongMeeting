@@ -13,6 +13,7 @@ import { startViaHome } from './home-route/check'
 import { removeSidecar } from './home-route/sidecar'
 import { removeJobFiles } from './job-files'
 import { startAttempt, type LaunchDeps } from './launch'
+import { failLocalOccurrence, localHeartbeatTimeout } from './local/dispatch'
 import { releaseProfile } from './locks'
 import { checkpointFiles } from './retention'
 import { monitorSignins } from './signin'
@@ -148,6 +149,15 @@ async function runsViaHome(deps: LaunchDeps, row: OccurrenceRow): Promise<boolea
   return identity?.runLocation === 'server_via_home'
 }
 
+/** Whether the occurrence's identity runs on the member's own PC (plan 08): the monitor never launches or restarts it. */
+async function runsLocally(deps: LaunchDeps, row: OccurrenceRow): Promise<boolean> {
+  const [identity] = await deps.db
+    .select({ runLocation: identities.runLocation })
+    .from(identities)
+    .where(eq(identities.id, row.identityId))
+  return identity?.runLocation === 'local'
+}
+
 /** A home-route worker whose sidecar has died has lost its network (and its exit node): that is a crash. */
 async function sidecarLost(deps: LaunchDeps, row: OccurrenceRow): Promise<boolean> {
   if (row.containerName === null || !(await runsViaHome(deps, row))) return false
@@ -193,6 +203,9 @@ async function restart(deps: LaunchDeps, occurrenceId: string, now: Date): Promi
   const { db } = deps
   const [row] = await db.select().from(occurrences).where(eq(occurrences.id, occurrenceId))
   if (!row) throw new Error(`No occurrence ${occurrenceId}`)
+  // A local run is the PC's to restart; a server worker for it would be a second run of the meeting.
+  if (await runsLocally(deps, row))
+    throw new Error(`Occurrence ${occurrenceId} runs on a PC; the server never restarts it`)
   // Two workers must never run for one identity, so the old one is stopped before anything else changes.
   await stopContainer(deps.docker, row.containerName)
   if (!(await unchanged(deps, row))) return 'skipped'
@@ -296,8 +309,16 @@ async function watchWorkers(deps: LaunchDeps, now: Date, result: MonitorResult):
   const keys = new Set(active.map(trackKey))
   for (const key of unreachable.keys()) if (!keys.has(key)) unreachable.delete(key)
   for (const [id, at] of lastLogged) if (now.getTime() - at > 10 * LOG_EVERY_MS) lastLogged.delete(id)
+  const local = await localIdentities(deps, active)
   for (const row of active) {
     try {
+      if (local.has(row.identityId)) {
+        if ((await watchLocal(deps, row, now)) === 'failed') {
+          handled.add(row.id)
+          result.failed.push(row.id)
+        }
+        continue
+      }
       const outcome = await watch(deps, row, now)
       if (outcome === 'restarted' || outcome === 'failed') {
         handled.add(row.id)
@@ -315,6 +336,34 @@ async function watchWorkers(deps: LaunchDeps, now: Date, result: MonitorResult):
   }
   for (const row of active) if (!handled.has(row.id)) await removeLaunchFiles(deps, row, now)
   result.released.push(...(await releaseFinished(deps, now)))
+}
+
+/** The identities among those of `rows` that run on a PC. Their occurrences are watched by `watchLocal`, never `watch`. */
+async function localIdentities(deps: LaunchDeps, rows: OccurrenceRow[]): Promise<Set<string>> {
+  const ids = [...new Set(rows.map((r) => r.identityId))]
+  if (ids.length === 0) return new Set()
+  const found = await deps.db
+    .select({ id: identities.id })
+    .from(identities)
+    .where(and(inArray(identities.id, ids), eq(identities.runLocation, 'local')))
+  return new Set(found.map((r) => r.id))
+}
+
+/**
+ * What the server can know of a run on the member's PC: its heartbeats, relayed by the companion. Silence for
+ * `LOCAL_HEARTBEAT_TIMEOUT_MS` while the worker should be beating fails the run with `pc_lost` and tells the member.
+ * It never restarts anything (the companion restarts its own worker), has no container to look at, and leaves the
+ * start (`starting`, until T-10) and the upload to their own checks. A run still going 35 minutes after the meeting end
+ * is told to stop in its next heartbeat reply.
+ */
+async function watchLocal(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'failed' | null> {
+  const last = row.lastHeartbeatAt ?? row.scheduledStart
+  if (localHeartbeatTimeout(row.state, now.getTime() - last.getTime()) === 'pc_lost') {
+    return (await failLocalOccurrence(deps, row.id, 'pc_lost')) ? 'failed' : null
+  }
+  const stopAt = row.scheduledEnd.getTime() + STOP_AFTER_END_MS
+  if (isWorkerState(row.state) && now.getTime() >= stopAt) await requestStop(deps, row, stopAt)
+  return null
 }
 
 const trackKey = (row: OccurrenceRow): string => `${row.id}:${row.attempt}`
@@ -402,6 +451,9 @@ async function watch(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'
   const t = now.getTime()
   const end = row.scheduledEnd.getTime()
   const isWorker = isWorkerState(row.state)
+  // A server launch names the container in the transaction that makes the row `starting`. A `starting` row without one
+  // is a home-route occurrence waiting for its exit node (`home-route-recheck`): there is no worker to be quiet yet.
+  if (row.state === 'starting' && row.containerName === null) return null
   // Healthy again (or never unreachable): the unreachable clock starts over next time.
   if (!isStale(row, now) && !hasOverrun(row, now)) unreachable.delete(trackKey(row))
 

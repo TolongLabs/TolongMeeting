@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { JobConfigSchema, type LinkSource, type OccurrenceState, type WatchGate } from '@tm/core'
 import { and, eq, sql } from 'drizzle-orm'
-import { events, identities, occurrences, profiles, schema, signinSessions, type Db } from '@tm/web/db'
+import { events, occurrences, profiles, schema, signinSessions, type Db } from '@tm/web/db'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { QUEUES } from '@tm/web/db/queues'
 import { sealColumn } from '@tm/web/db/secrets'
@@ -47,7 +47,6 @@ interface Options {
   earlierHolding?: { end: string; state: OccurrenceState }
   signinHolding?: boolean
   dockerFails?: boolean
-  runLocation?: 'server' | 'local'
 }
 
 const START = '2026-10-21T06:00:00.000Z'
@@ -63,8 +62,6 @@ async function launchFixture(o: Options = {}) {
     .update(schema.aiKeys)
     .set({ dashscopeKeyEnc: sealColumn(MASTER, memberId, 'ai_keys.dashscope_key', 'sk-dash-secret') })
     .where(eq(schema.aiKeys.memberId, memberId))
-  if (o.runLocation)
-    await db.update(identities).set({ runLocation: o.runLocation }).where(eq(identities.id, identityId))
 
   const [entry] = await db
     .insert(schema.timetableEntries)
@@ -383,12 +380,6 @@ test('an identity that is not the occurrence member’s is refused', async () =>
   expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
   expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'identity_not_owned' })
   expect(f.docker.created).toEqual([])
-})
-
-test('an identity that does not run on the server fails the launch', async () => {
-  const f = await launchFixture({ runLocation: 'local' })
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
-  expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'run_location_unavailable' })
 })
 
 test('startAttempt for a later attempt writes its own token and names', async () => {

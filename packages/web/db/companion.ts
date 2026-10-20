@@ -152,8 +152,15 @@ export async function listCompanionEvents(db: Db, device: DeviceAuth, afterId: n
   return rows.map((r) => CompanionEventSchema.parse(r))
 }
 
-/** The member's `pending` jobs this device may claim (untargeted, or aimed at it) and the jobs it holds. */
+/**
+ * The member's `pending` jobs this device may claim (untargeted, or aimed at it) and the jobs it holds. A revoked device
+ * is handed nothing.
+ */
 export async function listJobsForDevice(db: Db, device: DeviceAuth): Promise<CompanionJob[]> {
+  const liveDevice = sql`exists (
+    select 1 from device_tokens d
+    where d.id = ${device.deviceId} and d.member_id = ${device.memberId} and d.revoked_at is null
+  )`
   const rows = await guarded(() =>
     db
       .select(jobColumns)
@@ -161,6 +168,7 @@ export async function listJobsForDevice(db: Db, device: DeviceAuth): Promise<Com
       .where(
         and(
           eq(companionJobs.memberId, device.memberId),
+          liveDevice,
           or(
             and(
               eq(companionJobs.state, 'pending'),
@@ -304,6 +312,28 @@ export async function renewLease(db: Db, device: DeviceAuth, jobId: string, now:
 }
 
 /**
+ * Gives a job the device holds back to `pending` without counting an attempt. Only the holding device can: a job it never
+ * held, another device's job, another member's job and a job that is no longer `claimed` all answer `false`.
+ */
+export async function releaseJob(db: Db, device: DeviceAuth, jobId: string, now: Date = new Date()): Promise<boolean> {
+  const rows = await guarded(() =>
+    db
+      .update(companionJobs)
+      .set({ state: 'pending', deviceId: null, leaseUntil: null, updatedAt: now })
+      .where(
+        and(
+          eq(companionJobs.id, jobId),
+          eq(companionJobs.memberId, device.memberId),
+          eq(companionJobs.deviceId, device.deviceId),
+          eq(companionJobs.state, 'claimed')
+        )
+      )
+      .returning({ id: companionJobs.id })
+  )
+  return rows.length === 1
+}
+
+/**
  * Returns claimed `native_transcription` jobs whose lease ended before `now` to `pending` and returns their ids: those
  * of every member, or only of `memberId` when it is given (a device request passes its own member). A `local_run` is
  * never released here (R13): its PC may be offline for a while and the run goes on; the monitor ends it after
@@ -351,7 +381,13 @@ export async function getJob(db: Db, jobId: string): Promise<(CompanionJob & { m
 
 /** The job rows this device holds right now: claimed by it, for its member, with a live lease (a `local_run` has none to lapse). */
 function heldBy(device: DeviceAuth, jobId: string, now: Date) {
+  // A revoked device holds nothing: its token is dead, whatever its rows still say.
+  const liveDevice = sql`exists (
+    select 1 from device_tokens d
+    where d.id = ${device.deviceId} and d.member_id = ${device.memberId} and d.revoked_at is null
+  )`
   return and(
+    liveDevice,
     eq(companionJobs.id, jobId),
     eq(companionJobs.memberId, device.memberId),
     eq(companionJobs.deviceId, device.deviceId),
