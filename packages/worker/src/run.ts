@@ -45,7 +45,7 @@ import { createFrameHandler, type FrameHandler } from './frames/handler'
 import type { FrameLoop } from './frames/frames'
 import type { LiveAsr } from './asr/live'
 import { setupProfile, type ProfileSetup } from './profile-setup'
-import { startMentionWatch } from './mentions/watch'
+import { lastMentionPing, startMentionWatch } from './mentions/watch'
 import { closeQr } from './qr/qr'
 import type { Recorder } from './recorder/recorder'
 import { defaultDeps, type OccurrenceOutcome, type RunDeps } from './run-deps'
@@ -1448,7 +1448,7 @@ class OccurrenceRun {
     if (cfg.entry.transcription === 'live') {
       const audio = this.audio!
       // A work meeting listens for the member's names (a lecture has a roll call too, but no ping is wanted there).
-      const mentions = this.lecture ? null : this.startMentions()
+      const mentions = this.lecture ? null : await this.startMentions()
       this.asr = await this.optional('live transcription', () =>
         deps.startLiveAsr(audio, cfg.ai, join(cfg.dataDir, 'transcript', 'live.jsonl'), {
           baseMs: audio.startedAt.getTime() - this.recorder!.startedAt.getTime(),
@@ -1461,9 +1461,11 @@ class OccurrenceRun {
 
   // The watch for the member's names. Its pings carry no link or passcode (see `pings.nameMentioned`), and a failure of
   // the ping or the event is logged by the watch itself and never reaches the speech path.
-  private startMentions(): ReturnType<typeof startMentionWatch> {
+  private async startMentions(): Promise<ReturnType<typeof startMentionWatch>> {
     const { cfg, deps, links } = this
     return startMentionWatch({
+      joinedLinks: [this.rawLink, this.url],
+      lastPingAt: await lastMentionPing(join(cfg.dataDir, 'events.jsonl')),
       names: cfg.member.mentionNames,
       entry: cfg.entry.name,
       timeZone: cfg.entry.timeZone,
