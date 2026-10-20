@@ -98,12 +98,16 @@ const BOUND = {
   stopCheckpoints: 5_000,
   checkpoint: 120_000,
   alerts: 5_000,
+  resume: 15_000,
   finalHeartbeat: 4_000,
   stopHeartbeat: 1_000,
   settleOutbox: 2_000,
   stopScreen: 5_000,
   join: 300_000
 }
+
+/** The pause between tries while the server has not yet taken a resumed worker's first heartbeat. */
+const RESUME_RETRY_MS = 1_000
 
 /** What a race against the abort signal returns when the signal wins. */
 const ABORTED = Symbol('aborted')
@@ -337,24 +341,49 @@ class OccurrenceRun {
   }
 
   // The meeting is over, so the bot does not join again. The first heartbeat already carries the acknowledged state;
-  // the states after it are reported now, the recording is joined if it is not yet, and the hand-over is reported.
+  // the states after it are reported once the server has taken that heartbeat, the recording is joined if it is not
+  // yet (never by a replaced worker), and the hand-over is reported.
   private async finishEarlier(outcome: OccurrenceOutcome): Promise<OccurrenceOutcome> {
     const verdict: Verdict = { result: outcome.result, endedBy: outcome.endedBy, reason: outcome.reason }
     this.resumed = true
     this.verdict = verdict
     this.joinedAt = outcome.joinedAt === null ? null : new Date(outcome.joinedAt)
     this.teardownStart = Date.now()
-    if (this.handsOver) await this.walkTo('uploading')
-    else if (verdict.endedBy === 'member_left') {
-      await this.walkTo('in_meeting')
-      await this.setState('left_by_member')
-    } else if (verdict.result === 'denied') {
-      await this.walkTo('joining')
-      await this.setState('in_lobby')
-    } else if (verdict.reason === 'no_link') await this.walkTo('watching_for_link')
-    await this.finishRecording()
-    await this.finalReport(verdict)
+    const taken = await this.resumeTaken()
+    if (taken) {
+      if (this.handsOver) await this.walkTo('uploading')
+      else if (verdict.endedBy === 'member_left') {
+        await this.walkTo('in_meeting')
+        await this.setState('left_by_member')
+      } else if (verdict.result === 'denied') {
+        await this.walkTo('joining')
+        await this.setState('in_lobby')
+      } else if (verdict.reason === 'no_link') await this.walkTo('watching_for_link')
+    }
+    if (!this.superseded) await this.finishRecording()
+    await this.finalReport(verdict, !taken)
     return outcome
+  }
+
+  // Waits, within the teardown budget, until the server has taken this worker's first heartbeat (the resumed state).
+  // False when it never does, or when the run is replaced: the states are then left in the outbox, not sent ahead.
+  private async resumeTaken(): Promise<boolean> {
+    const beat = this.heartbeat
+    if (beat === null) return true
+    let waiting = true
+    const finished = await this.bounded(
+      'resume',
+      BOUND.resume,
+      async () => {
+        while (waiting && !this.superseded && !(await beat.flush())) {
+          await new Promise<void>((resolve) => setTimeout(resolve, RESUME_RETRY_MS))
+        }
+      },
+      'pre'
+    )
+    // A wait the bound cut short must not go on sending in the background.
+    waiting = false
+    return finished && !this.superseded
   }
 
   // Reports each state from the one after the current state up to `target`, on the way a meeting goes. A step the
@@ -467,11 +496,12 @@ class OccurrenceRun {
 
   // The last report: the state the meeting ended in, then every event still unsent, within the budget. A failure leaves
   // the events in the outbox on disk for the next attempt (or the scheduler).
-  private async finalReport(verdict: Verdict): Promise<void> {
+  // `held`: the resumed worker's first heartbeat was never taken, so no state is reported after it.
+  private async finalReport(verdict: Verdict, held = false): Promise<void> {
     const beat = this.heartbeat
     if (beat === null) return
     if (!this.superseded) {
-      const state = this.finalState(verdict)
+      const state = held ? null : this.finalState(verdict)
       if (state !== null) await this.setState(state)
       // The phase 'beat' leaves the next step a share of the reserve even when the server never answers.
       await this.bounded(

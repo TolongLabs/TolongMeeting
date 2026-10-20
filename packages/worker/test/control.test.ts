@@ -393,6 +393,20 @@ test('a restarted worker reports the state before the first change the server ne
   expect(await acknowledgedState(outbox, 2, log)).toBe('starting')
 })
 
+test('a damaged earlier outbox file falls back to the state the attempt began in', async () => {
+  const outbox = join(dir, 'outbox')
+  await mkdir(outbox)
+  const [a, b, c] = [at(1, 'verifying_accounts'), at(2, 'watching_for_link'), at(3, 'joining')]
+  const log = await writeLog([a, b, c])
+  // The server heard of a and b; c is unsent.
+  await writeFile(join(outbox, 'attempt_1.jsonl'), `${JSON.stringify(c)}\n`)
+  expect(await acknowledgedState(outbox, 2, log)).toBe('watching_for_link')
+
+  // The same file, with a line cut short after c: the log cannot show what the damaged part held.
+  await writeFile(join(outbox, 'attempt_1.jsonl'), `${JSON.stringify(c)}\n{"occurrenceId":"occ-1","at\n`)
+  expect(await acknowledgedState(outbox, 2, log)).toBe('starting')
+})
+
 test("only worker states count, and a second restart does not trust the first restart's log", async () => {
   const outbox = join(dir, 'outbox')
   await mkdir(outbox)

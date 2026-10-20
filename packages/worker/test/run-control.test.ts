@@ -391,6 +391,71 @@ test('a restart after the meeting ended reports the acknowledged state, then han
   expect(c.seen.at(-1)).toMatchObject({ state: 'transcribing' })
 })
 
+// A meeting that ended while the worker was down: attempt 1 logged every state, and the server has only `in_meeting`.
+async function endedWhileDown(cfg: JobConfig): Promise<OccurrenceOutcome> {
+  const log = [
+    stateEvent(1, 'verifying_accounts'),
+    stateEvent(2, 'watching_for_link'),
+    stateEvent(3, 'joining'),
+    stateEvent(4, 'in_meeting'),
+    stateEvent(5, 'leaving'),
+    stateEvent(6, 'uploading'),
+    stateEvent(7, 'transcribing')
+  ]
+  await leftBehind(cfg, log, log.slice(4))
+  const earlier: OccurrenceOutcome = {
+    result: 'completed',
+    endedBy: 'page',
+    reason: null,
+    joinedAt: '2026-10-21T12:00:04.000Z',
+    endedAt: '2026-10-21T13:00:00.000Z'
+  }
+  await writeFile(join(cfg.dataDir, 'outcome.json'), JSON.stringify(earlier))
+  return earlier
+}
+
+test('a restarted worker that finds the meeting over reports nothing after its resumed state until the server takes it', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  const earlier = await endedWhileDown(cfg)
+  // The server refuses the first heartbeat, which carries the resumed state.
+  const c = control((_, n) => (n === 1 ? { status: 500 } : {}))
+  const d = fake({ states: 'always_in_meeting' })
+  const o = await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(o).toEqual(earlier)
+  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'in_meeting' })
+  // The heartbeat the server takes is still in the resumed state: the states after it come only once it is taken.
+  expect(c.seen[1]).toMatchObject({ attempt: 2, state: 'in_meeting' })
+  expect(c.seen.slice(0, 2).flatMap((b) => b.events.filter((e) => e.type === 'state'))).toEqual([])
+  expect(c.states()).toEqual(['leaving', 'uploading', 'transcribing'])
+  expect(c.seen.at(-1)).toMatchObject({ state: 'transcribing' })
+})
+
+test('a restarted worker the server never takes does not walk ahead of it; the states wait in the outbox', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  await endedWhileDown(cfg)
+  const c = control(() => ({ status: 500 }))
+  const d = fake({ states: 'always_in_meeting', teardownBudgetMs: 2000 })
+  const started = Date.now()
+  await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(Date.now() - started).toBeLessThan(4000)
+  expect(c.events().filter((e) => e.type === 'state')).toEqual([])
+  const own = (await logged(cfg)).filter((e) => e.attempt === 2)
+  expect(own.filter((e) => e.type === 'state')).toEqual([])
+  expect(own.filter((e) => e.type === 'error').map((e) => e.data.where)).toContain('teardown resume')
+  expect(await outboxText(cfg, 2)).not.toContain('"type":"state"')
+  expect(d.calls).toContain('joinRecording')
+}, 10_000)
+
+test('a worker replaced while it waits for its resumed state does not join the recording again', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  await endedWhileDown(cfg)
+  const c = control(() => ({ status: 410 }))
+  const d = fake({ states: 'always_in_meeting' })
+  await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(d.calls).not.toContain('joinRecording')
+  expect(c.events().filter((e) => e.type === 'state')).toEqual([])
+}, 10_000)
+
 test('a cut-short earlier attempt (SIGTERM) does not end the meeting: the restarted worker joins again', async () => {
   const cfg = withControl('http://unused', { attempt: 2 })
   await leftBehind(cfg, [stateEvent(1, 'verifying_accounts')], [])

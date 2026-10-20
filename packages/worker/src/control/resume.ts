@@ -56,7 +56,8 @@ async function readLog(eventsFile: string): Promise<MeetingEvent[]> {
  * The state the server has acknowledged for this occurrence, which a restarted worker reports first: the server accepts
  * only the state it applied before the crash (`resume_state`), and the event log can be ahead of that. It is the state
  * event just before the first state change still unsent in the earlier outbox files (the last one if none is unsent),
- * among the worker states, and `starting` when there is none. Read before `EventOutbox.open`, which drops those files.
+ * among the worker states, and `starting` when there is none. When an earlier file is damaged, the state the attempt began
+ * in is used instead. Read before `EventOutbox.open`, which drops those files.
  *
  * An attempt that sends nothing leaves the state it began with in `resume.json` in the outbox directory, so a second
  * restart (with the server still unreachable) does not mistake the first restart's log for acknowledged work.
@@ -65,14 +66,17 @@ export async function acknowledgedState(dir: string, attempt: number, eventsFile
   const base = await readBase(dir)
   const log = (await readLog(eventsFile)).filter((e) => e.attempt >= base.attempt && stateOf(e) !== null)
   let firstUnsent: string | null = null
+  let damaged = false
   for (const f of await earlierFiles(dir, attempt)) {
-    const { events } = await readOutboxFile(join(dir, f.name))
-    const unsent = events.find((e) => e.attempt >= base.attempt && stateOf(e) !== null)
-    if (unsent) {
-      firstUnsent = keyOf(unsent)
-      break
+    const read = await readOutboxFile(join(dir, f.name))
+    damaged ||= read.damaged
+    if (firstUnsent === null) {
+      const unsent = read.events.find((e) => e.attempt >= base.attempt && stateOf(e) !== null)
+      if (unsent) firstUnsent = keyOf(unsent)
     }
   }
+  // A damaged file may hold an unsent change that the log cannot show, so no state read from the log can be trusted.
+  if (damaged) return base.state
   // An unsent change the log does not hold cannot be placed: nothing in the log is known to be acknowledged.
   const at = firstUnsent === null ? log.length : log.findIndex((e) => keyOf(e) === firstUnsent)
   const known = log
