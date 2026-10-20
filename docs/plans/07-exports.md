@@ -856,7 +856,7 @@ Failure               title: Export failed
                       actions: Reconnect -> <TM_PUBLIC_URL>/connections (codes not_connected, reconnect_needed, invalid_settings, not_found on GitHub, Google Docs or Notion); Open meeting page -> <meeting page>
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // registry.test.ts
@@ -964,12 +964,12 @@ test('runLoop fails interrupted rows, then runs queued ones in order', async () 
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/registry.test.ts packages/exports/src/runner.test.ts`
 Expected: FAIL with `Cannot find module './registry'` and `Cannot find module './runner'`.
 
-- [ ] **Step 3: Implement the registry, the runner, `main.ts` and the memory stores**
+- [x] **Step 3: Implement the registry, the runner, `main.ts` and the memory stores**
 
 `runExport` in order:
 
@@ -1000,12 +1000,14 @@ exports:
 
 The `web` service gains the same four OAuth variables plus `GOOGLE_API_KEY` and `GOOGLE_APP_ID`; `.env.example` lists all six names without values; the root script is `"tm-exports": "bun run packages/exports/src/main.ts"`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/registry.test.ts packages/exports/src/runner.test.ts && docker compose -f docker/compose.yaml config --services`
 Expected: PASS (`0 fail`), and the service list includes `exports`.
 
-- [ ] **Step 5: Commit**
+> **As built (preflight P7-2, P7-7, P7-8, P7-9):** the runner takes a `RunnerStore` (task 5) plus `RunnerConnections` and `OccurrenceLookup`, not `ExportStore`/`ConnectionStore`; `memoryStores` returns `{ store, exports, connections, occurrences, markedReconnect, saved }`; `ping` answers a boolean; tests live in `packages/exports/test/` (`runner`, `registry`, `env`). `main.ts` reads its environment through `src/env.ts` and has a health file, a 10 minute per-export timeout, a 512 MB output cap and a bounded drain. The Compose service builds a new `exports` target of `docker/app/Dockerfile`; retention deletes a meeting's `exports` rows.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports docker/compose.yaml .env.example package.json

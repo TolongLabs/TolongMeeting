@@ -68,6 +68,14 @@ services:
       TM_TAILSCALE_CLIENT_ID:
       TM_TAILSCALE_CLIENT_SECRET:
       TM_TAILSCALE_TAILNET:
+      # Plan 07. The Google and Notion OAuth apps of the export targets. An empty value means "not configured": the
+      # target is then not offered. GOOGLE_API_KEY and GOOGLE_APP_ID belong to the Google Picker in the browser.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GOOGLE_APP_ID: ${GOOGLE_APP_ID:-}
+      NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
+      NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
       TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
     secrets: [tm_master_key]
     # Artefacts are served from here, read-only, except the occurrences subtree: web writes the native transcript
@@ -159,6 +167,46 @@ services:
     networks: [app, backend]
     depends_on:
       scheduler: { condition: service_healthy }
+
+  # `tm-exports`: runs the queued exports (zip, PDF and the member's own GitHub, Google Docs and Notion). It reads a
+  # finished meeting's files and writes one file per download into that meeting's `exports/` folder, so it needs the
+  # occurrences tree writable (a bind mount cannot be narrower than a directory, and every meeting has its own
+  # `exports/`); the code writes nowhere else and refuses an `exports/` that is a symlink. Docker, the worker network
+  # and the profiles are out of reach. It sits on `backend` for Postgres and on `app` for the internet (the providers'
+  # APIs) and ntfy. Nothing connects to it.
+  exports:
+    <<: *hardened
+    build: { context: .., dockerfile: docker/app/Dockerfile, target: exports }
+    restart: unless-stopped
+    # The health file, and the scratch space of the PDF and image libraries.
+    tmpfs: ['/tmp:uid=1000,gid=1000,size=512m']
+    user: '1000:1000'
+    init: true
+    # SIGTERM lets the export in progress finish (30 s) before it exits.
+    stop_grace_period: 60s
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      # An empty value means "not configured": that target is then not available. Set both or neither of a pair.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
+      NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
+      TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
+    secrets: [tm_master_key]
+    volumes: ['${TM_DATA_ROOT}/occurrences:${TM_DATA_ROOT}/occurrences']
+    networks: [app, backend]
+    depends_on:
+      scheduler: { condition: service_healthy }
+    # The loop touches this file every 5 seconds, also during a long export; a stale file means a stuck process.
+    healthcheck:
+      test: ['CMD-SHELL', 'test -n "$$(find /tmp/tm-exports-alive -mmin -1 2>/dev/null)"']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   postgres:
     image: postgres:17.11

@@ -686,22 +686,25 @@ Tests run against a real Postgres, not PGlite: `createTestDb()` (`packages/web/d
 
 ## Environment variables
 
-| Variable                                                 | Used by                     | Meaning                                                                                                 |
-| -------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `TM_DATA_ROOT`                                           | worker, pipeline, scheduler | root of occurrence directories                                                                          |
-| `TM_PROFILE_ROOT`                                        | worker, scheduler           | root of identity profiles (encrypted volume)                                                            |
-| `TM_MASTER_KEY_FILE`                                     | worker, scheduler, web      | path to the Docker secret holding the 32-byte master key (base64)                                       |
-| `TM_SELECTORS_DIR`                                       | worker                      | directory of selector maps (default `/app/config/selectors`)                                            |
-| `TM_WECHAT_MODELS_DIR`                                   | worker                      | directory with the four WeChat QR model files (required)                                                |
-| `TM_WECHAT_PYTHON`                                       | worker                      | Python with `opencv-contrib-python-headless` for the QR bridge (default `python3`)                      |
-| `TM_IN_IMAGE`                                            | worker                      | `1` inside the worker image; gates the image-only tests                                                 |
-| `TM_PUBLIC_URL`                                          | web, scheduler, pipeline    | the website's base URL, for links in pings                                                              |
-| `DATABASE_URL`                                           | web, scheduler, pipeline    | Postgres connection string                                                                              |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_ORG` | web                         | sign-in and organisation check                                                                          |
-| `DOCKER_PROXY_URL`                                       | scheduler                   | restricted Docker socket proxy, e.g. `http://docker-proxy:2375`                                         |
-| `TM_BACKUP_REMOTE`                                       | scheduler                   | rclone remote path for nightly backups, an rclone `crypt` remote so copies are encrypted off the server |
-| `RCLONE_CONFIG`                                          | scheduler                   | path of the rclone configuration secret (read by rclone itself)                                         |
-| `NTFY_URL`, `NTFY_ADMIN_TOKEN`                           | web                         | ntfy base URL and the token used to create member topics and tokens                                     |
+| Variable                                                 | Used by                              | Meaning                                                                                                 |
+| -------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `TM_DATA_ROOT`                                           | worker, pipeline, scheduler, exports | root of occurrence directories                                                                          |
+| `TM_PROFILE_ROOT`                                        | worker, scheduler                    | root of identity profiles (encrypted volume)                                                            |
+| `TM_MASTER_KEY_FILE`                                     | worker, scheduler, web, exports      | path to the Docker secret holding the 32-byte master key (base64)                                       |
+| `TM_SELECTORS_DIR`                                       | worker                               | directory of selector maps (default `/app/config/selectors`)                                            |
+| `TM_WECHAT_MODELS_DIR`                                   | worker                               | directory with the four WeChat QR model files (required)                                                |
+| `TM_WECHAT_PYTHON`                                       | worker                               | Python with `opencv-contrib-python-headless` for the QR bridge (default `python3`)                      |
+| `TM_IN_IMAGE`                                            | worker                               | `1` inside the worker image; gates the image-only tests                                                 |
+| `TM_PUBLIC_URL`                                          | web, scheduler, pipeline, exports    | the website's base URL, for links in pings                                                              |
+| `DATABASE_URL`                                           | web, scheduler, pipeline, exports    | Postgres connection string                                                                              |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_ORG` | web                                  | sign-in and organisation check                                                                          |
+| `DOCKER_PROXY_URL`                                       | scheduler                            | restricted Docker socket proxy, e.g. `http://docker-proxy:2375`                                         |
+| `TM_BACKUP_REMOTE`                                       | scheduler                            | rclone remote path for nightly backups, an rclone `crypt` remote so copies are encrypted off the server |
+| `RCLONE_CONFIG`                                          | scheduler                            | path of the rclone configuration secret (read by rclone itself)                                         |
+| `NTFY_URL`, `NTFY_ADMIN_TOKEN`                           | web                                  | ntfy base URL and the token used to create member topics and tokens                                     |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`               | web, exports                         | the Google OAuth client of the Google Docs export (scope `drive.file`); empty means not configured      |
+| `GOOGLE_API_KEY`, `GOOGLE_APP_ID`                        | web                                  | the Google Picker, in the browser                                                                       |
+| `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`               | web, exports                         | the Notion public integration of the Notion export; empty means not configured                          |
 
 ## Plan conventions
 
