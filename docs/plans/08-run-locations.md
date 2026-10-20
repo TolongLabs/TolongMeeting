@@ -1502,11 +1502,16 @@ export class TailscaleApi {
   devices(): Promise<TailscaleDevice[]>
 }
 export type HomeRouteStatus = 'ready' | 'offline' | 'not_exit_node' | 'not_enrolled'
-export function homeHostname(memberId: string): string // 'tm-home-' + the first 8 hex characters of the member id
-export function enrolKey(api: TailscaleApi, memberId: string): Promise<{ key: string; hostname: string }>
-export function checkHomeRoute(
-  db: Db,
+export function homeHostname(master: Buffer, memberId: string): string // 'tm-home-' + 24 hex characters of a keyed hash
+export function enrolKey(
   api: TailscaleApi,
+  master: Buffer,
+  memberId: string
+): Promise<{ key: string; hostname: string }>
+export function checkHomeRoute(
+  store: HomeNodeStore,
+  api: TailscaleApi,
+  master: Buffer,
   memberId: string,
   now?: Date
 ): Promise<{ status: HomeRouteStatus; hostname: string; ipv4: string | null }>
@@ -1609,7 +1614,7 @@ Expected: FAIL with "Cannot find module './home-route'"
 
 - [ ] **Step 3: Implement the client, status, routes, policy file and setup page** (done except the setup page `app/settings/home-route/page.tsx`, deferred to the Figma gate. Built as `db/home-route.ts` (stores), `lib/home-route.ts` (client, `checkHomeRoute(store, api, memberId)`, handlers), tests in `packages/web/test/home-route.test.ts`; the key is not ephemeral: a home exit node is long-lived)
 
-The token is `POST https://api.tailscale.com/api/v2/oauth/token` (`grant_type=client_credentials`, form-encoded), cached until 60 seconds before `expires_in`; keys are `POST /api/v2/tailnet/{tailnet}/keys`; devices are `GET /api/v2/tailnet/{tailnet}/devices?fields=all`. A device matches a member when it has `tag:tm-home` and `hostname === homeHostname(memberId)`; `ready` needs `connectedToControl` and both `0.0.0.0/0` and `::/0` in `enabledRoutes`. An admin applies `config/tailscale/policy.json` to the TolongLabs tailnet once and creates the OAuth client with the `auth_keys` and `devices:core` scopes and both tags. The key route (`POST /api/home-route/key`) shows the key once and never stores it. The setup page (`/settings/home-route`) shows this guide, with the member's hostname filled in:
+The token is `POST https://api.tailscale.com/api/v2/oauth/token` (`grant_type=client_credentials`, form-encoded), cached until 60 seconds before `expires_in`; keys are `POST /api/v2/tailnet/{tailnet}/keys`; devices are `GET /api/v2/tailnet/{tailnet}/devices?fields=all`. A device matches a member when it has `tag:tm-home`, `hostname === homeHostname(master, memberId)` (a keyed hash of the member id, not its prefix) and, once a node is stored, that node's id; `ready` needs `connectedToControl` and both `0.0.0.0/0` and `::/0` in `enabledRoutes`. An admin applies `config/tailscale/policy.json` to the TolongLabs tailnet once and creates the OAuth client with the `auth_keys` and `devices:core` scopes and both tags. The key route (`POST /api/home-route/key`) shows the key once and never stores it. The setup page (`/settings/home-route`) shows this guide, with the member's hostname filled in:
 
 ```text
 Your bot can join through your home internet connection, so your university and work sign-ins come from your usual address.

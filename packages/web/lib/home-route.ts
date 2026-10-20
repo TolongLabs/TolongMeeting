@@ -1,4 +1,6 @@
+import { deriveKey } from '@tm/core'
 import { z } from 'zod'
+import { loadMasterKey } from '../db/secrets'
 import { scopeHomeNodeStore, type HomeNodeStore } from '../db/home-route'
 import { AttemptLimiter } from './companion/tokens'
 import type { MemberScope } from './scope'
@@ -61,6 +63,9 @@ const DevicesSchema = z.object({
   )
 })
 
+/** An auth key lives at most an hour: a leaked or unused key stops working soon. */
+const MAX_KEY_SECONDS = 3600
+
 /** Tailscale accepts a key description of at most 50 letters, digits, hyphens and spaces. */
 const KEY_DESCRIPTION = /^[A-Za-z0-9 -]{1,50}$/
 
@@ -119,8 +124,8 @@ export class TailscaleApi {
   }
 
   /**
-   * A single-use, pre-approved auth key for the given tags, valid for `expirySeconds`. The OAuth client must own the
-   * tags. The key is returned to the caller and nowhere else.
+   * A single-use, pre-approved auth key for the given tags, valid for `expirySeconds` (at most an hour). The OAuth
+   * client must own the tags. The key is returned to the caller and nowhere else.
    */
   async createAuthKey(o: {
     tags: string[]
@@ -129,6 +134,8 @@ export class TailscaleApi {
     description: string
   }): Promise<string> {
     if (o.tags.length === 0 || !o.tags.every((t) => t.startsWith('tag:'))) throw new Error('An auth key needs tags.')
+    if (!Number.isInteger(o.expirySeconds) || o.expirySeconds < 1 || o.expirySeconds > MAX_KEY_SECONDS)
+      throw new Error('An auth key lives at most one hour.')
     if (!KEY_DESCRIPTION.test(o.description)) throw new Error('The auth key description is not allowed.')
     const res = await this.call('auth key creation', '/keys', {
       method: 'POST',
@@ -162,21 +169,32 @@ export type HomeRouteStatus = 'ready' | 'offline' | 'not_exit_node' | 'not_enrol
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** The machine name of the member's home device: `tm-home-` and the first 8 hex characters of the member id. */
-export function homeHostname(memberId: string): string {
+/**
+ * The machine name the member's home device must register with: `tm-home-` and 24 hex characters of a keyed hash of the
+ * member id, derived from the master key. Only this server can compute it, so another member can't register a device
+ * under it by guessing (the member id is not secret, so a name made from it, such as its first 8 characters, would be
+ * guessable). The name is still chosen by the device. That is why `checkHomeRoute` also pins the node id.
+ */
+export function homeHostname(master: Buffer, memberId: string): string {
   if (!UUID.test(memberId)) throw new Error('Not a member id.')
-  return `tm-home-${memberId.slice(0, 8).toLowerCase()}`
+  return `tm-home-${deriveKey(master, `home-hostname:${memberId.toLowerCase()}`).toString('hex').slice(0, 24)}`
 }
 
 /** A single-use key (valid for an hour) for the member's home device, and the hostname it must register with. */
-export async function enrolKey(api: TailscaleApi, memberId: string): Promise<{ key: string; hostname: string }> {
-  const hostname = homeHostname(memberId)
-  // Not ephemeral: the device is a long-lived exit node, and an ephemeral one is deleted whenever it goes offline.
+export async function enrolKey(
+  api: TailscaleApi,
+  master: Buffer,
+  memberId: string
+): Promise<{ key: string; hostname: string }> {
+  const hostname = homeHostname(master, memberId)
+  // Not ephemeral, on purpose: the home device is a long-lived exit node, and an ephemeral node is deleted by Tailscale
+  // soon after it goes offline (a reboot or a router restart), which would break the member's route. The sidecar's
+  // worker-side key (plan 08 task 13) stays ephemeral. The key is still single-use, tagged, pre-approved and short-lived.
   const key = await api.createAuthKey({
     tags: [HOME_TAG],
     ephemeral: false,
     expirySeconds: ENROL_KEY_SECONDS,
-    description: `tm-home ${hostname.slice('tm-home-'.length)}`
+    description: `tm-home ${memberId.slice(0, 8).toLowerCase()}`
   })
   return { key, hostname }
 }
@@ -184,32 +202,38 @@ export async function enrolKey(api: TailscaleApi, memberId: string): Promise<{ k
 const EXIT_ROUTES = ['0.0.0.0/0', '::/0']
 const statusOf = (d: TailscaleDevice): HomeRouteStatus =>
   !d.connectedToControl ? 'offline' : EXIT_ROUTES.every((r) => d.enabledRoutes.includes(r)) ? 'ready' : 'not_exit_node'
-const RANK: Record<HomeRouteStatus, number> = { ready: 0, not_exit_node: 1, offline: 2, not_enrolled: 3 }
 
 /**
- * Looks the member's device up in the tailnet: it must carry `tag:tm-home` and the member's hostname. Another member's
- * device or an untagged one never counts. A ready device is stored with its IPv4 address; a missing one clears the
- * stored row. Throws `TailscaleApiError` when Tailscale can't be reached.
+ * Looks the member's device up in the tailnet on every call. A device counts only if it carries `tag:tm-home`, has the
+ * member's keyed hostname (`homeHostname`) and, once a node is stored for the member, is that very node: a later device
+ * with the same name never replaces a stored one while it exists. Tailscale does not say which auth key created a node,
+ * so these three checks are what binds a node to its member. Another member's device, an untagged one or a lookalike
+ * never counts. A ready device is stored with its IPv4 address; a missing one clears the stored row. Two unpinned
+ * devices with the name are not trusted. Throws `TailscaleApiError` when Tailscale can't be reached.
  */
 export async function checkHomeRoute(
   store: HomeNodeStore,
   api: TailscaleApi,
+  master: Buffer,
   memberId: string,
   now: Date = new Date()
 ): Promise<{ status: HomeRouteStatus; hostname: string; ipv4: string | null }> {
-  const hostname = homeHostname(memberId)
-  const mine = (await api.devices())
-    .filter((d) => d.tags.includes(HOME_TAG) && d.hostname === hostname)
-    .map((d) => ({ d, status: statusOf(d) }))
-    .sort((a, b) => RANK[a.status] - RANK[b.status])[0]
-  if (!mine) {
-    await store.clear()
-    return { status: 'not_enrolled', hostname, ipv4: null }
+  const hostname = homeHostname(master, memberId)
+  const named = (await api.devices()).filter((d) => d.tags.includes(HOME_TAG) && d.hostname === hostname)
+  const pinned = await store.get()
+  let mine: TailscaleDevice | undefined
+  if (pinned) {
+    mine = named.find((d) => d.nodeId === pinned.nodeId)
+    // The stored node is gone: forget it. A single device with the member's name may be enrolled in its place.
+    if (!mine) await store.clear()
   }
-  if (mine.status !== 'ready') return { status: mine.status, hostname, ipv4: null }
-  const ipv4 = mine.d.addresses.find((a) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(a))
+  if (!mine && named.length === 1) mine = named[0]
+  if (!mine) return { status: 'not_enrolled', hostname, ipv4: null }
+  const status = statusOf(mine)
+  if (status !== 'ready') return { status, hostname, ipv4: null }
+  const ipv4 = mine.addresses.find((a) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(a))
   if (!ipv4) throw new Error('A ready home device has no IPv4 address.')
-  await store.save({ nodeId: mine.d.nodeId, hostname, ipv4, checkedAt: now })
+  await store.save({ nodeId: mine.nodeId, hostname, ipv4, checkedAt: now })
   return { status: 'ready', hostname, ipv4 }
 }
 
@@ -218,6 +242,8 @@ export async function checkHomeRoute(
 
 export interface HomeRouteDeps {
   api: TailscaleApi
+  /** The master key the home hostnames are derived from. */
+  master: Buffer
   /** Setup keys issued per member. */
   keyLimiter: AttemptLimiter
   /** Checks per member. */
@@ -245,6 +271,7 @@ export function homeRouteDeps(env: Record<string, string | undefined> = process.
   if (!cfg) return null
   shared.__tmHomeRoute ??= {
     api: new TailscaleApi(cfg),
+    master: loadMasterKey(env.TM_MASTER_KEY_FILE),
     keyLimiter: new AttemptLimiter(MAX_KEYS_PER_HOUR, 3_600_000),
     checkLimiter: new AttemptLimiter(MAX_CHECKS_PER_10_MIN, 600_000),
     now: () => new Date()
@@ -286,7 +313,9 @@ export async function handleKeyRequest(
   if (deps.keyLimiter.locked(scope.memberId, now)) return fail('too_many_keys', 429)
   // Counted before the call, so a failing Tailscale can't be hammered through this route either.
   deps.keyLimiter.fail(scope.memberId, now)
-  return viaTailscale(async () => Response.json(await enrolKey(deps.api, scope.memberId), { headers: NO_STORE }))
+  return viaTailscale(async () =>
+    Response.json(await enrolKey(deps.api, deps.master, scope.memberId), { headers: NO_STORE })
+  )
 }
 
 /** `POST /api/home-route/check` for the signed-in member: `{ status, hostname }`. */
@@ -301,7 +330,13 @@ export async function handleCheckRequest(
   if (deps.checkLimiter.locked(scope.memberId, now)) return fail('too_many_checks', 429)
   deps.checkLimiter.fail(scope.memberId, now)
   return viaTailscale(async () => {
-    const { status, hostname } = await checkHomeRoute(scopeHomeNodeStore(scope), deps.api, scope.memberId, now)
+    const { status, hostname } = await checkHomeRoute(
+      scopeHomeNodeStore(scope),
+      deps.api,
+      deps.master,
+      scope.memberId,
+      now
+    )
     return Response.json({ status, hostname }, { headers: NO_STORE })
   })
 }

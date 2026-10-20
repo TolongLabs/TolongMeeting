@@ -6,5 +6,15 @@
   "acls": [{ "action": "accept", "src": ["tag:tm-worker"], "dst": ["autogroup:internet:*"] }],
   "autoApprovers": {
     "exitNode": ["tag:tm-home"]
-  }
+  },
+  "tests": [
+    {
+      "src": "tag:tm-worker",
+      "deny": ["tag:tm-worker:*", "tag:tm-home:*"]
+    },
+    {
+      "src": "tag:tm-home",
+      "deny": ["tag:tm-home:*", "tag:tm-worker:*"]
+    }
+  ]
 }

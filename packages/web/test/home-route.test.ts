@@ -24,6 +24,7 @@ import { expectNotLogged } from './no-log'
 const t0 = new Date('2026-10-21T08:00:00Z')
 const SECRET = 'tskey-client-test-secret-0123456789'
 const KEY = 'tskey-auth-kTEST123CNTRL-abcdefghijklmnopqrstuvwxyz012345'
+const MASTER = Buffer.alloc(32, 7)
 const CFG = { clientId: 'client-id-1', clientSecret: SECRET, tailnet: '-' }
 const READY = { connectedToControl: true, enabledRoutes: ['0.0.0.0/0', '::/0'] }
 
@@ -70,7 +71,7 @@ const device = (hostname: string, over: Partial<TailscaleDevice> = {}): Tailscal
 
 async function member() {
   const { memberId } = await seedMember(db, { full: false })
-  return { memberId, hostname: homeHostname(memberId), scope: createScope(db, memberId) }
+  return { memberId, hostname: homeHostname(MASTER, memberId), scope: createScope(db, memberId) }
 }
 
 const row = async (memberId: string) =>
@@ -80,7 +81,7 @@ describe('the Tailscale client', () => {
   test('the OAuth token is fetched once and keys are single-use, pre-authorised and tagged', async () => {
     const seen: Request[] = []
     const api = new TailscaleApi(CFG, tsFake(seen))
-    const { key, hostname } = await enrolKey(api, '1a2b3c4d-0000-4000-8000-000000000000')
+    const { key, hostname } = await enrolKey(api, MASTER, '1a2b3c4d-0000-4000-8000-000000000000')
     await api.devices()
     expect(seen.filter((r) => r.url.endsWith('/api/v2/oauth/token'))).toHaveLength(1)
     const create = seen.find((r) => r.url.endsWith('/api/v2/tailnet/-/keys'))!
@@ -92,7 +93,7 @@ describe('the Tailscale client', () => {
       description: 'tm-home 1a2b3c4d'
     })
     expect(key).toStartWith('tskey-auth-')
-    expect(hostname).toBe('tm-home-1a2b3c4d')
+    expect(hostname).toBe(homeHostname(MASTER, '1a2b3c4d-0000-4000-8000-000000000000'))
   })
 
   test('the token request is a form body; the secret is in no URL; calls carry the bearer token', async () => {
@@ -142,15 +143,23 @@ describe('the Tailscale client', () => {
   test('a key needs tags and an allowed description', async () => {
     const api = new TailscaleApi(CFG, tsFake([]))
     const base = { ephemeral: true, expirySeconds: 600, description: 'ok key' }
+    await expect(api.createAuthKey({ ...base, tags: ['tag:x'], expirySeconds: 3601 })).rejects.toThrow('one hour')
+    await expect(api.createAuthKey({ ...base, tags: ['tag:x'], expirySeconds: 0 })).rejects.toThrow('one hour')
     await expect(api.createAuthKey({ ...base, tags: [] })).rejects.toThrow('needs tags')
     await expect(api.createAuthKey({ ...base, tags: ['tm-home'] })).rejects.toThrow('needs tags')
     await expect(api.createAuthKey({ ...base, tags: ['tag:x'], description: 'bad;key' })).rejects.toThrow('description')
     await expect(api.createAuthKey({ ...base, tags: ['tag:x'] })).resolves.toBe(KEY)
   })
 
-  test('the hostname is tm-home- and the first 8 hex characters of the member id', () => {
-    expect(homeHostname('1A2B3C4D-0000-4000-8000-000000000000')).toBe('tm-home-1a2b3c4d')
-    expect(() => homeHostname('1a2b3c4d')).toThrow('Not a member id')
+  test('the hostname is keyed: it differs per member and per master key, and does not hold the member id', () => {
+    const id = '1a2b3c4d-0000-4000-8000-000000000000'
+    const name = homeHostname(MASTER, id)
+    expect(name).toMatch(/^tm-home-[0-9a-f]{24}$/)
+    expect(name).not.toContain('1a2b3c4d')
+    expect(homeHostname(MASTER, id.toUpperCase())).toBe(name)
+    expect(homeHostname(MASTER, '1a2b3c4d-0000-4000-8000-000000000001')).not.toBe(name)
+    expect(homeHostname(Buffer.alloc(32, 8), id)).not.toBe(name)
+    expect(() => homeHostname(MASTER, '1a2b3c4d')).toThrow('Not a member id')
   })
 
   test('the config reads the environment, defaults the tailnet to "-" and is null without a client', () => {
@@ -183,7 +192,7 @@ describe('checkHomeRoute', () => {
       CFG,
       tsFake([], { devices: [device(m.hostname, { ...dev, enabledRoutes: [...dev.enabledRoutes] })] })
     )
-    const result = await checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, m.memberId)
+    const result = await checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, MASTER, m.memberId)
     expect(result.status).toBe(status)
     expect(result.ipv4).toBe(status === 'ready' ? '100.101.102.103' : null)
   })
@@ -201,7 +210,7 @@ describe('checkHomeRoute', () => {
         ]
       })
     )
-    expect((await checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, m.memberId)).status).toBe('not_enrolled')
+    expect((await checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, MASTER, m.memberId)).status).toBe('not_enrolled')
     expect(await row(m.memberId)).toBeUndefined()
   })
 
@@ -209,7 +218,7 @@ describe('checkHomeRoute', () => {
     const m = await member()
     const store = dbHomeNodeStore(db, m.memberId)
     const ready = new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname)] }))
-    await checkHomeRoute(store, ready, m.memberId, t0)
+    await checkHomeRoute(store, ready, MASTER, m.memberId, t0)
     expect(await row(m.memberId)).toMatchObject({
       nodeId: 'n1',
       hostname: m.hostname,
@@ -221,24 +230,78 @@ describe('checkHomeRoute', () => {
     await checkHomeRoute(
       store,
       new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname, { nodeId: 'n9', addresses: ['100.1.1.1'] })] })),
+      MASTER,
       m.memberId,
       later
     )
     expect(await row(m.memberId)).toMatchObject({ nodeId: 'n9', ipv4: '100.1.1.1', checkedAt: later })
 
-    const offline = new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname, { connectedToControl: false })] }))
-    expect((await checkHomeRoute(store, offline, m.memberId)).status).toBe('offline')
+    const offline = new TailscaleApi(
+      CFG,
+      tsFake([], { devices: [device(m.hostname, { nodeId: 'n9', connectedToControl: false })] })
+    )
+    expect((await checkHomeRoute(store, offline, MASTER, m.memberId)).status).toBe('offline')
     expect(await row(m.memberId)).toMatchObject({ nodeId: 'n9' })
 
     const gone = new TailscaleApi(CFG, tsFake([], { devices: [] }))
-    expect((await checkHomeRoute(store, gone, m.memberId)).status).toBe('not_enrolled')
+    expect((await checkHomeRoute(store, gone, MASTER, m.memberId)).status).toBe('not_enrolled')
+    expect(await row(m.memberId)).toBeUndefined()
+  })
+
+  test("a device named with another member's member-id prefix, made with a different key, is refused", async () => {
+    const m = await member()
+    const other = await member()
+    // The name the old scheme gave a member: anyone who knows the member id can type it into `tailscale up --hostname`.
+    const guessable = `tm-home-${m.memberId.slice(0, 8)}`
+    const api = new TailscaleApi(
+      CFG,
+      tsFake([], { devices: [device(guessable, { nodeId: 'evil' }), device(other.hostname, { nodeId: 'theirs' })] })
+    )
+    const result = await checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, MASTER, m.memberId)
+    expect(result).toEqual({ status: 'not_enrolled', hostname: m.hostname, ipv4: null })
+    expect(await row(m.memberId)).toBeUndefined()
+  })
+
+  test('a stored node is the only one that counts: a later device with the same name never replaces it', async () => {
+    const m = await member()
+    const store = dbHomeNodeStore(db, m.memberId)
+    await checkHomeRoute(
+      store,
+      new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname)] })),
+      MASTER,
+      m.memberId
+    )
+    const both = [device(m.hostname, { nodeId: 'evil', addresses: ['100.66.6.6'] }), device(m.hostname)]
+    const ready = await checkHomeRoute(store, new TailscaleApi(CFG, tsFake([], { devices: both })), MASTER, m.memberId)
+    expect(ready).toMatchObject({ status: 'ready', ipv4: '100.101.102.103' })
+    expect(await row(m.memberId)).toMatchObject({ nodeId: 'n1', ipv4: '100.101.102.103' })
+
+    const offline = [
+      device(m.hostname, { nodeId: 'evil', addresses: ['100.66.6.6'] }),
+      device(m.hostname, { connectedToControl: false })
+    ]
+    const result = await checkHomeRoute(
+      store,
+      new TailscaleApi(CFG, tsFake([], { devices: offline })),
+      MASTER,
+      m.memberId
+    )
+    expect(result.status).toBe('offline')
+    expect(await row(m.memberId)).toMatchObject({ nodeId: 'n1' })
+  })
+
+  test('two unpinned devices with the name are not trusted', async () => {
+    const m = await member()
+    const two = [device(m.hostname, { nodeId: 'a' }), device(m.hostname, { nodeId: 'b' })]
+    const api = new TailscaleApi(CFG, tsFake([], { devices: two }))
+    expect((await checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, MASTER, m.memberId)).status).toBe('not_enrolled')
     expect(await row(m.memberId)).toBeUndefined()
   })
 
   test('a ready device with no IPv4 address is an error, not a stored node', async () => {
     const m = await member()
     const api = new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname, { addresses: ['fd7a::1'] })] }))
-    await expect(checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, m.memberId)).rejects.toThrow('no IPv4')
+    await expect(checkHomeRoute(dbHomeNodeStore(db, m.memberId), api, MASTER, m.memberId)).rejects.toThrow('no IPv4')
     expect(await row(m.memberId)).toBeUndefined()
   })
 })
@@ -266,6 +329,7 @@ describe('the member routes', () => {
   const depsOf = (o: FakeOptions = {}, seen: Request[] = []): HomeRouteDeps => ({
     api: new TailscaleApi(CFG, tsFake(seen, o)),
     keyLimiter: new AttemptLimiter(MAX_KEYS_PER_HOUR, 3_600_000),
+    master: MASTER,
     checkLimiter: new AttemptLimiter(30, 600_000),
     now: () => t0
   })
@@ -284,7 +348,7 @@ describe('the member routes', () => {
     const seen: Request[] = []
     await handleKeyRequest(post(), m.scope, depsOf({}, seen))
     const create = seen.find((r) => r.url.endsWith('/keys'))!
-    expect(((await create.json()) as { description: string }).description).toBe(`tm-home ${m.hostname.slice(8)}`)
+    expect(((await create.json()) as { description: string }).description).toBe(`tm-home ${m.memberId.slice(0, 8)}`)
   })
 
   test('a fifth key an hour is the last', async () => {
@@ -334,11 +398,16 @@ describe('the member routes', () => {
 })
 
 describe('the tailnet policy', () => {
-  test('workers reach only the internet; home devices reach nothing; home exit nodes are approved', async () => {
+  test('workers reach only the internet; home devices reach nothing; no node reaches another', async () => {
     const p = await Bun.file(new URL('../../../config/tailscale/policy.json', import.meta.url)).json()
     expect(p.acls).toEqual([{ action: 'accept', src: ['tag:tm-worker'], dst: ['autogroup:internet:*'] }])
     expect(p.autoApprovers).toEqual({ exitNode: ['tag:tm-home'] })
     expect(Object.keys(p.tagOwners).sort()).toEqual(['tag:tm-home', 'tag:tm-worker'])
-    expect(Object.keys(p).sort()).toEqual(['acls', 'autoApprovers', 'tagOwners'])
+    expect(Object.keys(p).sort()).toEqual(['acls', 'autoApprovers', 'tagOwners', 'tests'])
+    // Home to home, worker to worker and worker to home are denied by the default and checked by Tailscale when applied.
+    expect(p.tests).toEqual([
+      { src: 'tag:tm-worker', deny: ['tag:tm-worker:*', 'tag:tm-home:*'] },
+      { src: 'tag:tm-home', deny: ['tag:tm-home:*', 'tag:tm-worker:*'] }
+    ])
   })
 })
