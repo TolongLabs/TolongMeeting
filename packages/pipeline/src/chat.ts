@@ -101,8 +101,21 @@ function roleLabel(role: ChatMessage['senderRole']): string {
   return ''
 }
 
+const LINK_REMOVED = '[meeting link removed]'
+const MARKDOWN_CONTROL = /[\\`*_[\]()#+\-!>|~]/g
+
+/** A participant's text as literal Markdown: no character can start emphasis, a link, a heading or a list. */
+function escapeChatText(text: string): string {
+  return text.replace(MARKDOWN_CONTROL, (character) => `\\${character}`)
+}
+
+/** The scrub adds `LINK_REMOVED` itself; it stays clean while the participant's own text is escaped. */
+function renderText(text: string): string {
+  return stripInviteLinks(text).split(LINK_REMOVED).map(escapeChatText).join(LINK_REMOVED)
+}
+
 function renderLine(message: ChatMessage): string {
-  return `**[${message.time}] ${message.sender}${roleLabel(message.senderRole)}:** ${stripInviteLinks(message.text)}`
+  return `**[${message.time}] ${message.sender}${roleLabel(message.senderRole)}:** ${renderText(message.text)}`
 }
 
 function depthOf(message: ChatMessage, byKey: Map<string, ChatMessage>): number {

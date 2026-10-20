@@ -118,3 +118,23 @@ test('a meeting without captured chat says so', async () => {
   expect(md).toContain('0 messages from the meeting chat')
   expect(md.endsWith('## Messages\n\n_No chat was captured for this meeting._\n')).toBe(true)
 })
+
+test('a participant cannot inject Markdown structure into chat.md', async () => {
+  const occ = await makeOccurrence()
+  occurrences.push(occ.root)
+  await writeLines(join(occ.dataDir, 'chat.jsonl'), [
+    m(
+      'i1',
+      '9:10 PM',
+      'Student F',
+      '**bold** [click](https://evil.example) # heading\n`code` > quote _em_ | table ~ strike + plus - dash ! bang \\ slash',
+      1
+    )
+  ])
+  const md = await Bun.file(await buildChat(occ.cfg)).text()
+  expect(md).toContain(
+    '**[9:10 PM] Student F:** ' +
+      '\\*\\*bold\\*\\* \\[click\\]\\(https://evil.example\\) \\# heading\n' +
+      '\\`code\\` \\> quote \\_em\\_ \\| table \\~ strike \\+ plus \\- dash \\! bang \\\\ slash'
+  )
+})
