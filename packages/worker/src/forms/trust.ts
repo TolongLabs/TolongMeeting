@@ -26,7 +26,10 @@ export function checkTrust(
     if (f.senderRole === 'host') return trusted('host')
     if (f.senderRole === 'co_host') return trusted('co_host')
   }
-  if (f.sender !== null) {
+  // A name the platform could not tell apart (listed twice with different roles, so a student may have copied the
+  // trusted person's name) is not trusted by name. Chats watched outside the meeting give no role, so they are exempt.
+  const ambiguous = f.source === 'meeting_chat' && f.senderRole === 'unknown'
+  if (f.sender !== null && !ambiguous) {
     const name = normaliseName(f.sender)
     if (name !== '' && trustedSenders.some((t) => normaliseName(t) === name)) return trusted('trusted_sender')
   }

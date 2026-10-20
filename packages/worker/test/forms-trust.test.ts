@@ -52,3 +52,13 @@ test('a resolved form from a trusted sender is trusted; a bare candidate works t
     reason: 'qr_on_screen'
   })
 })
+
+test('a meeting-chat name the platform could not tell apart is not trusted by name', () => {
+  const t = (source: FormSource, senderRole: SenderRole) =>
+    checkTrust({ source, sender: 'Dr Lecturer', senderRole }, ['Dr Lecturer'])
+  // A student copied the name, so the roster lists it twice with different roles and the role is `unknown`.
+  expect(t('meeting_chat', 'unknown')).toEqual({ trusted: false, reason: null })
+  expect(t('meeting_chat', 'participant')).toEqual({ trusted: true, reason: 'trusted_sender' })
+  // A watched chat (WhatsApp, Discord) has no roles, so its trusted names still count.
+  expect(t('watched_chat', 'unknown')).toEqual({ trusted: true, reason: 'trusted_sender' })
+})

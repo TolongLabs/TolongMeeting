@@ -104,7 +104,10 @@ export function splitChat(cfg: JobConfig, chat: ChatMessage[]): { host: ChatMess
   const trusted = new Set(cfg.entry.trustedSenders)
   const ordered = orderChat(chat)
   const isHost = (m: ChatMessage): boolean =>
-    m.senderRole === 'host' || m.senderRole === 'co_host' || trusted.has(m.sender)
+    m.senderRole === 'host' ||
+    m.senderRole === 'co_host' ||
+    // `unknown` also covers a name listed twice with different roles (a copy of the trusted person's name).
+    (m.senderRole !== 'unknown' && trusted.has(m.sender))
   return { host: ordered.filter(isHost), other: ordered.filter((m) => !isHost(m)) }
 }
 

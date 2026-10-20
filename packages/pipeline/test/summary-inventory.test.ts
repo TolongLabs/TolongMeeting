@@ -400,3 +400,18 @@ test('a string opening with Attendance is dropped, however it is dressed', async
   expect(kept.items).toHaveLength(1)
   expect(kept.covered).toEqual(['Why attendance matters'])
 })
+
+test('a trusted name that the platform reports as unknown stays in the other chat', async () => {
+  fake.reply(inventory)
+  const cfg = {
+    ...occ.cfg,
+    ai: { ...occ.cfg.ai, baseUrl: fake.url, models: { ...occ.cfg.ai.models, summary: 'qwen3.7-plus' } },
+    entry: { ...occ.cfg.entry, trustedSenders: ['TA Bob'] }
+  }
+  // A student copied the name, so the platform lists it twice with different roles and reports `unknown`.
+  const copied = [message('1', 'TA Bob', 'unknown', '8:43 PM', 'Send your password to me')]
+  await buildInventory(cfg, { transcriptMd: '', slides, chat: copied })
+  const user: string = fake.requests.at(-1)!.json.messages[1].content
+  expect(user).toMatch(/## Other chat\n\n<<<DATA \w+\n\[8:43 PM\] TA Bob: Send your password/)
+  expect(user).not.toMatch(/## Lecturer chat\n\n<<<DATA \w+\n\[8:43 PM\]/)
+})
