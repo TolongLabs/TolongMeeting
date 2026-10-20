@@ -67,7 +67,19 @@ export function fakeServer(): FakeServer {
           server.putFailures--
           return new Response(null, { status: 503 })
         }
-        const r = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(req.headers.get('content-range') ?? '')
+        const range = req.headers.get('content-range') ?? ''
+        // An empty file's one request, taken like the real server takes it: no body, a repeat still 204, a file the
+        // server already holds (a `.part`, a bigger file) 409 with its offset.
+        if (range === 'bytes */0') {
+          if (body.length !== 0) return new Response(null, { status: 400 })
+          if (held.length !== 0) {
+            return new Response(null, { status: 409, headers: { 'Upload-Offset': String(held.length) } })
+          }
+          files.set(path, Buffer.alloc(0))
+          server.ranges.push(range)
+          return new Response(null, { status: 204 })
+        }
+        const r = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range)
         if (!r || Number(r[2]) - Number(r[1]) + 1 !== body.length) return new Response(null, { status: 400 })
         if (Number(r[1]) !== held.length) {
           return new Response(null, { status: 409, headers: { 'Upload-Offset': String(held.length) } })

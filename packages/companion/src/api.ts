@@ -337,7 +337,9 @@ export class CompanionApi {
   /**
    * Sends bytes `start` to `start + bytes.length - 1` of a file of `total` bytes (`PUT`, `Content-Range`). The website
    * takes a chunk only at its own offset: when it holds more or less than `start` it answers 409 with its offset, and
-   * this returns `{ accepted: false, offset }` so the caller continues from there.
+   * this returns `{ accepted: false, offset }` so the caller continues from there. A whole empty file is the one range
+   * the website's grammar has for it, `bytes *` then `/0` (`Content-Range`), which is taken only at offset 0 and
+   * carries no body.
    */
   async uploadChunk(
     jobId: string,
@@ -347,16 +349,18 @@ export class CompanionApi {
     bytes: Uint8Array
   ): Promise<{ accepted: true } | { accepted: false; offset: number }> {
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(total) || start < 0) throw new RangeError('bad range')
-    if (bytes.byteLength < 1 || bytes.byteLength > UPLOAD_CHUNK_MAX_BYTES || start + bytes.byteLength > total) {
-      throw new RangeError('bad chunk size')
-    }
+    const empty = bytes.byteLength === 0
+    const badChunk = empty
+      ? total !== 0 || start !== 0
+      : bytes.byteLength > UPLOAD_CHUNK_MAX_BYTES || start + bytes.byteLength > total
+    if (badChunk) throw new RangeError('bad chunk size')
     const res = await this.call('PUT', `/api/companion/jobs/${id(jobId)}/files/${filePath(relPath)}`, {
       expect: [204, 409],
       headers: {
         'content-type': 'application/octet-stream',
-        'content-range': `bytes ${start}-${start + bytes.byteLength - 1}/${total}`
+        'content-range': empty ? 'bytes */0' : `bytes ${start}-${start + bytes.byteLength - 1}/${total}`
       },
-      body: new Blob([bytes as BlobPart]),
+      body: empty ? undefined : new Blob([bytes as BlobPart]),
       timeoutMs: CHUNK_TIMEOUT_MS
     })
     await discard(res)

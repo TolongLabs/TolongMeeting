@@ -168,6 +168,45 @@ describe('uploadFile', () => {
     expect(await api.uploadChunk('j1', 'chat.jsonl', 10, 20, bytesOf(10))).toEqual({ accepted: false, offset: 0 })
     expect(await api.uploadChunk('j1', 'chat.jsonl', 0, 20, bytesOf(10))).toEqual({ accepted: true })
   })
+
+  test('an empty file in the set is its one bodyless `bytes */0` request', async () => {
+    const occ = await occWith([
+      ['events.jsonl', ''],
+      ['chat.jsonl', Buffer.from('x')]
+    ])
+    const server = serve()
+    for (const rel of await uploadSet(occ)) await uploadFile(server.api(), 'j1', occ, rel)
+    expect(server.ranges).toEqual(['bytes */0', 'bytes 0-0/1'])
+    const puts = server.requests.filter((r) => r.method === 'PUT')
+    expect(puts).toHaveLength(2)
+    expect(puts[0]!.headers.get('content-range')).toBe('bytes */0')
+    expect(puts[0]!.body.length).toBe(0)
+    expect(server.files.has('events.jsonl')).toBe(true)
+  })
+
+  test('an empty file is sent again after a retry, and a server holding more than the file stops it', async () => {
+    const occ = await occWith([['events.jsonl', '']])
+    const server = serve()
+    await uploadFile(server.api(), 'j1', occ, 'events.jsonl')
+    await uploadFile(server.api(), 'j1', occ, 'events.jsonl')
+    expect(server.ranges).toEqual(['bytes */0', 'bytes */0'])
+    const ahead = serve()
+    ahead.files.set('events.jsonl', Buffer.from('abc'))
+    await expect(uploadFile(ahead.api(), 'j1', occ, 'events.jsonl')).rejects.toMatchObject({ reason: 'server_ahead' })
+  })
+
+  test('uploadChunk sends a whole empty file as `bytes */0`, and keeps the other empty checks', async () => {
+    const server = serve()
+    const api = server.api()
+    expect(await api.uploadChunk('j1', 'events.jsonl', 0, 0, new Uint8Array(0))).toEqual({ accepted: true })
+    const first = server.requests.filter((r) => r.method === 'PUT')[0]!
+    expect(first.headers.get('content-range')).toBe('bytes */0')
+    expect(first.body.length).toBe(0)
+    server.files.set('chat.jsonl', Buffer.from('abc'))
+    expect(await api.uploadChunk('j1', 'chat.jsonl', 0, 0, new Uint8Array(0))).toEqual({ accepted: false, offset: 3 })
+    await expect(api.uploadChunk('j1', 'chat.jsonl', 0, 5, new Uint8Array(0))).rejects.toBeInstanceOf(RangeError)
+    await expect(api.uploadChunk('j1', 'chat.jsonl', 1, 0, new Uint8Array(0))).rejects.toBeInstanceOf(RangeError)
+  })
 })
 
 describe('the request', () => {

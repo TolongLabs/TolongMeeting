@@ -32,6 +32,8 @@ export function isUploadPath(relPath: string): boolean {
 const NATIVE_TRANSCRIPT = /^transcript\/native\//
 const MAX_SET_FILES = 20_000
 const MAX_CONFLICTS = 3
+/** The whole bytes of an empty file: one 0-byte chunk, sent as `bytes *` then `/0`. */
+const EMPTY = new Uint8Array(0)
 
 /** Something is wrong with a local file or with what the website said about it. The message names no path or value. */
 export class UploadError extends Error {
@@ -161,7 +163,9 @@ export type UploadApi = Pick<CompanionApi, 'uploadOffset' | 'uploadChunk'>
  * only at that offset: when the website answers 409 with a different offset this continues from it (a few times),
  * and an offset past the end of the local file stops with an `UploadError`. An aborted `signal` stops it between chunks
  * with an `AbortError`. A call after a crash or a lost
- * connection therefore resumes; it does not start again. An empty file sends nothing.
+ * connection therefore resumes; it does not start again. An empty file is still its one request, `Content-Range:`
+ * `bytes *` then `/0` with no body at offset 0, so `complete` finds the file: HEAD reports 0 whether or not the
+ * website holds it.
  */
 export async function uploadFile(
   api: UploadApi,
@@ -193,6 +197,16 @@ export async function uploadFile(
       if (++conflicts > MAX_CONFLICTS) throw new UploadError('server_out_of_step', 'The website would not take a chunk')
       if (sent.offset > size) throw new UploadError('server_ahead', 'The website holds more of a file than this PC has')
       offset = sent.offset
+    }
+    if (size === 0) {
+      signal?.throwIfAborted()
+      const sent = await api.uploadChunk(jobId, relPath, 0, 0, EMPTY)
+      if (!sent.accepted) {
+        if (sent.offset > size) {
+          throw new UploadError('server_ahead', 'The website holds more of a file than this PC has')
+        }
+        throw new UploadError('server_out_of_step', 'The website would not take a chunk')
+      }
     }
   } finally {
     await handle.close()
