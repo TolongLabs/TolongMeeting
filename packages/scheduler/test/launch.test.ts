@@ -4,7 +4,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { JobConfigSchema, type LinkSource, type OccurrenceState, type WatchGate } from '@tm/core'
 import { and, eq, sql } from 'drizzle-orm'
-import { events, occurrences, profiles, schema, signinSessions, type Db } from '@tm/web/db'
+import {
+  events,
+  identities,
+  occurrences,
+  profiles,
+  schema,
+  signinSessions,
+  timetableEntries,
+  type Db
+} from '@tm/web/db'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { QUEUES } from '@tm/web/db/queues'
 import { sealColumn } from '@tm/web/db/secrets'
@@ -677,6 +686,81 @@ describe('the watch gate', () => {
     expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
     expect((await f.job0()).entry.link).toEqual(chat)
     expect(f.notifier.sent).toEqual([])
+  })
+
+  test('a restarted attempt is gated too: a gate tightened since the launch fails it, with one ping', async () => {
+    const f = await launchFixture({ link: chat, watchGate: { whatsapp: 'allowed', discord: 'allowed' } })
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+    const tightened = { ...f.deps, watchGate: { whatsapp: 'home_only', discord: 'allowed' } } satisfies LaunchDeps
+    expect(await startAttempt(tightened, f.id, 2, new Date(f.tMinus60.getTime() + 60_000))).toBe(false)
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'watching_not_allowed' })
+    expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Not watching WhatsApp: Data Mining'])
+    expect(f.docker.created).toHaveLength(1)
+    expect(await f.heldBy()).toBeNull()
+  })
+
+  test('the snapshot is gated again when the entry changed after the launch looked at it', async () => {
+    // A PC run starts no worker here, so only the snapshot gate can stop it.
+    const f = await launchFixture({ link: { kind: 'paste' }, watchGate: { whatsapp: 'none', discord: 'allowed' } })
+    await f.db.update(identities).set({ runLocation: 'local' })
+    // The member saves the entry with a WhatsApp chat just after the gate read it: the first read of the entry
+    // finishes, then the entry is edited, then the launch rebuilds the snapshot from the entry.
+    let edited = false
+    const racing = (q: object): object =>
+      new Proxy(q, {
+        get(target, prop) {
+          if (prop === 'then')
+            return (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+              (target as Promise<unknown>)
+                .then(async (rows) => {
+                  if (!edited) {
+                    edited = true
+                    await f.db.update(timetableEntries).set({ link: chat })
+                  }
+                  return rows
+                })
+                .then(resolve, reject)
+          const value = Reflect.get(target, prop, target)
+          return typeof value === 'function' ? (...args: unknown[]) => racing(value.apply(target, args)) : value
+        }
+      })
+    const db = new Proxy(f.db, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target)
+        if (prop === 'transaction')
+          return (run: (tx: Db) => Promise<unknown>) =>
+            target.transaction((tx) =>
+              run(
+                new Proxy(tx, {
+                  get(txTarget, txProp) {
+                    const v = Reflect.get(txTarget, txProp, txTarget)
+                    if (txProp !== 'select') return typeof v === 'function' ? v.bind(txTarget) : v
+                    return (...args: unknown[]) => {
+                      const builder = v.apply(txTarget, args)
+                      return new Proxy(builder, {
+                        get(bt, bp) {
+                          const bv = Reflect.get(bt, bp, bt)
+                          if (bp !== 'from') return typeof bv === 'function' ? bv.bind(bt) : bv
+                          return (table: unknown) => {
+                            const query = bv.call(bt, table)
+                            return table === timetableEntries ? racing(query) : query
+                          }
+                        }
+                      })
+                    }
+                  }
+                }) as Db
+              )
+            )
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    }) as Db
+    expect(await launchOccurrence({ ...f.deps, db }, f.job, f.tMinus60)).toBe('failed')
+    expect(edited).toBe(true)
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'watching_not_allowed' })
+    expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Not watching WhatsApp: Data Mining'])
+    expect(f.docker.created).toEqual([])
+    expect(await f.heldBy()).toBeNull()
   })
 
   test('a link pasted for the occurrence skips the gate', async () => {

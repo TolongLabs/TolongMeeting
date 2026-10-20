@@ -6,6 +6,8 @@ import {
   profileKey,
   stripPasscode,
   watchGateFromEnv,
+  type LinkSource,
+  type RunLocation,
   type SpecEnv,
   type WatchGate
 } from '@tm/core'
@@ -205,7 +207,8 @@ async function startAttemptIn(
     .select({ runLocation: identities.runLocation })
     .from(identities)
     .where(eq(identities.id, row.identityId))
-  if (placed?.runLocation === 'local') throw new Error(`Occurrence ${occurrenceId} runs on a PC, not on the server`)
+  if (!placed) throw new Error(`Occurrence ${occurrenceId} has no identity`)
+  if (placed.runLocation === 'local') throw new Error(`Occurrence ${occurrenceId} runs on a PC, not on the server`)
   const spec: SpecParams = {
     kind: 'worker',
     occurrenceId,
@@ -250,6 +253,15 @@ async function startAttemptIn(
     const safe = safeDbError(e)
     if (safe instanceof DbError) throw safe
     return failLaunch(e)
+  }
+  // A restarted attempt is gated again (a gate tightened since the launch, or while the home route was checked): the
+  // chat is not watched, so the occurrence fails as a launch does, and the profile goes back.
+  const blocked = blockedChat(deps, job.entry.link, placed.runLocation)
+  if (blocked !== null) {
+    await applyTrigger(db, occurrenceId, 'fail', { reason: 'watching_not_allowed' })
+    await releaseProfile(db, row.identityId, `occ:${occurrenceId}`)
+    outbox.push(watchingOffPing(deps, row, blocked))
+    return false
   }
   const key = profileKey(deps.master, row.identityId)
 
@@ -300,6 +312,39 @@ async function failedPing(deps: LaunchDeps, row: OccurrenceRow, reason: WorkerFa
     row.memberId,
     pings.workerFailed({ entry: row.entryName, reason, meetingUrl: `${publicUrl}/meetings/${row.id}` })
   )
+}
+
+type GatedApp = keyof WatchGate
+
+/** The chat app the gate refuses for this link on this run location, or null (a pasted or fixed link is never refused). */
+function blockedChat(deps: LaunchDeps, link: LinkSource, runLocation: RunLocation): GatedApp | null {
+  const { blockedApp } = gateLinkSource(link, runLocation, deps.watchGate ?? DEFAULT_WATCH_GATE)
+  // Teams is never gated, and the type says so only here.
+  return blockedApp === null || blockedApp === 'teams' ? null : blockedApp
+}
+
+/** Fails the launch of an occurrence whose chat the gate refuses, and queues the one ping. */
+async function refuseWatching(deps: LaunchDeps, occ: OccurrenceRow, app: GatedApp, outbox: Outbox): Promise<'failed'> {
+  await launchThen(deps.db, occ.id, 'fail', 'watching_not_allowed')
+  outbox.push(watchingOffPing(deps, occ, app))
+  return 'failed'
+}
+
+/** The ping for a chat app the gate refuses. */
+function watchingOffPing(deps: LaunchDeps, row: OccurrenceRow, app: GatedApp) {
+  const { publicUrl } = resolveEnv(deps.env)
+  const gate = deps.watchGate ?? DEFAULT_WATCH_GATE
+  return () =>
+    deps.notifier.notify(
+      row.memberId,
+      pings.watchingOff({
+        entry: row.entryName,
+        app,
+        gate: gate[app] === 'none' ? 'none' : 'home_only',
+        meetingUrl: `${publicUrl}/meetings/${row.id}`,
+        accountsUrl: `${publicUrl}/accounts`
+      })
+    )
 }
 
 // --- launchOccurrence ----------------------------------------------------------------------------------------------
@@ -422,24 +467,8 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
 
   // A chat the gate refuses is never watched, and a paste entry can't be told from one with no link, so the launch fails
   // with one ping (a gate tightened after the entry was saved lands here). A link pasted for this occurrence skips the gate.
-  const gate = deps.watchGate ?? DEFAULT_WATCH_GATE
-  const { blockedApp } = occ.pastedLink ? { blockedApp: null } : gateLinkSource(entry.link, identity.runLocation, gate)
-  if (blockedApp !== null && blockedApp !== 'teams') {
-    await launchThen(db, occ.id, 'fail', 'watching_not_allowed')
-    outbox.push(() =>
-      deps.notifier.notify(
-        occ.memberId,
-        pings.watchingOff({
-          entry: occ.entryName,
-          app: blockedApp,
-          gate: gate[blockedApp] === 'none' ? 'none' : 'home_only',
-          meetingUrl: `${publicUrl}/meetings/${occ.id}`,
-          accountsUrl: `${publicUrl}/accounts`
-        })
-      )
-    )
-    return 'failed'
-  }
+  const blockedApp = occ.pastedLink ? null : blockedChat(deps, entry.link, identity.runLocation)
+  if (blockedApp !== null) return refuseWatching(deps, occ, blockedApp, outbox)
 
   const [profile] = await db
     .select({ heldBy: profiles.heldBy })
@@ -449,7 +478,9 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
 
   // The profile of a local identity is on its PC: no profile lock, no capacity slot, no container on this machine.
   if (identity.runLocation === 'local') {
-    const cfg = await snapshotAndConfig(deps, occ.id)
+    const blocked = await storeSnapshot(deps, occ, identity.runLocation)
+    if (blocked !== null) return refuseWatching(deps, occ, blocked, outbox)
+    const cfg = await localConfig(deps, occ.id)
     if (cfg === null) return refuse('launch_failed')
     return (await startLocalRun(deps, cfg, now, outbox)) === 'offered' ? 'launched' : 'skipped_pc_offline'
   }
@@ -491,7 +522,11 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
       .where(eq(profiles.identityId, occ.identityId))
     return taken ? defer(deps, job, occ, taken.heldBy, now, refuse) : refuse('profile_missing')
   }
-  await storeSnapshot(db, occ.id)
+  const blockedNow = await storeSnapshot(deps, occ, identity.runLocation)
+  if (blockedNow !== null) {
+    await releaseProfile(db, occ.identityId, `occ:${occ.id}`)
+    return refuseWatching(deps, occ, blockedNow, outbox)
+  }
   await applyTrigger(db, occ.id, 'launch')
   if (identity.runLocation === 'server_via_home') {
     // The occurrence is `starting` and holds the profile, so nothing else can take the identity while the home device is
@@ -504,28 +539,35 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
   return (await startAttemptIn(deps, occ.id, 1, now, outbox)) ? 'launched' : 'failed'
 }
 
-/** Stores the entry as it is now (the link used, the passcode stripped), so a later edit can't change a running meeting. */
-async function storeSnapshot(db: Db, occurrenceId: string): Promise<void> {
+/**
+ * Stores the entry as it is now (the link used, the passcode stripped), so a later edit can't change a running meeting.
+ * The entry is read again here, so the rebuilt snapshot is gated again: a chat the gate refuses is not stored, and its
+ * app is returned (the entry may have been edited since the launch looked at it).
+ */
+async function storeSnapshot(deps: LaunchDeps, occ: OccurrenceRow, runLocation: RunLocation): Promise<GatedApp | null> {
+  const { db } = deps
   try {
-    const entrySnapshot = await buildEntrySnapshot(db, occurrenceId)
+    const entrySnapshot = await buildEntrySnapshot(db, occ.id)
+    const blocked = blockedChat(deps, entrySnapshot.link, runLocation)
+    if (blocked !== null) return blocked
     await db
       .update(occurrences)
       .set({
         entrySnapshot,
         linkUsed: entrySnapshot.link.kind === 'fixed' ? stripPasscode(entrySnapshot.link.url) : null
       })
-      .where(eq(occurrences.id, occurrenceId))
+      .where(eq(occurrences.id, occ.id))
+    return null
   } catch (e) {
     throw safeDbError(e)
   }
 }
 
 /**
- * `storeSnapshot` and the job config for attempt 1 of a local run (no control block: the PC makes its own). `null` when
- * the config can't be made (a missing AI key or ntfy topic), which fails the launch; a database error stays one.
+ * The job config for attempt 1 of a local run, from the stored snapshot (no control block: the PC makes its own). `null`
+ * when the config can't be made (a missing AI key or ntfy topic), which fails the launch; a database error stays one.
  */
-async function snapshotAndConfig(deps: LaunchDeps, occurrenceId: string) {
-  await storeSnapshot(deps.db, occurrenceId)
+async function localConfig(deps: LaunchDeps, occurrenceId: string) {
   try {
     return await loadJobConfig(deps.db, deps.master, occurrenceId, { attempt: 1, control: null, env: deps.env })
   } catch (e) {
