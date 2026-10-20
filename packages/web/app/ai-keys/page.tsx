@@ -48,7 +48,13 @@ function Providers({ status, timeZone }: { status: AiKeyStatus | null; timeZone:
         {status ? (
           <>
             <p>
-              Saved key ending in <code>{status.dashscopeSuffix}</code>.
+              {status.dashscopeSuffix ? (
+                <>
+                  Saved key ending in <code>{status.dashscopeSuffix}</code>.
+                </>
+              ) : (
+                'Saved key.'
+              )}
               {status.workspaceId ? ` Workspace ID: ${status.workspaceId}.` : ' No Workspace ID.'}
             </p>
             <TestResult
@@ -91,7 +97,13 @@ function Providers({ status, timeZone }: { status: AiKeyStatus | null; timeZone:
             {status.modelscope ? (
               <>
                 <p>
-                  Saved key ending in <code>{status.modelscope.suffix}</code>.
+                  {status.modelscope.suffix ? (
+                    <>
+                      Saved key ending in <code>{status.modelscope.suffix}</code>.
+                    </>
+                  ) : (
+                    'Saved key.'
+                  )}
                 </p>
                 <TestResult
                   ok={status.modelscope.ok}
@@ -128,7 +140,8 @@ export default async function AiKeysPage({ searchParams }: { searchParams: Promi
     scope.me(),
     searchParams
   ])
-  const message = typeof notice === 'string' ? NOTICES[notice] : undefined
+  // Only a code from the list is shown; anything else in the URL is ignored and never echoed.
+  const message = typeof notice === 'string' && Object.hasOwn(NOTICES, notice) ? NOTICES[notice] : undefined
 
   return (
     <>

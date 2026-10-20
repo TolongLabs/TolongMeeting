@@ -28,6 +28,9 @@ export default async function TimetablePage(props: { searchParams: Promise<{ not
   const scope = await requireMember()
   const [{ notice, problem }, view] = await Promise.all([props.searchParams, timetableView(scope, new Date())])
   const { entries, identities, hasKey, timeZone } = view
+  // Only a code from the lists is shown; anything else in the URL is ignored and never echoed.
+  const noticeText = notice !== undefined && Object.hasOwn(NOTICES, notice) ? NOTICES[notice] : undefined
+  const problemText = problem !== undefined && Object.hasOwn(PROBLEMS, problem) ? PROBLEMS[problem] : undefined
 
   return (
     <>
@@ -39,8 +42,8 @@ export default async function TimetablePage(props: { searchParams: Promise<{ not
         )}
       </PageHeader>
 
-      {notice && NOTICES[notice] && <Notice>{NOTICES[notice]}</Notice>}
-      {problem && PROBLEMS[problem] && <Notice kind="error">{PROBLEMS[problem]}</Notice>}
+      {noticeText && <Notice>{noticeText}</Notice>}
+      {problemText && <Notice kind="error">{problemText}</Notice>}
       {!hasKey && (
         <Notice kind="warn">
           You have no working AI key, so entries cannot be saved or scheduled.{' '}

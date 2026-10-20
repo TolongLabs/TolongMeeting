@@ -163,19 +163,25 @@ export interface AiKeyStatus {
 
 const ADD_DASHSCOPE_FIRST = 'Add a DashScope key first. ModelScope is an extra key and cannot be saved alone.'
 
-const lastFour = (key: string) => key.slice(-4)
+/**
+ * The part of a key the page may show: its last four characters, and only when the key is long enough that they are a
+ * small part of it. A short key shows nothing at all.
+ */
+export function keySuffix(key: string): string {
+  return key.length >= 24 ? key.slice(-4) : ''
+}
 
 /** The member's saved keys as the page may show them, or `null` when none is saved. */
 export async function loadAiKeyStatus(scope: MemberScope, master: Buffer): Promise<AiKeyStatus | null> {
   const [row] = await scope.select(aiKeys)
   if (!row) return null
   return {
-    dashscopeSuffix: lastFour(openColumn(master, scope.memberId, 'ai_keys.dashscope_key', row.dashscopeKeyEnc)),
+    dashscopeSuffix: keySuffix(openColumn(master, scope.memberId, 'ai_keys.dashscope_key', row.dashscopeKeyEnc)),
     workspaceId: row.workspaceId,
     dashscopeOk: row.testOk,
     modelscope: row.modelscopeKeyEnc
       ? {
-          suffix: lastFour(openColumn(master, scope.memberId, 'ai_keys.modelscope_key', row.modelscopeKeyEnc)),
+          suffix: keySuffix(openColumn(master, scope.memberId, 'ai_keys.modelscope_key', row.modelscopeKeyEnc)),
           ok: row.modelscopeTestOk
         }
       : null,

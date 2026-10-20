@@ -27,6 +27,8 @@ export default async function EditEntryPage(props: {
   const entry = await entryById(scope, id)
   if (!entry) notFound()
   const identities = await listIdentities(scope)
+  // Only a code from the list is shown; anything else in the URL is ignored and never echoed.
+  const problemText = problem !== undefined && Object.hasOwn(PROBLEMS, problem) ? PROBLEMS[problem] : undefined
 
   return (
     <>
@@ -35,7 +37,7 @@ export default async function EditEntryPage(props: {
           <Link href="/timetable">Back to the timetable</Link>
         </p>
       </PageHeader>
-      {problem && PROBLEMS[problem] && <Notice kind="error">{PROBLEMS[problem]}</Notice>}
+      {problemText && <Notice kind="error">{problemText}</Notice>}
 
       <section aria-labelledby="status">
         <h2 id="status">{entry.paused ? 'Paused' : 'Running'}</h2>

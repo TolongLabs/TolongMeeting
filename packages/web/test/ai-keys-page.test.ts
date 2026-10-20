@@ -101,7 +101,7 @@ test("removing one member's key leaves another member's key", async () => {
   const a = await seedBare()
   const b = await seedBare()
   await updateAiKeys(a, { dashscopeKey: DASH }, deps())
-  await updateAiKeys(b, { dashscopeKey: 'sk-other-key-9999' }, deps())
+  await updateAiKeys(b, { dashscopeKey: 'sk-other-key-secret-value-9999' }, deps())
   await removeAiKey(a, 'dashscope')
   expect((await loadAiKeyStatus(b, master))!.dashscopeSuffix).toBe('9999')
 })

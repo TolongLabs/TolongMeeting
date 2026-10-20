@@ -11,12 +11,17 @@ import type { EntryFormState } from './form-state'
 // get the member from the session. A saved link is never put in a result or a redirect.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const IN_PROGRESS = 'This entry has a meeting in progress.'
-const NO_ENTRY = 'No such entry.'
 
 /** The reason a pause or delete failed, as a short code for the page to explain. */
 function problemCode(result: Extract<TimetableResult, { ok: false }>): string {
-  return result.error === IN_PROGRESS ? 'busy' : result.error === NO_ENTRY ? 'gone' : 'failed'
+  switch (result.code) {
+    case 'in_use':
+      return 'busy'
+    case 'not_found':
+      return 'gone'
+    default:
+      return 'failed'
+  }
 }
 
 /** Saves the entry form. A save with no clash goes back to the timetable; a clash or a refusal stays on the form. */
@@ -30,11 +35,11 @@ export async function saveEntryFormAction(_previous: EntryFormState, formData: F
   }
   const result = await saveEntryAction(input)
   if (!result.ok) {
-    if (result.error.startsWith('Add a working')) {
+    if (result.code === 'no_working_key') {
       return { status: 'error', message: result.error, help: { href: '/ai-keys', label: 'Open AI keys' }, fields: {} }
     }
     // A refused chat source is about the chat field; the identity decides it, so the message also names the fix.
-    if (/\bwatch(?:ed|ing)\b/.test(result.error)) return { status: 'error', fields: { 'link-chat': result.error } }
+    if (result.code === 'watching_not_allowed') return { status: 'error', fields: { 'link-chat': result.error } }
     return { status: 'error', message: result.error, fields: {} }
   }
   if (result.clashes.length === 0) redirect('/timetable?notice=saved')

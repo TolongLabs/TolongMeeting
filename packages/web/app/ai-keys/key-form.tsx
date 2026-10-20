@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { FormField } from '../../components/FormField'
 import { Notice } from '../../components/Notice'
 import { SubmitButton } from '../../components/SubmitButton'
@@ -15,6 +15,8 @@ const IDLE: KeyFormState = { status: 'idle' }
  */
 export function KeyForm(props: { provider: 'dashscope' | 'modelscope'; saved: boolean; workspaceId: string | null }) {
   const [state, action] = useActionState(saveKeyFormAction, IDLE)
+  // A failed save keeps the Workspace ID the member typed, not the saved one the page was rendered with.
+  const [workspaceId, setWorkspaceId] = useState(props.workspaceId ?? '')
   const errors = state.status === 'error' ? state.fields : {}
   const dashscope = props.provider === 'dashscope'
   const keyId = dashscope ? 'dashscope-key' : 'modelscope-key'
@@ -51,7 +53,8 @@ export function KeyForm(props: { provider: 'dashscope' | 'modelscope'; saved: bo
               name="workspace-id"
               type="text"
               autoComplete="off"
-              defaultValue={props.workspaceId ?? ''}
+              value={workspaceId}
+              onChange={(event) => setWorkspaceId(event.target.value)}
             />
           )}
         </FormField>
