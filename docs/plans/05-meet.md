@@ -74,14 +74,14 @@ Names used from earlier plans:
 
 - Create: `config/selectors/meet.json`
 - Create: `packages/worker/src/adapters/meet/selectors.ts`
-- Test: `packages/worker/src/adapters/meet/selectors.test.ts`
+- Test: `packages/worker/test/meet-selectors.test.ts`
 
 **Interfaces:**
 
-- Consumes: `loadSelectors<T>(platform: Platform, schema: z.ZodType<T>): Promise<T>` from plan 01a (Task 13).
+- Consumes: `loadSelectors<T>(name: string, schema: z.ZodType<T>, dir?: string): Promise<T>` from plan 01a (Task 13), which takes a map name, not a `Platform`.
 - Produces: `MeetSelectorsSchema` (zod, strict at every level, the shape of `meet.json` below), `type MeetSelectors = z.infer<typeof MeetSelectorsSchema>` and `meetSelectors(): Promise<MeetSelectors>` (`loadSelectors('meet', MeetSelectorsSchema)`) in `packages/worker/src/adapters/meet/selectors.ts`. The map follows 01a's `zoom.json` layout: `selectors` holds CSS selectors usable in `document.querySelectorAll`; `texts` holds regular expressions matched case-insensitively against visible text, with apostrophes written as `.` so straight and curly ones both match; `noticeAllowlist` holds exact button texts; `signInHosts` holds host names; `joinButtons` holds exact join-button texts in order of preference.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -112,12 +112,12 @@ test('a missing key fails loudly and names the key', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/worker/src/adapters/meet/selectors.test.ts`
-Expected: FAIL, module `./selectors` not found.
+Run: `bun test packages/worker/test/meet-selectors.test.ts`
+Expected: FAIL, module `../src/adapters/meet/selectors` not found.
 
-- [ ] **Step 3: Create `config/selectors/meet.json` and `meetSelectors(): Promise<MeetSelectors>`**
+- [x] **Step 3: Create `config/selectors/meet.json` and `meetSelectors(): Promise<MeetSelectors>`**
 
 "Switch here", "Present" and "Use Companion mode" are deliberately absent from `joinButtons`. Starting values, mirrored by the fixtures and confirmed or corrected in Task 10:
 
@@ -168,16 +168,16 @@ Expected: FAIL, module `./selectors` not found.
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/worker/src/adapters/meet/selectors.test.ts`
-Expected: PASS (2 tests).
+Run: `bun test packages/worker/test/meet-selectors.test.ts`
+Expected: PASS (6 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add config/selectors/meet.json packages/worker/src/adapters/meet/selectors.ts packages/worker/src/adapters/meet/selectors.test.ts
-git commit -m "feat(worker): add meet selector map"
+git add config/selectors/meet.json packages/worker/src/adapters/meet/selectors.ts packages/worker/test/meet-selectors.test.ts
+git commit -m "feat(worker): meet selector map"
 ```
 
 ### Task 2: Link normalisation

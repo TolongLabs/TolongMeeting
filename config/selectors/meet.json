@@ -1,0 +1,55 @@
+{
+  "signInHosts": ["accounts.google.com"],
+  "joinButtons": ["Join now", "Join here too", "Ask to join"],
+  "selectors": {
+    "prejoinNameInput": "input[aria-label='Your name']",
+    "micToggle": "[role='button'][data-is-muted][aria-label*='microphone' i]",
+    "micOff": "[role='button'][data-is-muted='true'][aria-label*='microphone' i]",
+    "cameraToggle": "[role='button'][data-is-muted][aria-label*='camera' i]",
+    "cameraOff": "[role='button'][data-is-muted='true'][aria-label*='camera' i]",
+    "leaveButton": "[aria-label='Leave call']",
+    "chatButton": "[aria-label='Chat with everyone']",
+    "peopleButton": "[aria-label^='People'], [aria-label^='Show everyone']",
+    "sidePanel": "[role='complementary']",
+    "chatScroller": "[role='complementary'] [aria-live='polite']",
+    "chatGroup": "[data-sender-id]",
+    "chatSender": "[data-sender-name]",
+    "chatTime": "[data-formatted-timestamp]",
+    "chatMessage": "[data-message-id]",
+    "peopleList": "[role='list'][aria-label='Participants']",
+    "peopleItem": "[role='listitem']",
+    "moreButton": "[aria-label='More options']",
+    "dialogClose": "[role='dialog'] [aria-label='Close']",
+    "captionsOnButton": "[aria-label='Turn off captions']",
+    "captionsRegion": "[aria-label='Captions']",
+    "sharedScreen": "[data-is-presentation='true'] video",
+    "noticeContainers": "[role='dialog'], [role='alertdialog'], [role='alert']"
+  },
+  "texts": {
+    "blocked": "you can.t join this video call",
+    "invalidLink": "check your meeting code|invalid video call name",
+    "permissionContinue": "^continue without microphone and camera$",
+    "lobby": "asking to be let in|please wait until a meeting host brings you into the call|your request to join is being reviewed",
+    "lobbyDenied": "denied your request to join|your request to join was declined",
+    "lobbyExpired": "no one responded to your request to join",
+    "leaveConfirm": "^just leave the call$",
+    "layoutMenu": "^(adjust view|change layout)$",
+    "spotlight": "^spotlight$",
+    "breakoutPrompt": "breakout room|you.ve been invited to join",
+    "endScreen": "return to home screen",
+    "ended": "you left the meeting|the call has ended|the meeting has ended",
+    "removed": "you.ve been removed from the meeting",
+    "noticeDanger": [
+      { "name": "join", "source": "\\bjoin\\b" },
+      { "name": "start video", "source": "start (my |your )?video" },
+      { "name": "allow", "source": "\\ballow\\b" },
+      { "name": "unmute", "source": "\\bunmute\\b" },
+      { "name": "share", "source": "\\bshare\\b" },
+      {
+        "name": "record",
+        "source": "record\\w*[^.\\n]*(consent|permission|agree|request)|(consent|permission|agree|request\\w*)[^.\\n]*record"
+      }
+    ]
+  },
+  "noticeAllowlist": ["Got it", "OK", "Dismiss"]
+}
