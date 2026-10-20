@@ -171,8 +171,45 @@ test('local runs keep their claim when the lease lapses; release keeps the attem
   expect(await getJob(db, native)).toMatchObject({ state: 'pending', attempts: 0 })
 })
 
+const startOffered = (extra: Partial<typeof occurrences.$inferInsert> = {}) =>
+  db
+    .update(occurrences)
+    .set({ state: 'starting', ...extra })
+    .where(eq(occurrences.id, f.occA))
+
+test('a local run goes back to pending only while its meeting has not started', async () => {
+  const id = await claimedLocalRun(f.a1)
+  // Started: the worker reported (or the meeting moved on). Giving the job back would start it twice.
+  await startOffered({ lastHeartbeatAt: at('13:01') })
+  expect(await releaseJob(db, f.a1, id)).toBe(false)
+  await startOffered({ state: 'in_meeting' })
+  expect(await releaseJob(db, f.a1, id)).toBe(false)
+  expect(await getJob(db, id)).toMatchObject({ state: 'claimed' })
+  // Offered and claimed, nothing started yet: it goes back.
+  await startOffered({ lastHeartbeatAt: null })
+  expect(await releaseJob(db, f.a1, id)).toBe(true)
+  expect(await getJob(db, id)).toMatchObject({ state: 'pending', attempts: 0 })
+})
+
+test('an occurrence has at most one live local run', async () => {
+  const make = async () =>
+    createCompanionJob(db, {
+      memberId: f.a1.memberId,
+      occurrenceId: f.occA,
+      kind: 'local_run',
+      payload: await payloadFor(f.occA, f.a1.memberId),
+      targetDeviceId: f.a1.deviceId
+    })
+  const first = await make()
+  await expect(make()).rejects.toThrow()
+  // Once the first is over, another can be made.
+  await db.execute(sql`update companion_jobs set state = 'failed' where id = ${first}`)
+  await make()
+})
+
 test('release is only for the holding device', async () => {
   const id = await claimedLocalRun(f.a1)
+  await startOffered()
   const auth = (d: Device) => createDeviceScope(db, d)
   expect(await releaseJob(db, f.a2, id)).toBe(false)
   expect(await releaseJob(db, f.b1, id)).toBe(false)

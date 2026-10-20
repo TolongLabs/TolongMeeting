@@ -325,9 +325,16 @@ export async function renewLease(db: Db, device: DeviceAuth, jobId: string, now:
 
 /**
  * Gives a job the device holds back to `pending` without counting an attempt. Only the holding device can: a job it never
- * held, another device's job, another member's job and a job that is no longer `claimed` all answer `false`.
+ * held, another device's job, another member's job and a job that is no longer `claimed` all answer `false`. A
+ * `local_run` can be given back only while its occurrence has not started (`starting`, no heartbeat yet): after that the
+ * meeting may be running on the PC, and offering it again would start it twice.
  */
 export async function releaseJob(db: Db, device: DeviceAuth, jobId: string, now: Date = new Date()): Promise<boolean> {
+  const notStarted = sql`exists (
+    select 1 from ${occurrences}
+    where ${occurrences.id} = ${companionJobs.occurrenceId}
+      and ${occurrences.state} = 'starting' and ${occurrences.lastHeartbeatAt} is null
+  )`
   const rows = await guarded(() =>
     db
       .update(companionJobs)
@@ -337,7 +344,8 @@ export async function releaseJob(db: Db, device: DeviceAuth, jobId: string, now:
           eq(companionJobs.id, jobId),
           eq(companionJobs.memberId, device.memberId),
           eq(companionJobs.deviceId, device.deviceId),
-          eq(companionJobs.state, 'claimed')
+          eq(companionJobs.state, 'claimed'),
+          or(ne(companionJobs.kind, 'local_run'), notStarted)
         )
       )
       .returning({ id: companionJobs.id })

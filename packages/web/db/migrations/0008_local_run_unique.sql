@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "companion_jobs_one_live_local_run_idx" ON "companion_jobs" USING btree ("occurrence_id") WHERE "companion_jobs"."kind" = 'local_run' and "companion_jobs"."state" in ('pending', 'claimed');

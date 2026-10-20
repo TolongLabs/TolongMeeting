@@ -650,6 +650,10 @@ export const companionJobs = pgTable(
     index('companion_jobs_lease_until_idx')
       .on(t.leaseUntil)
       .where(sql`${t.state} = 'claimed'`),
+    // One live PC run per occurrence: a repeat of the offer cannot give the meeting two jobs.
+    uniqueIndex('companion_jobs_one_live_local_run_idx')
+      .on(t.occurrenceId)
+      .where(sql`${t.kind} = 'local_run' and ${t.state} in ('pending', 'claimed')`),
     check('companion_jobs_kind_check', oneOf(t.kind, COMPANION_JOB_KINDS)),
     check('companion_jobs_state_check', oneOf(t.state, COMPANION_JOB_STATES)),
     check('companion_jobs_attempts_check', sql`${t.attempts} >= 0`),

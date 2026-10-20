@@ -57,6 +57,13 @@
       "when": 1792479912769,
       "tag": "0007_home_exit_node_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792484061312,
+      "tag": "0008_local_run_unique",
+      "breakpoints": true
     }
   ]
 }

@@ -191,6 +191,8 @@ describe('claim', () => {
   })
 
   test('a local_run whose target was last seen outside the online window is a conflict', async () => {
+    // The earlier test's run is over: an occurrence has at most one live local_run.
+    await db.update(companionJobs).set({ state: 'done' }).where(eq(companionJobs.occurrenceId, fx.occA))
     const id = await createCompanionJob(db, {
       memberId: fx.a1.memberId,
       occurrenceId: fx.occA,
