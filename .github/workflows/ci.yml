@@ -50,6 +50,12 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
+      # The remote view's Caddy contract runs the real Caddyfile in the image Compose names. With CI set, the test fails
+      # rather than skips when the image is missing.
+      - name: Pull the Caddy image
+        run: docker pull "$(grep -oP 'image:\s*\Kcaddy:\S+' docker/compose.yaml)"
+      - name: Caddy remote view contract
+        run: bun test packages/web/test/caddy-vnc.test.ts
       - run: bun run test
 
   # Playwright specs are not part of `bun run test` (bunfig.toml ignores *.spec.ts). The image and host projects need the

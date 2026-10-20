@@ -12,6 +12,13 @@
 				not header Origin {$TM_PUBLIC_URL}
 			}
 			respond @foreign_origin 403
+			# ... and a WebSocket upgrade with no Origin at all (a script, not a browser) is refused too.
+			@upgrade_without_origin {
+				header Connection *Upgrade*
+				header Upgrade *
+				not header Origin *
+			}
+			respond @upgrade_without_origin 403
 
 			# Never trust a client-supplied upstream: only the website's answer below may set it.
 			request_header -X-Vnc-Upstream
@@ -44,6 +51,19 @@
 	}
 
 	handle {
+		# Anything that looks like the remote view's path but was not taken by the handler above (Caddy matches a cleaned
+		# path, so `/vnc/<id>/%2e%2e/x` and `//vnc/x` get here) is refused instead of passed to the website.
+		@vnc_lookalike expression `{http.request.uri}.matches("(?i)^/+vnc(/|%|\\?|$)")`
+		respond @vnc_lookalike 403
+		# The authorisation check is for Caddy's own sub-request only; it is never public.
+		respond /api/vnc/authorize* 404
+		header {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+			# Added next to any policy the website sets (the artefact downloads send their own), never in place of it.
+			+Content-Security-Policy "frame-ancestors 'none'"
+		}
 		encode zstd gzip
 		# Caddy sets X-Forwarded-For, -Proto and -Host itself and discards what a client sent, because no proxy is trusted.
 		reverse_proxy web:3000
