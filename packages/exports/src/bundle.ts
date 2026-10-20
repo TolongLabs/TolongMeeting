@@ -14,6 +14,8 @@ export const MAX_IMAGE_BYTES = 16 * 1024 * 1024
 export const MAX_SLIDES = 500
 export const MAX_BUNDLE_BYTES = 256 * 1024 * 1024
 
+const READ_CHUNK = 1024 * 1024
+
 const MISSING = new Set(['ENOENT', 'ENOTDIR'])
 
 function isMissing(e: unknown): boolean {
@@ -49,9 +51,19 @@ async function readMember(
     if (!info.isFile()) throw refused(rel, 'it is not a regular file')
     if (!actual.startsWith(base + sep)) throw refused(rel, 'it is outside the meeting folder')
     if (info.size > maxBytes) throw refused(rel, `it is larger than ${Math.floor(maxBytes / (1024 * 1024))} MB`)
-    const bytes = new Uint8Array(await handle.readFile())
-    if (bytes.length > maxBytes) throw refused(rel, `it is larger than ${Math.floor(maxBytes / (1024 * 1024))} MB`)
-    return { bytes, mtimeMs: info.mtimeMs }
+    // The worker may still be appending, so `info.size` is not a bound: read in chunks and stop at maxBytes + 1.
+    const tooBig = () => refused(rel, `it is larger than ${Math.floor(maxBytes / (1024 * 1024))} MB`)
+    const chunks: Buffer[] = []
+    let total = 0
+    for (;;) {
+      const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK, maxBytes + 1 - total))
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null)
+      if (bytesRead === 0) break
+      total += bytesRead
+      if (total > maxBytes) throw tooBig()
+      chunks.push(chunk.subarray(0, bytesRead))
+    }
+    return { bytes: new Uint8Array(Buffer.concat(chunks, total)), mtimeMs: info.mtimeMs }
   } finally {
     await handle.close()
   }
@@ -79,11 +91,17 @@ function relinkSlides(bytes: Uint8Array): Uint8Array {
 
 /**
  * Reads a finished occurrence's summary, transcript, slides, chat and slide images into memory, so that deleting the
- * directory later can't corrupt a running export. Missing optional files are left out. `slides.md` is the one file not
+ * directory later can't corrupt a running export. Throws `ExportError('meeting_deleted')` when the directory is gone. Missing optional files are left out. `slides.md` is the one file not
  * kept byte for byte: its image links are rewritten from `../slides/NN.webp` to `slides/NN.webp`.
  */
 export async function loadBundle(dataDir: string): Promise<ExportBundle> {
-  const base = await realpath(dataDir)
+  let base
+  try {
+    base = await realpath(dataDir)
+  } catch (e) {
+    if (isMissing(e)) throw new ExportError('meeting_deleted', 'This meeting has been deleted from TolongMeeting.')
+    throw e
+  }
   let total = 0
   const take = (file: BundleFile): BundleFile => {
     total += file.bytes.length

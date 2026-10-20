@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import { afterEach, expect, test } from 'bun:test'
-import { mkdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, rm, symlink, truncate, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { loadBundle } from '../src/bundle'
+import { loadBundle, MAX_BUNDLE_BYTES, MAX_IMAGE_BYTES, MAX_SLIDES, MAX_TEXT_BYTES } from '../src/bundle'
 import { copyFixture, fixture, removeCopies } from './fixture'
 
 afterEach(removeCopies)
@@ -124,3 +125,72 @@ test('a directory named like a slide is not read', async () => {
   await mkdir(join(dir, 'slides/03.webp'))
   expect((await loadBundle(dir)).files.map((f) => f.path)).not.toContain('slides/03.webp')
 })
+
+test('a directory that is gone is meeting_deleted', async () => {
+  const dir = await copyFixture()
+  await rm(dir, { recursive: true })
+  await expect(loadBundle(dir)).rejects.toMatchObject({
+    code: 'meeting_deleted',
+    message: 'This meeting has been deleted from TolongMeeting.'
+  })
+})
+
+test('a FIFO named like a pipeline file is refused without blocking', async () => {
+  const dir = await copyFixture()
+  await rm(join(dir, 'out/chat.md'))
+  execFileSync('mkfifo', [join(dir, 'out/chat.md')])
+  await expect(loadBundle(dir)).rejects.toMatchObject({
+    code: 'failed',
+    message: expect.stringContaining('regular file')
+  })
+})
+
+test('a FIFO named like a slide is never listed or opened', async () => {
+  const dir = await copyFixture()
+  execFileSync('mkfifo', [join(dir, 'slides/03.webp')])
+  expect((await loadBundle(dir)).files.map((f) => f.path)).not.toContain('slides/03.webp')
+})
+
+test('a text file of exactly the cap is read and one byte more is refused', async () => {
+  const dir = await copyFixture()
+  await writeFile(join(dir, 'out/chat.md'), Buffer.alloc(MAX_TEXT_BYTES, 'a'))
+  const chat = (await loadBundle(dir)).files.find((f) => f.path === 'chat.md')!
+  expect(chat.bytes.length).toBe(MAX_TEXT_BYTES)
+  await writeFile(join(dir, 'out/chat.md'), Buffer.alloc(MAX_TEXT_BYTES + 1, 'a'))
+  await expect(loadBundle(dir)).rejects.toMatchObject({ code: 'failed' })
+})
+
+test('an image over the image cap is refused', async () => {
+  const dir = await copyFixture()
+  await truncate(join(dir, 'slides/01.webp'), MAX_IMAGE_BYTES + 1)
+  await expect(loadBundle(dir)).rejects.toMatchObject({ code: 'failed', message: expect.stringContaining('16 MB') })
+})
+
+test('more than the slide cap is refused before any is read', async () => {
+  const dir = await copyFixture()
+  for (let i = 3; i <= MAX_SLIDES + 1; i++) await writeFile(join(dir, `slides/${String(i).padStart(3, '0')}.webp`), 'x')
+  await expect(loadBundle(dir)).rejects.toMatchObject({ code: 'failed', message: expect.stringContaining('slides') })
+})
+
+test('exactly the slide cap is read', async () => {
+  const dir = await copyFixture()
+  await rm(join(dir, 'slides/02.webp'))
+  for (let i = 2; i <= MAX_SLIDES; i++) await writeFile(join(dir, `slides/${String(i).padStart(3, '0')}.webp`), 'x')
+  // 01.webp (fixture) is two digits, 002..500 are three: 500 files.
+  expect((await loadBundle(dir)).files.filter((f) => f.path.startsWith('slides/'))).toHaveLength(MAX_SLIDES)
+})
+
+test('a meeting whose files add up to more than the total cap is refused', async () => {
+  const dir = await copyFixture()
+  // Sparse files: cheap on disk, each read as a full 16 MB of zeros.
+  const need = Math.floor(MAX_BUNDLE_BYTES / MAX_IMAGE_BYTES) + 1
+  for (let i = 0; i < need; i++) {
+    const file = join(dir, `slides/${String(i + 10)}.webp`)
+    await writeFile(file, '')
+    await truncate(file, MAX_IMAGE_BYTES)
+  }
+  await expect(loadBundle(dir)).rejects.toMatchObject({
+    code: 'failed',
+    message: 'This meeting is too large to export.'
+  })
+}, 60_000)
