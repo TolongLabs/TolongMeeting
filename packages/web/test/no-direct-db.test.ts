@@ -4,8 +4,9 @@ import { expect, test } from 'bun:test'
 
 const webRoot = join(import.meta.dir, '..')
 
-// Files allowed to open the database: the member scope, Better Auth and the token-authenticated control endpoints.
-const ALLOWED = /^lib\/(scope|auth|control)\.[cm]?[jt]sx?$/
+// Files allowed to open the database: the member scope, Better Auth, the token-authenticated control endpoints and the
+// companion's device-token endpoints.
+const ALLOWED = /^lib\/(?:scope|auth|control|companion\/(?:scope|deps))\.[cm]?[jt]sx?$/
 // Not scanned: the database layer itself, tests (they build their own databases) and generated or installed files.
 const SKIPPED_DIRS = new Set(['db', 'test', 'node_modules', '.next'])
 const SOURCE = '*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'
@@ -76,6 +77,18 @@ test('the matcher flags every way to open the database and nothing else', () => 
   expect(GOOD.filter((text) => OPENS_DB.test(text))).toEqual([])
 })
 
+test('the allow-list names exactly those files', () => {
+  const allowed = ['lib/scope.ts', 'lib/auth.ts', 'lib/control.ts', 'lib/companion/scope.ts', 'lib/companion/deps.ts']
+  const refused = [
+    'lib/companion/tokens.ts',
+    'lib/companion/scope.ts.bak',
+    'lib/companion/x/deps.ts',
+    'app/lib/scope.ts'
+  ]
+  expect(allowed.filter((file) => !ALLOWED.test(file))).toEqual([])
+  expect(refused.filter((file) => ALLOWED.test(file))).toEqual([])
+})
+
 async function sourceFiles(): Promise<string[]> {
   const glob = (pattern: string) => Array.fromAsync(new Bun.Glob(pattern).scan({ cwd: webRoot }))
   const files = await glob(SOURCE)
@@ -85,7 +98,7 @@ async function sourceFiles(): Promise<string[]> {
   return files
 }
 
-test('only lib/scope.ts, lib/auth.ts and lib/control.ts open the database in packages/web', async () => {
+test('only lib/{scope,auth,control}.ts and lib/companion/{scope,deps}.ts open the database in packages/web', async () => {
   const files = await sourceFiles()
   expect(files).toContain('lib/scope.ts')
 
