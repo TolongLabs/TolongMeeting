@@ -1,0 +1,62 @@
+/* Layout only. Colours, type and spacing come with the approved design; until then the system defaults apply, in the
+   light or dark scheme the system asks for. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 36rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+form > .field,
+fieldset > .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+}
+
+fieldset {
+  margin: 0 0 1rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.row input {
+  flex: 1;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.875em;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  box-sizing: border-box;
+  height: 56px;
+}
+
+.toolbar p {
+  margin: 0;
+}

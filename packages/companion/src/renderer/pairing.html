@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Pair this PC - TolongMeeting</title>
+    <link rel="stylesheet" href="ui.css" />
+    <script src="pairing.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Pair this PC</h1>
+      <p>Make a pairing code on the Devices page of the website, then enter it here with the website address.</p>
+      <form id="pairing-form" novalidate>
+        <div class="field">
+          <label for="server-url">Website address</label>
+          <input id="server-url" name="serverUrl" type="url" required autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="code">Pairing code</label>
+          <input id="code" name="code" type="text" required autocomplete="off" spellcheck="false" maxlength="32" />
+        </div>
+        <div class="actions">
+          <button id="pair" type="submit">Pair</button>
+          <button id="close" type="button">Cancel</button>
+        </div>
+        <p id="message" role="alert"></p>
+      </form>
+    </main>
+  </body>
+</html>

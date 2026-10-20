@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Settings - TolongMeeting</title>
+    <link rel="stylesheet" href="ui.css" />
+    <script src="settings.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Settings</h1>
+      <form id="settings-form" novalidate>
+        <fieldset>
+          <legend>Summaries</legend>
+          <div class="field">
+            <label for="summaries-dir">Summaries folder</label>
+            <span class="row">
+              <input
+                id="summaries-dir"
+                name="summariesDir"
+                type="text"
+                required
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="browse-summaries" type="button" aria-label="Browse for the summaries folder">Browse</button>
+            </span>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Transcription on this PC (whisper)</legend>
+          <div class="field">
+            <label for="whisper-command">Whisper command</label>
+            <input
+              id="whisper-command"
+              name="whisperCommand"
+              type="text"
+              required
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="command-hint"
+            />
+            <span id="command-hint" class="hint"
+              >Use {audio}, {model} and {outDir}. The command runs in the whisper folder.</span
+            >
+          </div>
+          <div class="field">
+            <label for="whisper-cwd">Whisper folder</label>
+            <span class="row">
+              <input
+                id="whisper-cwd"
+                name="whisperCwd"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                aria-describedby="cwd-hint"
+              />
+              <button id="browse-whisper" type="button" aria-label="Browse for the whisper folder">Browse</button>
+            </span>
+            <span id="cwd-hint" class="hint">Leave empty to run the command where TolongMeeting runs.</span>
+          </div>
+          <div class="field">
+            <label for="whisper-model">Whisper model</label>
+            <input id="whisper-model" name="whisperModel" type="text" required autocomplete="off" spellcheck="false" />
+          </div>
+        </fieldset>
+        <div class="actions">
+          <button id="save" type="submit">Save</button>
+          <button id="close" type="button">Close</button>
+        </div>
+        <p id="message" role="status"></p>
+      </form>
+    </main>
+  </body>
+</html>
