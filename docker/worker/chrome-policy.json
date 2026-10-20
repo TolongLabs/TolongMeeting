@@ -10,7 +10,6 @@
     "zoomus://*",
     "msteams://*"
   ],
-  "DeveloperToolsAvailability": 2,
   "DownloadRestrictions": 3,
   "AllowFileSelectionDialogs": false,
   "FullscreenAllowed": false,
