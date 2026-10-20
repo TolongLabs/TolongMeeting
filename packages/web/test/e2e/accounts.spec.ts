@@ -97,9 +97,7 @@ test.describe('the accounts list', () => {
     await expect(identity(page, 'Laptop')).toContainText('My PC (Test laptop,')
     await expect(identity(page, 'Laptop').getByRole('button', { name: 'Sign in on my PC' })).toBeVisible()
     await expect(identity(page, 'Remote')).toContainText('The server, through your home connection')
-    await expect(identity(page, 'Remote')).toContainText(
-      'Remote sign-in is only for identities that run on the server.'
-    )
+    await expect(identity(page, 'Remote')).toContainText('Sign-in goes through your home connection.')
     await expectNoAxeViolations(page)
   })
 
@@ -157,6 +155,12 @@ test.describe('the accounts list', () => {
     await expect(page).toHaveURL(/notice=deleted/)
     await expect(page.getByRole('region', { name: 'Temp', exact: true })).toHaveCount(0)
   })
+
+  test('a missing or gone identity reports the fixed sentence', async ({ page }) => {
+    await page.goto('/accounts?problem=gone')
+    await expect(page.getByRole('main').getByRole('alert')).toContainText('That bot profile no longer exists.')
+    await expectNoAxeViolations(page)
+  })
 })
 
 test.describe('the sign-in page', () => {
@@ -174,6 +178,8 @@ test.describe('the sign-in page', () => {
     expect(csp).toContain("default-src 'none'")
     expect(csp).toContain("connect-src 'self'")
     expect(csp).toContain("frame-ancestors 'none'")
+    expect(csp).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+'/)
+    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/)
     await expectNoAxeViolations(page)
   })
 

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { guardDeviceToken } from './lib/companion/guard'
 import { connectionsCsp, isConnectionsPage, newNonce } from './lib/connections-csp'
+import { isSigninPage, signinCsp } from './lib/signin-csp'
 
 /**
  * Runs before every route except the device upload routes below, `/api/vnc/authorize` (Caddy's `forward_auth`)
@@ -23,15 +24,24 @@ import { connectionsCsp, isConnectionsPage, newNonce } from './lib/connections-c
 export function proxy(request: NextRequest): Response {
   const refused = guardDeviceToken(request)
   if (refused) return refused
-  if (!isConnectionsPage(request.nextUrl.pathname)) return NextResponse.next()
-  // The Connections page loads the Google Picker, so it alone gets a Content-Security-Policy with a nonce. Next reads the
-  // nonce from the request's policy and puts it on its own scripts.
-  const policy = connectionsCsp(newNonce())
-  const headers = new Headers(request.headers)
-  headers.set('Content-Security-Policy', policy)
-  const response = NextResponse.next({ request: { headers } })
-  response.headers.set('Content-Security-Policy', policy)
-  return response
+  if (isConnectionsPage(request.nextUrl.pathname)) {
+    const policy = connectionsCsp(newNonce())
+    const headers = new Headers(request.headers)
+    headers.set('Content-Security-Policy', policy)
+    const response = NextResponse.next({ request: { headers } })
+    response.headers.set('Content-Security-Policy', policy)
+    return response
+  }
+  if (isSigninPage(request.nextUrl.pathname)) {
+    const nonce = newNonce()
+    const policy = signinCsp(nonce)
+    const headers = new Headers(request.headers)
+    headers.set('Content-Security-Policy', policy)
+    const response = NextResponse.next({ request: { headers } })
+    response.headers.set('Content-Security-Policy', policy)
+    return response
+  }
+  return NextResponse.next()
 }
 
 export const config = {

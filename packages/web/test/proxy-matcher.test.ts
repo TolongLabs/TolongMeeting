@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { NextRequest } from 'next/server'
 import { proxy } from '../proxy'
+import { isSigninPage } from '../lib/signin-csp'
 
 const JOB = '3f2b8a9e-6c1d-4e7a-9b0f-2d5c8e1a4f60'
 const webRoot = join(import.meta.dir, '..')
@@ -30,6 +31,7 @@ describe('the proxy matcher', () => {
     const paths = [
       '/',
       '/devices',
+      `/accounts/${JOB}/signin`,
       '/api/meetings/abc',
       '/api/vnc/authorize',
       '/api/companion/jobs',
@@ -89,5 +91,30 @@ describe('the proxy matcher', () => {
     )
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: 'device_token_not_allowed' })
+  })
+
+  test('isSigninPage matches /accounts/<uuid>/signin without catching other routes', () => {
+    expect(isSigninPage(`/accounts/${JOB}/signin`)).toBe(true)
+    expect(isSigninPage(`/accounts/${JOB.toUpperCase()}/signin`)).toBe(true)
+    for (const bad of [
+      '/accounts/signin',
+      `/accounts/${JOB}`,
+      `/accounts/${JOB}/signin/extra`,
+      '/accounts/not-a-uuid/signin',
+      '/accounts',
+      '/'
+    ]) {
+      expect(isSigninPage(bad)).toBe(false)
+    }
+  })
+
+  test('proxy sets per-request nonce CSP without unsafe-inline on remote sign-in page', () => {
+    const res = proxy(new NextRequest(`https://tm.example/accounts/${JOB}/signin`))
+    const csp = res.headers.get('content-security-policy')
+    expect(csp).toBeDefined()
+    expect(csp).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+'/)
+    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/)
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'")
+    expect(csp).toContain("default-src 'none'")
   })
 })
