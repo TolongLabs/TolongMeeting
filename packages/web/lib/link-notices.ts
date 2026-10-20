@@ -1,4 +1,11 @@
-import { chatWatchAllowed, type ChatApp, type LinkSource, type RunLocation, type WatchGate } from '@tm/core'
+import {
+  chatWatchAllowed,
+  normaliseTeamsLink,
+  type ChatApp,
+  type LinkSource,
+  type RunLocation,
+  type WatchGate
+} from '@tm/core'
 
 export const BAN_RISK_NOTICE =
   "WhatsApp and Discord don't allow automated use of personal accounts. The bot only reads this chat: it opens it, checks it every 12 to 45 seconds, and never sends, reacts or replies. That lowers the risk of your account being restricted or banned, but doesn't remove it. If that risk isn't acceptable, use a fixed link or paste the link instead."
@@ -6,7 +13,10 @@ export const BAN_RISK_NOTICE =
 export const TRUSTED_SENDERS_CHAT_HINT =
   "For a watched chat, enter each sender as the chat shows them: in WhatsApp, their saved contact name, or their phone number if you haven't saved it."
 
-export const CHAT_FIELD_COPY: Record<'whatsapp' | 'discord', { label: string; placeholder: string; hint: string }> = {
+export const TEAMS_PRESENCE_NOTE =
+  'While the bot is in a Teams meeting for you, your Teams presence shows "In a call", and your own Teams apps may show the call as running on another device.'
+
+export const CHAT_FIELD_COPY: Record<ChatApp, { label: string; placeholder: string; hint: string }> = {
   whatsapp: {
     label: 'WhatsApp chat name',
     placeholder: 'Class group name',
@@ -16,6 +26,11 @@ export const CHAT_FIELD_COPY: Record<'whatsapp' | 'discord', { label: string; pl
     label: 'Discord channel address',
     placeholder: 'https://discord.com/channels/<server>/<channel>',
     hint: 'Open the channel in Discord in a browser and copy the address bar.'
+  },
+  teams: {
+    label: 'Teams chat link',
+    placeholder: 'https://teams.microsoft.com/l/chat/...',
+    hint: 'Open the chat in Teams, choose More options, then Copy link, and paste it here.'
   }
 }
 
@@ -24,6 +39,12 @@ const APP_NAME = { whatsapp: 'WhatsApp', discord: 'Discord', teams: 'Teams' } as
 /** The notice shows for chat sources on WhatsApp or Discord. */
 export function showsBanRiskNotice(link: LinkSource): boolean {
   return link.kind === 'chat' && (link.app === 'whatsapp' || link.app === 'discord')
+}
+
+/** The presence note shows for a Teams meeting link, or for a Teams chat source. */
+export function showsTeamsPresenceNote(link: LinkSource): boolean {
+  if (link.kind === 'fixed') return normaliseTeamsLink(link.url) !== null
+  return link.kind === 'chat' && link.app === 'teams'
 }
 
 /** Why `gate` refuses `app`: it runs only at home or on the member's PC, or it is switched off. */
@@ -44,11 +65,13 @@ export class WatchingNotAllowedError extends Error {
 export function chatAppOptions(
   runLocation: RunLocation,
   gate: WatchGate
-): { app: 'whatsapp' | 'discord'; enabled: boolean; note: string | null }[] {
-  return (['whatsapp', 'discord'] as const).map((app) => {
+): { app: ChatApp; enabled: boolean; note: string | null }[] {
+  const gated = (['whatsapp', 'discord'] as const).map((app) => {
     const enabled = chatWatchAllowed(app, runLocation, gate)
     return { app, enabled, note: enabled ? null : watchingNotAllowedMessage(app, gate) }
   })
+  // Teams watching is never gated (`chatWatchAllowed` is always true for it).
+  return [...gated, { app: 'teams', enabled: true, note: null }]
 }
 
 const SIGNIN_NOTES = {

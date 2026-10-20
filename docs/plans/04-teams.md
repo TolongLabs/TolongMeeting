@@ -1457,7 +1457,7 @@ git commit -m "feat(worker): watch a teams chat for links"
 - Consumes: `LinkSource` from `@tm/core`; `ChatApp`, `WatchGate` (plan 02, Task 1); `CHAT_FIELD_COPY`, `chatAppOptions`, `BanRiskNotice` (plan 02, Task 7); `accountStatus` rows (kind `teams`, label `Teams`) from plan 01c's `packages/web/lib/identities.ts`.
 - Produces (adds to contracts): in `packages/web/lib/link-notices.ts`, `TEAMS_PRESENCE_NOTE: string` and `showsTeamsPresenceNote(link: LinkSource): boolean`; `CHAT_FIELD_COPY` keyed by every `ChatApp`, with a `teams` entry; `chatAppOptions` returning a `teams` option (its `app` typed `ChatApp`); `TeamsPresenceNote(): JSX.Element` in `packages/web/app/timetable/teams-presence-note.tsx`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // added to packages/web/lib/link-notices.test.ts
@@ -1532,14 +1532,20 @@ test('renders the presence note as a note', () => {
 
 - [ ] **Step 2: Run them to verify they fail**
 
+  Not done: the lib code was written before this run, so no failing run was captured.
+
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/teams-presence-note.test.tsx`
 Expected: FAIL, `showsTeamsPresenceNote` is not exported and `./teams-presence-note` is not found.
 
-- [ ] **Step 3: Implement the copy, the option and the note, and show them**
+- [x] **Step 3: Implement the copy, the option and the note, and show them**
+
+  Lib part done (`link-notices.ts`: `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote` via core `normaliseTeamsLink`, `CHAT_FIELD_COPY` keyed by `ChatApp`, Teams option). Plan 02's existing `chatAppOptions` expectations now include the Teams option. **Deferred (Figma gate):** `packages/web/app/timetable/teams-presence-note.tsx` and its `.test.tsx`, and showing the note and the Teams field on `app/timetable/[id]/page.tsx` and `app/accounts/page.tsx`. No page exists yet (see preflight section 4).
 
 `showsTeamsPresenceNote` is true for a `fixed` link whose `decodeURIComponent`-decoded URL contains `teams.microsoft.com` or `teams.live.com`, and for a `chat` source with `app: 'teams'`. `chatAppOptions` appends `{ app: 'teams', enabled: true, note: null }`, because Teams watching isn't gated (plan 02's `chatWatchAllowed`). `TeamsPresenceNote` mirrors `BanRiskNotice`. On the entry edit page, the Teams chat option uses `CHAT_FIELD_COPY.teams`, and `<TeamsPresenceNote />` shows under the link source whenever `showsTeamsPresenceNote` holds for the link being edited; the ban-risk notice stays off for Teams. On the Accounts page, the note shows in every identity's `Teams` status row.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
+
+  Lib part: `link-notices.test.ts` and `timetable.test.ts` pass (38 tests), web `tsc` clean. The `.tsx` test is deferred with Step 3.
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/teams-presence-note.test.tsx` then `bun run typecheck`
 Expected: PASS (the 8 new tests and plan 02's existing ones); `tsc` reports no errors.
