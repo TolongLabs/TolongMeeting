@@ -6,7 +6,22 @@ import { PIPELINE_DEAD_QUEUE, PIPELINE_QUEUE } from '../../pipeline/src/consumer
 
 /** The handler keys of `JobHandlers`. Each has a queue in `QUEUES` and a row in `JOBS`. */
 export type JobKey =
-  'expand' | 'launchDead' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck'
+  | 'expand'
+  | 'launchDead'
+  | 'launch'
+  | 'signinStart'
+  | 'deleteOccurrence'
+  | 'retention'
+  | 'backup'
+  | 'orgCheck'
+  | 'nativeJobDead'
+  | 'nativeJobCheck'
+  | 'profileDelete'
+  | 'localClaimCheck'
+  | 'localStartDead'
+  | 'localStartCheck'
+  | 'homeRouteDead'
+  | 'homeRouteRecheck'
 
 /** One job's work. `data` is the job body (`{}` for a scheduled job); `signal` aborts when the job expires. */
 export type JobHandler = (data: unknown, signal: AbortSignal) => Promise<void>
@@ -151,6 +166,128 @@ export const JOBS: Record<JobKey, JobSpec> = {
     },
     pollingIntervalSeconds: 5,
     cron: '30 18 * * *'
+  },
+  // Plans 03 and 08 (P0-Q). The handlers are stubs that throw "not implemented yet" until the named task replaces them.
+  // None of these rows has a `cron`, and no code sends to these queues until its task lands, so the stubs never run.
+  // Each task that starts sending (03 T6, 08 T1, T2, T12) is the one that makes the job real; none edits this table
+  // unless a setting is wrong. A dead-letter queue comes before the queue that names it, as `launchDead` does.
+  //
+  // Where a `native-job-check` is spent, the recording would wait in `transcribing` for ever: `native-job-dead` moves it
+  // to `waiting_for_pc`. The same budget as `launch-dead`: a ping that throws (ntfy down) is tried again for an hour.
+  nativeJobDead: {
+    queue: QUEUES.nativeJobDead,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 20,
+      retryDelay: 180,
+      retryBackoff: false
+    },
+    pollingIntervalSeconds: 5
+  },
+  // Sent at +120 s after a native transcription job is created (and again at +300 s): a job no PC has claimed moves the
+  // recording to `waiting_for_pc`. A throw is a Postgres error, which a short backoff retry usually clears.
+  nativeJobCheck: {
+    queue: QUEUES.nativeJobCheck,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 3,
+      retryDelay: 5,
+      retryBackoff: true,
+      retryDelayMax: MINUTE,
+      deadLetter: QUEUES.nativeJobDead
+    },
+    pollingIntervalSeconds: 5
+  },
+  // The member moved an identity to My PC; the handler removes its server-side profile. It throws while a sign-in
+  // container holds the profile lock, so it retries for hours, like `delete-occurrence`. A lost job leaves files only.
+  profileDelete: {
+    queue: QUEUES.profileDelete,
+    queueOptions: {
+      expireInSeconds: 15 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 5,
+      retryDelay: MINUTE,
+      retryBackoff: true,
+      retryDelayMax: 30 * MINUTE
+    },
+    pollingIntervalSeconds: 5
+  },
+  // At offer +120 s: a local-run job no PC has claimed is cancelled and the occurrence is skipped. No dead letter: a
+  // lost claim check leaves the occurrence `starting`, and `local-start-check` at T-10 fails it.
+  localClaimCheck: {
+    queue: QUEUES.localClaimCheck,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 3,
+      retryDelay: 5,
+      retryBackoff: true,
+      retryDelayMax: MINUTE
+    },
+    pollingIntervalSeconds: 5
+  },
+  // Where a `local-start-check` goes when its retries are spent: the occurrence would stay `starting` for ever.
+  localStartDead: {
+    queue: QUEUES.localStartDead,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 20,
+      retryDelay: 180,
+      retryBackoff: false
+    },
+    pollingIntervalSeconds: 5
+  },
+  // At T-10: an occurrence still `starting` on a PC fails (`running` or `failed`).
+  localStartCheck: {
+    queue: QUEUES.localStartCheck,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 3,
+      retryDelay: 5,
+      retryBackoff: true,
+      retryDelayMax: MINUTE,
+      deadLetter: QUEUES.localStartDead
+    },
+    pollingIntervalSeconds: 5
+  },
+  // Where a `home-route-recheck` goes when its retries are spent: the occurrence would stay `scheduled` for ever.
+  homeRouteDead: {
+    queue: QUEUES.homeRouteDead,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 20,
+      retryDelay: 180,
+      retryBackoff: false
+    },
+    pollingIntervalSeconds: 5
+  },
+  // Every 60 s while the member's home exit node is not ready (a Tailscale call, then a launch): the 10 minute expiry
+  // covers both. A recheck that waited a day is for a meeting that is over.
+  homeRouteRecheck: {
+    queue: QUEUES.homeRouteRecheck,
+    queueOptions: {
+      expireInSeconds: 10 * MINUTE,
+      retentionSeconds: DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 3,
+      retryDelay: 5,
+      retryBackoff: true,
+      retryDelayMax: MINUTE,
+      deadLetter: QUEUES.homeRouteDead
+    },
+    pollingIntervalSeconds: 5
   }
 }
 

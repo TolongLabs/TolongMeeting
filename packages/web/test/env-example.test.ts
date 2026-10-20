@@ -19,7 +19,10 @@ test('.env.example names every variable and holds no values', async () => {
     'TM_DATA_ROOT',
     'TM_MASTER_KEY_FILE',
     'TM_PROFILE_ROOT',
-    'TM_PUBLIC_URL'
+    'TM_PUBLIC_URL',
+    'TM_TAILSCALE_CLIENT_ID',
+    'TM_TAILSCALE_CLIENT_SECRET',
+    'TM_WORKER_IMAGE_REF'
   ])
   expect(lines.every((l) => l.endsWith('='))).toBe(true)
 })

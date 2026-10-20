@@ -10,7 +10,16 @@ export const QUEUES = {
   deleteOccurrence: 'delete-occurrence',
   retention: 'retention',
   backup: 'backup',
-  orgCheck: 'org-check'
+  orgCheck: 'org-check',
+  // Plans 03 and 08. Nothing sends to these until their task lands (see the stub handlers in the scheduler).
+  nativeJobCheck: 'native-job-check',
+  nativeJobDead: 'native-job-dead',
+  profileDelete: 'profile-delete',
+  localClaimCheck: 'local-claim-check',
+  localStartCheck: 'local-start-check',
+  localStartDead: 'local-start-dead',
+  homeRouteRecheck: 'home-route-recheck',
+  homeRouteDead: 'home-route-dead'
 } as const
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES]

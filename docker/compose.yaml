@@ -62,10 +62,19 @@ services:
       # Passed through only when set in .env: watchGateFromEnv throws on an empty value, so no ":-" default here.
       TM_WHATSAPP_FROM_SERVER:
       TM_DISCORD_FROM_SERVER:
+      # Plans 03 and 08. Passed through only when set in .env, so a server that does not use My PC or the home route
+      # starts without them; the code that reads one refuses loudly when it is missing or empty.
+      TM_WORKER_IMAGE_REF:
+      TM_TAILSCALE_CLIENT_ID:
+      TM_TAILSCALE_CLIENT_SECRET:
+      TM_TAILSCALE_TAILNET:
       TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
     secrets: [tm_master_key]
-    # Artefacts are served from here, read-only.
-    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}:ro']
+    # Artefacts are served from here, read-only, except the occurrences subtree: web writes the native transcript
+    # (`transcript/native/audio.{txt,srt,json}`, plan 03) and local-run uploads (plan 08) into an occurrence directory.
+    # The second mount is its own mount, so the read-only flag of the first does not reach it, and nothing else under
+    # TM_DATA_ROOT becomes writable. The tree is owned by uid 1000, the uid web runs as.
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}:ro', '${TM_DATA_ROOT}/occurrences:${TM_DATA_ROOT}/occurrences']
     networks: [app, backend]
     # The scheduler applies the database migrations, so the website waits until it is healthy.
     depends_on:
@@ -105,6 +114,12 @@ services:
       # Passed through only when set in .env: watchGateFromEnv throws on an empty value, so no ":-" default here.
       TM_WHATSAPP_FROM_SERVER:
       TM_DISCORD_FROM_SERVER:
+      # Plans 03 and 08. Passed through only when set in .env, so a server that does not use My PC or the home route
+      # starts without them; the code that reads one refuses loudly when it is missing or empty.
+      TM_WORKER_IMAGE_REF:
+      TM_TAILSCALE_CLIENT_ID:
+      TM_TAILSCALE_CLIENT_SECRET:
+      TM_TAILSCALE_TAILNET:
       TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
       DOCKER_PROXY_URL: http://docker-proxy:2375
       RCLONE_CONFIG: /run/secrets/rclone_conf

@@ -22,8 +22,12 @@ import {
   stopJobFileWatchers,
   type LaunchDeps
 } from './launch'
+import { handleHomeRouteDead, handleHomeRouteRecheck } from './home-route/check'
+import { handleLocalClaimCheck, handleLocalStartCheck, handleLocalStartDead } from './local/dispatch'
 import { monitorTick, settleRemuxes } from './monitor'
+import { handleNativeJobCheck, handleNativeJobDead } from './native-check'
 import { runOrgCheck } from './org-check'
+import { handleProfileDelete } from './profile-delete'
 import { deleteOccurrenceData, retentionTick } from './retention'
 import { startSigninContainer } from './signin'
 
@@ -183,6 +187,31 @@ export function buildHandlers(deps: LaunchDeps, env: SchedulerEnv, now: () => Da
     orgCheck: async () => {
       const { ended } = await runOrgCheck(githubApi(), deps.master)
       console.log(`org-check: ${ended.length} member(s) ended`)
+    },
+    // Plans 03 and 08: stubs until their tasks land. Each owner replaces its handler file, not this map.
+    nativeJobCheck: async (data) => {
+      console.log(`native-job-check: ${await handleNativeJobCheck(deps, data, now())}`)
+    },
+    nativeJobDead: async (data) => {
+      console.log(`native-job-dead: ${await handleNativeJobDead(deps, data, now())}`)
+    },
+    profileDelete: async (data) => {
+      console.log(`profile-delete: ${await handleProfileDelete(deps, data, now())}`)
+    },
+    localClaimCheck: async (data) => {
+      console.log(`local-claim-check: ${await handleLocalClaimCheck(deps, data, now())}`)
+    },
+    localStartCheck: async (data) => {
+      console.log(`local-start-check: ${await handleLocalStartCheck(deps, data, now())}`)
+    },
+    localStartDead: async (data) => {
+      console.log(`local-start-dead: ${await handleLocalStartDead(deps, data, now())}`)
+    },
+    homeRouteRecheck: async (data) => {
+      console.log(`home-route-recheck: ${await handleHomeRouteRecheck(deps, data, now())}`)
+    },
+    homeRouteDead: async (data) => {
+      console.log(`home-route-dead: ${await handleHomeRouteDead(deps, data, now())}`)
     }
   }
 }

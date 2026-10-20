@@ -16,7 +16,15 @@ import {
   type JobHandlers,
   type JobKey
 } from '../src/jobs'
-import { EnvError, assertWorkerUid, parseRunArgs, readSchedulerEnv } from '../src/main'
+import type { LaunchDeps } from '../src/launch'
+import {
+  EnvError,
+  assertWorkerUid,
+  buildHandlers,
+  parseRunArgs,
+  readSchedulerEnv,
+  type SchedulerEnv
+} from '../src/main'
 
 afterAll(dropAllTestDbs, 60_000)
 
@@ -97,11 +105,19 @@ test(
           'backup',
           'delete-occurrence',
           'expand',
+          'home-route-dead',
+          'home-route-recheck',
           'launch',
           'launch-dead',
+          'local-claim-check',
+          'local-start-check',
+          'local-start-dead',
+          'native-job-check',
+          'native-job-dead',
           'org-check',
           'pipeline',
           'pipeline-dead',
+          'profile-delete',
           'retention',
           'signin-start'
         ].sort()
@@ -228,6 +244,49 @@ test('two schedulers booting at once apply each migration once', async () => {
   // And a boot after them finds nothing to do.
   await runMigrations(db)
 }, 60_000)
+
+test('every queue sets expiry, retention, deletion and retry; a queue that strands a meeting dead-letters to a queue made first', () => {
+  for (const key of KEYS) {
+    const { queueOptions } = JOBS[key]
+    for (const name of ['expireInSeconds', 'retentionSeconds', 'deleteAfterSeconds', 'retryLimit'] as const) {
+      expect(typeof queueOptions[name], `${key}.${name}`).toBe('number')
+    }
+  }
+  const dead = (key: JobKey) => KEYS.find((k) => JOBS[k].queue === JOBS[key].queueOptions.deadLetter)
+  for (const key of ['launch', 'nativeJobCheck', 'localStartCheck', 'homeRouteRecheck'] as const) {
+    const target = dead(key)
+    expect(target, key).toBeDefined()
+    // The dead-letter queue is created before the queue that names it.
+    expect(KEYS.indexOf(target!)).toBeLessThan(KEYS.indexOf(key))
+  }
+})
+
+test('plan 03 and 08 stubs have no schedule and fail loudly, naming their task, if a job reaches them', async () => {
+  const stubs = {
+    nativeJobCheck: 'plan 03 T6',
+    nativeJobDead: 'plan 03 T6',
+    profileDelete: 'plan 08 T1',
+    localClaimCheck: 'plan 08 T2',
+    localStartCheck: 'plan 08 T2',
+    localStartDead: 'plan 08 T2',
+    homeRouteRecheck: 'plan 08 T12',
+    homeRouteDead: 'plan 08 T12'
+  } as const
+  const handlers = buildHandlers({} as LaunchDeps, {} as SchedulerEnv)
+  for (const [key, task] of Object.entries(stubs) as [keyof typeof stubs, string][]) {
+    expect(JOBS[key].cron, key).toBeUndefined()
+    const error = await handlers[key]({}, new AbortController().signal).catch((e: Error) => e)
+    expect(error, key).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('not implemented yet')
+    expect((error as Error).message).toContain(task)
+  }
+  expect(KEYS.filter((key) => JOBS[key].cron !== undefined).sort()).toEqual([
+    'backup',
+    'expand',
+    'orgCheck',
+    'retention'
+  ])
+})
 
 test('queue names map to their handlers, and pipeline queues have none here', () => {
   expect(KEYS.map((key) => JOBS[key].queue).sort()).toEqual(
