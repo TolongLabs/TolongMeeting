@@ -185,6 +185,8 @@ describe('idempotent heartbeats', () => {
     await handleHeartbeat(f.deps, 'Bearer 1.abc', hb)
     await handleHeartbeat(f.deps, 'Bearer 1.abc', hb)
     expect(f.queue.sent.map((s) => [s.name, s.data])).toEqual([[QUEUES.pipeline, { occurrenceId: f.id }]])
+    // The job waits 20 s, so its first attempt normally finds the worker container gone.
+    expect(f.queue.sent[0]!.opts!.startAfter).toEqual(new Date(f.deps.now.getTime() + 20_000))
   })
 
   test('entering in_meeting and leaving sets the actual times', async () => {

@@ -34,6 +34,8 @@ export const MAX_EVENTS_PER_OCCURRENCE = 20_000
 /** Forms stored for one occurrence. */
 export const MAX_FORMS_PER_OCCURRENCE = 200
 /** An event may be stamped this long after the server's clock. */
+/** How long the pipeline job waits before its first attempt: the worker container is usually gone by then. */
+const PIPELINE_START_DELAY_MS = 20_000
 const FUTURE_SLACK_MS = 5 * 60_000
 /** An event may be stamped this long before the occurrence's scheduled start. */
 const PAST_SLACK_MS = 24 * 3_600_000
@@ -338,7 +340,13 @@ async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, h
         .set({ actualEnd: sql`coalesce(${occurrences.actualEnd}, ${stamp})` })
         .where(eq(occurrences.id, row.id))
     // Sent on the same connection, so the job exists only if this heartbeat commits.
-    if (current === 'transcribing') await queue.send(QUEUES.pipeline, { occurrenceId: row.id }, { db: queueDbOf(tx) })
+    // Starts 20 s later, so the first attempt normally finds the worker container gone (the pipeline refuses to run before).
+    if (current === 'transcribing')
+      await queue.send(
+        QUEUES.pipeline,
+        { occurrenceId: row.id },
+        { db: queueDbOf(tx), startAfter: new Date(now.getTime() + PIPELINE_START_DELAY_MS) }
+      )
   }
 
   for (const [key, event] of unique) {
