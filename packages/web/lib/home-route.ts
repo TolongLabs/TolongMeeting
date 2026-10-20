@@ -217,7 +217,7 @@ const statusOf = (d: TailscaleDevice): HomeRouteStatus =>
  * with the same name never replaces a stored one while it exists. Tailscale does not say which auth key created a node,
  * so these three checks are what binds a node to its member. Another member's device, an untagged one or a lookalike
  * never counts. A ready device is stored with its IPv4 address. A stored node that is missing or has lost its tag is
- * `offline` and stays stored (no other device is adopted in its place; the member's setup flow re-pins). Two unpinned
+ * `offline` and stays stored (no other device is adopted in its place; asking for a new setup key forgets it). Two unpinned
  * devices with the name are not trusted. Throws `TailscaleApiError` when Tailscale can't be reached.
  */
 export async function checkHomeRoute(
@@ -304,7 +304,8 @@ async function viaTailscale(run: () => Promise<Response>): Promise<Response> {
 
 /**
  * `POST /api/home-route/key` for the signed-in member: a single-use setup key and the hostname to register with. The
- * key is in this one response and is never stored. 503 when the OAuth client is not configured, 429 after 5 keys an hour.
+ * key is in this one response and is never stored; the member's stored home node is forgotten (see below). 503 when the
+ * OAuth client is not configured, 429 after 5 keys an hour.
  */
 export async function handleKeyRequest(
   request: Request,
@@ -317,9 +318,14 @@ export async function handleKeyRequest(
   if (deps.keyLimiter.locked(scope.memberId, now)) return fail('too_many_keys', 429)
   // Counted before the call, so a failing Tailscale can't be hammered through this route either.
   deps.keyLimiter.fail(scope.memberId, now)
-  return viaTailscale(async () =>
-    Response.json(await enrolKey(deps.api, deps.master, scope.memberId), { headers: NO_STORE })
-  )
+  return viaTailscale(async () => {
+    const enrolment = await enrolKey(deps.api, deps.master, scope.memberId)
+    // Asking for a setup key is how a member replaces their home device, so the stored node is forgotten here and
+    // nowhere else: the next check adopts the one tagged device with the member's keyed name. While the old device
+    // still exists beside the new one, two devices share the name and neither is trusted until the old one goes.
+    await scopeHomeNodeStore(scope).clear()
+    return Response.json(enrolment, { headers: NO_STORE })
+  })
 }
 
 /** `POST /api/home-route/check` for the signed-in member: `{ status, hostname }`. */

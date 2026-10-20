@@ -379,6 +379,33 @@ describe('the member routes', () => {
     expect(((await create.json()) as { description: string }).description).toBe(`tm-home ${m.memberId.slice(0, 8)}`)
   })
 
+  test('a new setup key forgets the stored node, so a replacement device is adopted once the old one is gone', async () => {
+    const m = await member()
+    const store = scopeHomeNodeStore(m.scope)
+    await store.save({ nodeId: 'old', hostname: m.hostname, ipv4: '100.64.0.1', checkedAt: t0 })
+    const old = device(m.hostname, { nodeId: 'old', addresses: ['100.64.0.1'] })
+    const fresh = device(m.hostname, { nodeId: 'new', addresses: ['100.64.0.2'] })
+    const both = new TailscaleApi(CFG, tsFake([], { devices: [old, fresh] }))
+    expect((await checkHomeRoute(store, both, MASTER, m.memberId)).ipv4).toBe('100.64.0.1')
+    expect((await handleKeyRequest(post(), m.scope, depsOf())).status).toBe(200)
+    expect(await store.get()).toBeNull()
+    expect((await checkHomeRoute(store, both, MASTER, m.memberId)).status).toBe('not_enrolled')
+    const onlyFresh = new TailscaleApi(CFG, tsFake([], { devices: [fresh] }))
+    expect(await checkHomeRoute(store, onlyFresh, MASTER, m.memberId)).toMatchObject({
+      status: 'ready',
+      ipv4: '100.64.0.2'
+    })
+    expect(await store.get()).toMatchObject({ nodeId: 'new' })
+  })
+
+  test('a failed key request keeps the stored node', async () => {
+    const m = await member()
+    const store = scopeHomeNodeStore(m.scope)
+    await store.save({ nodeId: 'old', hostname: m.hostname, ipv4: '100.64.0.1', checkedAt: t0 })
+    expect((await handleKeyRequest(post(), m.scope, depsOf({ apiStatus: 500 }))).status).toBe(502)
+    expect(await store.get()).toMatchObject({ nodeId: 'old' })
+  })
+
   test('a fifth key an hour is the last', async () => {
     const m = await member()
     const deps = depsOf()
@@ -417,11 +444,13 @@ describe('the member routes', () => {
         const res = await handleCheckRequest(post(), m.scope, depsOf({ devices: [device(m.hostname)] }))
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ status: 'ready', hostname: m.hostname })
-        await handleKeyRequest(post(), m.scope, depsOf())
+        expect(await row(m.memberId)).toMatchObject({ ipv4: '100.101.102.103' })
         await handleKeyRequest(post(), m.scope, depsOf({ apiStatus: 401 }))
+        expect(await row(m.memberId)).toMatchObject({ ipv4: '100.101.102.103' })
+        await handleKeyRequest(post(), m.scope, depsOf())
       })
     })
-    expect(await row(m.memberId)).toMatchObject({ ipv4: '100.101.102.103' })
+    expect(await row(m.memberId)).toBeUndefined()
   })
 })
 
