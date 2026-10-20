@@ -212,7 +212,11 @@ test('pings link to the website', async () => {
   const d = fake({ states: ['ended'], signedOut: ['google'] })
   await runOccurrence(withControl(control().url), d)
   const joined = d.pings.find((p) => p.title.startsWith('Joined'))
-  expect(joined?.actions).toEqual([{ label: 'Open meeting page', url: 'https://tolong.example.com/meetings/occ-1' }])
+  expect(joined?.actions).toEqual([
+    { label: 'Open meeting page', url: 'https://tolong.example.com/meetings/occ-1' },
+    { label: 'Make the bot leave', url: 'https://tolong.example.com/meetings/occ-1/leave' },
+    { label: 'Take over', url: 'https://tolong.example.com/meetings/occ-1/take-over' }
+  ])
   const signin = d.pings.find((p) => p.title.startsWith('Alert'))
   expect(signin?.actions).toEqual([
     { label: 'Sign in again', url: 'https://tolong.example.com/accounts/ident-1/signin' }
