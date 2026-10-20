@@ -409,25 +409,28 @@ test.describe('admin', () => {
 
     // The only admin cannot make themselves a member.
     await page.goto('/admin')
-    await members
-      .filter({ hasText: 'ops-admin' })
-      .getByRole('button', { name: /a member$/ })
+    const adminRow = members.filter({ hasText: 'ops-admin' })
+    await adminRow
+      .locator('summary')
+      .filter({ hasText: /a member$/ })
       .click()
+    await adminRow.getByRole('button', { name: /a member$/ }).click()
     await expect(page.getByText('The last admin cannot be removed or made a member.')).toBeVisible()
 
     // Another member can become an admin, and be removed behind a second step.
-    await members
-      .filter({ hasText: 'ops-new' })
-      .getByRole('button', { name: /an admin$/ })
+    const newRow = members.filter({ hasText: 'ops-new' })
+    await newRow
+      .locator('summary')
+      .filter({ hasText: /an admin$/ })
       .click()
+    await newRow.getByRole('button', { name: /an admin$/ }).click()
     await expect(page.getByText('The role is changed.')).toBeVisible()
-    await expect(members.filter({ hasText: 'ops-new' })).toContainText('Admin.')
-    await members.filter({ hasText: 'ops-new' }).locator('summary').click()
-    await expect(
-      members
-        .filter({ hasText: 'ops-new' })
-        .getByText(/This deletes their timetable, accounts, summaries and recordings/)
-    ).toBeVisible()
+    await expect(newRow).toContainText('Admin.')
+    await newRow
+      .locator('summary')
+      .filter({ hasText: /^Remove / })
+      .click()
+    await expect(newRow.getByText(/This deletes their timetable, accounts, summaries and recordings/)).toBeVisible()
     await expectNoAxeViolations(page)
     await page.getByRole('button', { name: 'Yes, remove this member' }).click()
     await expect(page).toHaveURL(/\/admin\?notice=removed$/)

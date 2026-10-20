@@ -51,13 +51,21 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
                 <strong>{member.displayName}</strong> (GitHub: {member.githubLogin}
                 {self && ', you'}). {admin ? 'Admin' : 'Member'}. Time zone {member.timeZone}. Added{' '}
                 <RelativeTime at={member.createdAt} timeZone={me.timeZone} />.
-                <form action={setRoleAction}>
+                <ConfirmForm
+                  action={setRoleAction}
+                  label={admin ? `Make ${member.displayName} a member` : `Make ${member.displayName} an admin`}
+                  question={
+                    admin
+                      ? `Make ${member.displayName}${self ? ' (you)' : ''} a plain member? They will lose access to the admin page.`
+                      : `Make ${member.displayName}${self ? ' (you)' : ''} an admin? They will gain access to the admin page.`
+                  }
+                  confirmLabel={
+                    admin ? `Yes, make ${member.displayName} a member` : `Yes, make ${member.displayName} an admin`
+                  }
+                >
                   <input type="hidden" name="id" value={member.id} />
                   <input type="hidden" name="role" value={admin ? 'member' : 'admin'} />
-                  <button type="submit">
-                    {admin ? `Make ${member.displayName} a member` : `Make ${member.displayName} an admin`}
-                  </button>
-                </form>
+                </ConfirmForm>
                 {ntfyReady && (
                   <ConfirmForm
                     action={removeMemberAction}

@@ -1,13 +1,14 @@
 import { randomBytes } from 'node:crypto'
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import type { Connection } from '@tm/exports/api'
+import { ExportError, type Connection } from '@tm/exports/api'
 import { DELETE as githubDELETE } from '../app/api/connections/github/route'
 import { DELETE as googleDELETE } from '../app/api/connections/google/route'
 import { DELETE as notionDELETE } from '../app/api/connections/notion/route'
 import { connections, type Db } from '../db'
 import { memberExportStores } from '../db/exports'
-import { createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
+import { createTestDb, dropAllTestDbs, seedAuthUser, seedMember, testDbUrl } from '../db/testing'
+import { members } from '../db'
 import { removeConnectionResponse } from '../lib/exports'
 import { createScope } from '../lib/scope'
 import { expectNotLogged } from './no-log'
@@ -125,4 +126,48 @@ test("another member's connection and a missing one are both 404, and a failed r
   expect(lines).toEqual(['connection google revoke failed (status 500)'])
   expect(await forMember(a.memberId).connections.get('google')).toBeNull()
   expect((await removeConnectionResponse(forMember(a.memberId), 'google', providers.fetch)).status).toBe(404)
+})
+
+test('removeConnectionAction catches provider errors and redirects with fixed problem sentence', async () => {
+  process.env.DATABASE_URL = testDbUrl(db)
+  const a = await seedMember(db, { full: false })
+  const authUserId = await seedAuthUser(db)
+  await db.update(members).set({ authUserId }).where(eq(members.id, a.memberId))
+
+  let removalRunner: () => Promise<Response> = async () =>
+    new Response(JSON.stringify({ error: 'failed' }), { status: 500 })
+  mock.module('next/headers', () => ({ headers: async () => new Headers() }))
+  mock.module('../lib/auth', () => ({
+    getAuth: () => ({ api: { getSession: async () => ({ user: { id: authUserId } }) } })
+  }))
+  mock.module('../lib/exports', () => ({
+    exportStores: () => ({}),
+    removeConnectionResponse: async () => removalRunner()
+  }))
+
+  const { removeConnectionAction } = await import('../app/connections/actions')
+
+  const googleForm = new FormData()
+  googleForm.set('kind', 'google')
+
+  // When removal answers non-200 / provider failure:
+  const res1 = await removeConnectionAction(googleForm).catch((e: unknown) => e)
+  expect((res1 as { digest?: string })?.digest).toBe(
+    'NEXT_REDIRECT;replace;/connections?google=google_unavailable;307;'
+  )
+
+  // When removal throws an ExportError:
+  removalRunner = async () => {
+    throw new ExportError('failed', 'provider error')
+  }
+  const res2 = await removeConnectionAction(googleForm).catch((e: unknown) => e)
+  expect((res2 as { digest?: string })?.digest).toBe(
+    'NEXT_REDIRECT;replace;/connections?google=google_unavailable;307;'
+  )
+
+  // When removal throws an unexpected error, it rethrows:
+  removalRunner = async () => {
+    throw new Error('unexpected crash')
+  }
+  await expect(removeConnectionAction(googleForm)).rejects.toThrow('unexpected crash')
 })

@@ -1,6 +1,12 @@
 'use server'
 
-import { oauthClientFromEnv, saveGitHubConnection, setGoogleFolder, type ConnectionKind } from '@tm/exports/api'
+import {
+  ExportError,
+  oauthClientFromEnv,
+  saveGitHubConnection,
+  setGoogleFolder,
+  type ConnectionKind
+} from '@tm/exports/api'
 import { redirect } from 'next/navigation'
 import { exportStores, removeConnectionResponse } from '../../lib/exports'
 import { providerFetch } from '../../lib/provider-fetch'
@@ -58,15 +64,32 @@ export async function defaultFolderAction(): Promise<FolderFormState> {
   return { status: 'error', message: messageOf(result.body) ?? TRY_AGAIN }
 }
 
+function failureRedirect(kind: ConnectionKind): never {
+  if (kind === 'google') redirect('/connections?google=google_unavailable')
+  if (kind === 'notion') redirect('/connections?notion=notion_unavailable')
+  redirect('/connections?notice=not-connected')
+}
+
 /** Removes the connection named by the form (`kind`), asks the provider to revoke where it can, and goes back. */
 export async function removeConnectionAction(formData: FormData): Promise<void> {
   const scope = await requireMember()
   const kind = KINDS.find((k) => k === formData.get('kind'))
   if (!kind) redirect('/connections')
-  const response = await removeConnectionResponse(exportStores(scope), kind)
+  let response: Response
+  try {
+    response = await removeConnectionResponse(exportStores(scope), kind)
+  } catch (e) {
+    if (e instanceof ExportError) failureRedirect(kind)
+    throw e
+  }
   if (response.status === 404) redirect('/connections?notice=not-connected')
-  const message = messageOf(await response.json())
-  if (response.status !== 200 || message === null)
-    throw new Error(`removing a ${kind} connection answered ${response.status}`)
+  let body: unknown = null
+  try {
+    body = await response.json()
+  } catch {
+    // If response body was not valid JSON, messageOf returns null.
+  }
+  const message = messageOf(body)
+  if (response.status !== 200 || message === null) failureRedirect(kind)
   redirect(`/connections?notice=${removalNoticeKey(kind, message)}`)
 }
