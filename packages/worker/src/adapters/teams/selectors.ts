@@ -58,6 +58,9 @@ export const TeamsSelectorsSchema = z
         removed: pattern
       })
       .strict(),
+    // A notice whose text matches one of these asks for something (or says something is on offer): an allowlisted button
+    // in it is not a plain acknowledgement and is left alone. The breakout prompt text is checked as well.
+    noticeDanger: z.array(z.object({ name: z.string().min(1), source: pattern })).min(1),
     // Exact button texts the adapter may click inside a notice.
     noticeAllowlist: z.array(z.string().min(1)).min(1)
   })

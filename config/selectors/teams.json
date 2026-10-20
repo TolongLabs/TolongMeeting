@@ -46,5 +46,17 @@
     "ended": "the meeting has ended|you left the meeting",
     "removed": "removed you from the meeting|you.ve been removed from this meeting"
   },
+  "noticeDanger": [
+    { "name": "breakout", "source": "\\bbreakout\\b" },
+    { "name": "join", "source": "\\bjoin\\b" },
+    { "name": "start video", "source": "(start|turn on) (my |your )?(video|camera)" },
+    { "name": "allow", "source": "\\ballow\\b" },
+    { "name": "unmute", "source": "\\bunmute\\b" },
+    { "name": "share", "source": "\\bshare\\b" },
+    {
+      "name": "record",
+      "source": "record\\w*[^.\\n]*(consent|permission|agree|request)|(consent|permission|agree|request\\w*)[^.\\n]*record"
+    }
+  ],
   "noticeAllowlist": ["Got it", "OK", "Dismiss"]
 }

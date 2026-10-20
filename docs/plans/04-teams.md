@@ -605,11 +605,11 @@ git commit -m "feat(worker): read teams lobby and meeting state"
   - `connectTeamsOutputAudio(page: Page, sel: TeamsSelectors): Promise<void>`.
   - `leaveTeams(page: Page, sel: TeamsSelectors): Promise<void>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `TeamsFixtureConfig.notices: { role: 'dialog' | 'alert' | 'status'; text: string; button: string }[]` (each rendered as a container with that role, its text and one button), `incomingAudioOff: boolean` (renders `[data-tid='incoming-audio-off-banner']`; "More" opens a `role="menu"` with "Turn on incoming audio", which clears the banner, plus "Turn off incoming video" and "Start recording" decoys) and `organiser: boolean` (clicking `#hangup-button` opens a `role="menu"` with "End meeting" and "Leave"; otherwise it switches to `left`). Give the chat pane a header button `aria-label="Close"`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -700,23 +700,23 @@ test('leaves without ending the meeting, even as organiser', async ({ page }) =>
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/controls.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/controls`.
 
-- [ ] **Step 4: Implement the four functions in `packages/worker/src/adapters/teams/controls.ts`**
+- [x] **Step 4: Implement the four functions in `packages/worker/src/adapters/teams/controls.ts`**
 
 - `dismissTeamsNotices`: for each visible `noticeContainers` element that isn't inside `chatPane` or `rosterPane` and whose text matches no `texts.breakoutPrompt`, click each visible button whose trimmed text or `aria-label` equals an entry of `noticeAllowlist` (case-insensitive).
 - `connectTeamsOutputAudio`: only when `incomingAudioOff` is visible, click `moreButton`, then the menu item whose text matches `texts.incomingAudioOn`, and wait up to 5 seconds for the banner to go. It never touches device controls. The sink-level check after it is 01a's.
 - `leaveTeams`: click `hangupButton`; if a `role="menu"` appears within 2 seconds, click the item whose text matches `texts.hangupLeave`; then wait up to 15 seconds for `endScreen`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/controls.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/controls.ts
