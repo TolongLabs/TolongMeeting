@@ -1,9 +1,11 @@
 import { app, Notification, powerSaveBlocker, safeStorage, session, shell } from 'electron'
 import { APP_USER_MODEL_ID } from '../app-id'
-import { resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
+import { KeepAwake } from '../keep-awake'
+import { jobsDir, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
 import { SecretStore } from '../secrets'
 import { loadSettings } from '../settings'
 import { StateStore } from '../state'
+import { Loops } from './loops'
 import { electronKeepAwake, electronNotifier, electronShell, secureSafeStorage, type Ports } from './ports'
 
 /** The default server address, injected at build time from `TM_PUBLIC_URL` (see `scripts/build.ts`). */
@@ -23,6 +25,8 @@ function guardWebContents(): void {
   })
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, allow) => allow(false))
 }
+
+let stopping = false
 
 async function main(): Promise<void> {
   const paths = resolvePaths({
@@ -47,6 +51,9 @@ async function main(): Promise<void> {
   app.on('window-all-closed', () => {})
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => app.quit())
 
+  // A bug in one loop is reported, not allowed to take the whole app down without a word.
+  process.on('unhandledRejection', (reason) => console.error('unhandled rejection:', reason))
+
   await app.whenReady()
   guardWebContents()
 
@@ -60,8 +67,36 @@ async function main(): Promise<void> {
   const state = new StateStore(stateFile(paths))
   const secrets = new SecretStore(secretsFile(paths), ports.safe)
 
-  // Later tasks start their loops here with `ports`, `state` and `secrets`: pairing, ntfy, summaries, commands and
-  // the native job runner.
+  // TODO(figma-gate): `openPairing` and `openSettings` open the pairing and settings windows once they exist.
+  const loops = new Loops({
+    settings,
+    state,
+    secrets,
+    notifier: ports.notifier,
+    keepAwake: new KeepAwake(powerSaveBlocker),
+    shell: ports.shell,
+    jobsDir: jobsDir(paths),
+    openPairing: () => console.error('This PC was unpaired. Pair it again (the pairing window is not built yet).'),
+    openSettings: () => console.error('Set the whisper folder in settings (the settings window is not built yet).')
+  })
+
+  // Quit (including SIGTERM) first stops the loops in reverse order and waits for the runner to let go.
+  let quitReady = false
+  app.on('before-quit', (event) => {
+    if (quitReady) return
+    event.preventDefault()
+    if (stopping) return
+    stopping = true
+    void loops
+      .stop()
+      .catch((e: unknown) => console.error(e))
+      .finally(() => {
+        quitReady = true
+        app.quit()
+      })
+  })
+
+  if (!(await loops.start())) console.log('tm-companion: this PC is not paired; no loop started')
   console.log(`tm-companion ready: summaries in ${settings.summariesDir}`)
 }
 

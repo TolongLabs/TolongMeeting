@@ -9,13 +9,16 @@ export interface CompanionState {
   lastEventId: number
   /** Where to follow the member's ntfy topic. Set by pairing; the ntfy token lives in the `SecretStore`, not here. */
   ntfy?: { url: string; topic: string }
+  /** Where each summary was saved, by occurrence id (N17), so a name clash with another occurrence can be told apart. */
+  summaryFiles?: Record<string, string>
 }
 
 const StateSchema = z.strictObject({
   ntfyLastId: z.string().min(1).max(256).nullable(),
   summariesAfter: z.iso.datetime({ offset: true }).nullable(),
   lastEventId: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
-  ntfy: z.strictObject({ url: z.url().max(2048), topic: z.string().min(1).max(256) }).optional()
+  ntfy: z.strictObject({ url: z.url().max(2048), topic: z.string().min(1).max(256) }).optional(),
+  summaryFiles: z.record(z.string().min(1).max(64), z.string().min(1).max(4096)).optional()
 }) satisfies z.ZodType<CompanionState>
 
 const INITIAL: CompanionState = { ntfyLastId: null, summariesAfter: null, lastEventId: 0 }

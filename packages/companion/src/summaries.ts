@@ -9,6 +9,8 @@ import type { StateStore } from './state'
 const PAGE = 50
 /** Longest file name kept, in UTF-16 units (the Windows path limit counts these), extension included. */
 const MAX_NAME = 200
+/** How many files may share one name before the sync gives up. */
+const MAX_CLASHES = 100
 const FORBIDDEN = /[<>:"/\\|?*\p{Cc}]/gu
 /** A device name by itself, or before the first dot, with or without an extension (`CON.md`, `nul .txt`). */
 const RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/i
@@ -53,9 +55,24 @@ async function isFree(path: string): Promise<boolean> {
   }
 }
 
+/** `name (2).md` for `name.md`, cut so the whole name stays within `MAX_NAME` units. */
+function numbered(name: string, n: number): string {
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 ? name.slice(dot) : ''
+  const suffix = ` (${n})`
+  let stem = (dot > 0 ? name.slice(0, dot) : name).slice(0, MAX_NAME - ext.length - suffix.length)
+  if (/[\uD800-\uDBFF]$/.test(stem)) stem = stem.slice(0, -1)
+  return `${stem}${suffix}${ext}`
+}
+
+/** A Windows path compares without case. */
+const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
+
 /**
  * Downloads the summaries ready since the stored time and writes each to the folder under a Windows-safe name.
- * A name that already exists is skipped, never overwritten, so a repeat download writes nothing. Each item advances
+ * A name that already exists is skipped, never overwritten, so a repeat download writes nothing; but when the name
+ * holds a summary of a different occurrence (kept in `state.summaryFiles`), the new one is saved as `<name> (2).md`
+ * (then `(3)`, and so on). Each item advances
  * `summariesAfter` once it is handled, so an interrupted sync resumes where it stopped. Returns the paths newly written.
  */
 export async function syncSummaries(d: SummarySyncDeps): Promise<string[]> {
@@ -68,15 +85,29 @@ export async function syncSummaries(d: SummarySyncDeps): Promise<string[]> {
     const page = await d.api.summaries(after)
     for (const item of page) {
       const name = windowsSafeFileName(item.fileName)
-      const target = join(root, name)
-      if (dirname(target) !== root || name === '.' || name === '..') {
+      if (dirname(join(root, name)) !== root || name === '.' || name === '..') {
         throw new Error('A summary file name would leave the summaries folder')
       }
-      if (await isFree(target)) {
+      const files = { ...d.state.get().summaryFiles }
+      const saved = files[item.occurrenceId]
+      const heldByOther = (path: string) =>
+        Object.entries(files).some(([id, p]) => id !== item.occurrenceId && same(p, path))
+      let target: string | null = null
+      if (saved === undefined || (await isFree(saved))) {
+        for (let n = 1; n <= MAX_CLASHES && target === null; n++) {
+          const candidate = join(root, n === 1 ? name : numbered(name, n))
+          if (await isFree(candidate)) target = candidate
+          else if (!heldByOther(candidate))
+            break // the member's own file, or this summary again: leave it
+          else if (n === MAX_CLASHES) throw new Error('Too many summaries share one file name')
+        }
+      }
+      if (target !== null) {
         await writeFileAtomic(target, await d.api.summary(item.occurrenceId), 0o600)
         written.push(target)
-      }
-      await d.state.update({ summariesAfter: item.readyAt })
+        files[item.occurrenceId] = target
+        await d.state.update({ summaryFiles: files, summariesAfter: item.readyAt })
+      } else await d.state.update({ summariesAfter: item.readyAt })
     }
     if (page.length < PAGE) return written
     const last = page[page.length - 1]!.readyAt

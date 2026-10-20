@@ -256,3 +256,59 @@ describe('showSummaryNotification', () => {
     expect(opened).toEqual(['C:\\S'])
   })
 })
+
+describe('syncSummaries name clashes (N17)', () => {
+  test('a different occurrence with the same name is saved as "<name> (2).md", never over the first', async () => {
+    const base = await tmpDir()
+    const dir = join(base, 'Meeting summaries')
+    const state = await stateIn(base)
+    const name = '2026-10-21 1400 Data Mining.md'
+    const api = apiFor([
+      { occurrenceId: 'occ-a', fileName: name, readyAt: '2026-10-21T08:00:00.000Z', text: 'first' },
+      { occurrenceId: 'occ-b', fileName: name, readyAt: '2026-10-21T08:00:30.000Z', text: 'second' },
+      { occurrenceId: 'occ-c', fileName: name, readyAt: '2026-10-21T08:01:00.000Z', text: 'third' }
+    ])
+    const root = await realpath((await mkdir(dir, { recursive: true }), dir))
+    expect(await syncSummaries({ api, dir, state })).toEqual([
+      join(root, name),
+      join(root, '2026-10-21 1400 Data Mining (2).md'),
+      join(root, '2026-10-21 1400 Data Mining (3).md')
+    ])
+    expect(await readFile(join(dir, name), 'utf8')).toBe('first')
+    expect(await readFile(join(dir, '2026-10-21 1400 Data Mining (2).md'), 'utf8')).toBe('second')
+    expect(state.get().summaryFiles).toEqual({
+      'occ-a': join(root, name),
+      'occ-b': join(root, '2026-10-21 1400 Data Mining (2).md'),
+      'occ-c': join(root, '2026-10-21 1400 Data Mining (3).md')
+    })
+  })
+
+  test('a repeat download of a numbered summary writes nothing', async () => {
+    const base = await tmpDir()
+    const dir = join(base, 'Meeting summaries')
+    const name = '2026-10-21 1400 Data Mining.md'
+    const api = apiFor([
+      { occurrenceId: 'occ-a', fileName: name, readyAt: '2026-10-21T08:00:00.000Z', text: 'first' },
+      { occurrenceId: 'occ-b', fileName: name, readyAt: '2026-10-21T08:00:30.000Z', text: 'second' }
+    ])
+    const state = await stateIn(base)
+    expect(await syncSummaries({ api, dir, state })).toHaveLength(2)
+    await state.update({ summariesAfter: START })
+    expect(await syncSummaries({ api, dir, state })).toEqual([])
+    expect((await readdir(dir)).sort()).toEqual(['2026-10-21 1400 Data Mining (2).md', name])
+  })
+
+  test('the numbered name keeps the 200 unit limit and the extension', async () => {
+    const base = await tmpDir()
+    const dir = join(base, 'Meeting summaries')
+    const long = `${'x'.repeat(197)}.md`
+    const api = apiFor([
+      { occurrenceId: 'occ-a', fileName: long, readyAt: '2026-10-21T08:00:00.000Z', text: 'a' },
+      { occurrenceId: 'occ-b', fileName: long, readyAt: '2026-10-21T08:00:30.000Z', text: 'b' }
+    ])
+    const written = await syncSummaries({ api, dir, state: await stateIn(base) })
+    const second = written[1]!.slice(written[1]!.lastIndexOf('/') + 1)
+    expect(second.length).toBe(200)
+    expect(second.endsWith(' (2).md')).toBe(true)
+  })
+})
