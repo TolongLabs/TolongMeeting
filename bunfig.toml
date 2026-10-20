@@ -1,3 +1,7 @@
+[install]
+# 14 days, in seconds: never resolve a package version published more recently.
+minimumReleaseAge = 1209600
+
 [test]
 # *.spec.ts files are Playwright Test specs (bunx playwright test -c packages/worker/playwright.config.ts).
 # test/image/ holds bun tests that run only inside the worker image (TM_IN_IMAGE=1).

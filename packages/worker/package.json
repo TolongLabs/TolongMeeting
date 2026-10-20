@@ -13,11 +13,11 @@
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
-    "@types/node": "^24.0.0",
-    "@types/qrcode": "^1.5.6",
-    "@types/ws": "^8.18.2",
-    "qrcode": "^1.5.4",
-    "ws": "^8.22.0"
+    "@types/node": "24.19.2",
+    "@types/qrcode": "1.5.6",
+    "@types/ws": "8.18.2",
+    "qrcode": "1.5.4",
+    "ws": "8.22.0"
   },
   "dependencies": {
     "@tm/ai": "workspace:*",
@@ -25,8 +25,8 @@
     "@tm/notify": "workspace:*",
     "playwright": "1.64.1",
     "sharp": "0.35.5",
-    "tar": "^7.5.22",
-    "zod": "^4.6.7",
+    "tar": "7.5.22",
+    "zod": "4.6.7",
     "zxing-wasm": "3.1.6"
   }
 }
