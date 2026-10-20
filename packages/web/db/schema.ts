@@ -20,6 +20,8 @@ import {
   type PgTable
 } from 'drizzle-orm/pg-core'
 import type {
+  CompanionJobKind,
+  CompanionJobState,
   EntryType,
   EventType,
   FormProvider,
@@ -141,22 +143,26 @@ export const EXPORT_ERROR_CODES = [
 export type ExportErrorCode = (typeof EXPORT_ERROR_CODES)[number]
 export const SIGNIN_MODES = ['worker', 'container'] as const
 export const SIGNIN_STATES = ['starting', 'ready', 'ended'] as const
-// Plan 03 (native transcription) and plan 08 (`local_run`). Plain lists here: the matching core unions come with the
-// companion contracts (`packages/core/src/companion.ts`), and `satisfies` can join them once those land.
-export const COMPANION_JOB_KINDS = ['native_transcription', 'local_run'] as const
-export type CompanionJobKind = (typeof COMPANION_JOB_KINDS)[number]
-export const COMPANION_JOB_STATES = ['pending', 'claimed', 'done', 'failed', 'cancelled'] as const
-export type CompanionJobState = (typeof COMPANION_JOB_STATES)[number]
+export const COMPANION_JOB_KINDS = ['native_transcription', 'local_run'] as const satisfies readonly CompanionJobKind[]
+export const COMPANION_JOB_STATES = [
+  'pending',
+  'claimed',
+  'done',
+  'failed',
+  'cancelled'
+] as const satisfies readonly CompanionJobState[]
 
 const completeLists: [
   Covers<RunLocation, typeof RUN_LOCATIONS>,
+  Covers<CompanionJobKind, typeof COMPANION_JOB_KINDS>,
+  Covers<CompanionJobState, typeof COMPANION_JOB_STATES>,
   Covers<EntryType, typeof ENTRY_TYPES>,
   Covers<TranscriptionMode, typeof TRANSCRIPTION_MODES>,
   Covers<OccurrenceState, typeof OCCURRENCE_STATES>,
   Covers<EventType, typeof EVENT_TYPES>,
   Covers<FormSource, typeof FORM_SOURCES>,
   Covers<FormState, typeof FORM_STATES>
-] = [true, true, true, true, true, true, true]
+] = [true, true, true, true, true, true, true, true, true]
 void completeLists
 
 // `column in ('a', 'b')`; the values are our own constants, so they are inlined (a check cannot take parameters).

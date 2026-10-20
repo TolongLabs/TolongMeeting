@@ -1,8 +1,9 @@
-import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'drizzle-kit'
 
+// Run drizzle-kit from packages/web (`bun run db:generate`): drizzle-kit resolves these paths against the working
+// directory, and it breaks an absolute `out` by prefixing it with `./`.
 export default defineConfig({
   dialect: 'postgresql',
-  schema: fileURLToPath(new URL('./db/schema.ts', import.meta.url)),
-  out: fileURLToPath(new URL('./db/migrations', import.meta.url))
+  schema: './db/schema.ts',
+  out: './db/migrations'
 })
