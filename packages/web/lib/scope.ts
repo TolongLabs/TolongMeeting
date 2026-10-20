@@ -5,7 +5,7 @@ import type { PgTable } from 'drizzle-orm/pg-core'
 import { ACTIVE_STATES, ControlCommandSchema, type ControlCommand } from '@tm/core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
-import { queueDbOf, type Queue, type QueueDb } from '../db/queues'
+import { queueDbOf, type Queue, type QueueName, type SendOpts } from '../db/queues'
 import {
   artefacts,
   auth_account,
@@ -42,8 +42,16 @@ export interface MemberScope {
   lock(name: string): Promise<void>
   /** Like `select`, but locks the rows it returns (`for update`) until the transaction ends. Throws outside `transaction`. */
   selectForUpdate<T extends MemberOwnedTable>(table: T, where: SQL): Promise<T['$inferSelect'][]>
-  /** The connection of this transaction for `SendOpts.db`, so a queued job commits or rolls back with it. Throws outside `transaction`. */
-  queueDb(): QueueDb
+  /**
+   * Sends a job on this transaction's connection, so it commits or rolls back with it. Throws outside `transaction`.
+   * The connection itself is never handed out: `lib` code gets no raw SQL executor through the scope.
+   */
+  sendInTransaction(
+    queue: Queue,
+    name: QueueName,
+    data: Record<string, unknown>,
+    opts?: Omit<SendOpts, 'db'>
+  ): Promise<string | null>
   /**
    * Queues a command for this member's running worker, to be returned by its next heartbeat. The append is one
    * statement, so a heartbeat that clears the queue at the same moment can't lose it or replay an old command. Does
@@ -143,9 +151,9 @@ export function createScope(db: Db, memberId: string, inTransaction = false): Me
         .for('update')) as never
     },
 
-    queueDb() {
-      if (!inTransaction) throw new Error('queueDb() is only valid inside scope.transaction()')
-      return queueDbOf(db)
+    async sendInTransaction(queue, name, data, opts) {
+      if (!inTransaction) throw new Error('sendInTransaction() is only valid inside scope.transaction()')
+      return await queue.send(name, data, { ...opts, db: queueDbOf(db) })
     },
 
     async sendCommand(occurrenceId, command) {

@@ -60,7 +60,7 @@ export async function setRunLocation(
       const deviceId = parsed.location === 'local' ? parsed.deviceId : null
       const unchanged = identity.runLocation === parsed.location && identity.localDeviceId === deviceId
       const queueDelete = async () => {
-        if (parsed.location === 'local') await queue.send(QUEUES.profileDelete, { identityId }, { db: s.queueDb() })
+        if (parsed.location === 'local') await s.sendInTransaction(queue, QUEUES.profileDelete, { identityId })
       }
       if (unchanged) {
         await queueDelete()
