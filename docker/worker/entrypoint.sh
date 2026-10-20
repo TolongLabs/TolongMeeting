@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Modes: selfcheck | test <playwright filter> | unit <bun test path> | seed --job <path> | --job <path> | --signin <path>
+# Modes: selfcheck | test <playwright filter> | unit <bun test path> | seed --job <path> | smoke --job <path> | --job <path> | --signin <path>
 set -euo pipefail
 
 usage() {
-  echo "usage: entrypoint.sh selfcheck | test <filter> | unit <path> | seed --job <path> | --job <path> | --signin <path>" >&2
+  echo "usage: entrypoint.sh selfcheck | test <filter> | unit <path> | seed --job <path> | smoke --job <path> | --job <path> | --signin <path>" >&2
   exit 2
 }
 
@@ -11,7 +11,7 @@ usage() {
 mode=$1
 case "$mode" in
   selfcheck | test | unit) ;;
-  seed) [ $# -eq 3 ] && [ "$2" = "--job" ] || usage ;;
+  seed | smoke) [ $# -eq 3 ] && [ "$2" = "--job" ] || usage ;;
   --job | --signin) [ $# -eq 2 ] || usage ;;
   *) usage ;;
 esac
@@ -87,6 +87,7 @@ case "$mode" in
   test) shift; run bunx playwright test -c packages/worker/playwright.config.ts "$@" ;;
   unit) shift; run bun test "$@" ;;
   seed) run node packages/worker/dist/cli.js --seed --job "$3" ;;
+  smoke) run node packages/worker/dist/cli.js --smoke --job "$3" ;;
   --job) run_job "$2" ;;
   # A sign-in container (no meeting): the member signs in through the remote view, then a checkpoint is written.
   --signin) run node packages/worker/dist/signin.js "$2" ;;

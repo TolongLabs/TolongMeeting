@@ -22,7 +22,7 @@ const job = async (content: string) => {
 test('usage and invalid jobs never echo secrets', async () => {
   const a = run()
   expect(a.exitCode).toBe(64)
-  expect(a.stderr.toString()).toContain('usage: tm-worker [--seed] --job <path>')
+  expect(a.stderr.toString()).toContain('usage: tm-worker [--seed | --smoke] --job <path>')
 
   const b = run(
     '--job',
@@ -40,6 +40,9 @@ test('usage and invalid jobs never echo secrets', async () => {
 test('unknown flags and a missing job file are refused', () => {
   expect(run('--job').exitCode).toBe(64)
   expect(run('--seed').exitCode).toBe(64)
+  expect(run('--smoke').exitCode).toBe(64)
+  expect(run('--seed', '--smoke', '--job', 'x').exitCode).toBe(64)
   expect(run('--bogus', '--job', 'x').exitCode).toBe(64)
   expect(run('--job', join(dir, 'missing.json')).exitCode).toBe(65)
+  expect(run('--smoke', '--job', join(dir, 'missing.json')).exitCode).toBe(65)
 })

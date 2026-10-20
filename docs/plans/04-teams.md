@@ -1576,7 +1576,7 @@ No earlier plan builds the design's monthly smoke test, so this task builds its 
   - `runSmokeEntry(page: Page, entry: SmokeEntry, url: string): Promise<{ missing: string[] }>` in `run.ts`.
   - CLI `tm-worker --smoke --job <path>` and `run-job.sh <job> smoke`, where the job's fixed link is the platform's standing test meeting; exit code 0 when nothing is missing, 1 otherwise.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/smoke/entries.test.ts
@@ -1630,12 +1630,12 @@ test('fails loudly, naming the key, when the roster button is gone', async ({ pa
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/smoke/entries.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/teams/smoke.spec.ts`
 Expected: FAIL, modules `./entries` and `../../src/smoke/run` not found.
 
-- [ ] **Step 3: Build the runner, the entries and the monthly run**
+- [x] **Step 3: Build the runner, the entries and the monthly run**
 
 Add `TeamsFixtureConfig.omit: string[]` (selectors whose elements the fixture leaves out). `runSmokeEntry` opens `adapterFor(url).normaliseLink(url)`, calls `join` (no guest name) and, on `lobby`, `waitUntilAdmitted` for at most 2 minutes; then it checks `inMeeting`, runs `assertDevicesOff`, `connectOutputAudio` and `ensureLayout`, checks `afterLayout`, runs `readChat`, `sweepChat`, `participantCount` and `meetingState` (which must be `in_meeting`), checks `afterSweep`, runs `leave` and checks `afterLeave`. A key is missing when its selector from `entry.selectors()` matches no element in any frame of the page (a Playwright locator, so `zoom.json`'s `text=` and `:text-matches` selectors work); a step that throws or gives an unexpected result adds `step:<name>`; the run goes on after a failure so that one report lists everything. The entries:
 
@@ -1674,12 +1674,12 @@ export const teamsSmoke: SmokeEntry = {
 
 `tm-worker --smoke --job <path>` prepares and launches the job's profile as `--seed` does, runs the entry for the platform of `entry.link.url` on the stage, prints the missing keys, and when any are missing sends `alertPing('Smoke test: <platform>', 'join_failed', 'missing ' + missing.join(', '))` to the job's ntfy topic and exits 1. `docker/worker/smoke.crontab` runs `run-job.sh <job> smoke` at 03:00 on the 1st of each month for each platform's smoke job (one line per platform, job paths as placeholders). The Teams test meeting is a standing meeting organised by the TolongLabs test account, with "Who can bypass the lobby" set to everyone and one message posted in its chat (Teams keeps meeting chat, so the chat checkpoints always have an item to find).
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: `bun test packages/worker/src/smoke/entries.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/teams/smoke.spec.ts`
 Expected: PASS (1 and 2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/teams docs/TRD.md

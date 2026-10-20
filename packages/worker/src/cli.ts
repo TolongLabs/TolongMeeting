@@ -2,23 +2,24 @@ import { readFile } from 'node:fs/promises'
 import { JobError, parseJob, type JobConfig } from '@tm/core'
 import { runOccurrence } from './run'
 import { seedProfile } from './seed'
+import { smokeJob } from './smoke/job'
 
-const USAGE = 'usage: tm-worker [--seed] --job <path>'
+const USAGE = 'usage: tm-worker [--seed | --smoke] --job <path>'
 
-// Exit codes: 0 completed, 1 any other outcome or a crash, 64 usage, 65 invalid job, 143 stopped by SIGTERM or SIGINT
+// Exit codes: 0 completed (a smoke test with nothing missing), 1 any other outcome or a crash, 64 usage, 65 invalid job, 143 stopped by SIGTERM or SIGINT
 // (128 + 15, the shell's code for a process ended by SIGTERM: a stop is not a normal end and not a failure).
 const EXIT = { completed: 0, other: 1, usage: 64, invalid: 65, terminated: 143 } as const
 
-function parseArgs(argv: string[]): { seed: boolean; job: string } | null {
-  let seed = false
+function parseArgs(argv: string[]): { mode: 'run' | 'seed' | 'smoke'; job: string } | null {
+  let mode: 'run' | 'seed' | 'smoke' = 'run'
   let job: string | null = null
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    if (arg === '--seed') seed = true
+    if ((arg === '--seed' || arg === '--smoke') && mode === 'run') mode = arg === '--seed' ? 'seed' : 'smoke'
     else if (arg === '--job' && job === null && argv[i + 1] !== undefined) job = argv[++i]!
     else return null
   }
-  return job === null ? null : { seed, job }
+  return job === null ? null : { mode, job }
 }
 
 // Reads and validates the job. A message names the failing paths only: the file holds keys and tokens.
@@ -54,9 +55,15 @@ async function main(): Promise<number> {
   process.once('SIGTERM', stop)
   process.once('SIGINT', stop)
 
-  if (args.seed) {
+  if (args.mode === 'seed') {
     await seedProfile(cfg, { signal: abort.signal })
     return EXIT.completed
+  }
+  if (args.mode === 'smoke') {
+    // Only selector key names and step names are printed.
+    const { platform, missing } = await smokeJob(cfg, { signal: abort.signal })
+    console.error(missing.length === 0 ? `smoke: ${platform} ok` : `smoke: ${platform} missing ${missing.join(', ')}`)
+    return missing.length === 0 ? EXIT.completed : EXIT.other
   }
   const outcome = await runOccurrence(cfg, { signal: abort.signal })
   console.error(`outcome: ${outcome.result}${outcome.reason ? ` (${outcome.reason})` : ''}`)

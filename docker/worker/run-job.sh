@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Starts one worker container. Usage: run-job.sh <job.json> [seed]
+# Starts one worker container. Usage: run-job.sh <job.json> [seed|smoke]
 # Needs TM_DATA_ROOT, TM_PROFILE_ROOT and TM_MASTER_KEY_FILE in the environment (absolute paths).
 # The container sees only this identity's profile directory and this job's dataDir, each at its host path.
 # TM_WORKER_IMAGE_REF overrides the image (default tm-worker:dev).
 set -euo pipefail
 
 usage() {
-  echo "usage: run-job.sh <job.json> [seed]" >&2
+  echo "usage: run-job.sh <job.json> [seed|smoke]" >&2
   exit 2
 }
 
 [ $# -ge 1 ] && [ $# -le 2 ] || usage
 job=$(realpath -- "$1")
 mode=${2:-run}
-case "$mode" in run | seed) ;; *) usage ;; esac
+case "$mode" in run | seed | smoke) ;; *) usage ;; esac
 
 : "${TM_DATA_ROOT:?set TM_DATA_ROOT}" "${TM_PROFILE_ROOT:?set TM_PROFILE_ROOT}" "${TM_MASTER_KEY_FILE:?set TM_MASTER_KEY_FILE}"
 for var in TM_DATA_ROOT TM_PROFILE_ROOT TM_MASTER_KEY_FILE; do
@@ -64,6 +64,9 @@ args=(
 )
 if [ "$mode" = seed ]; then args+=(-p 127.0.0.1:5900:5900); fi
 args+=("${TM_WORKER_IMAGE_REF:-tm-worker:dev}")
-if [ "$mode" = seed ]; then args+=(seed --job /job/job.json); else args+=(--job /job/job.json); fi
+case "$mode" in
+  run) args+=(--job /job/job.json) ;;
+  *) args+=("$mode" --job /job/job.json) ;;
+esac
 
 exec docker "${args[@]}"
