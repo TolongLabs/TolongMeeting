@@ -27,6 +27,9 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
+      # The local-run tests stand in a host ffmpeg for the ffmpeg the app runs in Docker.
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
       - name: Companion tests
         run: bun test packages/companion --timeout 120000
       - name: Package the app

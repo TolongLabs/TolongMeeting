@@ -40,6 +40,7 @@ import { startRelay } from '../src/local/relay'
 import { localPaths } from '../src/local/vault'
 import { SecretStore, type SafeStorageLike } from '../src/secrets'
 import { StateStore } from '../src/state'
+import { fileURLToPath } from 'node:url'
 
 const REF = 'ghcr.io/tl/tolongmeeting-worker:1.0.0'
 const OCC = '11111111-1111-4111-8111-111111111111'
@@ -90,7 +91,7 @@ const localJob: CompanionJob = {
 
 // --- Argument lists, checked against what the image and the egress script really accept ---
 
-const root = (path: string): string => new URL(`../../../${path}`, import.meta.url).pathname
+const root = (path: string): string => fileURLToPath(new URL(`../../../${path}`, import.meta.url))
 const entrypoint = readFileSync(root('docker/worker/entrypoint.sh'), 'utf8')
 const modeLine = entrypoint.split('\n').find((l) => l.startsWith('# Modes:')) ?? ''
 const denyPrivate = readFileSync(root('docker/egress/deny-private.sh'), 'utf8')
