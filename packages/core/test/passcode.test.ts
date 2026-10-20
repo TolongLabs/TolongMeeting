@@ -45,3 +45,17 @@ test('the rest of the query keeps its original encoding', () => {
   )
   expect(stripPasscode('https://example.zoom.us/j/1?a=%20&b=%zz')).toBe('https://example.zoom.us/j/1?a=%20&b=%zz')
 })
+
+test('a passcode joined with a semicolon, written pwd%3D or put in the fragment is stripped too', () => {
+  const zoom = 'https://us02web.zoom.us/j/123456789'
+  expect(stripPasscode(`${zoom}?a=1;pwd=ABC`)).toBe(`${zoom}?a=1`)
+  expect(stripPasscode(`${zoom}?pwd=ABC;a=1&b=2`)).toBe(`${zoom}?a=1&b=2`)
+  expect(stripPasscode(`${zoom}?pwd%3DABC`)).toBe(zoom)
+  expect(stripPasscode(`${zoom}?x=1&PWD%3dABC`)).toBe(`${zoom}?x=1`)
+  expect(stripPasscode(`${zoom}#success?pwd=ABC`)).toBe(`${zoom}#success`)
+  expect(stripPasscode(`${zoom}#pwd=ABC`)).toBe(zoom)
+  expect(stripPasscode(`${zoom}?pwd=ABC#success`)).toBe(`${zoom}#success`)
+  expect(stripPasscode(`${zoom}#a=1&passcode=ABC`)).toBe(`${zoom}#a=1`)
+  expect(stripPasscode('https://teams.microsoft.com/meet/1#p=ABC')).toBe('https://teams.microsoft.com/meet/1')
+  expect(stripPasscode(`${zoom}?b=%zz;pwd%3D%zz`)).toBe(`${zoom}?b=%zz`)
+})
