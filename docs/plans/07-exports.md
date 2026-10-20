@@ -113,7 +113,7 @@ Test helpers that a test calls but no Interfaces block lists are local builders 
 
 - Create: `packages/exports/package.json`, `packages/exports/tsconfig.json`, `packages/exports/src/types.ts`, `packages/exports/src/names.ts`, `packages/exports/src/bundle.ts`
 - Create: `packages/exports/test/fixtures/occurrence/` (contents below), `packages/exports/test/fixture.ts`
-- Test: `packages/exports/src/names.test.ts`, `packages/exports/src/bundle.test.ts`
+- Test: `packages/exports/test/names.test.ts`, `packages/exports/test/bundle.test.ts`
 
 **Interfaces:**
 
@@ -246,7 +246,7 @@ export interface OccurrenceLookup {
 
 - Produces, `src/names.ts`: `slugify(title: string): string`, `contentDisposition(fileName: string): string`; `src/bundle.ts`: `loadBundle(dataDir: string): Promise<ExportBundle>`; `test/fixture.ts`: `fixture: string` (absolute path of the fixture directory) and `copyFixture(): Promise<string>` (a copy in a fresh `mkdtemp` directory).
 
-- [ ] **Step 1: Create the package and the fixture**
+- [x] **Step 1: Create the package and the fixture**
 
 `package.json` takes the same name scope as `packages/core` with the bare name `exports`, and lists `marked`, `fflate`, `pdfmake`, `docx`, `sharp` and `zod` as dependencies and `unpdf` as a dev dependency; `tsconfig.json` extends `tsconfig.base.json` like the other packages, and the root `typecheck` script covers the new package. The fixture `packages/exports/test/fixtures/occurrence/` holds placeholder content only (no real names):
 
@@ -256,7 +256,7 @@ export interface OccurrenceLookup {
 - `out/chat.md`: H1, intro, `## Messages` with `**[2:05 PM] Sender A:** Is the lab due next week?`, a `- **Answer:** Yes, 27 October (transcript 00:41:10, slide 02).` line, and `**[2:07 PM] Sender B:** Thanks <U+1F44D> 谢谢 see you next week`, where `<U+1F44D>` stands for the thumbs-up emoji character itself, written into the file with `\u{1F44D}`;
 - `slides/01.webp`, `slides/02.webp`: 64x36 solid-colour images made once with sharp; `slides/slides.json`: `[]`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```ts
 // names.test.ts
@@ -316,21 +316,21 @@ test('the newest summary wins', async () => {
 })
 ```
 
-- [ ] **Step 3: Run them to see them fail**
+- [x] **Step 3: Run them to see them fail**
 
-Run: `bun test packages/exports/src/names.test.ts packages/exports/src/bundle.test.ts`
+Run: `bun test packages/exports`
 Expected: FAIL with `Cannot find module './names'` and `Cannot find module './bundle'`.
 
-- [ ] **Step 4: Implement `types.ts`, `slugify`, `contentDisposition` and `loadBundle`**
+- [x] **Step 4: Implement `types.ts`, `slugify`, `contentDisposition` and `loadBundle`**
 
 `slugify`: NFKD, strip `\p{M}`, lowercase, replace each run of characters outside `[a-z0-9]` with `-`, trim `-`, cut to 80 characters and trim a trailing `-`; an empty result becomes `meeting`. `contentDisposition`: the `filename` fallback replaces non-ASCII characters, `"` and `\` with `_`; `filename*` is `encodeURIComponent` with `'`, `(`, `)` and `*` also percent-encoded. `loadBundle`: the summary is the `.md` file in `out/` other than the three fixed names (newest modification time if several, `ExportError('not_ready', 'This meeting has no summary yet.')` if none); slide files are `slides/` entries matching `^\d{2,3}\.webp$`, sorted by name; everything is read into memory at load, so later deletion of the directory can't corrupt a running export.
 
-- [ ] **Step 5: Run them to see them pass**
+- [x] **Step 5: Run them to see them pass**
 
-Run: `bun test packages/exports/src/names.test.ts packages/exports/src/bundle.test.ts`
+Run: `bun test packages/exports`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/exports
