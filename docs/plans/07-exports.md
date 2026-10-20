@@ -1531,7 +1531,7 @@ export function createGdocsTarget(client: OAuthClient): ExportTarget // id 'gdoc
 
 Routes: `GET /api/connections/google/start` redirects to `googleAuthUrl` and sets the state cookie; `GET .../callback` runs `completeGoogleConnect`, clears the cookie and redirects to `/connections`; `GET .../picker` returns `pickerToken` with `Cache-Control: no-store`; `PUT .../folder` runs `setGoogleFolder`. `GOOGLE_API_KEY` and `GOOGLE_APP_ID` (the Cloud project number) feed the Picker.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // oauth.test.ts
@@ -1699,12 +1699,12 @@ test('gone folders, revoked access and a full Drive', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/connections/oauth.test.ts packages/exports/src/connections/google.test.ts packages/exports/src/targets/gdocs.test.ts`
 Expected: FAIL with `Cannot find module './oauth'`, `Cannot find module './google'` and `Cannot find module './gdocs'`.
 
-- [ ] **Step 3: Implement the OAuth helpers, the Google connection, the target and the routes; add `gdocs` to `buildTargets`**
+- [x] **Step 3: Implement the OAuth helpers, the Google connection, the target and the routes; add `gdocs` to `buildTargets`**
 
 State and verifier are 32 random bytes in base64url; the challenge is base64url SHA-256 of the verifier. Google endpoints: token `POST https://oauth2.googleapis.com/token` (form body; `authorization_code` with `code_verifier`, or `refresh_token`); account `GET https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)`; default folder `GET https://www.googleapis.com/drive/v3/files` with `q` `name = 'TolongMeeting Exports' and mimeType = 'application/vnd.google-apps.folder' and trashed = false` (with `drive.file` this sees only folders the app made), else `POST .../drive/v3/files` with that name and the folder MIME type. `setGoogleFolder` checks a picked folder with `GET .../files/{id}?fields=id,name,mimeType,trashed` (a file answers 400 "Pick a folder, not a file.", a trashed folder 400 "That folder is in the bin. Pick another."), saves it with `folderIsDefault: false`, and `{ useDefault: true }` switches back through `ensureDefaultFolder`. `createGdocsTarget(client).run`:
 
@@ -1712,14 +1712,16 @@ State and verifier are 32 random bytes in base64url; the challenge is base64url 
 1.  Check the folder: gone or trashed recreates it with `ensureDefaultFolder` and `ctx.saveConnection` when `folderIsDefault`, otherwise throws `not_found` with the test's message.
 1.  `toDocx(bundleDocument(bundle), await bundleImages(bundle), bundle.title)`.
 1.  Resumable upload: `POST https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,webViewLink` with the metadata in the test and `X-Upload-Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`, then `PUT` the bytes to the returned `Location`; a 403 with reason `storageQuotaExceeded` throws `failed` with the test's message.
-1.  Return `webViewLink`. A re-export always creates a new document; earlier documents are never changed or deleted.
+1.  Return the Doc's address. A re-export updates the Doc this export made: the first upload marks it with a private app property (`tmMeeting`, a hash of the member and the meeting folder name), and later runs search for a live Doc with that mark (`files.list`, `appProperties has {...}`) and replace its content with `PATCH /upload/drive/v3/files/{id}`. A file without the mark is never changed, and nothing is deleted. (Found in review: the plan said a new document each time; the TRD says one document per meeting.)
 
-- [ ] **Step 4: Run them to see them pass**
+**As built (differs from the signatures above):** T10a seals the state in a cookie (`sealOAuthState`, `verifyOAuthState`) instead of `stateCookie`/`readStateCookie`, so `startGoogleConnect(master, memberId, client)` returns `{ url, sealed }` and `completeGoogleConnect(memberId, url, sealedState, { connections, http, client, master })` takes the sealed value; the web cookie helpers are `packages/web/lib/oauth-cookie.ts`. `pickerToken` and `setGoogleFolder` take member-bound stores (no `memberId`) and `setGoogleFolder` takes the raw body text. `googleAccessToken` is `googleSession(...).accessToken()`; a 401 on a Drive call refreshes once. Tests live in `packages/exports/test/{google-connection,gdocs-target}.test.ts` and `packages/web/test/google-routes.test.ts`, with `google-fake.ts`. The `start` and `picker` GET routes check `Sec-Fetch-Site`/`Origin` (`lib/same-origin-read.ts`); `folder` uses `assertSameOrigin`; the callback is cross-site by nature and relies on the sealed state and PKCE.
+
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/connections/oauth.test.ts packages/exports/src/connections/google.test.ts packages/exports/src/targets/gdocs.test.ts packages/exports/src/registry.test.ts`
 Expected: PASS (`0 fail`), with a registry case added: `buildTargets({ google: client, notion: null })` has keys `github`, `gdocs`, `pdf`, `zip`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports packages/web/app/api/connections/google

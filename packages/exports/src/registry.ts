@@ -1,3 +1,4 @@
+import { createGdocsTarget } from './targets/gdocs'
 import { githubTarget } from './targets/github'
 import { pdfTarget } from './targets/pdf'
 import { zipTarget } from './targets/zip'
@@ -31,5 +32,10 @@ export function buildTargets(clients: {
   notion: OAuthClient | null
 }): Partial<Record<ExportTargetId, ExportTarget>> {
   void clients
-  return { zip: zipTarget, pdf: pdfTarget, github: githubTarget }
+  return {
+    zip: zipTarget,
+    pdf: pdfTarget,
+    github: githubTarget,
+    ...(clients.google ? { gdocs: createGdocsTarget(clients.google) } : {})
+  }
 }
