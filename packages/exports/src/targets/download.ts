@@ -32,6 +32,8 @@ export async function writeDownload(ctx: ExportContext, ext: 'zip' | 'pdf', byte
   const temp = join(ctx.outDir, `.${ctx.exportId}.${randomUUID()}.tmp`)
   try {
     await writeFile(temp, bytes, { flag: 'wx' })
+    // The deadline may have passed while the bytes were made or written: the export has failed, so no file may appear.
+    if (ctx.signal.aborted) throw new ExportError('failed', 'The export took too long. Try again.')
     await rename(temp, target)
   } catch (e) {
     await rm(temp, { force: true })

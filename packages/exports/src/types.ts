@@ -101,6 +101,8 @@ export interface ExportContext {
   saveConnection(c: Connection): Promise<void>
   http: typeof fetch
   sleep(ms: number): Promise<void>
+  /** Aborts at the export's deadline. Work that is not a network call checks it before it changes anything. */
+  signal: AbortSignal
   /** The page URL of this member's latest finished export of the same meeting and target, or null. Updates use it. */
   previousUrl?: string | null
 }

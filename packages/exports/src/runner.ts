@@ -142,19 +142,29 @@ async function checkOutput(dataDir: string, id: string, result: ExportResult, ma
   }
 }
 
-/** Runs `work` for at most `ms`. At the deadline its signal aborts and the call fails; a late result is dropped. */
-async function withTimeout<T>(ms: number, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+/**
+ * Runs `work` for at most `ms`. At the deadline its signal aborts and the call fails; a late result is dropped, and
+ * `afterLate` runs when the work settles after the deadline (work that ignores the signal may still leave a file).
+ */
+async function withTimeout<T>(
+  ms: number,
+  work: (signal: AbortSignal) => Promise<T>,
+  afterLate: () => Promise<void>
+): Promise<T> {
   const ac = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      timedOut = true
       ac.abort()
       reject(new ExportError('failed', 'The export took too long. Try again.'))
     }, ms)
   })
   const running = work(ac.signal)
   // After the deadline the work may still fail; nobody is waiting for that.
-  running.catch(() => undefined)
+  const late = () => (timedOut ? afterLate() : undefined)
+  running.then(late, late).catch(() => undefined)
   try {
     return await Promise.race([running, deadline])
   } finally {
@@ -202,38 +212,48 @@ async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], prog
   const previousUrl = kind === null ? null : await deps.store.previousUrl(row)
   const outDir = join(occurrence.dataDir, 'exports')
   try {
-    const result = await withTimeout(deps.timeoutMs ?? EXPORT_TIMEOUT_MS, async (signal) => {
-      const bundle = await loadBundle(occurrence.dataDir)
-      progress.title = bundle.title
-      const stopped = () => new ExportError('failed', 'The export took too long. Try again.')
-      return target.run(bundle, {
-        exportId: row.id,
-        memberId: row.memberId,
-        outDir,
-        connection,
-        previousUrl,
-        saveConnection: async (c) => {
-          // A rotated token is a secret from now on too.
-          await stillConnected()
-          secrets.push(...tokensOf(c))
-          await deps.connections.save(row.memberId, c)
-        },
-        http: (async (input, init) => {
-          await stillConnected()
-          return deps.http(input, {
-            ...init,
-            signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal
-          })
-        }) as typeof fetch,
-        sleep: (ms) => {
-          if (signal.aborted) return Promise.reject(stopped())
-          return Promise.race([
-            deps.sleep(ms),
-            new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(stopped()), { once: true }))
-          ])
-        }
-      })
-    })
+    const result = await withTimeout(
+      deps.timeoutMs ?? EXPORT_TIMEOUT_MS,
+      async (signal) => {
+        const bundle = await loadBundle(occurrence.dataDir)
+        progress.title = bundle.title
+        const stopped = () => new ExportError('failed', 'The export took too long. Try again.')
+        return target.run(bundle, {
+          exportId: row.id,
+          memberId: row.memberId,
+          outDir,
+          signal,
+          connection,
+          previousUrl,
+          saveConnection: async (c) => {
+            // A rotated token is a secret from now on too.
+            await stillConnected()
+            secrets.push(...tokensOf(c))
+            await deps.connections.save(row.memberId, c)
+          },
+          http: (async (input, init) => {
+            await stillConnected()
+            return deps.http(input, {
+              ...init,
+              signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal
+            })
+          }) as typeof fetch,
+          sleep: (ms) => {
+            if (signal.aborted) return Promise.reject(stopped())
+            return Promise.race([
+              deps.sleep(ms),
+              new Promise<never>((_, reject) =>
+                signal.addEventListener('abort', () => reject(stopped()), { once: true })
+              )
+            ])
+          }
+        })
+      },
+      () =>
+        removeOutputs(outDir, row.id).catch((e: unknown) => {
+          deps.log(`export ${row.id} ${row.target} could not remove a late file (${errorBrief(e)})`)
+        })
+    )
     await checkOutput(occurrence.dataDir, row.id, result, deps.maxOutputBytes ?? MAX_OUTPUT_BYTES)
     return result
   } catch (e) {

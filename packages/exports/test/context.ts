@@ -28,6 +28,7 @@ export function testContext(
     http: (async () => {
       throw new Error('no network in tests')
     }) as unknown as typeof fetch,
+    signal: new AbortController().signal,
     sleep: async (ms) => {
       sleeps.push(ms)
     },

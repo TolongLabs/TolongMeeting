@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Ping } from '@tm/notify'
@@ -306,6 +306,54 @@ test('an export that runs too long fails and its network calls are aborted', asy
   })
   await Bun.sleep(10)
   expect(aborted).toBe(true)
+})
+
+/** Waits until `path` is gone, at most 2 s. */
+async function gone(path: string): Promise<boolean> {
+  for (let i = 0; i < 200 && existsSync(path); i++) await Bun.sleep(10)
+  return !existsSync(path)
+}
+
+test('a target that ignores the deadline and writes its file late leaves nothing behind', async () => {
+  let release: () => void = () => undefined
+  const written = new Promise<void>((resolve) => (release = resolve))
+  const stubborn: ExportTarget = {
+    id: 'zip',
+    async run(_bundle, ctx) {
+      await Bun.sleep(150)
+      // Straight to disk, like work that never looks at the signal.
+      await mkdir(ctx.outDir, { recursive: true })
+      await writeFile(join(ctx.outDir, `${ctx.exportId}.zip`), new Uint8Array([1, 2, 3]))
+      release()
+      return { url: null, filePath: `exports/${ctx.exportId}.zip`, note: null }
+    }
+  }
+  const { deps, stores, dataDir } = await setup({ targets: { zip: stubborn }, timeoutMs: 30 })
+  const row = await queueAndClaim(stores, 'zip')
+  await runExport(row, deps)
+  expect(await stores.exports.get('m1', row.id)).toMatchObject({
+    status: 'failed',
+    error: 'The export took too long. Try again.'
+  })
+  await written
+  expect(await gone(join(dataDir, `exports/${row.id}.zip`))).toBe(true)
+})
+
+test('a download that is ready after the deadline is never written', async () => {
+  const slowZip: ExportTarget = {
+    id: 'zip',
+    async run(bundle, ctx) {
+      await Bun.sleep(150)
+      return zipTarget.run(bundle, ctx)
+    }
+  }
+  const { deps, stores, dataDir } = await setup({ targets: { zip: slowZip }, timeoutMs: 30 })
+  const row = await queueAndClaim(stores, 'zip')
+  await runExport(row, deps)
+  await Bun.sleep(400)
+  expect(existsSync(join(dataDir, `exports/${row.id}.zip`))).toBe(false)
+  expect(await readdir(join(dataDir, 'exports')).catch(() => [])).toEqual([])
+  expect(await stores.exports.get('m1', row.id)).toMatchObject({ status: 'failed' })
 })
 
 test('a file over the size cap fails the export and is removed', async () => {
