@@ -132,12 +132,52 @@ function finish(raw: RawMessage[]): ChatMessage[] {
 /** Reads one Discord channel on discord.com in the member's own session. `channelUrl` is normalised already. */
 export function discordReader(channelUrl: string, sel: DiscordSelectors): ChatSourceReader {
   const wantedPath = channelPath(channelUrl)
+  // Where the last history scan stopped. The scan leaves the older messages it loaded in the page, and `latest` must
+  // not report them again as new: nothing a poll can find is older than the scan's start.
+  let floorMs: number | null = null
 
   // Throws for a signed-out page. Returns the probe for a page that is signed in.
   async function signedInProbe(desk: Page): Promise<PageProbe> {
     const state = await probe(desk, sel)
     if (state.path === '/login' || state.loginVisible) throw new WatcherSigninError(HOST)
     return state
+  }
+
+  async function scan(desk: Page, since: Date): Promise<ChatMessage[]> {
+    const collected = new Map<string, RawMessage>()
+    const collect = async () => {
+      for (const m of await readRendered(desk, sel)) {
+        const have = collected.get(m.key)
+        if (have === undefined || (have.sender === null && m.sender !== null)) collected.set(m.key, m)
+      }
+    }
+    const oldest = () => Math.min(...Array.from(collected.values(), timeOf))
+
+    await collect()
+    const deadline = Date.now() + HISTORY_BUDGET_MS
+    for (let step = 0; step < HISTORY_MAX_STEPS && Date.now() < deadline; step++) {
+      if (collected.size > 0 && oldest() < since.getTime()) break
+      if (await channelStartVisible(desk, sel)) break
+      const first = await firstMessageId(desk, sel)
+      if (!(await scrollTo(desk, sel, 'top'))) throw new WatcherChatError('lost')
+      try {
+        await desk.waitForFunction(
+          ({ message, first }) => document.querySelector(message)?.id !== first,
+          { message: sel.message, first },
+          // A timer, not the default animation frame: a tab in the background gets no frames.
+          { timeout: OLDER_WAIT_MS, polling: 100 }
+        )
+      } catch (error) {
+        // Nothing older arrived within the wait; the next step tries again.
+        if (!(error instanceof errors.TimeoutError)) throw error
+      }
+      await collect()
+    }
+
+    if (!(await scrollTo(desk, sel, 'bottom'))) throw new WatcherChatError('lost')
+    const floor = since.getTime()
+    floorMs = floor
+    return finish(Array.from(collected.values())).filter((m) => Date.parse(m.time) >= floor)
   }
 
   return {
@@ -153,40 +193,7 @@ export function discordReader(channelUrl: string, sel: DiscordSelectors): ChatSo
       }
     },
 
-    async history(desk, since) {
-      const collected = new Map<string, RawMessage>()
-      const collect = async () => {
-        for (const m of await readRendered(desk, sel)) {
-          const have = collected.get(m.key)
-          if (have === undefined || (have.sender === null && m.sender !== null)) collected.set(m.key, m)
-        }
-      }
-      const oldest = () => Math.min(...Array.from(collected.values(), timeOf))
-
-      await collect()
-      const deadline = Date.now() + HISTORY_BUDGET_MS
-      for (let step = 0; step < HISTORY_MAX_STEPS && Date.now() < deadline; step++) {
-        if (collected.size > 0 && oldest() < since.getTime()) break
-        if (await channelStartVisible(desk, sel)) break
-        const first = await firstMessageId(desk, sel)
-        if (!(await scrollTo(desk, sel, 'top'))) throw new WatcherChatError('lost')
-        try {
-          await desk.waitForFunction(
-            ({ message, first }) => document.querySelector(message)?.id !== first,
-            { message: sel.message, first },
-            // A timer, not the default animation frame: a tab in the background gets no frames.
-            { timeout: OLDER_WAIT_MS, polling: 100 }
-          )
-        } catch (error) {
-          // Nothing older arrived within the wait; the next step tries again.
-          if (!(error instanceof errors.TimeoutError)) throw error
-        }
-        await collect()
-      }
-
-      if (!(await scrollTo(desk, sel, 'bottom'))) throw new WatcherChatError('lost')
-      return finish(Array.from(collected.values())).filter((m) => Date.parse(m.time) >= since.getTime())
-    },
+    history: (desk, since, step) => step(() => scan(desk, since)),
 
     async latest(desk) {
       const state = await signedInProbe(desk)
@@ -194,7 +201,9 @@ export function discordReader(channelUrl: string, sel: DiscordSelectors): ChatSo
       if (!state.hasScroller) throw new WatcherChatError('not_loaded')
       await scrollTo(desk, sel, 'bottom')
       await desk.waitForTimeout(SCROLL_SETTLE_MS)
-      return finish(await readRendered(desk, sel))
+      const rendered = finish(await readRendered(desk, sel))
+      const floor = floorMs
+      return floor === null ? rendered : rendered.filter((m) => Date.parse(m.time) >= floor)
     }
   }
 }

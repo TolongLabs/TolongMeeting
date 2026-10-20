@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { teamsSelectors } from '../../src/adapters/teams/selectors'
-import { WatcherSigninError, resetWatcherEnv } from '../../src/watchers/loop'
+import { WatcherSigninError, resetWatcherEnv, type DeskStep } from '../../src/watchers/loop'
 import { startWatcher, teamsChatReader } from '../../src/watchers/teams'
 import { teamsClicks } from '../teams/serve'
 import { watchHarness } from './harness'
@@ -14,6 +14,7 @@ const chat = { kind: 'chat', app: 'teams', chat: CHAT } as const
 const MEETING =
   'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_TESTTHREAD%40thread.v2/0?context=%7B%22Tid%22%3A%22TENANT%22%7D'
 
+const direct: DeskStep = (step) => step()
 const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
 const filler = Array.from({ length: 40 }, (_, i) => ({
   id: `w${i}`,
@@ -82,19 +83,52 @@ test('during the meeting form links come with their sender', async ({ context, p
   ])
 })
 
+const hourly = Array.from({ length: 70 }, (_, i) => ({
+  id: `h${i}`,
+  sender: 'Classmate',
+  time: '',
+  datetime: ago(70.5 - i),
+  text: `note ${i}`
+}))
+
 test('history reaches back 24 hours through lazily loaded batches', async ({ context, page }) => {
-  const hourly = Array.from({ length: 70 }, (_, i) => ({
-    id: `h${i}`,
-    sender: 'Classmate',
-    time: '',
-    datetime: ago(70.5 - i),
-    text: `note ${i}`
-  }))
   await serveWatcherFixtures(context, { teams: { chatUrl: CHAT, messages: hourly } })
   const reader = teamsChatReader(CHAT, await teamsSelectors())
   await reader.open(page)
-  const found = await reader.history(page, new Date(Date.now() - 24 * 3_600_000))
+  const found = await reader.history(page, new Date(Date.now() - 24 * 3_600_000), direct)
   expect(found.map((m) => m.key)).toEqual(hourly.slice(47).map((m) => m.id))
+})
+
+test('history holds the desk one scroll step at a time', async ({ context, page }) => {
+  await serveWatcherFixtures(context, { teams: { chatUrl: CHAT, messages: hourly } })
+  const reader = teamsChatReader(CHAT, await teamsSelectors())
+  await reader.open(page)
+  let steps = 0
+  let running = 0
+  let overlapped = false
+  const counted: DeskStep = async (step) => {
+    steps += 1
+    running += 1
+    overlapped ||= running > 1
+    try {
+      return await step()
+    } finally {
+      running -= 1
+    }
+  }
+  await reader.history(page, new Date(Date.now() - 24 * 3_600_000), counted)
+  // The first read, at least two scroll steps (the list shows 20 rows and loads 20 more each time), and the move back.
+  expect(steps).toBeGreaterThanOrEqual(4)
+  expect(overlapped).toBe(false)
+})
+
+test('history stops at its time budget with what it has read', async ({ context, page }) => {
+  await serveWatcherFixtures(context, { teams: { chatUrl: CHAT, messages: hourly } })
+  const reader = teamsChatReader(CHAT, await teamsSelectors(), 0)
+  await reader.open(page)
+  const found = await reader.history(page, new Date(Date.now() - 24 * 3_600_000), direct)
+  // Out of time before the first scroll: only the rows the list showed, newest 20 of the 70.
+  expect(found.map((m) => m.key)).toEqual(hourly.slice(50).map((m) => m.id))
 })
 
 test('a signed-out profile rejects the start with the sign-in host', async ({ context, page }) => {

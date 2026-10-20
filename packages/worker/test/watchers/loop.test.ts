@@ -23,11 +23,11 @@ const F = 'https://forms.gle/TESTFORM1'
 // The loop never looks inside the desk: the reader is the only thing that uses it.
 const desk = {} as unknown as Page
 
-const m = (key: string, sender: string, links: string[]): ChatMessage => ({
+const m = (key: string, sender: string, links: string[], time = ''): ChatMessage => ({
   key,
   sender,
   senderRole: 'unknown',
-  time: '',
+  time,
   seenAt: '',
   text: '',
   links,
@@ -53,10 +53,10 @@ function fakeReader({ history, feed = [] }: { history: ChatMessage[]; feed?: Cha
     async open() {
       reader.calls.open += 1
     },
-    async history(_desk, since) {
+    history(_desk, since, step) {
       reader.calls.history += 1
       reader.sinces.push(since)
-      return history
+      return step(async () => history)
     },
     async latest() {
       reader.calls.latest += 1
@@ -183,7 +183,7 @@ test('a form first seen after T-10 but before joining is offered when joining st
   const r = fakeReader({ history: [] })
   const h = harness({ formsSince: () => new Date('2026-10-21T04:55:00Z') })
   await h.run(r)
-  r.feed = [m('f', 'Lecturer', [F])]
+  r.feed = [m('f', 'Lecturer', [F], '2026-10-21T04:59:00Z')]
   await h.tick()
   expect(h.forms).toEqual([])
   h.set({ phase: () => 'during' })
@@ -191,6 +191,23 @@ test('a form first seen after T-10 but before joining is offered when joining st
   expect(h.forms).toEqual([
     { url: F, source: 'watched_chat', sender: 'Lecturer', senderRole: 'unknown', seenAt: '2026-10-21T05:00:00.000Z' }
   ])
+})
+
+test("a late start does not offer yesterday's form: the sent time decides, not the first-seen time", async () => {
+  // Started at T+20: the clock is past formsSince, so every message is "first seen" in time. Only the sent time can
+  // tell the form from the day before from today's. A message with no readable time is dropped too.
+  const r = fakeReader({
+    history: [
+      m('y', 'Lecturer', [F], '2026-10-20T04:50:00Z'),
+      m('n', 'Lecturer', ['https://forms.gle/NOTIME001'], ''),
+      m('t', 'Lecturer', ['https://forms.gle/TODAY0001'], '2026-10-21T04:58:00Z')
+    ]
+  })
+  const h = harness({ formsSince: () => new Date('2026-10-21T04:50:00Z') })
+  await h.run(r)
+  h.set({ phase: () => 'during' })
+  await h.tick()
+  expect(h.forms.map((c) => c.url)).toEqual(['https://forms.gle/TODAY0001'])
 })
 
 test('a form first seen before T-10 is never offered', async () => {
@@ -276,6 +293,20 @@ test('a lost chat is reopened at most 3 times, then the loop ends', async () => 
   expect(r.calls.open).toBe(4)
   expect(h.statuses).toEqual([{ kind: 'chat_lost' }])
   expect(r.calls.latest).toBe(4)
+})
+
+test('the reopen limit is per attempt: a chat lost every other poll still ends after 3 reopens', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  await h.run(r)
+  // Lost, good, lost, good, ...: a good poll in between must not give the chat its reopens back.
+  for (let i = 0; i < 4; i++) {
+    r.throwNext = [new WatcherChatError('lost')]
+    await h.tick()
+    await h.tick()
+  }
+  expect(r.calls.open).toBe(4)
+  expect(h.statuses).toEqual([{ kind: 'chat_lost' }])
 })
 
 test('the third failure in a row reopens the chat; a good read clears the count', async () => {

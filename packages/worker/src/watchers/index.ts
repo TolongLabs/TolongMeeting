@@ -17,9 +17,9 @@ export function watcherFor(app: ChatApp): StartWatcher {
   }
 }
 
-/** The host each chat app's watcher tab lives on. The sign-in pause must not open a second tab on it. */
-export const CHAT_HOST: Record<ChatApp, string> = {
-  discord: 'discord.com',
-  whatsapp: 'web.whatsapp.com',
-  teams: 'teams.microsoft.com'
+/** The hosts each chat app's watcher tab can live on. The sign-in pause must not open a second tab on one of them. */
+export const CHAT_HOST: Record<ChatApp, readonly string[]> = {
+  discord: ['discord.com'],
+  whatsapp: ['web.whatsapp.com'],
+  teams: ['teams.microsoft.com', 'teams.live.com']
 }

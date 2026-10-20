@@ -157,6 +157,13 @@
         scroller.scrollTop = scroller.scrollHeight
       }
 
+      // Scrolling back to the bottom brings the newest rows in and keeps the older rows already loaded in the list.
+      function catchUp() {
+        hi = open.model.length
+        renderMessages()
+        scroller.scrollTop = scroller.scrollHeight
+      }
+
       function openChat(name) {
         open = chats.find((c) => c.name === name)
         main.hidden = false
@@ -180,7 +187,7 @@
         if (scroller.scrollTop <= 1 && lo > 0 && !prepending) {
           prepending = true
           setTimeout(prependOlder, 100)
-        } else if (hi < open.model.length && atBottom()) jumpToPresent()
+        } else if (hi < open.model.length && atBottom()) catchUp()
       })
 
       search.addEventListener('input', renderList)

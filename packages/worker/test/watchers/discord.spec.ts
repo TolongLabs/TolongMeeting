@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { WatcherChatError, WatcherSigninError, resetWatcherEnv } from '../../src/watchers/loop'
+import { WatcherChatError, WatcherSigninError, resetWatcherEnv, type DeskStep } from '../../src/watchers/loop'
 import { discordReader, startWatcher } from '../../src/watchers/discord'
 import { discordSelectors } from '../../src/watchers/selectors'
 import { serveWatcherFixtures, type DiscordMessage, type DiscordWindow } from './serve'
@@ -16,6 +16,7 @@ const P = 'https://pasted.zoom.us/j/00000000009?pwd=PASSCODE'
 const F2 = 'https://forms.gle/TESTFORM2'
 const F3 = 'https://forms.gle/TESTFORM3'
 
+const direct: DeskStep = (step) => step()
 const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
 // Linkless messages from 19 hours to 3 hours ago, from different senders so none is a follow-up.
 const filler = (count: number): DiscordMessage[] =>
@@ -141,13 +142,16 @@ test('the history scroll reaches back to the cut-off, in time order, and sends n
   const reader = discordReader(CH, await discordSelectors())
   await reader.open(page)
   const since = new Date(Date.now() - 24 * 3_600_000)
-  const read = await reader.history(page, since)
+  const read = await reader.history(page, since, direct)
   // 'old' is 30 hours back: scrolling stops once it is collected, and it is cut by the time filter.
   expect(read.map((m) => m.key)).toEqual(['a', ...filler(60).map((m) => m.id), 'b', 'c', 'd'])
   expect(read[0]).toMatchObject({ sender: 'Rep', senderRole: 'unknown', replyTo: null, links: [Z1] })
   expect(read[0]!.text.startsWith('Yesterday')).toBe(true)
   // 'c' and 'd' follow 'b' from the same sender: they render without a name and take the one before.
   expect(read.slice(-3).map((m) => m.sender)).toEqual(['Rep', 'Rep', 'Rep'])
-  expect((await reader.latest(page)).map((m) => m.key)).toEqual(read.slice(-25).map((m) => m.key))
+  // The page keeps the older messages it loaded, 'old' among them: a poll must not report any message from before the
+  // scan's start, or an old meeting link would become the newest.
+  expect(await page.locator('li[id$="-old"]').count()).toBe(1)
+  expect((await reader.latest(page)).map((m) => m.key)).toEqual(read.map((m) => m.key))
   expect(await page.evaluate(() => (window as unknown as DiscordWindow).__touched ?? false)).toBe(false)
 })

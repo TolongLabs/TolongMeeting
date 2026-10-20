@@ -10,10 +10,10 @@ test('each chat app has its watcher', () => {
   expect(watcherFor('teams')).toBe(teams.startWatcher)
 })
 
-test('each chat app has the host its watcher tab lives on', () => {
+test('each chat app has the hosts its watcher tab can live on', () => {
   expect(CHAT_HOST).toEqual({
-    discord: 'discord.com',
-    whatsapp: 'web.whatsapp.com',
-    teams: 'teams.microsoft.com'
+    discord: ['discord.com'],
+    whatsapp: ['web.whatsapp.com'],
+    teams: ['teams.microsoft.com', 'teams.live.com']
   })
 })

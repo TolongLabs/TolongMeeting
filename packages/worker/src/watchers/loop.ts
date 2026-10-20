@@ -3,10 +3,18 @@ import type { Page } from 'playwright'
 import type { Stopper } from '../types'
 import { chooseMeetingLink, messageSignature, nextPollDelayMs, splitLinks, type WatchPhase } from './rules'
 
-/** One chat source (WhatsApp, Discord, Teams). Messages are oldest first. `desk` is the watcher's own desk tab. */
+/** Runs one desk action through the desk pause's busy gate (see `WatcherEnv.deskStep`). */
+export type DeskStep = <T>(step: () => Promise<T>) => Promise<T>
+
+/**
+ * One chat source (WhatsApp, Discord, Teams). Messages are oldest first. `desk` is the watcher's own desk tab. A
+ * message's `time` is its sent time as an ISO 8601 date: the loop drops a form link it cannot place in time.
+ * `history` runs its own desk actions through `step`, so a long scan holds the desk one step at a time and a desk
+ * pause waits for one step, not the whole scan.
+ */
 export interface ChatSourceReader {
   open(desk: Page): Promise<void>
-  history(desk: Page, since: Date): Promise<ChatMessage[]>
+  history(desk: Page, since: Date, step: DeskStep): Promise<ChatMessage[]>
   latest(desk: Page): Promise<ChatMessage[]>
 }
 
@@ -51,6 +59,7 @@ export interface WatcherEnv {
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000
 const PHASE_CHECK_MS = 1000
 const FAILURES_BEFORE_REOPEN = 3
+// Per watcher, so per worker attempt: a chat that keeps being lost every other poll must still end in `chat_lost`.
 const MAX_REOPENS = 3
 const NEVER = new Date(8.64e15)
 
@@ -145,6 +154,10 @@ export async function runChatWatcher(
       const seenAt = env.now()
       const { meeting, other } = splitLinks(m)
       const before = env.phase() === 'before'
+      // The first-seen time of a late start or a restart is "now", so only the sent time can tell yesterday's form
+      // from today's. A message with no readable sent time (NaN) is dropped.
+      const floor = env.formsSince()
+      const sentAt = Date.parse(m.time)
       if (before && meeting.length > 0) newest = meeting[meeting.length - 1]!
       for (const url of other) {
         const candidate: FormCandidate = {
@@ -155,7 +168,7 @@ export async function runChatWatcher(
           seenAt: seenAt.toISOString()
         }
         if (!before) offer(candidate)
-        else if (seenAt >= env.formsSince()) held.push(candidate)
+        else if (seenAt >= floor && sentAt >= floor.getTime()) held.push(candidate)
       }
     }
     if (env.phase() === 'during') {
@@ -172,7 +185,7 @@ export async function runChatWatcher(
   const openAndScan = async (): Promise<ChatMessage[]> => {
     await env.deskStep(() => reader.open(desk))
     const since = env.phase() === 'before' ? new Date(env.now().getTime() - HISTORY_WINDOW_MS) : env.formsSince()
-    return env.deskStep(() => reader.history(desk, since))
+    return reader.history(desk, since, (step) => env.deskStep(step))
   }
 
   function goodRead(): void {
@@ -211,7 +224,6 @@ export async function runChatWatcher(
     const result = await read(() => env.deskStep(() => reader.latest(desk)))
     if (stopped) return
     if (result.ok) {
-      reopens = 0
       goodRead()
       process(result.value)
     } else if (result.error instanceof WatcherSigninError) signedOutRead(result.error)

@@ -133,7 +133,7 @@ function toRow(raw: RawRow, format: TimeFormat, seenAt: string): Row | null {
       key: raw.key,
       sender: parsed.sender,
       senderRole: 'unknown',
-      time: parsed.shown,
+      time: parsed.sentAt,
       seenAt,
       text: raw.text,
       links: Array.from(new Set([...raw.hrefs, ...textUrls(raw.text)])),
@@ -169,6 +169,9 @@ function merge(order: Row[], batch: Row[]): void {
 export function whatsappReader(chatName: string, sel: WhatsAppSelectors): ChatSourceReader {
   const name = canon(chatName)
   let format: TimeFormat | null = null
+  // Where the last history scan stopped. The scan leaves the older rows it loaded in the page, and `latest` must not
+  // report them again as new: nothing a poll can find is older than the scan's start.
+  let floorMs: number | null = null
 
   const timeFormat = (): TimeFormat => {
     if (format === null) throw new Error('the WhatsApp reader was used before open()')
@@ -189,6 +192,40 @@ export function whatsappReader(chatName: string, sel: WhatsAppSelectors): ChatSo
       if (error instanceof errors.TimeoutError) return false
       throw error
     }
+  }
+
+  async function scan(desk: Page, since: Date): Promise<ChatMessage[]> {
+    const order: Row[] = []
+    const collect = async () => merge(order, toRows(await readRendered(desk, sel), timeFormat()))
+    const oldest = () => Math.min(...order.map((r) => r.sentAt))
+
+    await collect()
+    const deadline = Date.now() + HISTORY_BUDGET_MS
+    let misses = 0
+    for (let step = 0; step < HISTORY_MAX_STEPS && Date.now() < deadline; step++) {
+      if (order.length > 0 && oldest() < since.getTime()) break
+      const first = await firstRowId(desk, sel)
+      if (!(await scrollTo(desk, sel, 'top'))) throw new WatcherChatError('lost')
+      try {
+        await desk.waitForFunction(
+          ({ messageRow, first }) => document.querySelector(messageRow)?.getAttribute('data-id') !== first,
+          { messageRow: sel.messageRow, first },
+          { timeout: OLDER_WAIT_MS, polling: 100 }
+        )
+        misses = 0
+      } catch (error) {
+        // Nothing older arrived within the wait: after enough of these the chat's start has been reached.
+        if (!(error instanceof errors.TimeoutError)) throw error
+        if (++misses >= NO_OLDER_LIMIT) break
+      }
+      await collect()
+    }
+    await collect()
+
+    if (!(await scrollTo(desk, sel, 'bottom'))) throw new WatcherChatError('lost')
+    const floor = since.getTime()
+    floorMs = floor
+    return order.filter((r) => r.sentAt >= floor).map((r) => r.message)
   }
 
   return {
@@ -221,37 +258,7 @@ export function whatsappReader(chatName: string, sel: WhatsAppSelectors): ChatSo
       format = await readTimeFormat(desk)
     },
 
-    async history(desk, since) {
-      const order: Row[] = []
-      const collect = async () => merge(order, toRows(await readRendered(desk, sel), timeFormat()))
-      const oldest = () => Math.min(...order.map((r) => r.sentAt))
-
-      await collect()
-      const deadline = Date.now() + HISTORY_BUDGET_MS
-      let misses = 0
-      for (let step = 0; step < HISTORY_MAX_STEPS && Date.now() < deadline; step++) {
-        if (order.length > 0 && oldest() < since.getTime()) break
-        const first = await firstRowId(desk, sel)
-        if (!(await scrollTo(desk, sel, 'top'))) throw new WatcherChatError('lost')
-        try {
-          await desk.waitForFunction(
-            ({ messageRow, first }) => document.querySelector(messageRow)?.getAttribute('data-id') !== first,
-            { messageRow: sel.messageRow, first },
-            { timeout: OLDER_WAIT_MS, polling: 100 }
-          )
-          misses = 0
-        } catch (error) {
-          // Nothing older arrived within the wait: after enough of these the chat's start has been reached.
-          if (!(error instanceof errors.TimeoutError)) throw error
-          if (++misses >= NO_OLDER_LIMIT) break
-        }
-        await collect()
-      }
-      await collect()
-
-      if (!(await scrollTo(desk, sel, 'bottom'))) throw new WatcherChatError('lost')
-      return order.filter((r) => r.sentAt >= since.getTime()).map((r) => r.message)
-    },
+    history: (desk, since, step) => step(() => scan(desk, since)),
 
     async latest(desk) {
       const state = await probe(desk, sel)
@@ -260,7 +267,10 @@ export function whatsappReader(chatName: string, sel: WhatsAppSelectors): ChatSo
       if (!state.hasScroller) throw new WatcherChatError('not_loaded')
       await scrollTo(desk, sel, 'bottom')
       await desk.waitForTimeout(SCROLL_SETTLE_MS)
-      return toRows(await readRendered(desk, sel), timeFormat()).map((r) => r.message)
+      const floor = floorMs
+      return toRows(await readRendered(desk, sel), timeFormat())
+        .filter((r) => floor === null || r.sentAt >= floor)
+        .map((r) => r.message)
     }
   }
 }

@@ -120,6 +120,13 @@
         scroller.scrollTop = scroller.scrollHeight
       }
 
+      // Scrolling back to the bottom brings the newest messages in and keeps the older ones already loaded in the list.
+      function catchUp() {
+        hi = model.length
+        render()
+        scroller.scrollTop = scroller.scrollHeight
+      }
+
       function prependOlder() {
         prepending = false
         if (lo === 0) return
@@ -135,7 +142,7 @@
         if (scroller.scrollTop <= 1 && lo > 0 && !prepending) {
           prepending = true
           setTimeout(prependOlder, 100)
-        } else if (hi < model.length && atBottom()) jumpToPresent()
+        } else if (hi < model.length && atBottom()) catchUp()
       })
 
       window.__addMessage = (m) => {

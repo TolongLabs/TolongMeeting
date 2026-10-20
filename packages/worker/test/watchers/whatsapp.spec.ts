@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { WatcherSigninError, resetWatcherEnv } from '../../src/watchers/loop'
+import { WatcherSigninError, resetWatcherEnv, type DeskStep } from '../../src/watchers/loop'
 import { whatsappSelectors } from '../../src/watchers/selectors'
 import { startWatcher, whatsappReader } from '../../src/watchers/whatsapp'
 import { serveWatcherFixtures, type WhatsAppChat, type WhatsAppMessage, type WhatsAppWindow } from './serve'
@@ -12,6 +12,7 @@ const zoom = (n: number) => `https://example.zoom.us/j/0000000000${n}?pwd=PASSCO
 const [Z0, Z1, Z2] = [0, 1, 2].map(zoom)
 const F2 = 'https://forms.gle/TESTFORM2'
 
+const direct: DeskStep = (step) => step()
 const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
 // Linkless messages from 19 hours to 3 hours ago, from different senders.
 const filler = (count: number): WhatsAppMessage[] =>
@@ -107,8 +108,7 @@ test('a chat the member switched away from is reopened, at most 3 times', async 
   const stop = await startWatcher(page, { kind: 'chat', app: 'whatsapp', chat: 'Class 7A' }, h.onLink)
   const sel = await whatsappSelectors()
   const away = () => page.evaluate(() => (window as unknown as WhatsAppWindow).__switchChat('Other'))
-  // A good poll resets the reopen count, so to lose the chat for good the member must switch away again before the next
-  // poll: right after each of the first three reopens puts the chat back.
+  // The member switches away right after each of the first three reopens puts the chat back.
   let switches = 0
   h.set({
     deskStep: async (step) => {
@@ -133,14 +133,18 @@ test('the history scroll reaches back to the cut-off, in chat order, and sends n
   await serveWatcherFixtures(context, { whatsapp: { mode: 'chats', chats: [chat('Class 7A', history)] } })
   const reader = whatsappReader('Class 7A', await whatsappSelectors())
   await reader.open(page)
-  const read = await reader.history(page, new Date(Date.now() - 24 * 3_600_000))
+  const read = await reader.history(page, new Date(Date.now() - 24 * 3_600_000), direct)
   // 'old' is 30 hours back: scrolling stops once it is collected, and the time filter cuts it.
   expect(read.map((m) => m.key)).toEqual(
     ['a', ...filler(60).map((m) => m.id), 'b', 'c', 'd'].map((id) => `Class 7A:${id}`)
   )
   expect(read[0]).toMatchObject({ sender: 'Rep', senderRole: 'unknown', replyTo: null, links: [Z1] })
-  expect(read[0]!.time).toMatch(/^\d{2}:\d{2}, \d{2}\/\d{2}\/\d{4}$/)
-  expect((await reader.latest(page)).map((m) => m.key)).toEqual(read.slice(-25).map((m) => m.key))
+  // The sent time is an ISO date: the watcher loop places a form link in time by it.
+  expect(read[0]!.time).toBe(history[1]!.at.replace(/:\d{2}\.\d{3}Z$/, ':00.000Z'))
+  // The page keeps the older rows it loaded, 'old' among them: a poll must not report any row from before the scan's
+  // start, or an old meeting link would become the newest.
+  expect(await page.locator('[data-id="Class 7A:old"]').count()).toBe(1)
+  expect((await reader.latest(page)).map((m) => m.key)).toEqual(read.map((m) => m.key))
   expect(await touched(page)).toBe(false)
 })
 

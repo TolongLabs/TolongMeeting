@@ -16,6 +16,7 @@ import { runChatWatcher, WatcherChatError, WatcherSigninError, type ChatSourceRe
 const OPEN_TIMEOUT_MS = 60_000
 const OPEN_POLL_MS = 250
 const LAUNCHER_CLICK_MS = 10_000
+const HISTORY_BUDGET_MS = 60_000
 const HISTORY_MAX_STEPS = 300
 const OLDER_WAIT_MS = 2_000
 const SCROLL_SETTLE_MS = 150
@@ -58,7 +59,11 @@ function toMessages(raw: RawTeamsMessage[], cutoffMs: number | null): ChatMessag
 }
 
 /** Reads one Teams chat or group chat in the member's own session. `chatUrl` is normalised already. */
-export function teamsChatReader(chatUrl: string, sel: TeamsSelectors): ChatSourceReader {
+export function teamsChatReader(
+  chatUrl: string,
+  sel: TeamsSelectors,
+  historyBudgetMs = HISTORY_BUDGET_MS
+): ChatSourceReader {
   const wanted = new URL(chatUrl)
   const s = sel.selectors
   const onChat = (desk: Page) => {
@@ -84,36 +89,49 @@ export function teamsChatReader(chatUrl: string, sel: TeamsSelectors): ChatSourc
       }
     },
 
-    async history(desk, since) {
+    // One scroll step per desk step: a desk pause waits for one step, never for the whole scan. The scan stops at the
+    // budget, like the Discord and WhatsApp scans.
+    async history(desk, since, step) {
       const collected = new Map<string, RawTeamsMessage>()
       const collect = async () => {
         for (const m of await read(desk)) if (!Number.isNaN(sentAt(m))) collected.set(keyOf(m), m)
       }
       const oldest = () => Math.min(...Array.from(collected.values(), sentAt))
 
-      for (let step = 0; step < HISTORY_MAX_STEPS; step++) {
-        await collect()
-        if (collected.size > 0 && oldest() < since.getTime()) break
+      // One scroll up, then a read. True when the list has no older rows to load: this is the chat's start.
+      const scrollOnce = async (): Promise<boolean> => {
         const moved = await moveList(desk, s, 'up')
         if (moved === null) throw new WatcherChatError('lost')
         await desk.waitForTimeout(sleepMs())
-        if (moved.top > 0) continue
-        // At the top: the list loads older rows lazily. None within the wait means this is the chat's start.
-        try {
-          await desk.waitForFunction(
-            ({ scroller, height }) => (document.querySelector(scroller)?.scrollHeight ?? 0) > height,
-            { scroller: s.chatScroller, height: moved.height },
-            // A timer, not the default animation frame: a tab in the background gets no frames.
-            { timeout: OLDER_WAIT_MS, polling: 100 }
-          )
-        } catch (error) {
-          if (!(error instanceof errors.TimeoutError)) throw error
-          await collect()
-          break
+        let atStart = false
+        // At the top the list loads older rows lazily. None within the wait means this is the chat's start.
+        if (moved.top === 0) {
+          try {
+            await desk.waitForFunction(
+              ({ scroller, height }) => (document.querySelector(scroller)?.scrollHeight ?? 0) > height,
+              { scroller: s.chatScroller, height: moved.height },
+              // A timer, not the default animation frame: a tab in the background gets no frames.
+              { timeout: OLDER_WAIT_MS, polling: 100 }
+            )
+          } catch (error) {
+            if (!(error instanceof errors.TimeoutError)) throw error
+            atStart = true
+          }
         }
+        await collect()
+        return atStart
       }
 
-      if ((await moveList(desk, s, 'bottom')) === null) throw new WatcherChatError('lost')
+      await step(collect)
+      const deadline = Date.now() + historyBudgetMs
+      for (let n = 0; n < HISTORY_MAX_STEPS && Date.now() < deadline; n++) {
+        if (collected.size > 0 && oldest() < since.getTime()) break
+        if (await step(scrollOnce)) break
+      }
+
+      await step(async () => {
+        if ((await moveList(desk, s, 'bottom')) === null) throw new WatcherChatError('lost')
+      })
       floorMs = since.getTime()
       return toMessages(Array.from(collected.values()), floorMs)
     },
