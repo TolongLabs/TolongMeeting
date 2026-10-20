@@ -1,0 +1,326 @@
+# TolongMeeting on one server. Run from the repository root:
+#   docker compose -f docker/compose.yaml --env-file docker/worker/versions.env --env-file .env --profile build build worker home-route
+#   docker compose -f docker/compose.yaml --env-file docker/worker/versions.env --env-file .env up -d --build
+# docker/worker/versions.env supplies TAILSCALE_VERSION, the pin of the home-route sidecar image (plan 08 Task 13).
+# Host paths (TM_DATA_ROOT, TM_PROFILE_ROOT) are the same inside every container, because the Docker gate hands them
+# to Docker as bind sources. The directories belong to uid 1000 (the worker uid); so do the two secret files below
+# (mode 0400), which Docker bind-mounts with the host's owner. The firewall rules for the worker network are in
+# docker/firewall/ and must be installed on the host (see tm-worker-egress.service).
+name: tolongmeeting
+
+# What the app containers share: no capabilities, no privilege gain, a read-only root file system (each service lists
+# the few places it writes). Postgres and ntfy are left out: their images start as root and drop to their own user.
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: ['no-new-privileges:true']
+  read_only: true
+
+services:
+  # The only service with published ports. It is also on the worker network, at a fixed address, which is the only
+  # address a worker may reach (HTTPS to the app and ntfy), and from which it reaches a worker's noVNC on :6080.
+  caddy:
+    <<: *hardened
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    # Binding 80 and 443 is the one capability it keeps. /data (certificates) is a volume; /config holds only the
+    # autosaved copy of the config, which the next start rebuilds.
+    cap_add: [NET_BIND_SERVICE]
+    tmpfs: [/config, /tmp]
+    ports: ['80:80', '443:443', '443:443/udp']
+    environment:
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks:
+      app: {}
+      tm-workers:
+        ipv4_address: 172.30.0.2
+    depends_on: [web, ntfy]
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    <<: *hardened
+    build: { context: .., dockerfile: docker/app/Dockerfile, target: web }
+    restart: unless-stopped
+    # Next.js writes its image and fetch caches under .next/cache.
+    tmpfs: ['/tmp', '/app/packages/web/.next/cache:uid=1000,gid=1000']
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set GITHUB_CLIENT_ID in .env}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set GITHUB_CLIENT_SECRET in .env}
+      GITHUB_ORG: ${GITHUB_ORG:?set GITHUB_ORG in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      NTFY_ADMIN_TOKEN: ${NTFY_ADMIN_TOKEN:?set NTFY_ADMIN_TOKEN in .env}
+      TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      # Passed through only when set in .env: watchGateFromEnv throws on an empty value, so no ":-" default here.
+      TM_WHATSAPP_FROM_SERVER:
+      TM_DISCORD_FROM_SERVER:
+      # Plans 03 and 08. Passed through only when set in .env, so a server that does not use My PC or the home route
+      # starts without them; the code that reads one refuses loudly when it is missing or empty.
+      TM_WORKER_IMAGE_REF:
+      TM_TAILSCALE_CLIENT_ID:
+      TM_TAILSCALE_CLIENT_SECRET:
+      TM_TAILSCALE_TAILNET:
+      # Plan 07. The Google and Notion OAuth apps of the export targets. An empty value means "not configured": the
+      # target is then not offered. GOOGLE_API_KEY and GOOGLE_APP_ID belong to the Google Picker in the browser.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GOOGLE_APP_ID: ${GOOGLE_APP_ID:-}
+      NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
+      NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
+      TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
+    secrets: [tm_master_key]
+    # Artefacts are served from here, read-only, except the occurrences subtree: web writes the native transcript
+    # (`transcript/native/audio.{txt,srt,json}`, plan 03) and local-run uploads (plan 08) into an occurrence directory.
+    # The second mount is its own mount, so the read-only flag of the first does not reach it, and nothing else under
+    # TM_DATA_ROOT becomes writable. The tree is owned by uid 1000, the uid web runs as.
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}:ro', '${TM_DATA_ROOT}/occurrences:${TM_DATA_ROOT}/occurrences']
+    networks: [app, backend]
+    # The scheduler applies the database migrations, so the website waits until it is healthy.
+    depends_on:
+      scheduler: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # pg-boss workers and schedules, the launcher, the monitor, retention and backups. Runs as the worker uid.
+  scheduler:
+    <<: *hardened
+    build: { context: .., dockerfile: docker/app/Dockerfile, target: scheduler }
+    restart: unless-stopped
+    # The health file, and the nightly database dump before rclone copies it.
+    tmpfs: ['/tmp:uid=1000,gid=1000,size=2g']
+    user: '1000:1000'
+    init: true
+    # SIGTERM drains running jobs (30 s) and remuxes (30 s) before it exits.
+    stop_grace_period: 90s
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      GITHUB_ORG: ${GITHUB_ORG:?set GITHUB_ORG in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      TM_BACKUP_REMOTE: ${TM_BACKUP_REMOTE:?set TM_BACKUP_REMOTE in .env}
+      TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
+      TM_PROFILE_ROOT: ${TM_PROFILE_ROOT:?set TM_PROFILE_ROOT in .env}
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      # Passed through only when set in .env: watchGateFromEnv throws on an empty value, so no ":-" default here.
+      TM_WHATSAPP_FROM_SERVER:
+      TM_DISCORD_FROM_SERVER:
+      # Plans 03 and 08. Passed through only when set in .env, so a server that does not use My PC or the home route
+      # starts without them; the code that reads one refuses loudly when it is missing or empty.
+      TM_WORKER_IMAGE_REF:
+      TM_TAILSCALE_CLIENT_ID:
+      TM_TAILSCALE_CLIENT_SECRET:
+      TM_TAILSCALE_TAILNET:
+      # The sidecar image tag (tm-home-route:<version>) the scheduler asks the gate to create.
+      TAILSCALE_VERSION: ${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
+      TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
+      DOCKER_PROXY_URL: http://docker-proxy:2375
+      RCLONE_CONFIG: /run/secrets/rclone_conf
+    secrets: [tm_master_key, rclone_conf]
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}', '${TM_PROFILE_ROOT}:${TM_PROFILE_ROOT}']
+    networks: [app, backend, gate]
+    depends_on:
+      postgres: { condition: service_healthy }
+      docker-proxy: { condition: service_healthy }
+    # The monitor loop touches this file every 5 seconds; a stale file means a stuck process.
+    healthcheck:
+      test: ['CMD-SHELL', 'test -n "$$(find /tmp/tm-scheduler-alive -mmin -1 2>/dev/null)"']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  # The pg-boss consumer of the `pipeline` and `pipeline-dead` queues. It reuses the worker image (Bun, ffmpeg and the
+  # pipeline's dependencies are in it) and replaces its entrypoint. It never starts a meeting.
+  pipeline:
+    <<: *hardened
+    image: tolongmeeting/worker:current
+    restart: unless-stopped
+    tmpfs: ['/tmp:uid=1000,gid=1000,size=2g']
+    entrypoint: ['bun', 'run', 'packages/pipeline/src/consumer-main.ts']
+    init: true
+    stop_grace_period: 90s
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
+      TM_PROFILE_ROOT: ${TM_PROFILE_ROOT:?set TM_PROFILE_ROOT in .env}
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
+    secrets: [tm_master_key]
+    volumes: ['${TM_DATA_ROOT}:${TM_DATA_ROOT}']
+    networks: [app, backend]
+    depends_on:
+      scheduler: { condition: service_healthy }
+
+  # `tm-exports`: runs the queued exports (zip, PDF and the member's own GitHub, Google Docs and Notion). It reads a
+  # finished meeting's files and writes one file per download into that meeting's `exports/` folder, so it needs the
+  # occurrences tree writable (a bind mount cannot be narrower than a directory, and every meeting has its own
+  # `exports/`); the code writes nowhere else and refuses an `exports/` that is a symlink. Docker, the worker network
+  # and the profiles are out of reach. It sits on `backend` for Postgres and on `app` for the internet (the providers'
+  # APIs) and ntfy. Nothing connects to it.
+  exports:
+    <<: *hardened
+    build: { context: .., dockerfile: docker/app/Dockerfile, target: exports }
+    restart: unless-stopped
+    # The health file, and the scratch space of the PDF and image libraries.
+    tmpfs: ['/tmp:uid=1000,gid=1000,size=512m']
+    user: '1000:1000'
+    init: true
+    # SIGTERM lets the export in progress finish (30 s) before it exits.
+    stop_grace_period: 60s
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      # An empty value means "not configured": that target is then not available. Set both or neither of a pair.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
+      NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
+      TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
+    secrets: [tm_master_key]
+    volumes: ['${TM_DATA_ROOT}/occurrences:${TM_DATA_ROOT}/occurrences']
+    networks: [app, backend]
+    depends_on:
+      scheduler: { condition: service_healthy }
+    # The loop touches this file every 5 seconds, also during a long export; a stale file means a stuck process.
+    healthcheck:
+      test: ['CMD-SHELL', 'test -n "$$(find /tmp/tm-exports-alive -mmin -1 2>/dev/null)"']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  postgres:
+    image: postgres:17.11
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tm
+      POSTGRES_DB: tm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: ['pg-data:/var/lib/postgresql/data']
+    # Only the app's own services reach it, and it has no route out.
+    networks: [backend]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tm -d tm']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Pings. Nothing is readable without a token (deny-all); attachments stay off because the attachment cache is unset.
+  ntfy:
+    image: binwiederhier/ntfy:v2.32.0
+    restart: unless-stopped
+    command: serve
+    environment:
+      NTFY_BASE_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      NTFY_LISTEN_HTTP: ':80'
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+      NTFY_BEHIND_PROXY: 'true'
+      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+    volumes: ['ntfy-data:/var/lib/ntfy']
+    networks: [app]
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --tries=1 http://127.0.0.1:80/v1/health -O - | grep -Eo ''"healthy"\s*:\s*true''']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # The only consumer of the Docker socket. It sits on the internal `gate` network with the scheduler and nothing else,
+  # and rebuilds each container request from its own settings, so a request can only ask for the fixed worker shape.
+  docker-proxy:
+    build: { context: .., dockerfile: docker/app/Dockerfile, target: gate }
+    restart: unless-stopped
+    environment:
+      TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
+      TM_PROFILE_ROOT: ${TM_PROFILE_ROOT:?set TM_PROFILE_ROOT in .env}
+      TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      # The one sidecar image the gate lets the scheduler create (and nothing else with NET_ADMIN).
+      TAILSCALE_VERSION: ${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
+    volumes: ['/var/run/docker.sock:/var/run/docker.sock']
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    networks: [gate]
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "Bun.connect({ hostname: '127.0.0.1', port: 2375, socket: { open(s) { s.end(); process.exit(0) }, data() {}, error() { process.exit(1) }, connectError() { process.exit(1) } } })"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Build only: `docker compose --profile build build worker` makes tolongmeeting/worker:current, which the gate starts
+  # for every meeting and the `pipeline` service runs. scripts/build-worker-image.sh builds the same image with the pins.
+  worker:
+    profiles: [build]
+    image: tolongmeeting/worker:current
+    build: { context: .., dockerfile: docker/worker/Dockerfile }
+
+  # Build only: the sidecar that sends a server-run worker's traffic out through the member's home device. The gate starts
+  # it for an occurrence on "Server through home"; the worker then joins its network namespace. The tag is the pin.
+  home-route:
+    profiles: [build]
+    image: tm-home-route:${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
+    build:
+      context: ..
+      dockerfile: docker/home-route/Dockerfile
+      args:
+        TAILSCALE_VERSION: ${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
+
+networks:
+  app: {}
+  # Postgres and the services that use it. No route out, so the database can't reach the internet or be reached from it.
+  backend: { internal: true }
+  # Only the scheduler and the gate: no route out, and the Docker socket is reachable from nowhere else.
+  gate: { internal: true }
+  # Meeting workers. Not internal, because workers need the internet; docker/firewall/worker-egress.sh drops every private
+  # range, so a worker reaches only Caddy at 172.30.0.2 (HTTPS) and the public internet. Caddy reaches a worker's :6080.
+  # Dynamic addresses come from the upper half, so a worker never takes Caddy's .2.
+  tm-workers:
+    name: tm-workers
+    driver_opts:
+      com.docker.network.bridge.name: tm-workers0
+      com.docker.network.bridge.enable_icc: 'false'
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25
+          gateway: 172.30.0.1
+
+secrets:
+  tm_master_key: { file: /srv/tolongmeeting/secrets/master.key }
+  rclone_conf: { file: /srv/tolongmeeting/secrets/rclone.conf }
+
+volumes:
+  caddy-data: {}
+  pg-data: {}
+  ntfy-data: {}

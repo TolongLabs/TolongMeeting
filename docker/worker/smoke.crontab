@@ -1,0 +1,7 @@
+# The monthly smoke test: 03:00 on the 1st, one line per platform. Each job file is a worker job whose link is a fixed
+# link to that platform's standing test meeting, run as a signed-in identity (Zoom has no guest path here: a guest page
+# gives name_required). Replace each <...> path, and export TM_DATA_ROOT, TM_PROFILE_ROOT and TM_MASTER_KEY_FILE for
+# cron. The exit code is 0 when nothing is missing and 1 otherwise; a miss also pings the job's ntfy topic.
+0 3 1 * * /opt/tolongmeeting/docker/worker/run-job.sh <zoom-smoke-job.json> smoke
+0 3 1 * * /opt/tolongmeeting/docker/worker/run-job.sh <teams-smoke-job.json> smoke
+0 3 1 * * /opt/tolongmeeting/docker/worker/run-job.sh <meet-smoke-job.json> smoke

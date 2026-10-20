@@ -101,3 +101,11 @@ data/
 # Playwright
 test-results/
 playwright-report/
+.archify/
+
+# Next.js build output
+.next/
+next-env.d.ts
+
+# Companion installer output
+packages/companion/release/

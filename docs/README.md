@@ -1,6 +1,6 @@
 # TolongMeeting docs
 
-The documentation for TolongMeeting, an internal TolongLabs app. It attends online lectures and work meetings as the member, catches and submits attendance forms, and delivers ADHD-friendly summaries. It contains the record of the manual run that inspired it (an AI agent attending the SDC Hackathon 2026 opening ceremony on Zoom, 19 October 2026), the research, the design and the build plans. Nothing has been built yet.
+The documentation for TolongMeeting, an internal TolongLabs app. It attends online lectures and work meetings as the member, catches and submits attendance forms, and delivers ADHD-friendly summaries. It contains the record of the manual run that inspired it (an AI agent attending the SDC Hackathon 2026 opening ceremony on Zoom, 19 October 2026), the research, the product definition, requirements, technical design and screen design, and the build plans. Nothing has been built yet.
 
 Contents:
 
@@ -15,7 +15,7 @@ Contents:
 
 - **Session record**: complete. Everything in it is fact from the 19 October 2026 session: what was done, what failed, how it was fixed and what came out.
 - **Research**: complete as of 20 October 2026. It covers open-source meeting bots, platform constraints and AI providers, plus three specialist reviews of the design.
-- **Design**: revision 2, approved by the requester and revised after expert review: [TolongMeeting design](app-design/2026-10-20-meeting-bot-design.md).
+- **Product, requirements, technical design and screens**: revision 2 of the design, approved by the requester and revised after expert review, now split into four documents: [PRODUCT.md](PRODUCT.md) (a draft awaiting the requester's confirmation), [PRD.md](PRD.md), [TRD.md](TRD.md) and [DESIGN.md](DESIGN.md). The old single page, [the design](app-design/2026-10-20-meeting-bot-design.md), now only maps its sections to their new homes. The visual system is pending the Figma gate.
 - **Plans**: a roadmap, shared architecture contracts and one implementation plan per milestone, in [plans](plans/README.md). Implementation hasn't started; the spikes in plan 00 come first.
 
 ## Layout
@@ -23,11 +23,15 @@ Contents:
 ```text
 docs/
 ├── README.md                          this index
+├── PRODUCT.md                         what the product is: problem, users, principles, terminology
+├── PRD.md                             what it must do: goals, decisions, requirements, acceptance tests, milestones
+├── TRD.md                             how it is built: architecture, binding repository layout, types and interfaces
+├── DESIGN.md                          what the member sees: screens, pings, summary format, states
+├── trd/                               component deep-dives linked from the TRD
 ├── app-design/
-│   └── 2026-10-20-meeting-bot-design.md   the design: goals, decisions, components, state machines, build order
+│   └── 2026-10-20-meeting-bot-design.md   retired: maps each old section of the single design to its new home
 ├── plans/
 │   ├── README.md                      roadmap, exit criteria, how to execute
-│   ├── architecture.md                binding repository layout, types and interfaces
 │   └── 00-spikes.md … 08-run-locations.md   one plan per milestone
 ├── research/
 │   ├── README.md                      index
@@ -56,8 +60,8 @@ docs/
 
 ## How to use these docs
 
-- **People**: start with the [design](app-design/2026-10-20-meeting-bot-design.md)'s summary and decisions. For the story behind it, read the session [overview](session-record/overview.md).
-- **Agents building the app**: read the [design](app-design/2026-10-20-meeting-bot-design.md), [architecture and contracts](plans/architecture.md) and the [roadmap](plans/README.md), then execute plans in order with the superpowers `subagent-driven-development` or `executing-plans` skill. Read [problems and fixes](session-record/problems-and-fixes.md) and the [expert reviews](research/expert-reviews/README.md) before touching the meeting worker.
+- **People**: start with [PRODUCT.md](PRODUCT.md), then the [PRD](PRD.md)'s decisions and scenarios. For the screens, read the [design](DESIGN.md). For the story behind it, read the session [overview](session-record/overview.md).
+- **Agents building the app**: read the [PRD](PRD.md), the [TRD](TRD.md) (architecture and binding contracts) and the [roadmap](plans/README.md), plus the [design](DESIGN.md) for any UI work, then execute plans in order with the superpowers `subagent-driven-development` or `executing-plans` skill. Read [problems and fixes](session-record/problems-and-fixes.md) and the [expert reviews](research/expert-reviews/README.md) before touching the meeting worker.
 - **Agents repeating the job by hand** with Claude Code and the claude-in-chrome extension: follow the [runbook](session-record/runbook.md) and use [techniques](session-record/techniques.md) and the [reference scripts](reference-scripts/README.md).
 - **Code reuse**: the reference scripts are session-grade (Windows-only, hard-coded layouts and thresholds); each one's README entry says what it assumes and what to generalise.
 
@@ -76,7 +80,7 @@ docs/
 
 ## Questions the brainstorm started from
 
-The [design's decisions table](app-design/2026-10-20-meeting-bot-design.md#decisions) records how each was settled:
+The [PRD's decisions table](PRD.md#decisions) records how each was settled:
 
 1.  **Where it runs**: a local desktop agent on the user's PC, a cloud meeting bot that joins as a participant, or both.
 2.  **Platforms**: Zoom only, or also Microsoft Teams and Google Meet; Windows only, or macOS and Linux.

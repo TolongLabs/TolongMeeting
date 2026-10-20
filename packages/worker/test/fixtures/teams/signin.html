@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign in to your account</title>
+  </head>
+  <body>
+    <!-- An imitation of the Microsoft sign-in page, unverified against the real one. -->
+    <main id="root"></main>
+    <script>
+      const root = document.getElementById('root')
+      if (new URLSearchParams(location.search).get('blocked') === '1') {
+        root.innerHTML = '<h1>You can’t get there from here</h1><p>AADSTS53000: Device is not in required device state: compliant.</p>'
+      } else {
+        root.innerHTML = '<h1>Sign in</h1><input name="loginfmt" type="email" placeholder="Email, phone, or Skype" /><button type="button">Next</button>'
+      }
+    </script>
+  </body>
+</html>

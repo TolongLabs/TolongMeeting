@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "How a Lecture Goes",
+    "output": ".archify/lecture-sequence/lecture-sequence.html",
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "participants": [
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "queue, T-60"
+    },
+    {
+      "id": "chat",
+      "type": "external",
+      "label": "Chat app",
+      "sublabel": "WhatsApp, Discord"
+    },
+    {
+      "id": "platform",
+      "type": "external",
+      "label": "Platform",
+      "sublabel": "Zoom, Teams, Meet"
+    },
+    {
+      "id": "forms",
+      "type": "external",
+      "label": "Forms",
+      "sublabel": "Google, Microsoft"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "one container"
+    },
+    {
+      "id": "pipeline",
+      "type": "backend",
+      "label": "Pipeline",
+      "sublabel": "server"
+    },
+    {
+      "id": "member",
+      "type": "external",
+      "label": "Member",
+      "sublabel": "ntfy, companion"
+    }
+  ],
+  "segments": [
+    {
+      "from": 161,
+      "to": 245,
+      "label": "T-60: verify"
+    },
+    {
+      "from": 259,
+      "to": 315,
+      "label": "Watch for link"
+    },
+    {
+      "from": 329,
+      "to": 441,
+      "label": "T-10 to T-5: join"
+    },
+    {
+      "from": 455,
+      "to": 567,
+      "label": "During the meeting"
+    },
+    {
+      "from": 581,
+      "to": 665,
+      "label": "End and after"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m1-scheduler-worker",
+      "from": "scheduler",
+      "to": "worker",
+      "y": 175,
+      "label": "start worker, T-60",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m2-worker-platform",
+      "from": "worker",
+      "to": "platform",
+      "y": 203,
+      "label": "check platform, chat, form sign-ins",
+      "variant": "default"
+    },
+    {
+      "id": "m3-worker-member",
+      "from": "worker",
+      "to": "member",
+      "y": 231,
+      "label": "ping: sign in again, if expired",
+      "variant": "dashed"
+    },
+    {
+      "id": "m4-worker-chat",
+      "from": "worker",
+      "to": "chat",
+      "y": 273,
+      "label": "scan last 24 h, then keep watching",
+      "variant": "default"
+    },
+    {
+      "id": "m5-chat-worker",
+      "from": "chat",
+      "to": "worker",
+      "y": 301,
+      "label": "meeting link, newest wins",
+      "variant": "return"
+    },
+    {
+      "id": "m6-worker-forms",
+      "from": "worker",
+      "to": "forms",
+      "y": 343,
+      "label": "T-10: load once, session works",
+      "variant": "default"
+    },
+    {
+      "id": "m7-worker-platform",
+      "from": "worker",
+      "to": "platform",
+      "y": 371,
+      "label": "join with mic and camera off, wait in lobby",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m8-worker-member",
+      "from": "worker",
+      "to": "member",
+      "y": 399,
+      "label": "ping: joined, with count",
+      "variant": "default"
+    },
+    {
+      "id": "m9-worker-member",
+      "from": "worker",
+      "to": "member",
+      "y": 427,
+      "label": "ping: no link, paste one",
+      "variant": "dashed"
+    },
+    {
+      "id": "m10-platform-worker",
+      "from": "platform",
+      "to": "worker",
+      "y": 469,
+      "label": "video and audio, stage frames every 2 s",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m11-chat-worker",
+      "from": "chat",
+      "to": "worker",
+      "y": 497,
+      "label": "form link, or QR on the shared screen",
+      "variant": "return"
+    },
+    {
+      "id": "m12-worker-forms",
+      "from": "worker",
+      "to": "forms",
+      "y": 525,
+      "label": "open, fill, submit if trusted",
+      "variant": "security"
+    },
+    {
+      "id": "m13-worker-member",
+      "from": "worker",
+      "to": "member",
+      "y": 553,
+      "label": "ping: submitted, or form link",
+      "variant": "security"
+    },
+    {
+      "id": "m14-platform-worker",
+      "from": "platform",
+      "to": "worker",
+      "y": 595,
+      "label": "meeting ends, or T+30 min",
+      "variant": "return"
+    },
+    {
+      "id": "m15-worker-pipeline",
+      "from": "worker",
+      "to": "pipeline",
+      "y": 623,
+      "label": "upload files, checkpoint profile",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m16-pipeline-member",
+      "from": "pipeline",
+      "to": "member",
+      "y": 651,
+      "label": "post-process, ping summary",
+      "variant": "emphasis"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "worker",
+      "from": 170,
+      "to": 659,
+      "type": "backend"
+    }
+  ],
+  "cards": []
+}

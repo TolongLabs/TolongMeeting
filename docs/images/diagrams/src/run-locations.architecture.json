@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Run Locations",
+    "output": ".archify/run-locations/run-locations.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "components": [
+    {
+      "id": "sched",
+      "type": "backend",
+      "label": "Scheduler + API",
+      "sublabel": "T-60 start, job queue",
+      "pos": [40, 90],
+      "size": [150, 330]
+    },
+    {
+      "id": "worker_a",
+      "type": "backend",
+      "label": "Worker, server",
+      "sublabel": "run location: server",
+      "pos": [300, 90],
+      "size": [150, 60]
+    },
+    {
+      "id": "profile_a",
+      "type": "database",
+      "label": "Profile, server",
+      "sublabel": "encrypted volume, 5 min checkpoints",
+      "pos": [300, 200],
+      "size": [170, 60]
+    },
+    {
+      "id": "worker_b",
+      "type": "backend",
+      "label": "Worker, server",
+      "sublabel": "run location: server_via_home",
+      "pos": [300, 360],
+      "size": [170, 60]
+    },
+    {
+      "id": "profile_b",
+      "type": "database",
+      "label": "Profile, server",
+      "sublabel": "encrypted volume, 5 min checkpoints",
+      "pos": [300, 470],
+      "size": [170, 60]
+    },
+    {
+      "id": "tailscale",
+      "type": "cloud",
+      "label": "Home exit node",
+      "sublabel": "Tailscale device, must be on",
+      "pos": [570, 360],
+      "size": [160, 60]
+    },
+    {
+      "id": "companion",
+      "type": "frontend",
+      "label": "Companion app",
+      "sublabel": "relays control channel",
+      "pos": [40, 630],
+      "size": [160, 60]
+    },
+    {
+      "id": "whisper",
+      "type": "backend",
+      "label": "whisper-transcriber",
+      "sublabel": "native mode",
+      "pos": [40, 740],
+      "size": [160, 60]
+    },
+    {
+      "id": "worker_c",
+      "type": "backend",
+      "label": "Worker, my PC",
+      "sublabel": "run location: local",
+      "pos": [300, 630],
+      "size": [170, 60]
+    },
+    {
+      "id": "profile_c",
+      "type": "database",
+      "label": "Profile, PC only",
+      "sublabel": "encrypted, never uploaded",
+      "pos": [300, 740],
+      "size": [170, 60]
+    },
+    {
+      "id": "web_a",
+      "type": "external",
+      "label": "Web services",
+      "sublabel": "Zoom, Teams, Meet, Forms, chats",
+      "pos": [830, 90],
+      "size": [190, 60]
+    },
+    {
+      "id": "web_b",
+      "type": "external",
+      "label": "Web services",
+      "sublabel": "Zoom, Teams, Meet, Forms, chats",
+      "pos": [830, 360],
+      "size": [190, 60]
+    },
+    {
+      "id": "web_c",
+      "type": "external",
+      "label": "Web services",
+      "sublabel": "Zoom, Teams, Meet, Forms, chats",
+      "pos": [830, 630],
+      "size": [190, 60]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "TolongLabs server, Singapore",
+      "wraps": ["sched", "worker_a", "profile_a", "worker_b", "profile_b"]
+    },
+    {
+      "kind": "region",
+      "label": "Member's home",
+      "wraps": ["tailscale"]
+    },
+    {
+      "kind": "region",
+      "label": "Member's PC (Docker Desktop)",
+      "wraps": ["companion", "whisper", "worker_c", "profile_c"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "sched-to-worker-a",
+      "from": "sched",
+      "to": "worker_a",
+      "label": "launch",
+      "variant": "default"
+    },
+    {
+      "id": "sched-to-worker-b",
+      "from": "sched",
+      "to": "worker_b",
+      "label": "launch",
+      "variant": "default"
+    },
+    {
+      "id": "worker-a-to-profile",
+      "from": "worker_a",
+      "to": "profile_a",
+      "label": "working copy",
+      "variant": "default"
+    },
+    {
+      "id": "worker-b-to-profile",
+      "from": "worker_b",
+      "to": "profile_b",
+      "label": "working copy",
+      "variant": "default"
+    },
+    {
+      "id": "worker-a-to-web",
+      "from": "worker_a",
+      "to": "web_a",
+      "label": "server IP",
+      "variant": "emphasis"
+    },
+    {
+      "id": "worker-b-to-tailscale",
+      "from": "worker_b",
+      "to": "tailscale",
+      "label": "via home",
+      "variant": "dashed"
+    },
+    {
+      "id": "tailscale-to-web",
+      "from": "tailscale",
+      "to": "web_b",
+      "label": "home IP",
+      "variant": "dashed"
+    },
+    {
+      "id": "companion-to-sched",
+      "from": "companion",
+      "to": "sched",
+      "label": "jobs, relay",
+      "variant": "default"
+    },
+    {
+      "id": "companion-to-worker-c",
+      "from": "companion",
+      "to": "worker_c",
+      "label": "runs",
+      "variant": "default"
+    },
+    {
+      "id": "companion-to-whisper",
+      "from": "companion",
+      "to": "whisper",
+      "label": "native job",
+      "variant": "dashed"
+    },
+    {
+      "id": "worker-c-to-profile",
+      "from": "worker_c",
+      "to": "profile_c",
+      "label": "working copy",
+      "variant": "default"
+    },
+    {
+      "id": "worker-c-to-web",
+      "from": "worker_c",
+      "to": "web_c",
+      "label": "PC network",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": []
+}

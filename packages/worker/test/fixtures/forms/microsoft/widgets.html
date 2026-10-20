@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Widgets</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='button'], [role='option'], button { cursor: pointer; padding: 4px }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div data-automation-id="formTitle">Widgets</div>
+      
+      
+      <div class="page"><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Short answer <span aria-label="Required">*</span></span><input data-automation-id="textInput" type="text"></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Long answer</span><textarea></textarea></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Pick one <span aria-label="Required">*</span></span><label><input type="radio" name="q7" value="Present"> <span>Present</span></label><label><input type="radio" name="q7" value="Absent"> <span>Absent</span></label></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Pick some</span><label><input type="checkbox" name="q8" value="Lecture"> <span>Lecture</span></label><label><input type="checkbox" name="q8" value="Tutorial"> <span>Tutorial</span></label></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Choose a section <span aria-label="Required">*</span></span><div role="button" aria-haspopup="listbox" tabindex="0" data-value="">Select your answer</div><div role="listbox" hidden><div role="option" data-value="01">01</div><div role="option" data-value="02">02</div><div role="option" data-value="03">03</div></div></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Date</span><input data-automation-id="dateInput" type="date"></div><button type="button" data-automation-id="submitButton">Submit</button></div><div class="copy"><label><input type="checkbox" aria-label="Send me an email receipt of my responses"> Send me an email receipt of my responses</label></div>
+    </div>
+    
+    <script src="fixture.js"></script>
+  </body>
+</html>

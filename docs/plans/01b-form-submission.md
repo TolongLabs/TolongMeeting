@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright on Node 24 driving the pinned Chrome, zod, `chatJson` from `packages/ai` (model `models.formMatch`), `sendPing` from `packages/notify`, `bun test`, Playwright Test against static HTML fixtures.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -96,6 +96,7 @@ export type StopReason =
   | 'deadline'
   | 'interrupted'
   | 'interrupted_submitting'
+  | 'tab_stuck'
   | 'unexpected_error'
 
 export interface FilledField {
@@ -146,7 +147,7 @@ export const sampleForm: ResolvedForm // Google form G below, source 'qr', seenA
 export function sampleRecord(patch?: Partial<FormRecord>): FormRecord // newFormRecord(sampleForm, 'occ-1') with the patch applied
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/form-record.test.ts
@@ -208,12 +209,12 @@ test('identity.organisation defaults to null and accepts an OrgConfig', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/core/src/form-record.test.ts packages/core/src/job.test.ts`
 Expected: FAIL with "Cannot find module './form-record'" and the organisation test failing on `undefined`.
 
-- [ ] **Step 3: Implement `form-record.ts`, `testing.ts` and the `identity.organisation` field**
+- [x] **Step 3: Implement `form-record.ts`, `testing.ts` and the `identity.organisation` field**
 
 Canonical URL rules (the host is lower-cased in every case):
 
@@ -223,12 +224,12 @@ Canonical URL rules (the host is lower-cased in every case):
 
 `formIdFor` hashes with `node:crypto` `createHash('sha256')`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/core/src/form-record.test.ts packages/core/src/job.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/form-record.ts packages/core/src/form-record.test.ts packages/core/src/testing.ts packages/core/src/job.ts packages/core/src/job.test.ts packages/core/src/index.ts
@@ -301,7 +302,7 @@ submitting       already_answered_seen   already_answered
 
 `untrusted` is terminal for the handler; only the dispatcher (Task 13) leaves it, through `trusted_candidate_seen`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const EDGES: [FormState, FormTrigger, FormState][] = [
@@ -373,21 +374,21 @@ test('applyFormTrigger appends to history without mutating', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/core/src/form-machine.test.ts`
 Expected: FAIL on the added edges (`IllegalTransition`) and "applyFormTrigger is not a function".
 
-- [ ] **Step 3: Implement the table in `packages/core/src/form-machine.ts`**
+- [x] **Step 3: Implement the table in `packages/core/src/form-machine.ts`**
 
 A `Record<FormState, Partial<Record<FormTrigger, FormState>>>` plus the `error` rule for non-terminal states. Rename any 1A call site whose trigger name differs (the typecheck lists them). If 1A's manual-submission path drives a transition that is not in this table, keep that one entry with a `// removed in Task 14` comment; Task 14 deletes it with that path.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/core && bun run typecheck`
 Expected: PASS, and the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/form-machine.ts packages/core/src/form-machine.test.ts
@@ -399,7 +400,7 @@ git commit -m "feat(core): complete the form state machine"
 **Files:**
 
 - Create: `packages/worker/src/forms/store.ts`
-- Test: `packages/worker/src/forms/store.test.ts`
+- Test: `packages/worker/test/forms-store.test.ts` (moved from `src/`; tests live in `test/`)
 
 **Interfaces:**
 
@@ -409,12 +410,12 @@ git commit -m "feat(core): complete the form state machine"
 ```ts
 export async function saveFormRecord(dataDir: string, rec: FormRecord): Promise<void> // forms/<formId>/record.json via record.json.tmp and rename; creates the directory
 export async function loadFormRecords(dataDir: string): Promise<{ records: FormRecord[]; invalid: string[] }> // invalid: formIds whose record.json is unreadable or fails the schema
-export function formEventData(rec: FormRecord): Record<string, unknown> // { formId, state, provider, source, sender, trustReason, reason, fields }
+export function formEventData(rec: FormRecord): Record<string, unknown> // { formId, state, provider, source, sender, senderRole, trustReason, reason, seenAt, submittedAt, url, finalUrl, fieldsFilled }
 ```
 
-`fields` lists `detailKey` for each filled field, and `attendance_confirmation` where `detailKey` is null.
+`fieldsFilled` lists `detailKey` for each filled field, and `attendance_confirmation` where `detailKey` is null. `url` and `finalUrl` are both `canonicalFormUrl(finalUrl)`, so no query (no prefilled answers) reaches an event (ruling B10).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const rec = sampleRecord()
@@ -456,31 +457,31 @@ test('formEventData names fields but never carries their values', () => {
       }
     ]
   })
-  expect(data.fields).toEqual(['full_name', 'attendance_confirmation'])
+  expect(data.fieldsFilled).toEqual(['full_name', 'attendance_confirmation'])
   expect(JSON.stringify(data)).not.toContain('Test Student')
   expect(JSON.stringify(data)).not.toContain('I confirm')
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/store.test.ts`
+Run: `bun test packages/worker/test/forms-store.test.ts`
 Expected: FAIL with "Cannot find module './store'".
 
-- [ ] **Step 3: Implement `packages/worker/src/forms/store.ts`**
+- [x] **Step 3: Implement `packages/worker/src/forms/store.ts`**
 
 `node:fs/promises` only; records are parsed with `FormRecordSchema.safeParse`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/store.test.ts`
+Run: `bun test packages/worker/test/forms-store.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/store.ts packages/worker/src/forms/store.test.ts
-git commit -m "feat(worker): persist form records and events"
+git add packages/worker/src/forms/store.ts packages/worker/test/forms-store.test.ts docs/plans/01b-form-submission.md
+git commit -m "feat(worker): store form records and events"
 ```
 
 ### Task 4: Form ping copy
@@ -488,7 +489,7 @@ git commit -m "feat(worker): persist form records and events"
 **Files:**
 
 - Create: `packages/worker/src/forms/pings.ts`
-- Test: `packages/worker/src/forms/pings.test.ts`
+- Test: `packages/worker/test/forms-pings.test.ts` (moved from `src/`; tests live in `test/`)
 
 **Interfaces:**
 
@@ -503,7 +504,7 @@ export interface FormLinks {
 export function formPing(rec: FormRecord, opts: { entryName: string; timeZone: string; links: FormLinks }): Ping | null // null for states that don't ping
 ```
 
-Exact copy. `<entry>` is the entry name; `<provider>` is `Google Forms` or `Microsoft Forms`; `<time>` is `submittedAt` as `HH:MM` (24-hour) in the entry's time zone; `<sender>` is the sender, or `someone` when null; `<source>` is `meeting chat`, `watched chat` or `shared screen`. `Open form` links to `finalUrl`. `actions` is always an array, and `attachPath` is never set.
+Exact copy. `<entry>` is the entry name; `<provider>` is `Google Forms` or `Microsoft Forms`; `<time>` is `submittedAt` as `HH:MM` (24-hour) in the entry's time zone; `<sender>` is the sender, or `someone` when null; `<source>` is `meeting chat`, `watched chat` or `shared screen`. `Open form` links to `canonicalFormUrl(finalUrl)` (ruling B1: a raw submit-style link must never be a tap target), which equals `finalUrl` for the plain form URLs the tests use. `actions` is always an array, and `attachPath` is never set.
 
 ```text
 submitted (high) "Attendance submitted"
@@ -511,7 +512,7 @@ submitted (high) "Attendance submitted"
   links.meetingPage set:  "<entry>: attendance form submitted at <time> (<provider>). Screenshots are on the meeting page."  actions: Open meeting page -> links.meetingPage
 awaiting_signin (high) "Sign in again"
   "<entry>: an attendance form needs your <provider> sign-in, which has expired. Sign in on the desk view and I'll try once more while the form is open, or open the form yourself."
-  actions: Sign in again -> links.signIn ?? finalUrl; plus Open form when links.signIn is set
+  actions: Sign in again -> links.signIn ?? canonicalFormUrl(finalUrl); plus Open form when links.signIn is set
 needs_member (high) "Form needs you"
   "<entry>: I didn't submit this <provider> form because no saved detail answers "<q1>", "<q2>", "<q3>" and <n> more."  (up to 3 questions from rec.unmatched; " and <n> more" only when there are more)  actions: Open form
 untrusted, reason untrusted_source (high) "Form seen, not submitted"
@@ -532,7 +533,7 @@ failed (high) "Form needs you"
   open_timeout            it didn't load within 15 seconds
   signin_required_again   it asked for sign-in again after you signed in
   signin_not_completed    sign-in wasn't completed within 15 minutes
-  meeting_ended           the meeting ended before sign-in was completed
+  meeting_ended           the meeting ended before it could be submitted
   form_closed             it's no longer accepting responses
   no_access               your account doesn't have access to it
   captcha                 it asks for a CAPTCHA
@@ -543,10 +544,11 @@ failed (high) "Form needs you"
   deadline                it wasn't ready to submit within 2 minutes
   interrupted             the worker restarted while handling it
   interrupted_submitting  the worker restarted while submitting it (check whether your response was recorded)
+  tab_stuck               an earlier form tab could not be closed
   unexpected_error        of an unexpected error
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const opts = {
@@ -612,24 +614,24 @@ test('non-outcome states do not ping', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/pings.test.ts`
+Run: `bun test packages/worker/test/forms-pings.test.ts`
 Expected: FAIL with "Cannot find module './pings'".
 
-- [ ] **Step 3: Implement `formPing` in `packages/worker/src/forms/pings.ts`**
+- [x] **Step 3: Implement `formPing` in `packages/worker/src/forms/pings.ts`**
 
 The time uses `Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone })`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/pings.test.ts`
+Run: `bun test packages/worker/test/forms-pings.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/pings.ts packages/worker/src/forms/pings.test.ts
+git add packages/worker/src/forms/pings.ts packages/worker/test/forms-pings.test.ts docs/plans/01b-form-submission.md docs/TRD.md
 git commit -m "feat(worker): add form ping copy"
 ```
 
@@ -638,7 +640,7 @@ git commit -m "feat(worker): add form ping copy"
 **Files:**
 
 - Create: `packages/worker/src/forms/types.ts`, `packages/worker/src/forms/rules.ts`
-- Test: `packages/worker/src/forms/rules.test.ts`
+- Test: `packages/worker/test/forms-rules.test.ts`
 
 **Interfaces:**
 
@@ -700,28 +702,34 @@ export interface PagePlan {
 }
 
 // packages/worker/src/forms/rules.ts
-export function normaliseText(s: string): string // NFKC, lower case, each run of characters other than letters and digits becomes one space, trimmed
+export function normaliseText(s: string): string // NFKC, drop \p{Cf} and \p{M}, lower case, each run of characters other than letters and digits becomes one space, trimmed
 export function looksLikeAttendance(page: FormPage, keywords: string[]): boolean
 export function isPointsLine(line: string): boolean
 export function orgRestricted(r: Restriction, org: OrgConfig | null): boolean
 export function confirmsAttendance(option: string): boolean
 ```
 
-Pinned patterns, applied to `normaliseText` output except `POINTS_LINE`, which takes one trimmed line of a question's text:
+Pinned patterns, applied to `normaliseText` output. `POINTS_LINE` is also applied to `normaliseText` output, so `isPointsLine` normalises its one line of a question's text first:
 
 ```ts
 const ATTENDANCE_TERMS = /\b(attendance|kehadiran|hadir|register|sign in sheet)\b/
-const POINTS_LINE =
-  /^\(?\d+(\.\d+)?\s*(point|points|mark|marks|mata|markah)\)?$|^(points|marks|mata|markah)\s*:\s*\d+(\.\d+)?$/i
-const CONFIRM_POSITIVE = /\b(present|presence|attend|attending|attended|attendance|hadir|kehadiran)\b/
-const CONFIRM_NEGATIVE = /\b(not|no|absent|tidak|tak|bukan|belum|cannot|unable|never|can t|won t|didn t|don t)\b/
+const NUMBER = String.raw`\d+(?: \d+)?`
+const UNIT = String.raw`(?:pts?|points?|marks?|mata|markah|poin)`
+// "point(s)" normalises to "point s", hence the optional " s" after a unit.
+const POINTS_LINE = new RegExp(
+  String.raw`^(?:${NUMBER} ${UNIT}(?: s)?|${NUMBER} (?:out )?of ${NUMBER} ${UNIT}(?: s)?|(?:${UNIT}|score|skor|jumlah markah) ${NUMBER}(?: (?:(?:out )?of )?${NUMBER})?|total ${NUMBER} ${UNIT}|total ${UNIT} ${NUMBER})$`
+)
+const CONFIRM_POSITIVE = /\b(present|presence|hadir|kehadiran|attend|attending|attended|attendance|here)\b/
+const CONFIRM_NEGATIVE =
+  /\b(not|no|non|neither|nor|never|absent|unavailable|unable|unattend\w*|cannot|cant|dont|wont|didnt|isnt|wasnt|arent|werent|havent|hasnt|couldnt|wouldnt|tidak|tak|tiada|bukan|belum|takde|tdk|gak|ketiadaan|skip|skipping|nope)\b|\bt\b/
+// CONFIRM_VOCABULARY: a Set of the words listed in the confirmsAttendance bullet below.
 ```
 
-- `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a non-empty normalised entry keyword. Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
-- `confirmsAttendance`: matches `CONFIRM_POSITIVE` and not `CONFIRM_NEGATIVE`.
-- `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms' evidence is its organisation-only notice.
+- `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a normalised entry keyword of 3 or more characters as a whole word or phrase (`bm` never matches `submit it`). Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
+- `confirmsAttendance`: true only when the option matches `CONFIRM_POSITIVE`, does not match `CONFIRM_NEGATIVE`, and every word of it is in `CONFIRM_VOCABULARY`: present, presence, hadir, kehadiran, attend, attending, attended, attendance, here, im, am, is, me, my, confirm, confirmed, confirming, that, this, the, class, lecture, session, today, kelas, kuliah, saya, ya, yes, yep, online, in, person, physically, physical, late, lewat, on, time, and, mark, marked, as, sudah, telah, dah. `i` and `m` are not in the list. A bare `i` counts only when the next word is am, m, confirm, confirmed, confirming, attend, attending, attended, was, will, have or hereby. `m` counts only when the word before it is `i` (the `I'm` split). So `Class I` and `Kelas M` do not confirm. Any other word (`tk`, `ga`, `x`, a name, a group or section label, a room number) means not a confirmation, so the member is pinged. `CONFIRM_NEGATIVE` also matches a lone `t`, which is what an apostrophe leaves behind (`can't` -> `can t`, `T/Hadir` -> `t hadir`).
+- `orgRestricted`: true only when `org` is set, `signedInAs` is an address at `org.emailDomain` or one of its subdomains, and either `orgOnly` is true or `organisation` equals `org.name` (after `normaliseText`). Google Forms shows respondents no explicit restriction notice, so its evidence is the footer naming the member's organisation; Microsoft Forms has no org trust until a live capture finds an org-specific signal: its owner notice is generic, so it is not evidence.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const page = (p: Partial<FormPage>): FormPage => ({
@@ -762,18 +770,91 @@ test('attendance terms in English and Malay, whole words only', () => {
   expect(looksLikeAttendance(page({ description: 'Isi untuk kehadiran' }), [])).toBe(true)
   expect(looksLikeAttendance(page({ title: 'Course registration feedback' }), [])).toBe(false)
   expect(looksLikeAttendance(page({ title: 'ABC1234 check-in' }), ['abc1234 check'])).toBe(true)
+  expect(looksLikeAttendance(page({ title: 'Week 5' }), ['eek'])).toBe(false)
+  expect(looksLikeAttendance(page({ title: 'Submit it' }), ['bm', 'it', 'mit'])).toBe(false)
 })
 
 test('points lines mark a quiz; labels that mention points do not', () => {
-  for (const l of ['1 point', '2 points', '(1 point)', 'Points: 5', '1 mata']) expect(isPointsLine(l)).toBe(true)
-  expect(isPointsLine('Explain 2 points from today')).toBe(false)
+  for (const l of [
+    '1 point',
+    '2 points',
+    '(1 point)',
+    'Points: 5',
+    '1 mata',
+    '1 pt',
+    '2 pts',
+    '[2 marks]',
+    '1 mark *',
+    'Points: 5 / 10',
+    'Score: 5',
+    'Total: 10 points',
+    '1.5 points',
+    '２ points',
+    '（1 point）'
+  ])
+    expect(isPointsLine(l)).toBe(true)
+  for (const l of ['Explain 2 points from today', 'Presentation', 'Presenter: 5 points', 'Points', 'Total: 10 items'])
+    expect(isPointsLine(l)).toBe(false)
 })
 
 test('confirmation options', () => {
-  for (const o of ['Present', 'Hadir', 'I confirm I am attending this class', 'Saya hadir', 'Present (late)'])
+  for (const o of [
+    'Present',
+    'Hadir',
+    'I confirm I am attending this class',
+    'Saya hadir',
+    'Present (late)',
+    'Present, online',
+    'Hadir online',
+    'Attending in person',
+    'Presence',
+    'Kehadiran',
+    "I'm present",
+    'I am present',
+    "I'm here"
+  ])
     expect(confirmsAttendance(o)).toBe(true)
-  for (const o of ['Absent', 'Not present', 'Tidak hadir', "I can't attend", 'Presentation', 'Yes'])
+  for (const o of [
+    'Absent',
+    'Not present',
+    'Tidak hadir',
+    "I can't attend",
+    'Presentation',
+    'Yes',
+    'I cant attend',
+    'I dont attend',
+    'Wont attend',
+    'I didnt attend',
+    "I wasn't present",
+    "Isn't attending",
+    'Isnt attending',
+    "Aren't present",
+    'Non-attending',
+    'Neither present',
+    'Tiada kehadiran',
+    'T/Hadir',
+    'I am unavailable to attend',
+    'Unattended',
+    'tak hadir',
+    'bukan hadir',
+    'belum hadir',
+    'Tk hadir',
+    'Ga hadir',
+    'X hadir',
+    'Present - Section T',
+    'Hadir - Kumpulan B',
+    'Present (Room No. 3)',
+    'Presentation done',
+    'Present - Class I',
+    'Hadir - Kelas M',
+    'Present, Session M',
+    'Hadir (Kelas I)',
+    'Present M'
+  ])
     expect(confirmsAttendance(o)).toBe(false)
+  // Soft hyphens, zero-width characters and decomposed accents cannot split a negation.
+  expect(confirmsAttendance('Ti\u00ADdak hadir')).toBe(false)
+  expect(confirmsAttendance('n\u0338ot present')).toBe(false)
 })
 
 test('organisation evidence', () => {
@@ -822,22 +903,22 @@ test('organisation evidence', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/rules.test.ts`
+Run: `bun test packages/worker/test/forms-rules.test.ts`
 Expected: FAIL with "Cannot find module './rules'".
 
-- [ ] **Step 3: Implement `types.ts` and `rules.ts` with the pinned patterns**
+- [x] **Step 3: Implement `types.ts` and `rules.ts` with the pinned patterns**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/rules.test.ts`
+Run: `bun test packages/worker/test/forms-rules.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/types.ts packages/worker/src/forms/rules.ts packages/worker/src/forms/rules.test.ts
+git add packages/worker/src/forms/types.ts packages/worker/src/forms/rules.ts packages/worker/test/forms-rules.test.ts
 git commit -m "feat(worker): add form detection rules"
 ```
 
@@ -846,7 +927,7 @@ git commit -m "feat(worker): add form detection rules"
 **Files:**
 
 - Create: `packages/worker/src/forms/details.ts`, `packages/worker/src/forms/plan.ts`, `packages/worker/test/forms/job.ts` (shared test job)
-- Test: `packages/worker/src/forms/details.test.ts`, `packages/worker/src/forms/plan.test.ts`
+- Test: `packages/worker/test/forms-answers.test.ts` (one file; tests live under `test/`)
 
 **Interfaces:**
 
@@ -900,12 +981,14 @@ export const DERIVED_LABELS = {
 
 - **Pool**: the member's details, each with its own labels plus `DEFAULT_LABELS[key]` plus the key with underscores as spaces; `session_date` (`DD/MM/YYYY`) and `session_start` (`HH:MM`, 24-hour) from `entry.start` in `entry.timeZone`; every `entry.formDetails` pair with `DERIVED_LABELS[key]` and its key as words. An `entry.formDetails` key overrides a member detail with the same key, and empty values are dropped.
 - **Exact match**: a question's normalised label equals a normalised label of exactly one detail. Equal to two or more details means no exact match.
-- **Plan, per question in page order**: (1) `confirmationAnswer`: the question is required, radio or checkbox, and exactly one option `confirmsAttendance`; that option is chosen with `via: 'confirmation'`. (2) A matched text or paragraph question gets the detail's value. (3) A matched radio, checkbox or dropdown gets the one option whose normalised text equals the normalised value; none or several means unmatched. (4) Anything else is unmatched; it goes to `unmatchedRequired` if required and is otherwise left blank. `via` is `label` for `exact` and `model` for `model`.
-- **Model questions**: neither exact-matched nor answerable by `confirmationAnswer`, and not of type `other`.
+- **Copy box**: a question whose label and options together contain a copy word (`copy`, `copies`, `receipt`, `salinan`, `resit`) and a send word (`send`, `email`, `e mail`, `get`, `receive`, `hantar`, `emel`), matched on normalised text. It is never answered and never sent to the model.
+- **Plan, per question in page order**: (1) `confirmationAnswer`: the question is required, radio or checkbox, not the copy box, its normalised label contains an attendance word (`attendance`, `kehadiran`, `hadir`, `present`, `presence`, `attend`, `attending`, `register`, `registration`, `sign in`, `sign in sheet`, `roll call`, `check in`), and exactly one option `confirmsAttendance`; that option is chosen with `via: 'confirmation'`. A question such as "Which describes the sample?" with "Present" and "Absent" is not a confirmation. (2) A matched text or paragraph question gets the detail's value. (3) A matched radio, checkbox or dropdown gets the one option whose strict text equals the saved value. Strict text is NFKC, case-folded, trimmed and whitespace-collapsed; punctuation counts, so `Dr Example` and `Dr. Example` differ, and `C` never matches `C++`. None or several equal options means unmatched. (4) Anything else is unmatched; it goes to `unmatchedRequired` if required and is otherwise left blank. `via` is `label` for `exact` and `model` for `model`.
+- **Model questions**: neither exact-matched nor answerable by `confirmationAnswer`, not the copy box, and not of type `other`.
+- **Date and time**: questions of type `other` (date, time, grid, upload) are never filled, even when matched by label. They fail closed as unmatched until a follow-up issue adds typed answers.
 - **Verification**: `verifyFill` is true only when every answer shows in `after` (text equal; option chosen or ticked), every question without an answer is empty, and `sendCopy` is not `true`.
 - **Test job**: entry "Example lecture", start `2026-10-20T20:00:00+08:00`, end `2026-10-20T22:00:00+08:00`, `Asia/Kuala_Lumpur`, `trustedSenders: ['Dr Example']`, `formDetails: { course_code: 'ABC1234', section: '02', lecturer: 'Dr Example' }`; identity organisation `{ name: 'Example University', emailDomain: 'example.edu.my' }` unless patched; details `full_name` "Test Student", `student_id` "A00000000", `university_email` "student@example.edu.my", `programme` "MSc Example", all with `labels: []`; `ai.models.formMatch` "qwen-flash".
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const pool = buildDetailPool(testJob('/tmp/tm'))
@@ -971,7 +1054,8 @@ test('confirmations need one confirming option on a required radio or checkbox',
     via: 'confirmation'
   })
   expect(
-    confirmationAnswer(q('b', 'Declaration', 'checkbox', ['I confirm I am attending this class'], true))?.kind
+    confirmationAnswer(q('b', 'Attendance declaration', 'checkbox', ['I confirm I am attending this class'], true))
+      ?.kind
   ).toBe('choose')
   expect(confirmationAnswer(q('c', 'Status', 'radio', ['Present', 'Present (online)', 'Absent'], true))).toBeNull()
   expect(confirmationAnswer(q('d', 'Status', 'radio', ['Not present', 'Tidak hadir'], true))).toBeNull()
@@ -1066,23 +1150,23 @@ test('verifyFill rejects a missing answer, a stray value or a ticked copy box', 
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/worker/src/forms/details.test.ts packages/worker/src/forms/plan.test.ts`
 Expected: FAIL with "Cannot find module './details'" and "Cannot find module './plan'".
 
-- [ ] **Step 3: Implement `details.ts`, `plan.ts` and `test/forms/job.ts` with the pinned values and rules above**
+- [x] **Step 3: Implement `details.ts`, `plan.ts` and `test/forms/job.ts` with the pinned values and rules above**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/worker/src/forms/details.test.ts packages/worker/src/forms/plan.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/details.ts packages/worker/src/forms/plan.ts packages/worker/src/forms/details.test.ts packages/worker/src/forms/plan.test.ts packages/worker/test/forms/job.ts
-git commit -m "feat(worker): plan form answers from details"
+git add packages/worker/src/forms/details.ts packages/worker/src/forms/plan.ts packages/worker/test/forms-answers.test.ts packages/worker/test/forms/job.ts docs/plans/01b-form-submission.md docs/TRD.md
+git commit -m "feat(worker): plan form answers"
 ```
 
 ### Task 7: Model label matching
@@ -1090,7 +1174,7 @@ git commit -m "feat(worker): plan form answers from details"
 **Files:**
 
 - Create: `packages/worker/src/forms/model-match.ts`
-- Test: `packages/worker/src/forms/model-match.test.ts`
+- Test: `packages/worker/test/forms-model-match.test.ts`
 
 **Interfaces:**
 
@@ -1127,7 +1211,7 @@ Reply with JSON only, in this shape: {"matches":[{"question":"<id>","detail":"<k
 
 The user message is `JSON.stringify({ details: detailKeys, questions })`, with each label and option cut to `LABEL_LIMIT` characters. Keys only: saved values never leave the worker. The call is `chatJson(ai, ai.models.formMatch, messages, FormMatchSchema, MATCH_TIMEOUT_MS)`, with thinking off by `chatJson`'s default. With no questions or no keys, return an empty map without calling. Keep only entries with `confidence === 'high'`, a non-null `detail` among `detailKeys`, and a `question` among the ids sent. Any error (timeout, HTTP error, `AiKeyError`, invalid JSON, schema mismatch) returns an empty map, which leaves those questions unmatched.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // stubCompletions(reply, delayMs = 0): Bun.serve on port 0 answering POST /chat/completions with
@@ -1209,23 +1293,23 @@ test('returns no matches on malformed JSON or an HTTP error, and makes no call w
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/model-match.test.ts`
+Run: `bun test packages/worker/test/forms-model-match.test.ts`
 Expected: FAIL with "Cannot find module './model-match'".
 
-- [ ] **Step 3: Implement `matchWithModel` in `packages/worker/src/forms/model-match.ts`**
+- [x] **Step 3: Implement `matchWithModel` in `packages/worker/src/forms/model-match.ts`**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/model-match.test.ts`
+Run: `bun test packages/worker/test/forms-model-match.test.ts`
 Expected: PASS (about 6 seconds, for the timeout case).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/model-match.ts packages/worker/src/forms/model-match.test.ts
-git commit -m "feat(worker): match form labels with the model"
+git add packages/worker/src/forms/model-match.ts packages/worker/test/forms-model-match.test.ts
+git commit -m "feat(worker): match form labels with a model"
 ```
 
 ### Task 8: Selector maps and the Google Forms driver
@@ -1250,17 +1334,32 @@ export async function loadFormSelectors(
 ): Promise<FormSelectors> // google-forms.json | microsoft-forms.json
 // drivers/driver.ts
 export class FormStepError extends Error {
-  code: 'next_failed' | 'submit_failed'
+  code:
+    | 'next_failed'
+    | 'submit_failed' // Submit not clicked, or refused by a validation error: nothing was sent
+    | 'submit_unconfirmed' // Submit WAS clicked, outcome unknown: maybe submitted
+    | 'dropdown_failed' // a dropdown's options never showed
+    | 'not_a_form' // the page is not a form page on a form host
 }
 export interface FormDriver {
   readonly provider: FormProvider
   pageKind(page: Page): Promise<PageKind>
   readPage(page: Page, index: number): Promise<FormPage>
   fill(page: Page, form: FormPage, answers: Answer[]): Promise<void> // also unticks "send me a copy"
-  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error or after 10 s
-  submit(page: Page): Promise<void> // FormStepError('submit_failed') on a validation error; else resolves when pageKind is no longer 'form' or after 15 s
+  // readPage, fill, next and submit first check pageKind is 'form' on a formHosts host: else FormStepError('not_a_form')
+  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error, a blocked click or after 10 s
+  // Resolves only on the provider's response page (pageKind 'confirmation' or 'already_answered'). 'submit_failed' when Submit
+  // was not clicked (needs exactly one visible, enabled, uncovered button; no trial click) or a validation error on a question
+  // refused it. A second submit() on a clicked page never clicks: 'submit_unconfirmed'. 'submit_unconfirmed' once Submit was clicked and nothing confirms it
+  // (still on the form after 15 s, captcha, sign-in, unknown page, failed read): the caller MUST treat it as maybe-submitted,
+  // record the form handled, never retry, and ping the member.
+  submit(page: Page, opts?: { signal?: AbortSignal }): Promise<void> // an aborted signal before the click: FormStepError('meeting_ended'), nothing clicked
 }
-export function createDriver(provider: FormProvider, map: FormSelectors): FormDriver
+export function createDriver(
+  provider: FormProvider,
+  map: FormSelectors,
+  timeouts?: { stepMs?: number; submitMs?: number } // defaults 10 s and 15 s; tests shorten them
+): FormDriver
 // drivers/index.ts
 export async function driverFor(provider: FormProvider): Promise<FormDriver> // loads the map once per provider and caches the driver
 // test/forms/route.ts
@@ -1272,7 +1371,7 @@ export interface FixtureServer {
     sendCopy: boolean
   }[]
   signedOut: Set<string> // fixture names whose form URL redirects to the provider's sign-in page
-  submitResult: Map<string, 'confirmation' | 'already-responded'>
+  submitResult: Map<string, 'confirmation' | 'already-responded' | 'still-form' | 'captcha'> // still-form and captcha test an unconfirmed submit
   delayMs: Map<string, number> // delay before serving a fixture
   onFormLoad: ((fixture: string, count: number) => void) | null
 }
@@ -1363,28 +1462,37 @@ Driver rules the tests rely on:
 
 - **`pageKind`**, first match wins: the URL's host is not in `formHosts`, so `signin`; a `captcha` element, so `captcha`; at least one `question` element, so `form`; then the page text contains a `texts` entry, giving `signin`, `already_answered`, `confirmation`, `closed` or `no_access`, in that order; otherwise `unknown`. Page texts are only consulted when no questions show, so form content can't fake a status page.
 - **`readPage`**: the type comes from the first input kind found inside the question; `unsupported` wins. The label is the `label` text minus the required marker's text and any points line. `quiz` is true when any line of a question's text passes `isPointsLine`. `signedInAs` is the first email address inside `accountLine`, `organisation` is the `orgFooterPattern` capture inside `orgFooter`, and `orgOnly` is true when an `orgOnlyTexts` entry is inside `orgOnlyNotice`; all three come only from those elements.
-- **`fill`**: types text with `locator.fill`, clicks a radio or checkbox option only if it isn't already chosen, opens the listbox and clicks the `listboxOption` whose text equals the option, and clicks `sendCopy` if it is ticked.
+- **`fill`**: types text with `locator.fill`, clicks a radio or checkbox option only if it isn't already chosen, opens the listbox, waits for the first `listboxOption` to show (`dropdown_failed` after the step timeout) and clicks the one whose text equals the option, and clicks `sendCopy` if it is ticked. Before each answer it re-reads the question and requires its stripped label to equal the planned one exactly (an empty label never matches).
+- **`next` and `submit`**: clicks carry an explicit timeout; a Next click that times out is `next_failed`. Submit is never trial-clicked (a Playwright trial click still dispatches real mouse events that page scripts can see). Instead the Submit locator must resolve to exactly one visible, enabled element and `document.elementFromPoint` at its centre must be the element or inside it, else `submit_failed` (nothing sent). The form assertion is re-run just before the one real click; once the click has happened every failure, including a click error or timeout, is `submit_unconfirmed`. A module-level `WeakSet<Page>` records pages whose Submit was clicked: a second `submit()` on such a page throws `submit_unconfirmed` without clicking. After the click, an alert counts as a validation error (`submit_failed`) only when it is new, inside a question element, and the page still shows the same form; any other new alert, or any doubt, is `submit_unconfirmed`. In `fill`, a question that vanishes mid-fill is `not_a_form`; after `dropdown_failed` the driver presses Escape to close a late popup.
 
 Google fixtures (`packages/worker/test/fixtures/forms/google/`). Every page uses the map's DOM and loads `fixture.js`, which: toggles `aria-checked` on radio (exclusive within its question) and checkbox clicks; opens the listbox on click and sets its text from the clicked option; on Next or Submit puts a `div[role='alert']` "This is a required question." under each empty required question and stops; on Next shows the next `.page`; on Submit posts the field `answers`, a JSON `{ answers: { <label>: string | string[] }, sendCopy: boolean }` of the answered questions, to `formResponse` beside `viewform`.
 
-| File                        | Must contain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fixture.js`                | The behaviour above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `widgets.html`              | One page: "Short answer" (text, required), "Long answer" (paragraph), "Pick one" (radio Present, Absent; required), "Pick some" (checkbox Lecture, Tutorial), "Choose a section" (listbox 01, 02, 03, placeholder "Choose"; required), "Date" (date input); the "Send me a copy of my responses." box outside the questions, ticked when the URL hash is `#copy-on`; Submit                                                                                                                                                                                                   |
-| `attendance.html`           | Title "Week 5 attendance / Kehadiran minggu 5"; description "Fill in during the lecture."; account line `student@example.edu.my` with "Switch account"; footer "This form was created inside of Example University."; the copy box. Page 1: "Full name", "Matric No.", "Course code" (text, required), "Section" (listbox 01, 02, 03, required), "Programme of study" (text, optional), Next. Page 2: "Attendance" (radio Present, Absent, required), "Declaration" (checkbox "I confirm I am attending this class", required), "Any comments?" (paragraph, optional), Submit |
-| `attendance-unmatched.html` | `attendance.html` with a required paragraph "What did you learn today?" at the end of page 1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `quiz.html`                 | Title "Week 5 attendance quiz", account line and footer as `attendance.html`; one page: "Full name" and two required radio questions, each showing a "1 point" line                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `not-attendance.html`       | Title "Course feedback", account line and footer; "Full name" and "Matric No." only; no attendance term anywhere                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `external.html`             | Title "Attendance"; no account line; footer "This content is neither created nor endorsed by Google."; description containing "This form was created inside of Example University. student@example.edu.my Switch account"; "Full name", "Matric No.", required "Attendance" radio (Present, Absent)                                                                                                                                                                                                                                                                           |
-| `captcha.html`              | `attendance.html` page 1 plus `<iframe src="https://www.google.com/recaptcha/api2/anchor">` (routed to an empty page)                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `already-responded.html`    | No questions; "You've already responded" and "You can only fill in this form once."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `closed.html`               | No questions; "The form Week 5 attendance is no longer accepting responses."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `signin.html`               | Served on `accounts.google.com`: "Sign in", an email input, an inert "Next" button, and a "Continue" link to the `continue` query parameter (the tests' stand-in for the member signing in)                                                                                                                                                                                                                                                                                                                                                                                   |
-| `confirmation.html`         | "Your response has been recorded." and no questions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| File                        | Must contain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixture.js`                | The behaviour above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `widgets.html`              | One page: "Short answer" (text, required), "Long answer" (paragraph), "Pick one" (radio Present, Absent; required), "Pick some" (checkbox Lecture, Tutorial), "Choose a section" (listbox 01, 02, 03, placeholder "Choose"; required), "Date" (date input); the "Send me a copy of my responses." box outside the questions, ticked when the URL hash is `#copy-on`; Submit                                                                                                                                                                                                              |
+| `attendance.html`           | Title "Week 5 attendance / Kehadiran minggu 5"; description "Fill in during the lecture."; account line `student@example.edu.my` with "Switch account"; footer "This form was created inside of Example University."; the copy box. Page 1: "Full name", "Matric No.", "Course code" (text, required), "Section" (listbox 01, 02, 03, required), "Programme of study" (text, optional), Next. Page 2: "Attendance" (radio Present, Absent, required), "Attendance declaration" (checkbox "I confirm I am attending this class", required), "Any comments?" (paragraph, optional), Submit |
+| `attendance-unmatched.html` | `attendance.html` with a required paragraph "What did you learn today?" at the end of page 1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `quiz.html`                 | Title "Week 5 attendance quiz", account line and footer as `attendance.html`; one page: "Full name" and two required radio questions, each showing a "1 point" line                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `not-attendance.html`       | Title "Course feedback", account line and footer; "Full name" and "Matric No." only; no attendance term anywhere                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `external.html`             | Title "Attendance"; no account line; footer "This content is neither created nor endorsed by Google."; description containing "This form was created inside of Example University. student@example.edu.my Switch account"; "Full name", "Matric No.", required "Attendance" radio (Present, Absent)                                                                                                                                                                                                                                                                                      |
+| `captcha.html`              | `attendance.html` page 1 plus `<iframe src="https://www.google.com/recaptcha/api2/anchor">` (routed to an empty page)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `already-responded.html`    | No questions; "You've already responded" and "You can only fill in this form once."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `closed.html`               | No questions; "The form Week 5 attendance is no longer accepting responses."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `signin.html`               | Served on `accounts.google.com`: "Sign in", an email input, an inert "Next" button, and a "Continue" link to the `continue` query parameter (the tests' stand-in for the member signing in)                                                                                                                                                                                                                                                                                                                                                                                              |
+| `confirmation.html`         | "Your response has been recorded." and no questions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 `routeFormFixtures` routes: `googleUrl(name)` serves `<name>.html` after `delayMs`, or, while `signedOut` has the name, answers 302 to `https://accounts.google.com/ServiceLogin?continue=<encoded viewform URL>`; it records every request in `requests` and calls `onFormLoad` after each served form. `.../formResponse` records the submission and serves `confirmation.html`, or `already-responded.html` when `submitResult` says so. `accounts.google.com/**` serves `signin.html`, `fixture.js` is served beside the forms, and anything else on a Google host is answered with an empty 200. The helper sets `process.env.TM_SELECTORS_DIR` to the repository's `config/selectors` when it is unset.
 
-- [ ] **Step 1: Write the failing tests**
+Deviations made while executing (kept so the later tasks use the same names):
+
+- **Headed project (B5)**: headless Chromium gives every tab its own CDP window id, so the form specs run in a new Playwright project `forms` (`testMatch: 'forms-*.spec.ts'`, headed) and are excluded from `fixtures`. Run them as `xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts <spec>`.
+- **Selector scope**: `question`, `title`, `description`, the buttons, `validationError`, `sendCopy`, `accountLine`, `orgFooter`, `orgOnlyNotice` and `captcha` are Playwright selectors; every selector read inside a question (`label` to `unsupported`) and `optionTextAttrs` run in the page and must be plain CSS. `loadFormSelectors` calls the shared `loadSelectors` (which gained an optional `dir` argument and the `google-forms` / `microsoft-forms` names) and also rejects an `orgFooterPattern` without exactly one capture group, a footer without a pattern (or the reverse), and `orgOnlyTexts` without a notice.
+- **Page kind**: a URL that is not http(s) (such as `about:blank`) is `unknown`, not `signin`, so `openForm` keeps polling instead of pinging "Sign in again". Page texts are compared after `normaliseText` on both sides, so a curly apostrophe still matches.
+- **Signed-out stand-in**: Playwright does not route the request a fulfilled 302 leads to, so `routeFormFixtures` serves a page that runs `location.replace` to the sign-in URL instead of a 302.
+- **Fixtures**: the confirmation checkbox is labelled "Attendance declaration" (the answer planner now needs attendance vocabulary in the label); the dropdown lists a "Choose" placeholder option like Google does, which `readPage` leaves out of `options`.
+
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const text = (questionId: string, value: string): Answer => ({
@@ -1493,7 +1601,7 @@ for (const c of CASES)
       const p2 = await driver.readPage(page, 2)
       expect(p2.questions.map((q) => `${q.id} ${q.label}`)).toEqual([
         'p2q0 Attendance',
-        'p2q1 Declaration',
+        'p2q1 Attendance declaration',
         'p2q2 Any comments?'
       ])
       await driver.fill(page, p2, [choose('p2q0', 'Present'), choose('p2q1', 'I confirm I am attending this class')])
@@ -1508,7 +1616,7 @@ for (const c of CASES)
           'Course code': 'ABC1234',
           Section: '02',
           Attendance: 'Present',
-          Declaration: ['I confirm I am attending this class']
+          'Attendance declaration': ['I confirm I am attending this class']
         }
       })
     })
@@ -1555,19 +1663,19 @@ for (const c of CASES)
   })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts`
 Expected: FAIL with "Cannot find module '../src/forms/drivers'".
 
-- [ ] **Step 3: Implement the schema, loader, `createDriver`, `driverFor`, the map, the fixture server and the fixtures as specified above**
+- [x] **Step 3: Implement the schema, loader, `createDriver`, `driverFor`, the map, the fixture server and the fixtures as specified above**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts`
 Expected: PASS (7 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/google-forms.json packages/worker/src/forms/drivers packages/worker/test/forms/route.ts packages/worker/test/fixtures/forms/google packages/worker/test/forms-driver.spec.ts
@@ -1613,8 +1721,8 @@ git commit -m "feat(worker): add Google Forms driver"
   "accountLine": "[data-automation-id='userEmail']",
   "orgFooter": null,
   "orgFooterPattern": null,
-  "orgOnlyNotice": "[data-automation-id='respondentNotice']",
-  "orgOnlyTexts": ["the owner will see your name and email address"],
+  "orgOnlyNotice": null,
+  "orgOnlyTexts": [],
   "captcha": "iframe[src*='captcha'], iframe[title*='captcha' i]",
   "texts": {
     "signin": ["Sign in to continue"],
@@ -1628,7 +1736,7 @@ git commit -m "feat(worker): add Google Forms driver"
 
 Microsoft fixtures carry the same names and questions as the Google ones (Task 8's table), in this map's DOM, with these differences:
 
-- **Organisation evidence**: no footer. Instead, `attendance.html`, `attendance-unmatched.html`, `quiz.html`, `not-attendance.html` and `captcha.html` show the account line `student@example.edu.my` and the notice "Hi, Test Student. When you submit this form, the owner will see your name and email address." in `respondentNotice`. `external.html` has neither, and its description holds that notice text and the email address instead.
+- **Organisation evidence**: no footer, and no organisation-only notice. Microsoft org trust is off (decided at the Task 9 review): the owner notice "Hi, Test Student. When you submit this form, the owner will see your name and email address." is generic and shows on any form that records a name, so it is not organisation evidence. `attendance.html`, `attendance-unmatched.html`, `quiz.html`, `not-attendance.html` and `captcha.html` still show the account line `student@example.edu.my` and that notice in `respondentNotice`, and `external.html` holds the notice text and the email address in its description. `external-record-name.html` is a genuine owner notice and account on an outside form: `orgRestricted` must be false. `signedInAs` is necessary, never sufficient. Microsoft org trust returns only when a live capture finds an org-specific signal (a distinct org-only element or text, or a tenant check against `OrgConfig`).
 - **Quiz**: points lines read "(1 point)".
 - **Send-a-copy box**: labelled "Send me an email receipt of my responses".
 - **Pages and submission**: pages are sections with Next. `fixture.js` submits by `fetch` POST of the same JSON to `https://forms.office.com/formapi/api/fixture/responses`, then replaces the form with "Your response was submitted." or, when the reply is `{ "alreadyResponded": true }`, "You've already responded".
@@ -1637,25 +1745,25 @@ Microsoft fixtures carry the same names and questions as the Google ones (Task 8
 
 `routeFormFixtures` adds: `microsoftUrl(name)` (302 to `https://login.microsoftonline.com/common/oauth2/authorize?redirect_uri=<encoded form URL>` while signed out), `formapi/**` (records the submission and replies `{}` or `{ "alreadyResponded": true }` per `submitResult`), and `login.microsoftonline.com/**`.
 
-- [ ] **Step 1: Add the Microsoft row to `CASES` in `forms-driver.spec.ts`**
+- [x] **Step 1: Add the Microsoft row to `CASES` in `forms-driver.spec.ts`**
 
 ```ts
-{ provider: 'microsoft' as const, url: microsoftUrl, org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: true } },
+{ provider: 'microsoft' as const, url: microsoftUrl, org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: false }, assets: ['https://forms.office.com/Pages/fixture.js'] },
 ```
 
-- [ ] **Step 2: Run the tests to verify the Microsoft ones fail**
+- [x] **Step 2: Run the tests to verify the Microsoft ones fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts`
 Expected: the 7 Google tests PASS; the 7 Microsoft tests FAIL with "ENOENT: ... microsoft-forms.json".
 
-- [ ] **Step 3: Add the map, the fixtures and the routes; change `driver.ts` only where a Microsoft test shows it must**
+- [x] **Step 3: Add the map, the fixtures and the routes; change `driver.ts` only where a Microsoft test shows it must**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts`
 Expected: PASS (14 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/microsoft-forms.json packages/worker/test/fixtures/forms/microsoft packages/worker/test/forms/route.ts packages/worker/src/forms/drivers/driver.ts packages/worker/test/forms-driver.spec.ts
@@ -1696,10 +1804,11 @@ export async function waitForTabSignin(
 ```
 
 - **`openDeskTab`**: compares the CDP `Browser.getWindowForTarget` window id of the new tab with the desk page's. If they differ, it closes the tab and throws `TabNotOnDeskError`, so a form can never show on the recorded stage.
+- **Tab hygiene**: for a `launchBrowser` context the desk window is the one `launchBrowser` recorded; a Page in another window (the stage) or a guest-stage context is refused before anything opens. If a tab outside the desk cannot be closed, `TabCloseFailedError` is thrown instead of `TabNotOnDeskError`, so a caller never assumes it is gone. `OpenTimeoutError` leaves the tab open: the caller must close it (or stop using it) before any reuse.
 - **`openForm`**: navigates, then polls `pageKind` every 250 ms until it isn't `unknown`. It throws `OpenTimeoutError` if navigation or a recognised kind takes longer than `timeoutMs`.
 - **`waitForTabSignin`**: polls `pageKind(tab)` every `SIGNIN_POLL_MS` and resolves `true` once it is `form` (the member finished signing in in that tab through the desk view), or `false` on abort or timeout. It only reads the page: it never clicks, types or navigates.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const windowOf = async (p: Page) =>
@@ -1759,19 +1868,19 @@ test('stops waiting on abort or timeout', async ({ context, page: desk }) => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-open.spec.ts`
 Expected: FAIL with "Cannot find module '../src/forms/open'".
 
-- [ ] **Step 3: Implement `packages/worker/src/forms/open.ts`**
+- [x] **Step 3: Implement `packages/worker/src/forms/open.ts`**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-open.spec.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/open.ts packages/worker/test/forms-open.spec.ts
@@ -1843,13 +1952,13 @@ Handler sequence. "Apply T" means `applyFormTrigger`, then `saveFormRecord`, the
 
 1.  **Start**: `rec = ctx.previous` with `trusted_candidate_seen` applied, and `source`, `sender` and `senderRole` taken from `f`; otherwise `newFormRecord(f, cfg.occurrenceId)`, then apply `resolve_started` (at `f.seenAt`) and `resolved`. The deadline is `f.seenAt + SUBMIT_DEADLINE_MS`.
 2.  **Trust**: run `checkTrust(f, cfg.entry.trustedSenders)`. If trusted, set `trustReason` and apply `trusted`. If not and `cfg.identity.organisation` is null, set reason `untrusted_source`, apply `trust_failed` and stop: no tab is opened. Otherwise apply `trust_deferred`.
-3.  **Opening**: `openDeskTab(ctx.desk)` (`TabNotOnDeskError`: fail `tab_not_on_desk`), then `openForm(tab, canonicalFormUrl(f.finalUrl), driver)` (`OpenTimeoutError`: fail `open_timeout`). By kind: `form` applies `page_loaded`; `already_answered` applies `already_answered_seen`; `closed`, `no_access`, `captcha` and `unknown` fail `form_closed`, `no_access`, `captcha` and `unknown_page`; `signin` fails `unexpected_error` until Task 12 replaces this branch.
+3.  **Opening**: `openDeskTab(ctx.desk)` (`TabNotOnDeskError`: fail `tab_not_on_desk`), then `openForm(tab, canonicalFormUrl(f.finalUrl), driver)` (`OpenTimeoutError`: close the tab first, then fail `open_timeout`; `TabCloseFailedError` is an unexpected error and the tab must not be reused). By kind: `form` applies `page_loaded`; `already_answered` applies `already_answered_seen`; `closed`, `no_access`, `captcha` and `unknown` fail `form_closed`, `no_access`, `captcha` and `unknown_page`; `signin` fails `unexpected_error` until Task 12 replaces this branch.
 4.  **Inspecting page n** (from 1): `page = driver.readPage(tab, n)`. On page 1 with no `trustReason`: `orgRestricted(page.restriction, cfg.identity.organisation)` sets `trustReason = 'org_restricted'`, or else sets reason `not_org_restricted` and applies `org_check_failed`. Then `page.quiz` applies `quiz_detected`; on page 1, `!looksLikeAttendance(page, cfg.entry.attendanceKeywords)` applies `no_attendance_terms`; on page 1, `rec.title = page.title`. Apply `inspected`.
 5.  **Filling**: `exact = exactLabelMatches`; `ctx.matchLabels(questionsForModel(page, exact), pool keys)` only when that list is non-empty; `plan = planPage(...)`. If `plan.unmatchedRequired` is non-empty, set `rec.unmatched` (labels cut to 120 characters) and apply `unmatched_required`. If now is past the deadline, fail `deadline`. Otherwise `driver.fill`, re-read the page and check `verifyFill` (fail `fill_failed`), append the answers to `fieldsFilled`, and screenshot to `filled.png` if `page.hasSubmit`, else `filled_<n>.png`.
 6.  **Advancing**: with `hasSubmit`, apply `submit_clicked`, run `driver.submit` (`FormStepError`: fail `submit_failed`), then by `pageKind`: `confirmation` screenshots `confirmation.png`, sets `submittedAt` and applies `confirmed`; `already_answered` applies `already_answered_seen`; anything else fails `submit_failed`. With `hasNext`, run `driver.next` (`FormStepError`: fail `next_failed`), apply `next_page` and go to step 4 with n + 1. With neither, fail `unknown_page`.
 7.  **Wrapping up**: any other exception emits an `error` event with its message and fails `unexpected_error`. The tab is closed whenever the record reaches a terminal state.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 let fx: FixtureServer
@@ -1895,7 +2004,7 @@ test('submits a two-page Google form shown as a QR code', async ({ page: desk, c
       Section: '02',
       'Programme of study': 'MSc Example',
       Attendance: 'Present',
-      Declaration: ['I confirm I am attending this class']
+      'Attendance declaration': ['I confirm I am attending this class']
     }
   })
   expect(rec.screenshots).toEqual(
@@ -1921,12 +2030,18 @@ test('submits a Microsoft form the host posted in the meeting chat', async ({ pa
 })
 
 test("trusts a participant's form only when it is limited to the member's organisation", async ({ page: desk }) => {
-  for (const p of ['google', 'microsoft'] as const)
-    expect(
-      (await handleForm(candidate(p, 'attendance', 'meeting_chat', participant), testContext(desk, testJob(dir)).ctx))
-        .trustReason
-    ).toBe('org_restricted')
+  const google = await handleForm(
+    candidate('google', 'attendance', 'meeting_chat', participant),
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect([google.state, google.trustReason]).toEqual(['submitted', 'org_restricted'])
   fx.submissions.length = 0
+  // Microsoft org trust is off: its notice is generic, so a participant's Microsoft form is never org-restricted.
+  const microsoft = await handleForm(
+    candidate('microsoft', 'attendance', 'meeting_chat', participant),
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect([microsoft.state, microsoft.reason, fx.submissions.length]).toEqual(['untrusted', 'not_org_restricted', 0])
   const { ctx, pings } = testContext(desk, testJob(dir))
   const rec = await handleForm(candidate('google', 'external', 'meeting_chat', participant), ctx)
   expect([rec.state, rec.reason, fx.submissions.length]).toEqual(['untrusted', 'not_org_restricted', 0])
@@ -2007,19 +2122,23 @@ test('stops at the 2-minute deadline', async ({ page: desk }) => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-handler.spec.ts`
 Expected: FAIL with "Cannot find module '../src/forms/handler'".
 
-- [ ] **Step 3: Implement `handleForm`, `makeFormContextBase` and the test context as specified**
+- [x] **Step 3: Implement `handleForm`, `makeFormContextBase` and the test context as specified**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-handler.spec.ts && bun run typecheck`
-Expected: PASS (11 tests), and the typecheck reports no errors.
+Expected: PASS (14+ tests: the plan's 11 plus the fixes after review), and the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+The review added tests for: redaction of typed and `formDetails` values in every event type; a quiz or an unmatched required question on page 2; an exception after Submit (`submit_unconfirmed`, no retry); the page limit (`unknown_page`); a failed save before the click (`unexpected_error`); a failing event sink (the ping still goes out); a failing ping (`recover` sends it again); a record `handleForm` cannot continue (it returns it, never submits again); an unreadable `seenAt`.
+
+Behaviour added by the review: every event, alert and error message is redacted (`redact.ts`: all values of `buildDetailPool`, longest first, cut at `\nCall log:`); `apply` reports a failing `emitEvent` on stderr and still sends the ping; `recover` sends a terminal ping that is missing from `rec.pings`; `handleForm` ends every failure in the record; a `FormStepError` from a fill, Next or Submit emits a redacted `form_step` error event; only the click and what follows it may be maybe-submitted (a failed save before it is `unexpected_error`); `submit` refuses a form with no `trustReason`; an unreadable `seenAt` fails the form instead of disabling the deadline.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/handler.ts packages/worker/src/forms/context.ts packages/worker/src/forms/types.ts packages/worker/test/forms/context.ts packages/worker/test/forms-handler.spec.ts
@@ -2042,10 +2161,10 @@ The new branch, for kind `signin` in step 3:
 
 - If `rec.signinRetried` is already true, fail `signin_required_again`.
 - Otherwise apply `signin_wall` (pings "Sign in again") and keep the tab open, untouched, then `ok = await ctx.waitForSignin(tab, f.provider, ctx.signal)`.
-- If `ok`, set `signinRetried = true`, apply `signed_in`, move the deadline to now + `SUBMIT_DEADLINE_MS`, and repeat step 3's `openForm` in the same tab.
+- If `ok`, set `signinRetried = true`, apply `signed_in`, move the deadline to now + `SUBMIT_DEADLINE_MS`, close the old tab (a `TabCloseFailedError` stops the run and alerts), and repeat step 3 in a new desk tab: the driver's submit guard is keyed by `Page`, so one `Page` serves one attempt. A retry is never made after a Submit click.
 - If not, fail `meeting_ended` when `ctx.signal.aborted`, else `signin_not_completed`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const stateOf = (events: Record<string, unknown>[]) => events.at(-1)?.state
@@ -2120,19 +2239,19 @@ test('fails with signin_not_completed when the wait times out', async ({ context
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-signin.spec.ts`
 Expected: FAIL: the records end `failed` with reason `unexpected_error`, and no "Sign in again" ping is sent.
 
-- [ ] **Step 3: Replace the `signin` branch in `handleForm` as specified**
+- [x] **Step 3: Replace the `signin` branch in `handleForm` as specified**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/forms-signin.spec.ts test/forms-handler.spec.ts`
 Expected: PASS (15 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/handler.ts packages/worker/test/forms-signin.spec.ts
@@ -2144,7 +2263,7 @@ git commit -m "feat(worker): retry forms once after sign-in"
 **Files:**
 
 - Create: `packages/worker/src/forms/dispatcher.ts`
-- Test: `packages/worker/src/forms/dispatcher.test.ts`
+- Test: `packages/worker/test/forms-dispatcher.test.ts`
 
 **Interfaces:**
 
@@ -2166,13 +2285,15 @@ Rules:
 
 - **At start**: `loadFormRecords(cfg.dataDir)`. Each record not in a terminal state fails with reason `interrupted_submitting` if it was `submitting`, else `interrupted`; it is saved, its `form` event emitted and the member pinged. Every loaded formId, and every `invalid` one, counts as handled.
 - **`offer(f)`**, with `id = formIdFor(f.finalUrl)` and `trusted = checkTrust(f, cfg.entry.trustedSenders).trusted`:
-  - **New id**: run `handle(f, { ...base, previous: null, signal })` at once. There is no concurrency cap; each form gets its own tab.
+  - **New id**: run `handle(f, { ...base, previous: null, signal })` at once while fewer than `MAX_FORMS_IN_FLIGHT` (3) forms are in flight, each in its own tab; otherwise queue it FIFO. Queued time counts against the deadline, which runs from `seenAt` (the handler enforces it). Upgrades take a slot too. A new form that gets its slot after `close` fails `meeting_ended`, and one whose deadline has passed fails `deadline`; both are saved and pinged unopened, with no `handle` call, and the slot is released. An expired upgrade (queued, or pending with its trusted `seenAt` past the deadline) is never opened either, but it is not saved: its record stays `untrusted`, and it gets one ping (at most once per form) so the member can submit it by hand.
   - **Id running**: if `trusted` and the running candidate wasn't, keep `f` as its pending upgrade; otherwise ignore it.
   - **Id finished**: if the record is `untrusted` and `trusted`, run `handle(f, { ...base, previous: record, signal })`; otherwise ignore it.
-  - **Pending upgrade**: when a run ends `untrusted` with an upgrade waiting, the upgrade runs immediately with that record as `previous`.
+  - **Pending upgrade**: when a run ends `untrusted` with an upgrade waiting, the upgrade runs immediately with that record as `previous`, unless it has expired (`close` was called, or its `seenAt` deadline passed); then it gets the expired-upgrade ping above and no run.
 - **`close`**: abort `signal`, await every running and pending handler, and return the records.
+- **From the Task 11 review**: the dispatcher must never call `handle` with `previous: null` for a form that already has a `record.json` (`handleForm` would start from `detected` and could submit a second time). A restart maps `submitting` to `interrupted_submitting`. After a `form_tab_not_closed` alert the dispatcher opens no more tabs: a new form fails `tab_stuck` unopened (record and ping), and a pending or later trusted upgrade gets one `tab_stuck` ping (retried until a ping goes out) and no run.
+- **From the Task 13 review**: a handler that throws kills the form: every later sighting or upgrade is ignored (a `form` event with `outcome: 'ignored'`, `reason: 'handler_failed'`), and a new form that threw is saved as `failed` / `unexpected_error` and pinged. No ping or save failure escapes: it becomes a redacted `error` event and the form settles; `track()` never rejects; a failure during startup does not abort `startFormDispatcher`. At start, loaded `failed` records with no `failed` ping in their pings log are pinged again, and each invalid record id is reported as an `error` event.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // formFor(name, source, sender?) builds a ResolvedForm for https://docs.google.com/forms/d/e/<name>/viewform;
@@ -2263,22 +2384,22 @@ test('close aborts the signal handlers see', async () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
-Run: `bun test packages/worker/src/forms/dispatcher.test.ts`
+Run: `bun test packages/worker/test/forms-dispatcher.test.ts`
 Expected: FAIL with "Cannot find module './dispatcher'".
 
-- [ ] **Step 3: Implement `startFormDispatcher` in `packages/worker/src/forms/dispatcher.ts`**
+- [x] **Step 3: Implement `startFormDispatcher` in `packages/worker/src/forms/dispatcher.ts`**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
-Run: `bun test packages/worker/src/forms/dispatcher.test.ts`
+Run: `bun test packages/worker/test/forms-dispatcher.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/forms/dispatcher.ts packages/worker/src/forms/dispatcher.test.ts
+git add packages/worker/src/forms/dispatcher.ts packages/worker/test/forms-dispatcher.test.ts
 git commit -m "feat(worker): dispatch forms once per meeting"
 ```
 
@@ -2288,7 +2409,7 @@ git commit -m "feat(worker): dispatch forms once per meeting"
 
 - Create: `packages/worker/src/forms/intake.ts`, `packages/worker/test/forms/model-stub.ts`
 - Modify: `packages/worker/src/run.ts` (1A's form path), `packages/core/src/form-machine.ts` (only to delete any entry marked `// removed in Task 14`)
-- Test: `packages/worker/src/forms/intake.test.ts`, `packages/worker/test/forms-speed.spec.ts`
+- Test: `packages/worker/test/forms-intake.test.ts`, `packages/worker/test/forms-speed.spec.ts`
 
 **Interfaces:**
 
@@ -2318,7 +2439,7 @@ Changes to `runOccurrence`:
 - **Candidates**: where 1A resolved, trust-checked and pinged a form candidate for manual submission, call `onFormCandidate(c, { resolve: resolveFormLink, dispatcher: forms, emitEvent: emit })` without awaiting it in the frame or chat loop, and delete 1A's manual-submission ping path.
 - **End**: `await forms?.close()` after leaving the meeting and before the browser context closes.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/forms/intake.test.ts
@@ -2438,19 +2559,19 @@ test('a form page that never loads is pinged within 30 seconds', async ({ contex
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/worker/src/forms/intake.test.ts`
 Expected: FAIL with "Cannot find module './intake'".
 
-- [ ] **Step 3: Implement `onFormCandidate` and the model stub, and make the three `runOccurrence` changes**
+- [x] **Step 3: Implement `onFormCandidate` and the model stub, and make the three `runOccurrence` changes**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/worker packages/core && bunx playwright test -c packages/worker/playwright.config.ts && bun run typecheck`
 Expected: PASS, including `forms-speed.spec.ts` (3 tests) and 1A's own worker tests; the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/forms/intake.ts packages/worker/src/forms/intake.test.ts packages/worker/test/forms/model-stub.ts packages/worker/test/forms-speed.spec.ts packages/worker/src/run.ts packages/core/src/form-machine.ts
@@ -2463,7 +2584,7 @@ git commit -m "feat(worker): submit forms during the meeting"
 
 - Create: `packages/pipeline/src/summary/attendance.ts`
 - Modify: 1A's lecture summary renderer in `packages/pipeline/src/summary/` (the code that fills the template's `Attendance:` line)
-- Test: `packages/pipeline/src/summary/attendance.test.ts`
+- Test: `packages/pipeline/test/summary-attendance.test.ts`
 
 **Interfaces:**
 
@@ -2482,7 +2603,7 @@ The design's template line is `Attendance: <submitted at HH:MM (provider) ✓ | 
 
 With no parts, the line is `not seen`; `quiz` and `not_attendance` records never count. The renderer reads every `forms/*/record.json` with `FormRecordSchema` (skipping unreadable ones) and passes them in, replacing 1A's candidate-based line.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 const tz = 'Asia/Kuala_Lumpur'
@@ -2531,19 +2652,19 @@ test('quizzes and non-attendance forms do not count', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/pipeline/src/summary/attendance.test.ts`
 Expected: FAIL with "Cannot find module './attendance'".
 
-- [ ] **Step 3: Implement `attendanceLine` and switch the renderer to it**
+- [x] **Step 3: Implement `attendanceLine` and switch the renderer to it**
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test packages/pipeline && bun run typecheck`
 Expected: PASS, including 1A's summary tests updated to the new line, and the typecheck reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline/src/summary
@@ -2558,13 +2679,14 @@ Manual verification on real meetings and real forms, for the design's acceptance
 
 - Modify: `docker/worker/Dockerfile` (add `x11vnc`, for the desk view in step 5; 1C's remote view uses the same package)
 - Modify, only if the live forms differ: `config/selectors/google-forms.json`, `config/selectors/microsoft-forms.json` and the matching fixtures
+- Modify, only if the live Zoom client differs: `config/selectors/zoom.json` roster selectors (`participantsList`, `participantItem`, `participantName`, `participantRole`) and matching fixtures
 
 **Interfaces:**
 
 - Consumes: the whole of this plan; 1A's job file, worker image and acceptance procedure for running a meeting.
 - Produces: nothing new.
 
-- [ ] **Step 1: Add the desk view to the worker image**
+- [x] **Step 1: Add the desk view to the worker image**
 
 Add `x11vnc` to the `apt-get install` line in `docker/worker/Dockerfile`.
 Run: `docker build -t tm-worker:dev -f docker/worker/Dockerfile . && docker run --rm --entrypoint sh tm-worker:dev -c 'command -v x11vnc'`
@@ -2588,7 +2710,7 @@ Use the member's own university account to create the forms, as the design's tes
 
 Job file: 1A's, plus `identity.organisation` (the university's name exactly as G1's footer shows it, and its email domain), `entry.trustedSenders` with the host's display name, `entry.formDetails` with `course_code` and `section`, and `member.details` with `full_name`, `student_id`, `university_email` and `programme`.
 
-Open G1 and M1 in the desk view (step 5's commands) and compare their DOM with the maps. If anything differs, update the maps and fixtures, rerun `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts` until it passes, and commit with `git commit -m "fix(worker): match live form DOM"`.
+Open G1 and M1 in the desk view (step 5's commands) and compare their DOM with the maps. If anything differs, update the maps and fixtures, rerun `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts` until it passes, and commit with `git commit -m "fix(worker): match live form DOM"`. Live check also Zoom's new participants roster selectors (`participantsList`, `participantItem`, `participantName`, `participantRole`) against a live Zoom meeting to verify host and co-host role labels.
 
 - [ ] **Step 3: Form fixture test**
 

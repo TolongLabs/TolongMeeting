@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron (the current stable major at build time, pinned exactly in `packages/companion/package.json`), electron-builder with the NSIS target, TypeScript bundled with `bun build`, zod, Next.js route handlers, Drizzle on Postgres, pg-boss, ffmpeg and ffprobe, ntfy's JSON stream, whisper-transcriber.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -122,7 +122,7 @@ export const NATIVE_MAX_ATTEMPTS = 2
 export function shortDate(iso: string, timeZone: string): string // 'Wed 21 Oct': en-GB, weekday short, day numeric, month short
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('shortDate formats in the member time zone', () => {
@@ -170,21 +170,21 @@ test('whisper JSON keeps start, end and text', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/core/src/companion.test.ts`
 Expected: FAIL with "Cannot find module './companion'"
 
-- [ ] **Step 3: Implement the types, schemas and constants above in `packages/core/src/companion.ts`**
+- [x] **Step 3: Implement the types, schemas and constants above in `packages/core/src/companion.ts`**
 
 `PairResponseSchema.token` is `z.string().startsWith(DEVICE_TOKEN_PREFIX)`; `CompanionCommandSchema` is a `z.discriminatedUnion('type', [...])` so plan 08 can add members.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/companion.test.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/companion.ts packages/core/src/companion.test.ts packages/core/src/index.ts
@@ -250,7 +250,7 @@ export function seedCompanionFixture(db: Db): Promise<{
 }> // fixtures file: two seedMember calls; member A gets devices 'DESKTOP-ABC' and 'LAPTOP-A', member B one device
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const native = (occurrenceId: string) => ({
@@ -337,21 +337,21 @@ test('the PC ping is marked sent only once', async () => {
 
 In `beforeEach`, `db` is `await createTestDb()` and `f` is `await seedCompanionFixture(db)`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/db/companion.test.ts`
 Expected: FAIL with "Cannot find module './companion'"
 
-- [ ] **Step 3: Implement the tables, the functions and the fixture in `packages/web/db/companion.ts` and `packages/web/db/companion.fixtures.ts`, then generate the migration**
+- [x] **Step 3: Implement the tables, the functions and the fixture in `packages/web/db/companion.ts` and `packages/web/db/companion.fixtures.ts`, then generate the migration**
 
 `listJobsForDevice` returns the member's `pending` jobs whose `target_device_id` is null or this device, plus the jobs this device holds. `claimJob` is one `UPDATE ... WHERE id = $1 AND state = 'pending' AND member_id = $2 AND (target_device_id IS NULL OR target_device_id = $3) RETURNING *`, setting `state = 'claimed'`, `device_id` and `lease_until = now + JOB_LEASE_MS`; if no row updates, it returns `'conflict'` when the job exists for that member, else `null`. `releaseExpiredLeases` sets `state = 'pending'`, `device_id = NULL`, `lease_until = NULL` for claimed jobs whose `lease_until < now`. `failJobAttempt` increments `attempts` and returns `'failed'` (state `failed`) once `attempts >= NATIVE_MAX_ATTEMPTS`, otherwise releases the job to `pending`. `emitCompanionEvent` deletes the member's events older than 24 hours in the same transaction. `markPcPingSent` is `UPDATE ... SET pc_ping_sent_at = $now WHERE id = $1 AND pc_ping_sent_at IS NULL`. Generate the migration with `cd packages/web && bunx drizzle-kit generate`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/db/companion.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/db
@@ -362,8 +362,8 @@ git commit -m "feat(web): add companion tables and queries"
 
 **Files:**
 
-- Create: `packages/web/lib/companion/tokens.ts`, `packages/web/app/api/companion/pair/route.ts`, `packages/web/app/api/devices/pairing-code/route.ts`, `packages/web/app/api/devices/[id]/revoke/route.ts`, `packages/web/app/devices/page.tsx`
-- Test: `packages/web/lib/companion/tokens.test.ts`
+- Create: `packages/web/lib/companion/tokens.ts`, `packages/web/app/api/companion/pair/route.ts`, `packages/web/app/api/devices/pairing-code/route.ts`, `packages/web/app/api/devices/[id]/revoke/route.ts`, `packages/web/app/devices/page.tsx` _(`app/devices/page.tsx` is built as a plain, unstyled page (list, "Pair a new PC" button and one-time code display, remove with a second step), restyled after the Figma step; the routes and `lib/` are built. Also added: `lib/companion/deps.ts` with `pairDeps()` and `ntfyConfigOf`, and `lib/companion/deps.ts` joins the `no-direct-db` allow-list.)_
+- Test: `packages/web/test/companion-tokens.test.ts`
 
 **Interfaces:**
 
@@ -394,7 +394,7 @@ export function revokeDevice(db: Db, memberId: string, deviceId: string, now?: D
 
 - Routes (adds to contracts): `POST /api/companion/pair` (body `PairRequest`, no session, answers `PairResponse` or 400), `POST /api/devices/pairing-code` and `POST /api/devices/<id>/revoke` (member session). The Devices page at `/devices` lists the member's PCs (name, paired, last seen, Remove) and a "Pair a PC" button that shows the website address and the code as `XXXX-XXXX`, "valid for 10 minutes".
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const t0 = new Date('2026-10-21T08:00:00Z')
@@ -439,21 +439,21 @@ test('a revoked token is refused; another member cannot revoke it', async () => 
 
 `pairA(at)` creates and redeems a code for `memberA`; `memberANtfy` is what `memberNtfy` returns for member A in the fixture.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/web/lib/companion/tokens.test.ts`
+Run: `bun test packages/web/test/companion-tokens.test.ts`
 Expected: FAIL with "Cannot find module './tokens'"
 
-- [ ] **Step 3: Implement the functions in `packages/web/lib/companion/tokens.ts`, the three routes and the Devices page**
+- [x] **Step 3: Implement the functions in `packages/web/lib/companion/tokens.ts`, the three routes and the Devices page**
 
 Codes are 8 characters from the Crockford alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, stored only as `hashSecret(normalisePairingCode(code))`, valid 10 minutes, single use. `redeemPairingCode` marks the pairing used and inserts the device token in one transaction; `pairedAt` is `now`. `authenticateDevice` accepts only `Bearer tmd_...` and refuses revoked rows.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/web/lib/companion/tokens.test.ts`
+Run: `bun test packages/web/test/companion-tokens.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/companion packages/web/app/api/companion/pair packages/web/app/api/devices packages/web/app/devices
@@ -464,9 +464,9 @@ git commit -m "feat(web): pair PCs with device tokens"
 
 **Files:**
 
-- Create: `packages/web/lib/companion/scope.ts`
-- Modify: `packages/web/middleware.ts` (plan 01c), so it runs the guard on every request, including plan 01c's `forward_auth` endpoint for remote views
-- Test: `packages/web/lib/companion/scope.test.ts`
+- Create: `packages/web/lib/companion/guard.ts` (pure path and header checks), `packages/web/lib/companion/scope.ts` (`withDevice`, `DeviceScope`; re-exports the guard), `packages/web/proxy.ts` (Next 16 name for middleware; runs the guard on every request, including the `forward_auth` endpoint for remote views)
+- Modify: `packages/web/lib/companion/deps.ts` (`companionDeps`), `packages/web/test/no-direct-db.test.ts`
+- Test: `packages/web/test/companion-scope.test.ts`
 
 **Interfaces:**
 
@@ -477,11 +477,11 @@ git commit -m "feat(web): pair PCs with device tokens"
 export function isCompanionPath(pathname: string): boolean // after URL normalisation, starts with '/api/companion/'
 export function misplacedDeviceToken(pathname: string, authorization: string | null): boolean
 export function withDevice<C>(
-  handler: (req: Request, device: DeviceAuth, ctx: C) => Promise<Response>
+  handler: (req: Request, scope: DeviceScope, ctx: C) => Promise<Response>
 ): (req: Request, ctx: C) => Promise<Response>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test.each([
@@ -532,24 +532,24 @@ test('withDevice passes the authenticated device to the handler', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/web/lib/companion/scope.test.ts`
+Run: `bun test packages/web/test/companion-scope.test.ts`
 Expected: FAIL with "Cannot find module './scope'"
 
-- [ ] **Step 3: Implement `scope.ts` and call `misplacedDeviceToken` first in the middleware**
+- [x] **Step 3: Implement `scope.ts` and call `misplacedDeviceToken` first in the middleware**
 
 The middleware answers `403` with `{ "error": "device_token_not_allowed" }`. `withDevice` reads only the `Authorization` header and answers `401` with `{ "error": "device_revoked_or_unknown" }` when `authenticateDevice` returns `null`. Every route under `packages/web/app/api/companion/` except `pair` is wrapped in `withDevice`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/web/lib/companion/scope.test.ts`
+Run: `bun test packages/web/test/companion-scope.test.ts`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib/companion/scope.ts packages/web/lib/companion/scope.test.ts packages/web/middleware.ts
+git add packages/web/lib/companion packages/web/proxy.ts packages/web/test/companion-scope.test.ts
 git commit -m "feat(web): scope device tokens to companion API"
 ```
 
@@ -578,7 +578,7 @@ export function companionEventStream(
 
 - Routes (adds to contracts): `GET /api/companion/events` (SSE, resumes from the `Last-Event-ID` header), `GET /api/companion/jobs` (answers `{ jobs: CompanionJob[] }` after `releaseExpiredLeases`), `POST /api/companion/jobs/<id>/claim` (200 with the job, 409 when another device holds it, 404 otherwise), `POST /api/companion/jobs/<id>/progress` (204, or 404 when this device doesn't hold the job).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // sse.test.ts
@@ -649,21 +649,21 @@ test('progress from a device that does not hold the job answers 404', async () =
 
 `collect` reads a stream to a string until it closes; `authed(path, token, method?)` builds a `Request` with the bearer header; `params(id)` builds the route context.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/companion/sse.test.ts packages/web/app/api/companion/jobs/jobs.test.ts`
 Expected: FAIL with "Cannot find module './sse'" and missing route modules
 
-- [ ] **Step 3: Implement `sse.ts` and the four routes**
+- [x] **Step 3: Implement `sse.ts` and the four routes**
 
 The events route sets `Content-Type: text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no` and `export const dynamic = 'force-dynamic'`; the stream polls `listCompanionEvents` every `pollMs`, writes `: keepalive\n\n` every `keepAliveMs`, touches `device_tokens.last_used_at` on each keepalive, and closes on `signal` abort. Caddy flushes `text/event-stream` responses immediately, so the Caddyfile needs no change.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/companion/sse.test.ts packages/web/app/api/companion/jobs/jobs.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/companion/sse.ts packages/web/lib/companion/sse.test.ts packages/web/app/api/companion/events packages/web/app/api/companion/jobs
@@ -674,7 +674,7 @@ git commit -m "feat(web): add companion event stream and jobs"
 
 **Files:**
 
-- Create: `packages/pipeline/src/native/flac.ts`, `packages/pipeline/src/native/start.ts`, `packages/pipeline/src/native/pc-check.ts`
+- Create: `packages/pipeline/src/native/flac.ts`, `packages/pipeline/src/native/start.ts`; the check is `checkNativeJob` in `packages/scheduler/src/native-check.ts` (it replaces the P0-Q stub; `pc-check.ts` is not made). Built as written in preflight N1/N2: `extractFlac` reads the safely joined recording (`joinedRecording` in `remux.ts`) and has no `RunLike` argument (tests run real ffmpeg); `startNativeTranscription(deps, input, signal)` takes `{ db, queue }` and the occurrence's fields, and finds an active job instead of making a second; the claim route hook belongs to Task 5. Tests are in `packages/<pkg>/test/`
 - Modify: `packages/core/src/occurrence-machine.ts` (one trigger); `packages/notify/src/messages.ts` (the waiting ping); plan 01c's pipeline job consumer in `packages/pipeline/src/` (the pg-boss handler that calls `runPipeline`), where `startNativeTranscription` replaces 01c's immediate `wait_for_pc` for native occurrences, and which registers the `native-job-check` handler; `packages/web/app/api/companion/jobs/[id]/claim/route.ts` (move a `waiting_for_pc` occurrence back to `transcribing`)
 - Test: `packages/pipeline/src/native/flac.test.ts`, `packages/pipeline/src/native/pc-check.test.ts`, `packages/core/src/occurrence-machine.test.ts`
 
@@ -710,7 +710,7 @@ export function checkNativeJob(
 ): Promise<'done' | 'failed' | 'claimed' | 'waiting_for_pc'>
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // occurrence-machine.test.ts (added cases)
@@ -821,21 +821,21 @@ test('a done job stops the checks', async () => {
 
 `deps` records `pings`, `transitions` and `scheduled`; its `transition` also updates the fixture occurrence's state; `cfgA` is a `JobConfig` for `f.occA` with entry "Data Mining" starting `2026-10-21T14:00:00+08:00`, time zone `Asia/Kuala_Lumpur`, transcription `native`; `fakeFfmpeg` answers duration `5400.5`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core/src/occurrence-machine.test.ts packages/pipeline/src/native`
 Expected: FAIL with "Cannot find module './flac'" and an `IllegalTransition` for `pc_claimed`
 
-- [ ] **Step 3: Implement the triggers, `flac.ts`, `start.ts`, `pc-check.ts`, the consumer branch and the claim hook**
+- [x] **Step 3: Implement the triggers, `flac.ts`, `start.ts`, `pc-check.ts`, the consumer branch and the claim hook**
 
 `checkNativeJob`: return `done` or `failed` for finished jobs without rescheduling; otherwise call `releaseExpiredLeases`; if the job is `pending` and the occurrence is `transcribing`, apply `wait_for_pc`, and send the ping above only when `markPcPingSent` returns `true`; reschedule itself after `JOB_LEASE_MS / 1000` seconds while the job is `pending` or `claimed`. The consumer branch runs only when `cfg.entry.transcription === 'native'` and the occurrence is `transcribing`: when `startNativeTranscription` returns a job id the consumer stops there, and when it returns `null` (the native transcript is already uploaded) the consumer goes on to `runPipeline` as for live mode. The claim route applies `pc_claimed` after a successful claim when the occurrence is `waiting_for_pc`. ffmpeg and ffprobe are already in the image `tm-pipeline` runs in (plan 01a).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/occurrence-machine.test.ts packages/pipeline/src/native`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/occurrence-machine.ts packages/core/src/occurrence-machine.test.ts packages/pipeline/src packages/web/app/api/companion/jobs packages/notify/src/messages.ts
@@ -864,7 +864,7 @@ export const MAX_TRANSCRIPT_FILE_BYTES = 50 * 1024 * 1024
 
 - Routes (adds to contracts): `GET /api/companion/jobs/<id>/audio` (200 or 206 with `Accept-Ranges: bytes`; 404 unless this device holds the native job; 410 when `audio.flac` is gone), `POST /api/companion/jobs/<id>/transcript` (multipart fields `txt`, `srt`, `json`; 204 or 400), `POST /api/companion/jobs/<id>/fail` (body `{ error: string }`; 204).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('audio goes only to the device that holds the job', async () => {
@@ -934,21 +934,21 @@ test('the first failure re-announces the job; the second fails the occurrence an
 
 `applyTrigger`, `enqueuePipeline` and `sendPing` are replaced by recorders (`triggers`, `enqueued`, `pings`) through `bun:test`'s `mock.module`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/lib/companion/native.test.ts`
 Expected: FAIL with "Cannot find module './native'"
 
-- [ ] **Step 3: Implement `native.ts` and the three routes**
+- [x] **Step 3: Implement `native.ts` and the three routes**
 
-Files are written under `$TM_DATA_ROOT/occurrences/<occurrenceId>/transcript/native/` as `audio.txt`, `audio.srt` and `audio.json`, each through a temporary name and a rename, each at most `MAX_TRANSCRIPT_FILE_BYTES`. Order on success: write the three files, delete `audio.flac`, `completeJob`, `enqueuePipeline`. The failure message uses the error's first line cut to 200 characters; the error is stored on the job and never logged with its full text.
+Files are written under `$TM_DATA_ROOT/occurrences/<occurrenceId>/transcript/native/` as `audio.txt`, `audio.srt` and `audio.json`, each through a temporary name and a rename, each at most `MAX_TRANSCRIPT_FILE_BYTES`. Built as `audio` and `transcript` routes only; the `fail` route and `reportFailure` are left for a follow-up (they need a web-side notifier). Tests live in `packages/web/test/companion-native.test.ts`. Order on success: write the three files, delete `audio.flac`, `completeJob`, `enqueuePipeline`. The failure message uses the error's first line cut to 200 characters; the error is stored on the job and never logged with its full text.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/lib/companion/native.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/companion/native.ts packages/web/lib/companion/native.test.ts packages/web/app/api/companion/jobs docker/compose.yaml packages/notify/src/messages.ts
@@ -961,14 +961,14 @@ git commit -m "feat(web): serve audio and accept transcripts"
 
 - Create: `packages/pipeline/src/native/read.ts`
 - Modify: plan 01a's transcript step in `packages/pipeline/src/` (the reader of `transcript/live.jsonl`), which reads `readNativeTranscript(cfg.dataDir)` when `cfg.entry.transcription === 'native'`
-- Test: `packages/pipeline/src/native/read.test.ts`
+- Test: `packages/pipeline/test/native-read.test.ts`
 
 **Interfaces:**
 
 - Consumes: `WhisperJsonSchema` (Task 1); `runPipeline(cfg: JobConfig): Promise<PipelineResult>`; plan 01a's hallucination filter if `packages/pipeline` exports one.
 - Produces: `readNativeTranscript(occDir: string): Promise<{ startMs: number; endMs: number; text: string }[]>`, the same row shape as `transcript/live.jsonl`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('whisper segments become recording-relative rows in milliseconds', async () => {
@@ -1000,21 +1000,21 @@ test('runPipeline builds transcript.md from the native transcript', async () => 
 
 `nativeOccurrenceFixture` writes a minimal occurrence directory (no `transcript/live.jsonl`) and stubs the AI client the way plan 01a's pipeline tests do.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/pipeline/src/native/read.test.ts`
+Run: `bun test packages/pipeline/test/native-read.test.ts`
 Expected: FAIL with "Cannot find module './read'"
 
-- [ ] **Step 3: Implement `readNativeTranscript` and the branch in the transcript step**
+- [x] **Step 3: Implement `readNativeTranscript` and the branch in the transcript step**
 
 Drop a segment when its text, trimmed, lower-cased and stripped of trailing punctuation, is empty, `you` or `thank you for watching` (reuse plan 01a's filter when it exists, keeping these cases). Round seconds to milliseconds with `Math.round(s * 1000)`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/pipeline/src/native/read.test.ts`
+Run: `bun test packages/pipeline/test/native-read.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline/src
@@ -1045,7 +1045,7 @@ export function readSummary(
 
 - Routes (adds to contracts): `GET /api/companion/summaries?after=<ISO 8601>` answers `{ summaries: SummaryListItem[] }`; `GET /api/companion/summaries/<occurrenceId>` answers `text/markdown; charset=utf-8` or 404.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // summaries.test.ts
@@ -1087,21 +1087,21 @@ test('sendPing sends tags as the ntfy Tags header', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/companion/summaries.test.ts packages/notify/src/tags.test.ts`
 Expected: FAIL with "Cannot find module './summaries'" and a missing `tags` header
 
-- [ ] **Step 3: Implement `summaries.ts`, the two routes, `Ping.tags` and the tag on the summary-ready ping**
+- [x] **Step 3: Implement `summaries.ts`, the two routes, `Ping.tags` and the tag on the summary-ready ping**
 
 A summary is a plan 01c `artefacts` row of the summary kind on one of the member's occurrences; `fileName` is its path's base name and `readyAt` its creation time.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/companion/summaries.test.ts packages/notify/src/tags.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib packages/web/app packages/notify/src packages/pipeline/src
@@ -1168,7 +1168,7 @@ export interface DesktopNotifier {
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('defaults: Documents\\Meeting summaries and whisper model medium', () => {
@@ -1206,12 +1206,12 @@ test('loadSettings rejects a malformed file and keeps defaults for missing keys'
 
 `fakeSafe(available)` reverses and base64-encodes strings; `tmpFile(content?)` writes a file in a temporary directory.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/shell.test.ts`
 Expected: FAIL with "Cannot find module './settings'"
 
-- [ ] **Step 3: Implement the modules and the Electron shell**
+- [x] **Step 3: Implement the modules and the Electron shell**
 
 - `package.json`: `"main": "dist/main/index.js"`; scripts `build` (`bun build src/main/index.ts src/preload.ts --target=node --format=cjs --external electron --outdir dist`), `start` (`bun run build && electron .`), `pack` (`bun run build && electron-builder --win --dir`), `dist` (`bun run build && electron-builder --win`); `build` key: `appId` `com.tolonglabs.tolongmeeting`, `productName` `TolongMeeting`, `files` `["dist/**", "assets/**", "src/renderer/**"]`, `directories.output` `release`, `win.target` `nsis`, `win.icon` `assets/icon.ico`, `nsis.oneClick` `true`, `nsis.perMachine` `false`. The build is unsigned (internal tool); the acceptance task covers the SmartScreen prompt.
 - `main/index.ts`, in this order: `app.requestSingleInstanceLock()` (quit if taken); `app.setAppUserModelId(APP_USER_MODEL_ID)`; `app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] })`; build `ports.ts` adapters (`safeStorage`, `powerSaveBlocker`, `Notification` with `actions: [{ type: 'button', text }]` and `timeoutType: 'never'` when sticky, `shell.openPath`, `shell.openExternal`); create the tray; open no window when started with `--hidden`. Later tasks start their loops from here.
@@ -1219,12 +1219,14 @@ Expected: FAIL with "Cannot find module './settings'"
 - Windows (`settings.html`, and the pairing view in Task 11) use `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, and a preload exposing only the IPC calls they need.
 - Settings, state and secrets live in `%APPDATA%\TolongMeeting\settings.json`, `state.json` and `secrets.json`; job scratch space in `%LOCALAPPDATA%\TolongMeeting\jobs\`. The default `serverUrl` is injected at build time with `bun build --define` from `TM_PUBLIC_URL`.
 
-- [ ] **Step 4: Run tests, the type check and an unpacked build**
+- [x] **Step 4: Run tests, the type check and an unpacked build**
 
 Run: `bun test packages/companion/src/shell.test.ts && bun run typecheck && cd packages/companion && bun run pack`
 Expected: PASS (5 tests); no type errors; `packages/companion/release/win-unpacked/TolongMeeting.exe` exists
 
-- [ ] **Step 5: Commit**
+> Built in two steps. First the headless shell; then the plain, unstyled windows and tray (the user decided to build them before the Figma step; they are restyled after it): `main/tray.ts` and `tray-menu.ts`, `main/windows.ts`, `main/guard.ts`, `ui/`, one preload per window in `src/preload/` (not one `preload.ts`), `src/renderer/{pairing,settings,signin}.{html,ts}` with `ui.css`, and the generated `assets/` (`scripts/make-icons.ts`). Deviations: tests are in `packages/companion/test/` (`shell`, `ports`, `ui-*`, `tray-menu`, and the opt-in `smoke` run with `TM_ELECTRON_SMOKE=1 xvfb-run -a`); the bundle is `dist/main/index.cjs` built by `scripts/build.ts` (with `dist/preload/` and `dist/renderer/`; `files` is `dist/**` and `assets/**`); the tray adds `Pair this PC` while unpaired; `electronFuses` are set in the electron-builder config; no root `trustedDependencies` (run `bun run electron:install` where the binary is needed); `pack`/`dist` need a Windows runner and were not run here.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json bun.lock packages/companion
@@ -1281,7 +1283,7 @@ export function handleRevoked(d: {
 }): Promise<void>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('requests carry the token in the Authorization header, never in the URL', async () => {
@@ -1371,21 +1373,21 @@ test('handleRevoked clears secrets, stops loops and shows the unpaired notificat
 
 `recorder(seen, respond)` is a fake `fetch` that records each `Request` and answers with `respond()`; `apiWith(fetch)` builds a `CompanionApi` with token `tmd_x`; `pairResponse` is a valid `PairResponse` fixture.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/api.test.ts`
 Expected: FAIL with "Cannot find module './api'"
 
-- [ ] **Step 3: Implement `api.ts`, `pairing.ts`, the pairing view and the wiring**
+- [x] **Step 3: Implement `api.ts`, `pairing.ts`, the pairing view and the wiring**
 
-The pairing view has two fields, "Website address" (prefilled with `Settings.serverUrl`) and "Pairing code", and shows the server's error text on failure. `ntfy.url` and `ntfy.topic` go into `state.json`; the ntfy token goes only into the `SecretStore`. The device name is `os.hostname()`.
+The pairing view has two fields, "Website address" (prefilled with `Settings.serverUrl`) and "Pairing code", and shows the server's error text on failure. `ntfy.url` and `ntfy.topic` go into `state.json`; the ntfy token goes only into the `SecretStore`. The device name is `os.hostname()`. _(Built as `renderer/pairing.html`, `PairingService` in `ui/services.ts` and `Windows.openPairing`; it shows only the app's own fixed sentences. The window opens on a first run that is not `--hidden`, from the tray's `Pair this PC`, and from the unpaired notification.)_
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/api.test.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1438,7 +1440,7 @@ export function startNtfySubscriber(d: {
 }): { stop(): void }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const now = new Date('2026-10-21T08:00:00Z')
@@ -1522,21 +1524,21 @@ test('the subscriber sends the token as a header and resumes with since=<last id
 
 `streamOf(text)` answers a 200 response whose body streams `text` and then closes; `recorder` is Task 11's fake `fetch`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/ntfy.test.ts`
 Expected: FAIL with "Cannot find module './ntfy'"
 
-- [ ] **Step 3: Implement `backoff.ts`, `ntfy.ts` and the wiring**
+- [x] **Step 3: Implement `backoff.ts`, `ntfy.ts` and the wiring** (`backoff.ts` and `ntfy.ts` done; the `main/index.ts` wiring is left to the integrator)
 
 `sticky` is `priority >= 4`; `title` falls back to `TolongMeeting`; `clickUrl` is the message's `click` when it is `https:`, else the first kept button's URL. In `main/index.ts`, a click or button opens its URL with `shell.openExternal` only after a second `https:` check; `sync_summaries` calls Task 13's `syncSummaries`. Without a stored `ntfyLastId`, the first connection omits `since`. Reconnects wait `reconnectDelayMs(attempt)`, resetting after a message arrives.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/ntfy.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1574,7 +1576,7 @@ export function showSummaryNotification(
 ): void
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('windowsSafeFileName replaces what Windows forbids', () => {
@@ -1650,21 +1652,21 @@ test('clicking a summary whose file was moved opens the folder', () => {
 
 `fakeSummaries(items)` implements `summaries(after)` (items with `readyAt > after`) and `summary(occurrenceId)` (the item's `text`).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/summaries.test.ts`
 Expected: FAIL with "Cannot find module './summaries'"
 
-- [ ] **Step 3: Implement `summaries.ts` and the wiring**
+- [x] **Step 3: Implement `summaries.ts` and the wiring**
 
 `windowsSafeFileName`: replace each of `<>:"/\|?*` and control characters with `-`; trim trailing dots and spaces from the stem; prefix `_` when the stem is a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`); cut the stem so the whole name is at most 200 characters, keeping `.md`. `syncSummaries` pages through `summaries(after)` until a page has fewer than 50 items, creates the folder if needed, writes through `<name>.part` and a rename, skips names that already exist, and advances `summariesAfter` after each item. The wiring shows one notification per newly written file and never calls `openPath` outside a click.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/summaries.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1701,7 +1703,7 @@ export function startJobPoller(d: {
 }): { trigger(): void; stop(): void } // default 60000
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('parseSse joins fields split across chunks and skips comments', async () => {
@@ -1756,21 +1758,21 @@ test('trigger polls at once; otherwise the poller waits for the interval', async
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/sse.test.ts`
 Expected: FAIL with "Cannot find module './sse'"
 
-- [ ] **Step 3: Implement `sse.ts`, `poller.ts` and the wiring**
+- [x] **Step 3: Implement `sse.ts`, `poller.ts` and the wiring**
 
 Each event's `data` is parsed with `CompanionEventSchema` (unknown commands are dropped); `lastEventId` is stored after `onEvent` returns. On `job_available` the wiring calls `poller.trigger()`; on every stream (re)connect it calls `syncSummaries`. A `DeviceRevokedError` from either loop runs `handleRevoked`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/sse.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1834,7 +1836,7 @@ export class NativeRunner {
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('buildWhisperArgv keeps paths with spaces as one argument', () => {
@@ -1952,21 +1954,21 @@ test('the companion never changes power settings', async () => {
 
 `runnerWith` builds a `NativeRunner` over `fakeApi` (records `claims`, `uploads`, `uploadAttempts`, `flacPresentAtEachUpload`, `progressCalls`, `failures`; `downloadAudio` writes a 1000-byte `audio.flac`) with `uploadRetryMs: 10`; `okProcess()`, `slowProcess(ms)`, `writesOutputs()`, `failingProcess(code, stderr)` and `spawnError(message)` are `SpawnLike` fakes; `pending(id)` is a pending native `CompanionJob`; `idle(r)` waits until `r.busy` is false. The last test skips its own file, the only one that names the command.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/jobs/native-runner.test.ts`
 Expected: FAIL with "Cannot find module './whisper'"
 
-- [ ] **Step 3: Implement `keep-awake.ts`, `whisper.ts`, `native-runner.ts` and the wiring**
+- [x] **Step 3: Implement `keep-awake.ts`, `whisper.ts`, `native-runner.ts` and the wiring** _(The Settings window with the whisper command, folder and model fields is built: `renderer/settings.html`, `SettingsService`.)_
 
 Per job, in order: `claim` (skip on `null`); `keepAwake.acquire(jobId)`; every `progressMs` call `progress`; `downloadAudio` to `<jobsDir>\<jobId>\audio.flac`; run `buildWhisperArgv(settings.whisper.command, { audio, model: settings.whisper.model, outDir: <jobsDir>\<jobId>\out })` in `settings.whisper.cwd` with `whisperTimeoutMs(payload.durationSec)`; expect `out\audio.txt`, `out\audio.srt` and `out\audio.json`; `uploadTranscript`, retrying every `uploadRetryMs` until it succeeds or the job is lost (404); then delete the job folder; finally release the keep-awake and stop progress calls. On a whisper failure, a spawn error (reported as its message, for example `spawn uv ENOENT`), a timeout or missing output, call `fail` with the last 2 KB of stderr (the server uses the first line) and delete the job folder. `buildWhisperArgv` splits the template on whitespace outside double quotes, then replaces `{audio}`, `{model}` and `{outDir}` inside each token. The "Set up native transcription" notification opens the Settings window on click and is shown once per companion start.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/jobs/native-runner.test.ts`
 Expected: PASS (11 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src

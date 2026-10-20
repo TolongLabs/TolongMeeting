@@ -1,0 +1,94 @@
+// Types only: this module has no runtime code, so the package index can export it without pulling in the database. The
+// cross-member `runnerStore` is in `./store` and only the runner entry imports it.
+import type {
+  Connection,
+  ConnectionKind,
+  ConnectionSummary,
+  ExportErrorCode,
+  ExportResult,
+  ExportStatus,
+  ExportTargetId,
+  OccurrenceInfo
+} from './types'
+
+export interface ExportRow {
+  id: string
+  occurrenceId: string
+  memberId: string
+  target: ExportTargetId
+  status: ExportStatus
+  title: string | null
+  url: string | null
+  /** Relative to the occurrence directory (for example `exports/<exportId>.zip`), never absolute. */
+  filePath: string | null
+  note: string | null
+  errorCode: ExportErrorCode | null
+  error: string | null
+  createdAt: Date
+  finishedAt: Date | null
+}
+
+/** What `create` answers when it does not queue an export. The message is safe to show to the member. */
+export type CreateExportRefusal =
+  | { ok: false; code: 'already_running'; message: string }
+  | { ok: false; code: 'not_found'; message: string }
+  | { ok: false; code: 'not_ready'; message: string }
+  | { ok: false; code: 'too_many'; message: string }
+export type CreateExportResult = { ok: true; row: ExportRow } | CreateExportRefusal
+
+/** The member-facing export operations, bound to one member by a `MemberScope` (`memberExportStores`). */
+export interface MemberExports {
+  /**
+   * Queues an export. `not_found` for a meeting that is not the member's or is deleted, `not_ready` unless it is
+   * `completed`. The partial unique index allows one queued or running export per occurrence and target, and a member
+   * may have at most `MAX_ACTIVE_EXPORTS_PER_MEMBER` queued or running in all (`too_many`).
+   */
+  create(occurrenceId: string, target: ExportTargetId): Promise<CreateExportResult>
+  get(id: string): Promise<ExportRow | null>
+  /** Newest first, at most 50. */
+  listForOccurrence(occurrenceId: string): Promise<ExportRow[]>
+}
+
+/** The member's connections, bound to one member by a `MemberScope`. Tokens are sealed in the database. */
+export interface MemberConnections {
+  /** The opened connection, tokens included: for server code that calls the provider. Never send it to the browser. */
+  get(kind: ConnectionKind): Promise<{ connection: Connection; status: 'ok' | 'reconnect_needed' } | null>
+  /** Holds no token. */
+  summaries(): Promise<ConnectionSummary[]>
+  /** Insert or replace; the status goes back to 'ok'. */
+  save(c: Connection): Promise<void>
+  markReconnect(kind: ConnectionKind): Promise<void>
+  remove(kind: ConnectionKind): Promise<void>
+}
+
+/** Reads an occurrence the member owns; null otherwise. */
+export interface MemberOccurrences {
+  get(occurrenceId: string): Promise<OccurrenceInfo | null>
+}
+
+/**
+ * The operations only `tm-exports` uses. They cross members, so they take the raw `Db` (like the pipeline consumer) and
+ * never read a token.
+ */
+export interface RunnerStore {
+  /**
+   * A queued export becomes running: the oldest one of the member whose last claim is the oldest (a member who was
+   * never served goes first), so one member's backlog can't starve the others. Two runners never claim the same row.
+   */
+  claimNext(): Promise<ExportRow | null>
+  /** Throws when the export is not running (it was purged, or already finished). */
+  succeed(id: string, title: string, r: ExportResult): Promise<void>
+  /** `message` is cleaned with `redact` (also removing `secrets`, the tokens of the opened connection) before it is stored. Throws when the export is neither queued nor running. */
+  fail(id: string, code: ExportErrorCode, message: string, secrets?: readonly string[]): Promise<void>
+  /** The `url` of the latest earlier export of the same member, meeting and target that succeeded with one, else null. */
+  previousUrl(row: ExportRow): Promise<string | null>
+  /**
+   * After a download (zip or pdf) succeeded: the same member's earlier succeeded downloads of the same meeting and target
+   * keep their row but lose their file path and get `REPLACED_NOTE`. Returns the cleared rows, whose files the caller removes.
+   */
+  replaceEarlierDownloads(row: ExportRow): Promise<ExportRow[]>
+  /** Running exports become failed with code 'interrupted' (the runner restarted). Returns them. */
+  failInterrupted(): Promise<ExportRow[]>
+  /** Deletes the rows of occurrences in state 'deleted'. Returns how many. */
+  purgeDeleted(): Promise<number>
+}

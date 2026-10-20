@@ -4,3 +4,10 @@ dist/
 test-results/
 playwright-report/
 packages/worker/test/fixtures/
+spikes/03-qr/.venv/
+.superpowers/
+.dkm/
+graphify-out/
+packages/web/db/migrations/meta/
+packages/exports/test/fixtures/
+packages/companion/release/

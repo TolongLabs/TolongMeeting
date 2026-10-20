@@ -1,0 +1,1430 @@
+{
+  "generatedFor": "plan 00 task 3 (synthetic frames)",
+  "thresholds": {
+    "acceptWithinSec": 10,
+    "q2SizePct": 8,
+    "q3MinSizePct": 12,
+    "q3Rate": 0.9,
+    "p95Ms": 1500,
+    "bridgeP95Ms": 100,
+    "startMs": 5000
+  },
+  "decision": {
+    "qr.decoder": "wechat",
+    "qr.minSizePct": 12,
+    "qr.p95Ms": 80.8,
+    "basis": "no pipeline passes Q1 to Q5; chosen for the smallest passing size among those passing Q1, Q4 and Q5"
+  },
+  "main": {
+    "conditions": ["A", "B"],
+    "frames": 1080,
+    "pipelines": {
+      "zxing": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "26/28",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 16
+          }
+        },
+        "Q3": {
+          "pass": true,
+          "frameRate": 0.988,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 20.7,
+          "p95Ms": 146.5,
+          "maxMs": 167.6
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": false
+        },
+        "minSizePct": 20,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0.183,
+            "accepted": "1/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.117,
+                "accepted": "0/2"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.433,
+                "accepted": "1/2"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0.822,
+            "accepted": "5/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.967,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 0.5,
+                "accepted": "1/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 0.973,
+            "accepted": "9/10",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 0.933,
+                "accepted": "3/4"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "4/4"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 1,
+          "google": 0.967,
+          "msforms": 1
+        }
+      },
+      "wechat": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "25/28",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 2
+          }
+        },
+        "Q3": {
+          "pass": true,
+          "frameRate": 1,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 15.9,
+          "p95Ms": 80.8,
+          "maxMs": 150.9
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": true,
+          "startMs": 188,
+          "overheadP95Ms": 0.6
+        },
+        "minSizePct": 12,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0,
+            "accepted": "0/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0.5,
+            "accepted": "3/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.5,
+                "accepted": "1/2"
+              },
+              "google": {
+                "frameRate": 0.5,
+                "accepted": "1/2"
+              },
+              "msforms": {
+                "frameRate": 0.5,
+                "accepted": "1/2"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 1,
+            "accepted": "10/10",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "4/4"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "4/4"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 1,
+          "google": 1,
+          "msforms": 1
+        }
+      },
+      "both": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "26/28",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 16
+          }
+        },
+        "Q3": {
+          "pass": true,
+          "frameRate": 0.988,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 20.7,
+          "p95Ms": 227.3,
+          "maxMs": 299.8
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": true,
+          "startMs": 188,
+          "overheadP95Ms": 0.6
+        },
+        "minSizePct": 20,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0.183,
+            "accepted": "1/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.117,
+                "accepted": "0/2"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.433,
+                "accepted": "1/2"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0.822,
+            "accepted": "5/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.967,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 0.5,
+                "accepted": "1/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 0.973,
+            "accepted": "9/10",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 0.933,
+                "accepted": "3/4"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "4/4"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 1,
+          "google": 0.967,
+          "msforms": 1
+        }
+      },
+      "bothUnion": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "27/28",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 2
+          }
+        },
+        "Q3": {
+          "pass": true,
+          "frameRate": 1,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 219.7,
+          "p95Ms": 241.2,
+          "maxMs": 299.8
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": true,
+          "startMs": 188,
+          "overheadP95Ms": 0.6
+        },
+        "minSizePct": 12,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0.183,
+            "accepted": "1/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.117,
+                "accepted": "0/2"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.433,
+                "accepted": "1/2"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0.822,
+            "accepted": "5/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.967,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 0.5,
+                "accepted": "1/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 1,
+            "accepted": "10/10",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "4/4"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "4/4"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "6/6",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "2/2"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 1,
+          "google": 1,
+          "msforms": 1
+        }
+      }
+    },
+    "stages": {
+      "zxing:full": {
+        "p50Ms": 14.7,
+        "p95Ms": 22.8,
+        "rateBySize": {
+          "5": 0,
+          "8": 0.722,
+          "12": 0.933,
+          "20": 1,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0.833,
+            "google": 0.45,
+            "msforms": 0.883
+          },
+          "12": {
+            "gle": 1,
+            "google": 0.833,
+            "msforms": 1
+          },
+          "20": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      },
+      "zxing:region": {
+        "p50Ms": 117.2,
+        "p95Ms": 134.3,
+        "rateBySize": {
+          "5": 0.183,
+          "8": 0.822,
+          "12": 0.997,
+          "20": 1,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0.117,
+            "google": 0,
+            "msforms": 0.433
+          },
+          "8": {
+            "gle": 0.967,
+            "google": 0.5,
+            "msforms": 1
+          },
+          "12": {
+            "gle": 1,
+            "google": 0.992,
+            "msforms": 1
+          },
+          "20": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      },
+      "wechat:full": {
+        "p50Ms": 14.1,
+        "p95Ms": 30.3,
+        "rateBySize": {
+          "5": 0,
+          "8": 0.5,
+          "12": 1,
+          "20": 1,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0.5,
+            "google": 0.5,
+            "msforms": 0.5
+          },
+          "12": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          },
+          "20": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      },
+      "wechat:region": {
+        "p50Ms": 62.9,
+        "p95Ms": 80.4,
+        "rateBySize": {
+          "5": 0,
+          "8": 0.133,
+          "12": 1,
+          "20": 1,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0,
+            "google": 0.4,
+            "msforms": 0
+          },
+          "12": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          },
+          "20": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      }
+    }
+  },
+  "stress": {
+    "conditions": ["C"],
+    "frames": 540,
+    "pipelines": {
+      "zxing": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "5/14",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 38
+          }
+        },
+        "Q3": {
+          "pass": false,
+          "frameRate": 0.576,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 112,
+          "p95Ms": 123.7,
+          "maxMs": 198.5
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": false
+        },
+        "minSizePct": 35,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 0.127,
+            "accepted": "0/5",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.133,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.25,
+                "accepted": "0/2"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 0.9,
+            "accepted": "2/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0.7,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "3/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 0.711,
+          "google": 0.425,
+          "msforms": 0.625
+        }
+      },
+      "wechat": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "6/14",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 18
+          }
+        },
+        "Q3": {
+          "pass": false,
+          "frameRate": 0.636,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 65.3,
+          "p95Ms": 108.8,
+          "maxMs": 166.6
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": true,
+          "startMs": 188,
+          "overheadP95Ms": 0.6
+        },
+        "minSizePct": 35,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 0.3,
+            "accepted": "1/5",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.433,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.533,
+                "accepted": "0/2"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 0.833,
+            "accepted": "2/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0.5,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "3/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 0.811,
+          "google": 0.375,
+          "msforms": 0.767
+        }
+      },
+      "both": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "6/14",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 16
+          }
+        },
+        "Q3": {
+          "pass": false,
+          "frameRate": 0.655,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 177.4,
+          "p95Ms": 229.1,
+          "maxMs": 279
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": true,
+          "startMs": 188,
+          "overheadP95Ms": 0.6
+        },
+        "minSizePct": 35,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 0.3,
+            "accepted": "1/5",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.433,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.533,
+                "accepted": "0/2"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 0.9,
+            "accepted": "2/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0.7,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "3/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 0.811,
+          "google": 0.425,
+          "msforms": 0.767
+        }
+      },
+      "bothUnion": {
+        "Q1": {
+          "pass": true,
+          "wrongDecodes": 0,
+          "blankSlideDecodes": 0,
+          "samples": []
+        },
+        "Q2": {
+          "pass": false,
+          "accepted": "6/14",
+          "sizeThreshold": 8,
+          "acceptSecAtOrAbove12": {
+            "p50": 2,
+            "max": 16
+          }
+        },
+        "Q3": {
+          "pass": false,
+          "frameRate": 0.655,
+          "sizeThreshold": 12
+        },
+        "Q4": {
+          "pass": true,
+          "p50Ms": 185.8,
+          "p95Ms": 233.3,
+          "maxMs": 279
+        },
+        "Q5": {
+          "pass": true,
+          "applicable": true,
+          "startMs": 188,
+          "overheadP95Ms": 0.6
+        },
+        "minSizePct": 35,
+        "sizeCurve": [
+          {
+            "sizePct": 5,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 8,
+            "frameRate": 0,
+            "accepted": "0/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 0,
+                "accepted": "0/1"
+              }
+            }
+          },
+          {
+            "sizePct": 12,
+            "frameRate": 0.3,
+            "accepted": "1/5",
+            "byKind": {
+              "gle": {
+                "frameRate": 0.433,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0,
+                "accepted": "0/2"
+              },
+              "msforms": {
+                "frameRate": 0.533,
+                "accepted": "0/2"
+              }
+            }
+          },
+          {
+            "sizePct": 20,
+            "frameRate": 0.9,
+            "accepted": "2/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 0.7,
+                "accepted": "0/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          },
+          {
+            "sizePct": 35,
+            "frameRate": 1,
+            "accepted": "3/3",
+            "byKind": {
+              "gle": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "google": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              },
+              "msforms": {
+                "frameRate": 1,
+                "accepted": "1/1"
+              }
+            }
+          }
+        ],
+        "rateByKindAtOrAbove12": {
+          "gle": 0.811,
+          "google": 0.425,
+          "msforms": 0.767
+        }
+      }
+    },
+    "stages": {
+      "zxing:full": {
+        "p50Ms": 15.3,
+        "p95Ms": 21.8,
+        "rateBySize": {
+          "5": 0,
+          "8": 0,
+          "12": 0.04,
+          "20": 0.778,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "12": {
+            "gle": 0.067,
+            "google": 0,
+            "msforms": 0.067
+          },
+          "20": {
+            "gle": 1,
+            "google": 0.333,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      },
+      "zxing:region": {
+        "p50Ms": 98.1,
+        "p95Ms": 107.6,
+        "rateBySize": {
+          "5": 0,
+          "8": 0,
+          "12": 0.127,
+          "20": 0.9,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "12": {
+            "gle": 0.133,
+            "google": 0,
+            "msforms": 0.25
+          },
+          "20": {
+            "gle": 1,
+            "google": 0.7,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      },
+      "wechat:full": {
+        "p50Ms": 15.2,
+        "p95Ms": 38.4,
+        "rateBySize": {
+          "5": 0,
+          "8": 0,
+          "12": 0.2,
+          "20": 0.833,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "12": {
+            "gle": 0.133,
+            "google": 0,
+            "msforms": 0.433
+          },
+          "20": {
+            "gle": 1,
+            "google": 0.5,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      },
+      "wechat:region": {
+        "p50Ms": 53.8,
+        "p95Ms": 73.2,
+        "rateBySize": {
+          "5": 0,
+          "8": 0,
+          "12": 0.3,
+          "20": 0.833,
+          "35": 1
+        },
+        "rateBySizeAndKind": {
+          "5": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "8": {
+            "gle": 0,
+            "google": 0,
+            "msforms": 0
+          },
+          "12": {
+            "gle": 0.433,
+            "google": 0,
+            "msforms": 0.533
+          },
+          "20": {
+            "gle": 1,
+            "google": 0.5,
+            "msforms": 1
+          },
+          "35": {
+            "gle": 1,
+            "google": 1,
+            "msforms": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zoom meeting on web</title>
+    <script src="fixture.js"></script>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+      #sharee-container {
+        position: absolute;
+        left: 0;
+        top: 60px;
+        pointer-events: none;
+      }
+      #sharee-container canvas {
+        display: block;
+        background: #ccc;
+      }
+      footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 5;
+      }
+      #chat-panel {
+        position: fixed;
+        top: 60px;
+        right: 0;
+        width: 320px;
+        background: #fff;
+        border: 1px solid #000;
+        z-index: 5;
+      }
+      #chat-panel[hidden] {
+        display: none;
+      }
+      #participants-panel {
+        position: fixed;
+        top: 60px;
+        right: 0;
+        width: 320px;
+        background: #fff;
+        border: 1px solid #000;
+        z-index: 5;
+      }
+      #participants-panel[hidden] {
+        display: none;
+      }
+      .participants-ul {
+        list-style: none;
+        margin: 0;
+        padding: 8px;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      .participants-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+      }
+      .participants-item__name {
+        font-weight: bold;
+      }
+      .participants-item__role {
+        color: #666;
+        margin-left: 4px;
+      }
+      .chat-container__chat-list {
+        height: 300px;
+        overflow-y: auto;
+        position: relative;
+      }
+      #chat-rows {
+        position: relative;
+      }
+      .chat-item-container {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 80px;
+        box-sizing: border-box;
+        overflow: hidden;
+        padding: 4px 8px;
+        font: 13px sans-serif;
+      }
+      .chat-item__sender {
+        font-weight: bold;
+      }
+      .chat-item__quote {
+        color: #666;
+        border-left: 2px solid #999;
+        padding-left: 4px;
+      }
+      .notice {
+        position: fixed;
+        left: 20px;
+        z-index: 10;
+        background: #fff;
+        border: 1px solid #000;
+        padding: 12px;
+      }
+      .notice[hidden] {
+        display: none;
+      }
+      #notices {
+        position: fixed;
+        top: 100px;
+        left: 20px;
+        z-index: 10;
+      }
+      #notices .notice {
+        position: static;
+        margin-bottom: 8px;
+      }
+      #leave-confirm {
+        position: fixed;
+        top: 40%;
+        left: 40%;
+        background: #fff;
+        border: 1px solid #000;
+        padding: 16px;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>Lecture room</p>
+      <div id="sharee-container"><canvas width="1410" height="840"></canvas></div>
+    </main>
+    <section id="chat-panel">
+      <div class="chat-container__chat-list"><div id="chat-rows"></div></div>
+      <textarea data-click="chat input" aria-label="Type message here ..."></textarea>
+    </section>
+    <section id="participants-panel" hidden>
+      <ul class="participants-ul" aria-label="Participants"></ul>
+    </section>
+    <div id="audio-prompt" class="notice" role="dialog" style="top: 10px">
+      <p>Hear the meeting</p>
+      <button type="button" data-click="join audio by computer">Join Audio by Computer</button>
+    </div>
+    <div id="leave-confirm" hidden>
+      <button type="button" data-click="leave meeting">Leave Meeting</button>
+    </div>
+    <div id="notices"></div>
+    <footer>
+      <button type="button" data-click="audio" aria-label="audio">Audio</button>
+      <button type="button" data-click="video" aria-label="Video">Video</button>
+      <button type="button" data-click="participants" aria-label="open the participants list pane,[12] particpants">
+        12
+      </button>
+      <button id="open-chat" type="button" data-click="chat" aria-label="open the chat panel">Chat</button>
+      <button type="button" data-click="share" aria-label="Share">Share</button>
+      <button type="button" data-click="react" aria-label="React">React</button>
+      <button type="button" data-click="more" aria-label="More meeting control ">More</button>
+      <button id="leave" type="button" data-click="leave" aria-label="Leave">Leave</button>
+    </footer>
+    <script>
+      const ROW_HEIGHT = 80
+      const params = new URLSearchParams(location.search)
+      const list = document.querySelector('.chat-container__chat-list')
+      const rows = document.getElementById('chat-rows')
+      const panel = document.getElementById('chat-panel')
+      const openChat = document.getElementById('open-chat')
+
+      // `group: true` marks a follow-up message that Zoom renders without sender or time.
+      const seeded = (count) =>
+        Array.from({ length: count }, (_, i) => ({
+          sender: `Student ${i % 7}`,
+          time: `8:${String(10 + (i % 50)).padStart(2, '0')} PM`,
+          text: `Message number ${i}`
+        }))
+      // ?cold=1: at the bottom of the list the first row in view is a follow-up whose sender row has scrolled out.
+      const cold = [
+        { sender: 'Dr Lecturer (Host)', time: '8:41 PM', text: 'Attendance: https://forms.gle/abc' },
+        { group: true, text: 'Please submit before 9 PM' },
+        { group: true, text: '+1' },
+        { group: true, text: 'Thanks all' },
+        { sender: 'Student A', time: '8:42 PM', text: '+1' },
+        { sender: 'Student B', time: '8:43 PM', text: '+1' }
+      ]
+      const messages = params.has('seed')
+        ? seeded(Number(params.get('seed')))
+        : params.has('cold')
+          ? cold
+          : [
+              { sender: 'Dr Lecturer (Host)', time: '8:41 PM', text: 'Attendance: https://forms.gle/abc' },
+              { group: true, text: 'Please submit before 9 PM' },
+              {
+                id: 'msg-student-a',
+                sender: 'Student A',
+                time: '8:42 PM',
+                text: 'Is this the right form? https://forms.office.com/r/xyz'
+              },
+              {
+                sender: 'Student C',
+                time: '8:43 PM',
+                quote: 'Attendance: https://forms.gle/abc',
+                text: 'Done, thanks'
+              }
+            ]
+
+      const participants = params.has('seed')
+        ? Array.from({ length: 7 }, (_, i) => ({ name: `Student ${i % 7}`, role: '' }))
+        : params.has('cold')
+          ? [
+              { name: 'Dr Lecturer', role: '(Host)' },
+              { name: 'Student A', role: '' },
+              { name: 'Student B', role: '' }
+            ]
+          : [
+              { name: 'Dr Lecturer', role: '(Host)' },
+              { name: 'Student A', role: '' },
+              { name: 'Student C', role: '' }
+            ]
+
+      const participantsPanel = document.getElementById('participants-panel')
+      const participantsUl = document.querySelector('.participants-ul')
+
+      function renderParticipants() {
+        if (!participantsUl) return
+        participantsUl.innerHTML = ''
+        for (const p of participants) {
+          const li = document.createElement('li')
+          li.className = 'participants-item'
+          const nameSpan = document.createElement('span')
+          nameSpan.className = 'participants-item__name'
+          nameSpan.textContent = p.name
+          li.append(nameSpan)
+          if (p.role) {
+            const roleSpan = document.createElement('span')
+            roleSpan.className = 'participants-item__role'
+            roleSpan.textContent = p.role
+            li.append(roleSpan)
+          }
+          participantsUl.append(li)
+        }
+      }
+      renderParticipants()
+
+      function element(tag, className, text) {
+        const el = document.createElement(tag)
+        el.className = className
+        if (text !== undefined) el.textContent = text
+        return el
+      }
+
+      // Plain text with its URLs turned into anchors, the way Zoom shows links.
+      function linked(text) {
+        const box = element('div', 'new-chat-message__text-box')
+        for (const part of text.split(/(https?:\/\/\S+)/)) {
+          if (/^https?:\/\//.test(part)) {
+            const a = document.createElement('a')
+            a.href = part
+            a.textContent = part
+            box.append(a)
+          } else {
+            box.append(part)
+          }
+        }
+        return box
+      }
+
+      function row(index) {
+        const m = messages[index]
+        const el = element('div', 'chat-item-container')
+        if (m.id) el.id = m.id
+        el.style.top = `${index * ROW_HEIGHT}px`
+        if (!m.group) {
+          const info = element('div', 'chat-item__chat-info')
+          info.append(
+            element('span', 'chat-item__sender', m.sender),
+            element('span', 'chat-item__receiver', 'Everyone'),
+            element('span', 'new-chat-item__chat-info-time-stamp', m.time)
+          )
+          el.append(info)
+        }
+        if (m.quote) el.append(element('div', 'chat-item__quote', m.quote))
+        el.append(linked(m.text))
+        return el
+      }
+
+      // A virtualised list: only the rows that intersect the visible part are in the DOM.
+      const rendered = new Map()
+      function render() {
+        if (list.clientHeight === 0) return
+        rows.style.height = `${messages.length * ROW_HEIGHT}px`
+        const first = Math.floor(list.scrollTop / ROW_HEIGHT)
+        const last = Math.min(messages.length - 1, Math.floor((list.scrollTop + list.clientHeight - 1) / ROW_HEIGHT))
+        for (const [index, el] of rendered) {
+          if (index < first || index > last) {
+            el.remove()
+            rendered.delete(index)
+          }
+        }
+        let added = false
+        for (let index = first; index <= last; index++) {
+          if (!rendered.has(index)) {
+            rendered.set(index, row(index))
+            added = true
+          }
+        }
+        // The DOM keeps the rows in message order, as Zoom's list does.
+        if (added) for (const index of [...rendered.keys()].sort((a, b) => a - b)) rows.append(rendered.get(index))
+      }
+      list.addEventListener('scroll', render)
+
+      if (params.get('chat') === 'closed') panel.hidden = true
+      render()
+
+      // labels: [text, hidden?, click name?]. `bare` leaves out the dialog role and class: a prompt that Zoom's
+      // markup would not identify as a dialog.
+      function notice(title, labels, bare = false) {
+        const el = element('div', bare ? '' : 'notice')
+        if (!bare) el.setAttribute('role', 'dialog')
+        el.append(element('p', '', title))
+        for (const [label, hidden, name] of labels) {
+          const button = element('button', '', label)
+          button.type = 'button'
+          button.dataset.click = name || label.toLowerCase()
+          button.hidden = hidden
+          el.append(button)
+        }
+        document.getElementById('notices').append(el)
+        return el
+      }
+
+      Object.assign(window.__fixture, {
+        addMessage(m) {
+          messages.push({ ...m })
+          render()
+        },
+        scrollTop(y) {
+          list.scrollTop = y
+          render()
+        },
+        endMeeting() {
+          document.getElementById('leave').remove()
+          notice('This meeting has been ended by host', [['OK']])
+        },
+        remove() {
+          document.getElementById('leave').remove()
+          notice('You have been removed from this meeting', [['OK']])
+        },
+        breakout() {
+          notice('Dr Lecturer invited you to join Breakout Room 1', [['Join'], ['Later']])
+        },
+        // A breakout prompt that also carries an allowlist button: it must still not be accepted.
+        breakoutNotice() {
+          notice('Breakout Room 2 is open', [['OK', false, 'unsafe ok']])
+        },
+        // The same prompt with no dialog role or class around it: nothing says it is a notice, so nothing is clicked.
+        bareBreakout() {
+          notice('Dr Lecturer invited you to a breakout room', [['OK', false, 'unsafe ok']], true)
+        },
+        // A dialog that asks for the camera: its OK is not an acknowledgement.
+        startVideoNotice() {
+          notice('The host asks you to start your video', [['OK', false, 'unsafe ok'], ['Start Video']])
+        },
+        // A plain recording notice: Got it only acknowledges.
+        recordingNotice() {
+          notice('This meeting is being recorded', [['Got it']])
+        },
+        // A notice that closes as soon as the pointer reaches it, like one that times out under the click.
+        vanishingNotice() {
+          const el = notice('Notice', [['OK']])
+          el.querySelector('button').addEventListener('mouseover', () => el.remove())
+        },
+        // End and removal screens as plain page text, with no dialog container around them.
+        plainEnd() {
+          document.getElementById('leave').remove()
+          document.querySelector('main').append(element('p', '', 'This meeting has been ended by host'))
+        },
+        plainRemoved() {
+          document.getElementById('leave').remove()
+          document.querySelector('main').append(element('p', '', 'You have been removed from this meeting'))
+        },
+        // Nested containers: the breakout text is in the outer dialog, the OK button in an inner modal.
+        nestedNotice() {
+          const outer = notice('Breakout Room 3 is open', [])
+          const inner = element('div', 'zm-modal')
+          inner.append(element('p', '', 'Notice'))
+          const button = element('button', '', 'OK')
+          button.type = 'button'
+          button.dataset.click = 'unsafe ok'
+          inner.append(button)
+          outer.append(inner)
+        },
+        stopShare() {
+          document.querySelector('#sharee-container canvas')?.remove()
+        },
+        showNotice() {
+          notice('Notice', [['Got it'], ['OK'], ['OK', true]])
+          notice('Permission', [['Allow'], ['Start Video'], ['Join Breakout Room']])
+        },
+        addParticipant(p) {
+          participants.push(p)
+          renderParticipants()
+        },
+        setParticipants(list) {
+          participants.length = 0
+          participants.push(...list)
+          renderParticipants()
+        }
+      })
+
+      // One delegated listener, so dialogs added later are covered too.
+      document.addEventListener('click', (event) => {
+        const el = event.target.closest('[data-click]')
+        if (!el) return
+        const name = el.dataset.click
+        window.__fixture.click(name === 'join' ? 'breakout join' : name)
+        if (name === 'leave') document.getElementById('leave-confirm').hidden = false
+        if (name === 'participants') {
+          if (participantsPanel) {
+            participantsPanel.hidden = false
+            renderParticipants()
+          }
+        }
+        if (name === 'chat') {
+          panel.hidden = false
+          render()
+        }
+        if (name === 'join audio by computer') document.getElementById('audio-prompt').remove()
+        if (el.closest('#notices')) el.remove()
+      })
+    </script>
+  </body>
+</html>

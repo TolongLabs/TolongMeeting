@@ -1,0 +1,1 @@
+ALTER TABLE "home_exit_nodes" ADD CONSTRAINT "home_exit_nodes_node_id_unique" UNIQUE("node_id");

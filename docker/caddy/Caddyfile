@@ -1,0 +1,75 @@
+# TM_PUBLIC_URL and NTFY_URL are origins with a scheme and no trailing slash, e.g. https://tm.example.
+# Caddy never writes an access log here, and `log_credentials` stays off.
+
+{$TM_PUBLIC_URL} {
+	# The remote view of a worker's desk (noVNC over WebSocket), for the owning member only.
+	# Order matters, so the steps are in a `route`: Caddy's own directive order would strip the path before the check.
+	handle /vnc/* {
+		route {
+			# A browser always sends Origin on a WebSocket upgrade. Anything but our own origin is refused.
+			@foreign_origin {
+				header Origin *
+				not header Origin {$TM_PUBLIC_URL}
+			}
+			respond @foreign_origin 403
+			# ... and a WebSocket upgrade with no Origin at all (a script, not a browser) is refused too.
+			@upgrade_without_origin {
+				header Connection *Upgrade*
+				header Upgrade *
+				not header Origin *
+			}
+			respond @upgrade_without_origin 403
+
+			# Never trust a client-supplied upstream: only the website's answer below may set it.
+			request_header -X-Vnc-Upstream
+			# Caddy sets X-Forwarded-Method and X-Forwarded-Uri itself, so the website sees the real path. The website
+			# answers 401 (no session) or 403 (not yours, not ready, bad path); forward_auth passes those on to the client.
+			forward_auth web:3000 {
+				uri /api/vnc/authorize
+				copy_headers X-Vnc-Upstream
+				# The check is a plain request: the client's upgrade headers must not turn it into a WebSocket.
+				header_up -Upgrade
+				header_up -Connection
+			}
+
+			# Only a worker or sign-in container on the worker network, port 6080. Anything else is refused.
+			@bad_upstream {
+				not header_regexp X-Vnc-Upstream ^tm-(worker|signin)-[0-9a-f-]+(-a[0-9]+)?:6080$
+			}
+			respond @bad_upstream 403
+
+			# After the check: drop /vnc/<session id> and send the rest (the WebSocket path and query) to the worker.
+			uri path_regexp ^/vnc/[0-9a-f-]+/?(.*)$ /$1
+			reverse_proxy {http.request.header.X-Vnc-Upstream} {
+				transport http {
+					dial_timeout 5s
+				}
+				# A sign-in lasts at most an hour and the view closes itself after 15 idle minutes.
+				stream_timeout 90m
+			}
+		}
+	}
+
+	handle {
+		# Anything that looks like the remote view's path but was not taken by the handler above (Caddy matches a cleaned
+		# path, so `/vnc/<id>/%2e%2e/x` and `//vnc/x` get here) is refused instead of passed to the website.
+		@vnc_lookalike expression `{http.request.uri}.matches("(?i)^/+vnc(/|%|\\?|$)")`
+		respond @vnc_lookalike 403
+		# The authorisation check is for Caddy's own sub-request only; it is never public.
+		respond /api/vnc/authorize* 404
+		header {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+			# Added next to any policy the website sets (the artefact downloads send their own), never in place of it.
+			+Content-Security-Policy "frame-ancestors 'none'"
+		}
+		encode zstd gzip
+		# Caddy sets X-Forwarded-For, -Proto and -Host itself and discards what a client sent, because no proxy is trusted.
+		reverse_proxy web:3000
+	}
+}
+
+{$NTFY_URL} {
+	reverse_proxy ntfy:80
+}

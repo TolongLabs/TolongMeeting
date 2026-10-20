@@ -1,0 +1,52 @@
+{
+  "name": "@tm/companion",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "start": "bun run build && electron .",
+    "pack": "bun run build && electron-builder --win --dir",
+    "dist": "bun run build && electron-builder --win",
+    "electron:install": "node node_modules/electron/install.js",
+    "typecheck": "tsc",
+    "icons": "bun scripts/make-icons.ts"
+  },
+  "build": {
+    "appId": "com.tolonglabs.tolongmeeting",
+    "productName": "TolongMeeting",
+    "files": [
+      "dist/**",
+      "assets/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    }
+  },
+  "dependencies": {
+    "@tm/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.17.0"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "URLBlocklist": [
+    "file://*",
+    "chrome://*",
+    "devtools://*",
+    "chrome-untrusted://*",
+    "view-source:*",
+    "javascript://*",
+    "zoommtg://*",
+    "zoomus://*",
+    "msteams://*"
+  ],
+  "DownloadRestrictions": 3,
+  "AllowFileSelectionDialogs": false,
+  "FullscreenAllowed": false,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "ScreenCaptureAllowed": false,
+  "DefaultNotificationsSetting": 2,
+  "PasswordManagerEnabled": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "MetricsReportingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "ExternalProtocolDialogShowAlwaysOpenCheckbox": false,
+  "CommandLineFlagSecurityWarningsEnabled": false
+}

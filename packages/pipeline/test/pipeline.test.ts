@@ -1,0 +1,464 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { mkdir, readdir, readFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { utimes } from 'node:fs/promises'
+import type { ChatMessage, FormRecord, JobConfig } from '@tm/core'
+import { sampleRecord } from '@tm/core/testing'
+import sharp from 'sharp'
+import { runPipeline } from '../src/index'
+import type { Inventory } from '../src/summary/inventory'
+import type { WorkInventory } from '../src/summary/work'
+import { startFakeAi, startFakeNtfy, type FakeAi, type FakeNtfy } from './fakes'
+import { liveLine, makeOccurrence, removeOccurrence, writeAttempts, writeLines, type Occurrence } from './helpers'
+
+let occ: Occurrence
+let cfg: JobConfig
+let ai: FakeAi
+let ntfy: FakeNtfy
+
+const inventory: Inventory = {
+  sessionLabel: 'Week 7: Clustering',
+  nextAction: null,
+  items: [
+    {
+      kind: 'deadline',
+      text: 'Submit assignment 2',
+      due: '2026-11-01T23:59',
+      source: 'slide',
+      ref: 'slide 1',
+      conflicts: []
+    }
+  ],
+  covered: ['k-means']
+}
+
+const chatMessage: ChatMessage = {
+  key: 'm1',
+  sender: 'Dr Lecturer',
+  senderRole: 'host',
+  time: '8:41 PM',
+  seenAt: '2026-10-21T12:41:00Z',
+  text: 'Assignment 2 is due Sunday',
+  links: [],
+  replyTo: null
+}
+
+// A black 1920x1080 frame with one white slide-sized panel.
+async function whiteSlide(): Promise<Buffer> {
+  const panel = await sharp({
+    create: { width: 1000, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } }
+  })
+    .png()
+    .toBuffer()
+  return sharp({ create: { width: 1920, height: 1080, channels: 3, background: { r: 0, g: 0, b: 0 } } })
+    .composite([{ input: panel, left: 100, top: 100 }])
+    .png()
+    .toBuffer()
+}
+
+beforeEach(async () => {
+  occ = await makeOccurrence()
+  ai = startFakeAi()
+  ntfy = startFakeNtfy()
+  ai.reply(inventory)
+  cfg = { ...occ.cfg, ai: { ...occ.cfg.ai, baseUrl: ai.url }, ntfy: { ...occ.cfg.ntfy, url: ntfy.url } }
+  await Bun.write(join(occ.dataDir, 'events.jsonl'), '')
+  await writeAttempts(occ.dataDir, [{ startMs: 0, stopMs: null }])
+  await writeLines(join(occ.dataDir, 'transcript', 'live.jsonl'), [liveLine(0, 1000, 'Selamat petang.')])
+  await writeLines(join(occ.dataDir, 'chat.jsonl'), [chatMessage])
+})
+afterEach(async () => {
+  ai.stop()
+  ntfy.stop()
+  await removeOccurrence(occ.root)
+})
+
+async function writeForm(formDir: string, patch: Partial<FormRecord>): Promise<void> {
+  const dir = join(occ.dataDir, 'forms', formDir)
+  await mkdir(dir, { recursive: true })
+  await Bun.write(join(dir, 'record.json'), JSON.stringify(sampleRecord(patch)))
+}
+
+test('runPipeline writes the four files and pings the summary', async () => {
+  const r = await runPipeline(cfg)
+  for (const p of [r.transcriptPath, r.slidesPath, r.chatPath, r.summaryPath])
+    expect(await Bun.file(p).exists()).toBe(true)
+  expect(basename(r.summaryPath)).toBe('2026-10-21 2000 Data Mining.md')
+  const ping = ntfy.requests.at(-1)!.json
+  expect(ping).toMatchObject({ title: 'Summary ready: Data Mining', priority: 3 })
+  expect(ping.message).toStartWith('Data Mining')
+  // spike 8: the summary is never attached
+  expect(ntfy.requests.at(-1)!.headers.get('content-type')).toBe('application/json')
+  expect(await readdir(join(occ.dataDir, 'out'))).toContain('2026-10-21 2000 Data Mining.md')
+})
+
+test('attendance reads not seen without a form, and reads the submitted and needs-you forms with a form', async () => {
+  const first = await runPipeline(cfg)
+  expect(await Bun.file(first.summaryPath).text()).toContain('\nAttendance: not seen\n')
+
+  await writeForm('a1', { state: 'submitted', submittedAt: '2026-10-21T12:40:00.000Z' })
+  await writeForm('b2', {
+    url: 'https://forms.gle/abc?x=1',
+    finalUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform?entry.1=Secret',
+    state: 'needs_member',
+    seenAt: '2026-10-21T12:10:00Z'
+  })
+  const second = await runPipeline(cfg)
+  const md = await Bun.file(second.summaryPath).text()
+  expect(md).toContain(
+    '\nAttendance: needs you: https://docs.google.com/forms/d/e/1FAIpQLSabc/viewform; submitted at 20:40 (Google Forms) ✓\n'
+  )
+  expect(md).not.toContain('Secret')
+})
+
+test('a Microsoft form link is written as its canonical page, which the final scrub keeps', async () => {
+  await writeForm('m1', {
+    provider: 'microsoft',
+    finalUrl: 'https://forms.office.com/Pages/ResponsePage.aspx?id=AbC123xyz&r4f=secret',
+    state: 'needs_member'
+  })
+  const md = await Bun.file((await runPipeline(cfg)).summaryPath).text()
+  expect(md).toContain('\nAttendance: needs you: https://forms.office.com/Pages/ResponsePage.aspx?id=AbC123xyz\n')
+  expect(md).not.toContain('secret')
+})
+
+const workInventory: WorkInventory = {
+  decisions: ['Ship the beta on 3 Nov'],
+  actionItems: [
+    { owner: 'Ben', task: 'Book the demo room', due: null, source: 'speech', ref: null, conflicts: [] },
+    { owner: 'Aisyah', task: 'Draft the release notes', due: '2026-10-28', source: 'slide', ref: null, conflicts: [] }
+  ],
+  discussed: ['Beta scope'],
+  openQuestions: []
+}
+
+function workConfig(): JobConfig {
+  return {
+    ...cfg,
+    entry: { ...cfg.entry, name: 'Weekly sync', type: 'work' },
+    ai: { ...cfg.ai, models: { ...cfg.ai.models, summary: 'qwen3.7-plus' } },
+    member: { ...cfg.member, displayName: 'A Member', mentionNames: ['Aisyah'] }
+  }
+}
+
+test('a work entry gets the work inventory and summary, with no attendance line', async () => {
+  ai.reply(workInventory)
+  const r = await runPipeline(workConfig())
+  const md = await Bun.file(r.summaryPath).text()
+  expect(md.split('\n')[0]).toStartWith('Weekly sync (')
+  expect(md).not.toContain('Attendance')
+  expect(md).toContain('\nDo next: Draft the release notes (due Wed 28 Oct 2026)\n')
+  expect(md.split('\n').at(-2)).toStartWith('Details: the transcript, slides and chat files in ')
+  expect(ai.requests).toHaveLength(1)
+  const body = ai.requests[0]!.json
+  expect(body).toMatchObject({ model: 'qwen3.7-plus', enable_thinking: false })
+  expect(body.messages[0].content).toStartWith('You extract an inventory from one work meeting.')
+  expect(body.messages[1].content).toContain('## Host chat')
+})
+
+describe('a work summary links to the meeting page when TM_PUBLIC_URL is set', () => {
+  const saved = process.env.TM_PUBLIC_URL
+  afterEach(() => {
+    if (saved === undefined) delete process.env.TM_PUBLIC_URL
+    else process.env.TM_PUBLIC_URL = saved
+  })
+
+  test('https URL', async () => {
+    process.env.TM_PUBLIC_URL = 'https://tm.example/'
+    ai.reply(workInventory)
+    const md = await Bun.file((await runPipeline(workConfig())).summaryPath).text()
+    expect(md.split('\n').at(-2)).toBe('Details: https://tm.example/meetings/occ-1')
+  })
+
+  test('a URL that is not https is reported, and the summary is still written without the link', async () => {
+    const errors = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      for (const bad of ['http://tm.example', 'not a url']) {
+        process.env.TM_PUBLIC_URL = bad
+        ai.reply(workInventory)
+        const md = await Bun.file((await runPipeline(workConfig())).summaryPath).text()
+        expect(md).toContain('\nDo next: Draft the release notes (due Wed 28 Oct 2026)\n')
+        expect(md.split('\n').at(-2)).toStartWith('Details: the transcript, slides and chat files in ')
+      }
+      expect(errors.mock.calls.map((c) => c.join(' '))).toEqual([
+        expect.stringContaining('TM_PUBLIC_URL must be an https URL; the summary has no meeting link'),
+        expect.stringContaining('TM_PUBLIC_URL must be an https URL; the summary has no meeting link')
+      ])
+    } finally {
+      errors.mockRestore()
+    }
+  })
+})
+
+test('a re-run rewrites the same files and does not ping the summary twice', async () => {
+  const a = await runPipeline(cfg)
+  const before = await readFile(a.summaryPath, 'utf8')
+  const b = await runPipeline(cfg)
+  expect(b).toEqual(a)
+  expect(await readFile(b.summaryPath, 'utf8')).toBe(before)
+  expect(ntfy.requests).toHaveLength(1)
+})
+
+test('a failed ping is not marked sent, so the next run pings again', async () => {
+  ntfy.fail(500)
+  await expect(runPipeline(cfg)).rejects.toMatchObject({ name: 'PingError', status: 500 })
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged')).exists()).toBe(false)
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged.lock')).exists()).toBe(false)
+  ntfy.fail(null)
+  ntfy.requests.length = 0
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(1)
+}, 15_000)
+
+test('a fresh ping lock means another run is pinging, so this run does not; a stale one is taken over', async () => {
+  const lock = join(occ.dataDir, 'out', 'summary-pinged.lock')
+  await mkdir(join(occ.dataDir, 'out'), { recursive: true })
+  await Bun.write(lock, '')
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(0)
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged')).exists()).toBe(false)
+  expect(await Bun.file(lock).exists()).toBe(true)
+
+  const old = new Date(Date.now() - 11 * 60_000)
+  await utimes(lock, old, old)
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(1)
+  expect(await Bun.file(join(occ.dataDir, 'out', 'summary-pinged')).exists()).toBe(true)
+  expect(await Bun.file(lock).exists()).toBe(false)
+})
+
+test('the summary file leaves no temporary file behind', async () => {
+  await runPipeline(cfg)
+  expect((await readdir(join(occ.dataDir, 'out'))).filter((f) => f.endsWith('.tmp'))).toEqual([])
+})
+
+test('a torn or malformed form record reads as a form that could not be read, never as not seen', async () => {
+  const unreadable = '\nAttendance: a form was seen but could not be read; check the meeting page\n'
+  await mkdir(join(occ.dataDir, 'forms', 't1'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'forms', 't1', 'record.json'), '{"state": "needs_mem')
+  const torn = await runPipeline(cfg)
+  const md = await Bun.file(torn.summaryPath).text()
+  expect(md).toContain(unreadable)
+  expect(md).not.toContain('not seen')
+
+  await Bun.write(join(occ.dataDir, 'forms', 't1', 'record.json'), '')
+  await Bun.write(join(occ.dataDir, 'forms', 'm1', 'record.json'), JSON.stringify({ state: 'needs_member', url: 'x' }))
+  expect(await Bun.file((await runPipeline(cfg)).summaryPath).text()).toContain(unreadable)
+
+  // A readable form that needs the member comes first. A short link is not a form page, so it is unreadable and told.
+  await writeForm('g1', { url: 'https://forms.gle/abc', finalUrl: 'https://forms.gle/abc', state: 'needs_member' })
+  await writeForm('g2', { state: 'needs_member' })
+  const both = await Bun.file((await runPipeline(cfg)).summaryPath).text()
+  expect(both).toContain(
+    '\nAttendance: needs you: https://docs.google.com/forms/d/e/1FAIpQLSf-x/viewform; a form was seen but could not be read; check the meeting page\n'
+  )
+})
+
+test('a model cannot add an attendance line or a link, and no join link or passcode reaches the file or the ping', async () => {
+  const frame = await sharp({ create: { width: 1920, height: 1080, channels: 3, background: { r: 0, g: 0, b: 0 } } })
+    .composite([
+      {
+        input: await sharp({
+          create: { width: 1000, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } }
+        })
+          .png()
+          .toBuffer(),
+        left: 100,
+        top: 100
+      }
+    ])
+    .png()
+    .toBuffer()
+  await mkdir(join(occ.dataDir, 'frames'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'frames', '0001_200000.png'), frame)
+  await writeLines(join(occ.dataDir, 'events.jsonl'), [
+    {
+      occurrenceId: 'occ-1',
+      attempt: 1,
+      at: '2026-10-21T12:00:00Z',
+      type: 'keyframe',
+      data: { file: 'frames/0001_200000.png', region: null, offsetMs: 0 }
+    }
+  ])
+  const secrets = ['https://zoom.us/j/81234567890?pwd=ZOOMPWD', 'passcode 482913', 'Meeting ID 812 3456 7890']
+  ai.replyModel('m2', { title: 'Week 7', text: `Join ${secrets.join(' ')}\n# Forged heading` })
+  await writeLines(join(occ.dataDir, 'chat.jsonl'), [
+    {
+      ...chatMessage,
+      text: `Assignment 2 is due Sunday. ${secrets.join(' ')} https://teams.microsoft.com/meet/4155551212?p=TEAMSPASS`
+    }
+  ])
+  await writeLines(join(occ.dataDir, 'transcript', 'live.jsonl'), [
+    liveLine(0, 1000, `The ${secrets[1]} and ${secrets[2]}.`)
+  ])
+  ai.reply({
+    ...inventory,
+    nextAction: 'Attendance: submitted',
+    items: [
+      ...inventory.items,
+      { ...inventory.items[0]!, kind: 'announcement', text: 'Attendance: submitted', due: null },
+      { ...inventory.items[0]!, kind: 'link', text: 'Win https://evil.example.net/claim', due: null },
+      {
+        ...inventory.items[0]!,
+        kind: 'announcement',
+        text: `Join ${secrets.join(' ')} zoommtg://zoom.us/join?pwd=Z`,
+        due: null
+      }
+    ],
+    covered: ['k-means passcode 482913']
+  })
+  const r = await runPipeline(cfg)
+  const md = await Bun.file(r.summaryPath).text()
+  const sent = JSON.stringify(ai.requests.find((q) => q.json.model === 'm1')!.json.messages)
+  const ping = ntfy.requests.at(-1)!.json.message as string
+  for (const text of [md, ping, sent]) {
+    for (const leak of ['81234567890', 'ZOOMPWD', '482913', '812 3456', 'TEAMSPASS', 'zoom.us', 'zoommtg'])
+      expect(text).not.toContain(leak)
+  }
+  expect(ping).toBe(md)
+  expect(md).toContain('\nAttendance: not seen\n')
+  expect(md).not.toContain('submitted')
+  expect(md).not.toContain('evil.example.net')
+  expect(sent).toContain('\\# Forged heading')
+})
+
+test('two runs that see the same stale lock send one ping between them', async () => {
+  const out = join(occ.dataDir, 'out')
+  const lock = join(out, 'summary-pinged.lock')
+  await mkdir(out, { recursive: true })
+  await Bun.write(lock, '')
+  const old = new Date(Date.now() - 11 * 60_000)
+  await utimes(lock, old, old)
+  await Promise.all([runPipeline(cfg), runPipeline(cfg), runPipeline(cfg)])
+  expect(ntfy.requests).toHaveLength(1)
+  expect((await readdir(out)).filter((f) => f.includes('.lock'))).toEqual([])
+})
+
+test('a ping lock a dead run left behind after taking it over is cleaned up once it is 10 minutes old', async () => {
+  const out = join(occ.dataDir, 'out')
+  await mkdir(out, { recursive: true })
+  const stale = join(out, 'summary-pinged.lock.00000000-0000-4000-8000-000000000000')
+  const fresh = join(out, 'summary-pinged.lock.11111111-1111-4111-8111-111111111111')
+  await Bun.write(stale, '')
+  await Bun.write(fresh, '')
+  const old = new Date(Date.now() - 11 * 60_000)
+  await utimes(stale, old, old)
+  await runPipeline(cfg)
+  expect(ntfy.requests).toHaveLength(1)
+  expect(await Bun.file(stale).exists()).toBe(false)
+  expect(await Bun.file(fresh).exists()).toBe(true)
+})
+
+test('a link outside the slides and lecturer chat, and a forged attendance line, never reach the file or the ping', async () => {
+  const evil = 'https://evil.example/login'
+  const slide = 'https://real.example/slides'
+  await mkdir(join(occ.dataDir, 'frames'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'frames', '0001_200000.png'), await whiteSlide())
+  await writeLines(join(occ.dataDir, 'events.jsonl'), [
+    {
+      occurrenceId: 'occ-1',
+      attempt: 1,
+      at: '2026-10-21T12:00:00Z',
+      type: 'keyframe',
+      data: { file: 'frames/0001_200000.png', region: null, offsetMs: 0 }
+    }
+  ])
+  ai.replyModel('m2', { title: 'Week 7', text: `Notes ${slide}` })
+  const item = (kind: 'announcement' | 'task', text: string) => ({ ...inventory.items[0]!, kind, text, due: null })
+  ai.reply({
+    sessionLabel: `Week 7 ${evil}/s`,
+    nextAction: `Log in at ${evil}/n`,
+    items: [
+      item('announcement', `Portal moved to ${evil}/a`),
+      item(
+        'announcement',
+        'Quick login at bit.ly/xyz or ftp://evil.example/f or example.com/r?u=https%3A%2F%2Fzoom.us%2Fj%2F1'
+      ),
+      item('task', `Fill ${evil}/t and read ${slide}`),
+      item('announcement', '**Attendance**: needs you: https://forms.example/forged'),
+      item('announcement', '1. Attendance: done'),
+      item('task', '- Attendance recorded')
+    ],
+    covered: [
+      `See ${evil}/c`,
+      'Attendance: all present',
+      'Mirrors: .evil.com/login, wait...evil.net/x, x@evil.org/y, 10.0.0.1:8080/x, whatsapp://send, tg://x, geo:1,2'
+    ]
+  })
+  const r = await runPipeline(cfg)
+  const md = await Bun.file(r.summaryPath).text()
+  const ping = ntfy.requests.at(-1)!.json.message as string
+  for (const text of [md, ping]) {
+    expect(text).not.toContain('evil.example')
+    expect(text).not.toContain('bit.ly')
+    for (const bit of ['evil.com', 'evil.net', 'evil.org', '10.0.0.1', 'whatsapp', 'tg://', 'geo:']) {
+      expect(text).not.toContain(bit)
+    }
+    expect(text).not.toContain('zoom')
+    expect(text).not.toContain('forged')
+    expect(text).not.toContain('all present')
+    expect(text.match(/Attendance/g)).toHaveLength(1)
+    expect(text).toContain(slide)
+    expect(text).toContain('[link removed]')
+  }
+  expect(md).toContain('\nAttendance: not seen\n')
+})
+
+test('a rejected key keeps the inputs, pings and rethrows', async () => {
+  ai.fail(401)
+  await expect(runPipeline(cfg)).rejects.toMatchObject({ name: 'AiKeyError', status: 401 })
+  expect(ntfy.requests.at(-1)!.json.title).toBe('Summary failed: Data Mining')
+  expect(await Bun.file(join(cfg.dataDir, 'transcript/live.jsonl')).exists()).toBe(true)
+  expect(await Bun.file(join(cfg.dataDir, 'chat.jsonl')).exists()).toBe(true)
+})
+
+test('pingOnKeyError false rethrows without a ping', async () => {
+  ai.fail(402)
+  await expect(runPipeline(cfg, { pingOnKeyError: false })).rejects.toMatchObject({ name: 'AiKeyError', status: 402 })
+  expect(ntfy.requests).toHaveLength(0)
+})
+
+test('other AI failures rethrow without a ping', async () => {
+  ai.fail(500)
+  await expect(runPipeline(cfg)).rejects.toMatchObject({ name: 'AiError', status: 500 })
+  expect(ntfy.requests).toHaveLength(0)
+})
+
+test('a slide the vision model could not read is told to the summary model and named in the summary', async () => {
+  const frame = await sharp({
+    create: { width: 1920, height: 1080, channels: 3, background: { r: 0, g: 0, b: 0 } }
+  })
+    .composite([
+      {
+        input: await sharp({
+          create: { width: 1000, height: 600, channels: 3, background: { r: 255, g: 255, b: 255 } }
+        })
+          .png()
+          .toBuffer(),
+        left: 100,
+        top: 100
+      }
+    ])
+    .png()
+    .toBuffer()
+  await mkdir(join(occ.dataDir, 'frames'), { recursive: true })
+  await Bun.write(join(occ.dataDir, 'frames', '0001_200000.png'), frame)
+  await writeLines(join(occ.dataDir, 'events.jsonl'), [
+    {
+      occurrenceId: 'occ-1',
+      attempt: 1,
+      at: '2026-10-21T12:00:00Z',
+      type: 'keyframe',
+      data: { file: 'frames/0001_200000.png', region: null, offsetMs: 0 }
+    }
+  ])
+  ai.failModel('m2', 400)
+  const r = await runPipeline(cfg)
+  const summaryCall = ai.requests.find((q) => q.json.model === 'm1')!
+  expect(summaryCall.json.messages[1].content).toContain(
+    'Slide 01: [text could not be read; list nothing from this slide]'
+  )
+  expect(await Bun.file(r.summaryPath).text()).toContain(
+    'Slide text could not be read for slide 01. Items on those slides may be missing.'
+  )
+})

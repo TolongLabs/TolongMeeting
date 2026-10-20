@@ -1,0 +1,199 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Meeting Occurrence: Scheduled to Joining",
+    "output": ".archify/occurrence-lifecycle-start/occurrence-lifecycle-start.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Path to the meeting"
+    },
+    {
+      "id": "side",
+      "label": "Waiting and skipped"
+    },
+    {
+      "id": "terminal",
+      "label": "Ends here"
+    }
+  ],
+  "states": [
+    {
+      "id": "scheduled",
+      "type": "start",
+      "label": "Scheduled",
+      "sublabel": "queued for T-60",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "starting",
+      "type": "active",
+      "label": "Starting",
+      "sublabel": "worker launching",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "verifying_accounts",
+      "type": "active",
+      "label": "Verifying accounts",
+      "sublabel": "platform, chat, forms",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "width": 160
+    },
+    {
+      "id": "watching_for_link",
+      "type": "active",
+      "label": "Watching for link",
+      "sublabel": "T-60 to T-5",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "width": 160
+    },
+    {
+      "id": "joining",
+      "type": "active",
+      "label": "Joining",
+      "sublabel": "T-10 to T-5",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "next: lobby"
+    },
+    {
+      "id": "skipped_capacity",
+      "type": "neutral",
+      "label": "Skipped, capacity",
+      "sublabel": "2 workers already run",
+      "lane": "side",
+      "col": 0,
+      "width": 160
+    },
+    {
+      "id": "skipped_identity_clash",
+      "type": "neutral",
+      "label": "Skipped, clash",
+      "sublabel": "identity already running",
+      "lane": "side",
+      "col": 1
+    },
+    {
+      "id": "waiting_for_signin",
+      "type": "waiting",
+      "label": "Waiting for sign-in",
+      "sublabel": "member signs in",
+      "lane": "side",
+      "col": 2,
+      "width": 160
+    },
+    {
+      "id": "skipped_pc_offline",
+      "type": "neutral",
+      "label": "Skipped, PC offline",
+      "sublabel": "PC off at T-60",
+      "lane": "terminal",
+      "col": 0,
+      "width": 160
+    },
+    {
+      "id": "no_link",
+      "type": "failure",
+      "label": "No link",
+      "sublabel": "30 min after start",
+      "lane": "terminal",
+      "col": 3
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "Failed",
+      "sublabel": "from any state, with reason",
+      "lane": "terminal",
+      "col": 4
+    }
+  ],
+  "transitions": [
+    {
+      "id": "scheduled-to-starting",
+      "from": "scheduled",
+      "to": "starting"
+    },
+    {
+      "id": "starting-to-verifying_accounts",
+      "from": "starting",
+      "to": "verifying_accounts"
+    },
+    {
+      "id": "verifying_accounts-to-watching_for_link",
+      "from": "verifying_accounts",
+      "to": "watching_for_link"
+    },
+    {
+      "id": "watching_for_link-to-joining",
+      "from": "watching_for_link",
+      "to": "joining"
+    },
+    {
+      "id": "starting-to-skipped_capacity",
+      "from": "starting",
+      "to": "skipped_capacity",
+      "label": "capacity",
+      "variant": "security"
+    },
+    {
+      "id": "starting-to-skipped_identity_clash",
+      "from": "starting",
+      "to": "skipped_identity_clash",
+      "label": "clash",
+      "variant": "security"
+    },
+    {
+      "id": "starting-to-skipped_pc_offline",
+      "from": "starting",
+      "to": "skipped_pc_offline",
+      "label": "PC off",
+      "variant": "security"
+    },
+    {
+      "id": "verifying_accounts-to-waiting_for_signin",
+      "from": "verifying_accounts",
+      "to": "waiting_for_signin",
+      "label": "login expired",
+      "variant": "dashed"
+    },
+    {
+      "id": "waiting_for_signin-to-verifying_accounts",
+      "from": "waiting_for_signin",
+      "to": "verifying_accounts",
+      "label": "signed in",
+      "variant": "emphasis"
+    },
+    {
+      "id": "watching_for_link-to-no_link",
+      "from": "watching_for_link",
+      "to": "no_link",
+      "label": "none by T+30",
+      "variant": "security"
+    },
+    {
+      "id": "joining-to-failed",
+      "from": "joining",
+      "to": "failed",
+      "label": "any state",
+      "variant": "security"
+    }
+  ],
+  "cards": []
+}

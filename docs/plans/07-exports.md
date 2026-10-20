@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun and TypeScript; marked (Markdown lexer); fflate (zip); pdfmake with DejaVu Sans fonts (PDF); docx (Word); sharp (WebP to JPEG); zod; Drizzle, pg and Next.js as set up by plan 01c; GitHub REST API version `2022-11-28`; Google Drive API v3 and Google Picker; Notion API version `2026-03-11` (the newest on 20 October 2026; re-check at build time).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -37,7 +37,7 @@ Contents:
 - Exports run only when the member asks; nothing exports automatically (design non-goal "Automatic exports").
 - Markdown and PDF downloads are always available and need no connection (decision 21).
 - The summary file is named `YYYY-MM-DD HHmm <entry name>.md`, the same name in exports.
-- The Markdown set is the summary file, `transcript.md`, `slides.md` with `slides/NN.webp`, and `chat.md`, in the formats of the session's three-file set (`session-record/techniques.md`, "Write-up format: the three-file set"); exports copy the pipeline's files byte for byte.
+- The Markdown set is the summary file, `transcript.md`, `slides.md` with `slides/NN.webp`, and `chat.md`, in the formats of the session's three-file set (`session-record/techniques.md`, "Write-up format: the three-file set"); exports copy the pipeline's files byte for byte, except that the zip names the summary entry `summary.md` (the title, with spaces and accents, stays in the folder name and the download name) and `slides.md` has its image links rewritten to `slides/NN.webp`.
 - Google Docs: one document per meeting, through Google sign-in with only the `https://www.googleapis.com/auth/drive.file` scope (never `drive` or `drive.readonly`); a "TolongMeeting Exports" folder by default, or a folder the member picks with the Google Picker; the OAuth client is owned by TolongLabs and published "In production", so refresh tokens don't expire after 7 days.
 - GitHub: commit the set to a repository, folder and branch the member configures, with a fine-grained token limited to that repository; commit headers are conventional and at most 50 characters.
 - Notion: one page per meeting under a parent page or database the member shares with the TolongLabs Notion integration (a database is addressed through its data source in the current API).
@@ -45,7 +45,7 @@ Contents:
 - Export tokens are encrypted at rest (AES-256-GCM under a key derived with HKDF from the master key in `TM_MASTER_KEY_FILE`), never logged, never returned by the website's API (the one exception is the one-hour Google access token the Picker needs in the member's own browser), and never put in the query string of the app's own URLs.
 - A member reaches only their own meetings, exports and connections; anything else answers 404. Export and connection routes accept the website session only, never a companion device token.
 - Exports are the member's own copies: retention (30 days) and "delete now" remove the server-side export records and files with the meeting, and never touch exported documents, pages or commits.
-- Re-exporting never edits or deletes an earlier Google Doc or Notion page; GitHub re-exports commit over the same folder, so Git history keeps older versions.
+- Re-exporting never edits or deletes an earlier Google Doc; a Notion re-export updates only the page the member's own earlier export made (found from that export's stored address, and only while it is still under the chosen parent), and never another page; GitHub re-exports commit over the same folder, so Git history keeps older versions.
 - Pings never contain meeting passcodes or tokens.
 
 ## Review Focus
@@ -53,7 +53,7 @@ Contents:
 - **Awkward entry names**: names with `/`, `:`, `?`, quotes, accented Malay or 100-plus characters must give a valid zip folder, download file name, repository path and document title, never a path escape or a broken header (tests in tasks 1 and 8).
 - **Big meetings**: a 2-hour transcript with paragraphs over 2,000 characters and 60 or more slides must export whole within Notion's 2,000-character, 100-block and 3-requests-per-second limits and GitHub's 80 content-creating requests per minute, rather than fail halfway (tests in tasks 8, 11 and 12).
 - **Connections that stopped working**: a revoked Google grant, an expired GitHub token, a Notion integration removed from the page, or a deleted export folder must fail the export with a message that names the fix, flag the connection "Reconnect" and ping, never fail silently (tests in tasks 6, 8, 10 and 12).
-- **Double clicks and re-exports**: a second click while an export is queued or running must not start another; exporting to GitHub again must delete stale slide files or report "already up to date"; exporting to Google Docs or Notion again must never edit or delete the member's earlier copy (tests in tasks 5, 7, 8 and 10).
+- **Double clicks and re-exports**: a second click while an export is queued or running must not start another; exporting to GitHub again must delete stale slide files or report "already up to date"; exporting to Google Docs again must never edit or delete the member's earlier copy, and exporting to Notion again may update only the page that member's own earlier export made (tests in tasks 5, 7, 8, 10 and 12).
 - **Deletion during an export**: a meeting deleted by retention or "delete now" while its export is queued or running must fail with "This meeting has been deleted from TolongMeeting.", write nothing back into the deleted directory, and leave no export rows behind (tests in tasks 3, 5 and 6).
 
 ## File structure
@@ -93,7 +93,7 @@ packages/web/
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), to be copied there when task 1 lands:
+Names this plan adds to [architecture and contracts](../TRD.md), to be copied there when task 1 lands:
 
 - **Package**: `packages/exports` and every type in task 1's `src/types.ts`, including `ExportTarget`.
 - **Process**: `tm-exports` (`packages/exports/src/main.ts`), Compose service `exports`, root script `tm-exports`.
@@ -113,7 +113,7 @@ Test helpers that a test calls but no Interfaces block lists are local builders 
 
 - Create: `packages/exports/package.json`, `packages/exports/tsconfig.json`, `packages/exports/src/types.ts`, `packages/exports/src/names.ts`, `packages/exports/src/bundle.ts`
 - Create: `packages/exports/test/fixtures/occurrence/` (contents below), `packages/exports/test/fixture.ts`
-- Test: `packages/exports/src/names.test.ts`, `packages/exports/src/bundle.test.ts`
+- Test: `packages/exports/test/names.test.ts`, `packages/exports/test/bundle.test.ts`
 
 **Interfaces:**
 
@@ -246,7 +246,7 @@ export interface OccurrenceLookup {
 
 - Produces, `src/names.ts`: `slugify(title: string): string`, `contentDisposition(fileName: string): string`; `src/bundle.ts`: `loadBundle(dataDir: string): Promise<ExportBundle>`; `test/fixture.ts`: `fixture: string` (absolute path of the fixture directory) and `copyFixture(): Promise<string>` (a copy in a fresh `mkdtemp` directory).
 
-- [ ] **Step 1: Create the package and the fixture**
+- [x] **Step 1: Create the package and the fixture**
 
 `package.json` takes the same name scope as `packages/core` with the bare name `exports`, and lists `marked`, `fflate`, `pdfmake`, `docx`, `sharp` and `zod` as dependencies and `unpdf` as a dev dependency; `tsconfig.json` extends `tsconfig.base.json` like the other packages, and the root `typecheck` script covers the new package. The fixture `packages/exports/test/fixtures/occurrence/` holds placeholder content only (no real names):
 
@@ -256,7 +256,7 @@ export interface OccurrenceLookup {
 - `out/chat.md`: H1, intro, `## Messages` with `**[2:05 PM] Sender A:** Is the lab due next week?`, a `- **Answer:** Yes, 27 October (transcript 00:41:10, slide 02).` line, and `**[2:07 PM] Sender B:** Thanks <U+1F44D> 谢谢 see you next week`, where `<U+1F44D>` stands for the thumbs-up emoji character itself, written into the file with `\u{1F44D}`;
 - `slides/01.webp`, `slides/02.webp`: 64x36 solid-colour images made once with sharp; `slides/slides.json`: `[]`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```ts
 // names.test.ts
@@ -316,21 +316,21 @@ test('the newest summary wins', async () => {
 })
 ```
 
-- [ ] **Step 3: Run them to see them fail**
+- [x] **Step 3: Run them to see them fail**
 
-Run: `bun test packages/exports/src/names.test.ts packages/exports/src/bundle.test.ts`
+Run: `bun test packages/exports`
 Expected: FAIL with `Cannot find module './names'` and `Cannot find module './bundle'`.
 
-- [ ] **Step 4: Implement `types.ts`, `slugify`, `contentDisposition` and `loadBundle`**
+- [x] **Step 4: Implement `types.ts`, `slugify`, `contentDisposition` and `loadBundle`**
 
 `slugify`: NFKD, strip `\p{M}`, lowercase, replace each run of characters outside `[a-z0-9]` with `-`, trim `-`, cut to 80 characters and trim a trailing `-`; an empty result becomes `meeting`. `contentDisposition`: the `filename` fallback replaces non-ASCII characters, `"` and `\` with `_`; `filename*` is `encodeURIComponent` with `'`, `(`, `)` and `*` also percent-encoded. `loadBundle`: the summary is the `.md` file in `out/` other than the three fixed names (newest modification time if several, `ExportError('not_ready', 'This meeting has no summary yet.')` if none); slide files are `slides/` entries matching `^\d{2,3}\.webp$`, sorted by name; everything is read into memory at load, so later deletion of the directory can't corrupt a running export.
 
-- [ ] **Step 5: Run them to see them pass**
+- [x] **Step 5: Run them to see them pass**
 
-Run: `bun test packages/exports/src/names.test.ts packages/exports/src/bundle.test.ts`
+Run: `bun test packages/exports`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/exports
@@ -370,7 +370,7 @@ export function parseMarkdown(md: string): DocBlock[]
 export function bundleDocument(bundle: ExportBundle): DocBlock[]
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('drops the contents list and anchor links', () => {
@@ -420,21 +420,21 @@ test('bundle order is summary, transcript, slides, chat', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/render/doc.test.ts`
 Expected: FAIL with `Cannot find module './doc'`.
 
-- [ ] **Step 3: Implement `parseMarkdown` and `bundleDocument` in `src/render/doc.ts`**
+- [x] **Step 3: Implement `parseMarkdown` and `bundleDocument` in `src/render/doc.ts`**
 
 Walk `marked.lexer(md)` tokens. Rules: heading depth above 3 becomes 3; a paragraph whose text is `Contents:` and the list right after it are dropped; a paragraph holding only an image becomes an `image` block; links to `#...` become plain runs, `http` and `https` links keep `href`, other schemes become plain runs; nested list items are flattened into their parent list in order; `html` tokens are dropped; a blockquote's paragraphs are emitted as paragraphs; adjacent plain runs are merged. `bundleDocument` concatenates the summary, `transcript.md`, `slides.md` and `chat.md` (those present) with a `break` between files.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/render/doc.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/render
@@ -453,13 +453,13 @@ git commit -m "feat(exports): add markdown document model"
 - Consumes: `ExportBundle`, `ExportContext`, `ExportTarget`, `ExportError`, `loadBundle`, `fixture` (task 1).
 - Produces: `writeDownload(ctx: ExportContext, ext: 'zip' | 'pdf', bytes: Uint8Array): Promise<string>`; `zipBundle(bundle: ExportBundle): Uint8Array`; `zipTarget: ExportTarget` (id `'zip'`); test helper `testContext(over?: Partial<ExportContext>): ExportContext & { sleeps: number[]; saved: Connection[] }` (fresh temporary occurrence directory with `outDir` inside it, `http` that throws `no network in tests`, `sleep` that records and resolves at once, `saveConnection` that records).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('zip holds the set under one folder', async () => {
   const entries = unzipSync(zipBundle(await loadBundle(fixture)))
   expect(Object.keys(entries)).toEqual([
-    '2026-10-20-1400-data-mining/2026-10-20 1400 Data Mining.md',
+    '2026-10-20-1400-data-mining/summary.md',
     '2026-10-20-1400-data-mining/transcript.md',
     '2026-10-20-1400-data-mining/slides.md',
     '2026-10-20-1400-data-mining/chat.md',
@@ -475,7 +475,7 @@ test('zipTarget writes <exportId>.zip in outDir', async () => {
   const r = await zipTarget.run(await loadBundle(fixture), ctx)
   expect(r).toEqual({
     url: null,
-    filePath: join(ctx.outDir, 'exp-1.zip'),
+    filePath: 'exports/exp-1.zip',
     note: null
   })
   expect((await stat(r.filePath!)).size).toBeGreaterThan(0)
@@ -488,21 +488,21 @@ test('a deleted meeting directory is never recreated', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/targets/zip.test.ts`
 Expected: FAIL with `Cannot find module './zip'`.
 
-- [ ] **Step 3: Implement `writeDownload`, `zipBundle` and `zipTarget`**
+- [x] **Step 3: Implement `writeDownload`, `zipBundle` and `zipTarget`**
 
-`writeDownload` throws `ExportError('meeting_deleted', 'This meeting has been deleted from TolongMeeting.')` when `dirname(ctx.outDir)` doesn't exist, creates `outDir` without `recursive`, ignoring `EEXIST`, and writes `<exportId>.<ext>`. `zipBundle` uses fflate `zipSync`, level 0 for `.webp` entries (already compressed) and level 6 for the rest, paths `<dirName>/<file path>` in bundle order.
+`writeDownload` throws `ExportError('meeting_deleted', 'This meeting has been deleted from TolongMeeting.')` when `dirname(ctx.outDir)` doesn't exist, creates `outDir` without `recursive`, ignoring `EEXIST`, and writes `<exportId>.<ext>`, returning the path relative to the occurrence directory (`exports/<exportId>.<ext>`, the form stored in `ExportRow.filePath`). `zipBundle` uses fflate `zipSync`, level 0 for `.webp` entries (already compressed) and level 6 for the rest, paths `<dirName>/<file path>` in bundle order.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/targets/zip.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/targets packages/exports/test/context.ts
@@ -521,7 +521,7 @@ git commit -m "feat(exports): add markdown zip download"
 - Consumes: `loadBundle`, `fixture` (task 1); `bundleDocument`, `DocBlock` (task 2); `writeDownload`, `testContext` (task 3).
 - Produces: `interface Jpeg { bytes: Uint8Array; width: number; height: number }`; `toJpeg(image: Uint8Array, maxWidth?: number): Promise<Jpeg>` (default 1600); `bundleImages(bundle: ExportBundle): Promise<Map<string, Jpeg>>` keyed by bundle path; `renderPdf(doc: DocBlock[], images: Map<string, Jpeg>, title: string): Promise<Uint8Array>`; `pdfTarget: ExportTarget` (id `'pdf'`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // images.test.ts
@@ -550,25 +550,25 @@ test('the PDF holds every section, slides and symbols', async () => {
 })
 test('pdfTarget writes <exportId>.pdf', async () => {
   const ctx = testContext({ exportId: 'exp-2' })
-  expect((await pdfTarget.run(await loadBundle(fixture), ctx)).filePath).toBe(join(ctx.outDir, 'exp-2.pdf'))
+  expect((await pdfTarget.run(await loadBundle(fixture), ctx)).filePath).toBe('exports/exp-2.pdf')
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/render/images.test.ts packages/exports/src/targets/pdf.test.ts`
 Expected: FAIL with `Cannot find module './images'` and `Cannot find module './pdf'`.
 
-- [ ] **Step 3: Implement `toJpeg`, `bundleImages`, `renderPdf` and `pdfTarget`**
+- [x] **Step 3: Implement `toJpeg`, `bundleImages`, `renderPdf` and `pdfTarget`**
 
 `toJpeg`: sharp, resize to `maxWidth` without enlarging, JPEG quality 85. `renderPdf`: pdfmake on the server with DejaVu Sans from `assets/fonts` (it covers `✓`; glyphs it lacks, such as emoji and CJK, print as blanks without failing); A4, 40 pt margins, body 10 pt with line height 1.3, headings bold at 18, 14 and 12 pt, images scaled to fit 515 pt wide, tables with a bold header row, a `break` puts a page break before the next block, `info.title` is `title`. `pdfTarget` renders `bundleDocument` with `bundleImages` and calls `writeDownload(ctx, 'pdf', bytes)`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/render/images.test.ts packages/exports/src/targets/pdf.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/assets packages/exports/src/render/images.ts packages/exports/src/render/images.test.ts packages/exports/src/targets/pdf.ts packages/exports/src/targets/pdf.test.ts
@@ -604,7 +604,7 @@ export interface ExportRow {
   status: ExportStatus
   title: string | null
   url: string | null
-  filePath: string | null
+  filePath: string | null // relative to the occurrence directory, e.g. 'exports/<exportId>.zip'
   note: string | null
   errorCode: ExportErrorCode | null
   error: string | null
@@ -666,7 +666,7 @@ exports      id uuid pk default gen_random_uuid()
              unique index exports_one_active on (occurrence_id, target) where status in ('queued','running')
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // vault.test.ts
@@ -761,21 +761,21 @@ test('failInterrupted and purgeDeleted', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/vault.test.ts packages/exports/src/store.test.ts` (with `DATABASE_URL` pointing at the test database 01c's database tests use)
 Expected: FAIL with `Cannot find module './vault'` and `Cannot find module './store'`.
 
-- [ ] **Step 3: Implement the vault, the schema and migration, and the stores**
+- [x] **Step 3: Implement the vault, the schema and migration, and the stores**
 
 Vault: key = `hkdfSync('sha256', masterKey, Buffer.alloc(0), 'tm:connection:' + memberId + ':' + kind, 32)`; AES-256-GCM with a random 12-byte IV; output `v1.<base64url iv>.<base64url ciphertext and 16-byte tag>`. `redact` replaces each listed secret of 8 or more characters, then every match of `/github_pat_\w+|gh[opsu]_\w+|ya29\.[\w.-]+|1\/\/[\w-]+|ntn_\w+|secret_\w+/g`, with `[redacted]`. Generate the migration with 01c's drizzle-kit command (`bunx drizzle-kit generate`); the partial index uses Drizzle's `uniqueIndex(...).on(...).where(sql\`status in ('queued','running')\`)`. In `store.ts`, `create`maps the unique-index violation to`ExportError('already_running', 'This export is already running.')`; `claimNext`uses`for update skip locked`; the token fields (`token`; `refreshToken`; `accessToken`and`refreshToken`) are sealed as one JSON string and everything else goes in `settings`. Summaries: GitHub label `<owner>/<repo>`, detail `branch <branch>, folder <folder or />`; Google label `account`, detail `folderName`; Notion label `workspace`, detail `parent.name`or`No page chosen yet`, `ready`false while`parent`is null.`occurrences.get`joins 01c's occurrence to its owning member and sets`dataDir`to`<dataRoot>/occurrences/<id>`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/vault.test.ts packages/exports/src/store.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/vault.ts packages/exports/src/vault.test.ts packages/exports/src/store.ts packages/exports/src/store.test.ts packages/web/db
@@ -856,7 +856,7 @@ Failure               title: Export failed
                       actions: Reconnect -> <TM_PUBLIC_URL>/connections (codes not_connected, reconnect_needed, invalid_settings, not_found on GitHub, Google Docs or Notion); Open meeting page -> <meeting page>
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // registry.test.ts
@@ -964,12 +964,12 @@ test('runLoop fails interrupted rows, then runs queued ones in order', async () 
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/registry.test.ts packages/exports/src/runner.test.ts`
 Expected: FAIL with `Cannot find module './registry'` and `Cannot find module './runner'`.
 
-- [ ] **Step 3: Implement the registry, the runner, `main.ts` and the memory stores**
+- [x] **Step 3: Implement the registry, the runner, `main.ts` and the memory stores**
 
 `runExport` in order:
 
@@ -1000,12 +1000,14 @@ exports:
 
 The `web` service gains the same four OAuth variables plus `GOOGLE_API_KEY` and `GOOGLE_APP_ID`; `.env.example` lists all six names without values; the root script is `"tm-exports": "bun run packages/exports/src/main.ts"`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/registry.test.ts packages/exports/src/runner.test.ts && docker compose -f docker/compose.yaml config --services`
 Expected: PASS (`0 fail`), and the service list includes `exports`.
 
-- [ ] **Step 5: Commit**
+> **As built (preflight P7-2, P7-7, P7-8, P7-9):** the runner takes a `RunnerStore` (task 5) plus `RunnerConnections` and `OccurrenceLookup`, not `ExportStore`/`ConnectionStore`; `memoryStores` returns `{ store, exports, connections, occurrences, markedReconnect, saved }`; `ping` answers a boolean; tests live in `packages/exports/test/` (`runner`, `registry`, `env`). `main.ts` reads its environment through `src/env.ts` and has a health file, a 10 minute per-export timeout, a 512 MB output cap and a bounded drain. The Compose service builds a new `exports` target of `docker/app/Dockerfile`; retention deletes a meeting's `exports` rows.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports docker/compose.yaml .env.example package.json
@@ -1067,7 +1069,7 @@ export function exportDeps(): ApiDeps // createStores(db, readMasterKey(TM_MASTE
 
 Routes: `GET` and `POST /api/meetings/[occurrenceId]/exports` (body `{ target }`), `GET /api/exports/[exportId]/file`, `GET /api/connections`. Each handler calls `requireMember(req)`, then the matching function, and returns `Response.json(body, { status })` (the file route returns the `Response` as it is).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('creating exports', async () => {
@@ -1172,12 +1174,14 @@ test('buttonState', () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/api.test.ts`
 Expected: FAIL with `Cannot find module './api'`.
 
-- [ ] **Step 3: Implement `api.ts`, the route handlers, `exportDeps` and `ExportPanel`**
+- [x] **Step 3: Implement `api.ts`, the route handlers, `exportDeps` and `ExportPanel`**
+
+  _Status:_ the non-UI part is done (`api.ts`, `lib/exports.ts`, `lib/export-files.ts`, `lib/same-origin.ts`, the three routes; tests in `packages/exports/test/api.test.ts` and `packages/web/test/export-routes.test.ts`). The stores are member-bound (P7-2), so the functions take no member id. Routes use `[id]` (P7-1), `POST` checks `assertSameOrigin` (P7-12), and failures answer 422 and a deleted meeting 404 (not 400/410). `openExportFile` is in `lib/export-files.ts`. `components/export-panel.tsx` is built as plain, unstyled markup and mounted on the meeting page; it is restyled after the Figma step. Its button rule is `lib/export-buttons.ts`, a copy of `buttonState` that the client bundle can import, kept equal by `packages/web/test/export-buttons.test.ts`.
 
 Check order in `createExportRequest`: zod body (`invalid_target`, 400), ownership (404), `deleted` (410, "This meeting has been deleted from TolongMeeting."), not `completed` (409, "This meeting is still being processed."), connection (400 `not_connected`, `reconnect_needed` or `invalid_settings`, with the runner's messages), then `exports.create` (409 on `already_running`), 202 `{ exportId }`. `buttonState`: any target is disabled with hint `Exporting` while an export to it is `queued` or `running`; otherwise downloads are enabled, and remote targets are disabled with the hints in the test while not connected or needing reconnection, and with `Pick a Notion page on the Connections page` while a Notion connection isn't `ready`. `exportFileRequest` answers 404 unless the row is the member's, `succeeded`, `zip` or `pdf`, and its file exists; it streams the file with the headers in the test, named `<title>.zip` or `<title>.pdf`. `ExportPanel` is a client component: it loads `/api/connections` and the export list, polls the list every 2,000 ms while any export is `queued` or `running`, and calls `window.location.assign(downloadUrl)` when a download this page view started succeeds. Copy:
 
@@ -1190,12 +1194,12 @@ Exports are your own copies. Deleting this meeting, by hand or after 30 days, do
 
 Below the buttons, each export shows its label, status, time, and "Open" (`url`), "Download" (`downloadUrl`), the note or the error.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/api.test.ts && bun run typecheck`
 Expected: PASS (`0 fail`); typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/api.ts packages/exports/src/api.test.ts packages/web
@@ -1248,7 +1252,7 @@ export function fakeFetch(
 
 Route: `PUT /api/connections/github` with `{ owner, repo, branch, folder, token? }` (the token may be left out to keep the stored one). Every GitHub request sends `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and `User-Agent: TolongMeeting`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // connections/github.test.ts
@@ -1380,12 +1384,12 @@ test('a moved branch retries once; a bad token asks to reconnect', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/connections/github.test.ts packages/exports/src/targets/github.test.ts`
 Expected: FAIL with `Cannot find module './github'`.
 
-- [ ] **Step 3: Implement the connection, the target and the route; add `github` to `buildTargets`**
+- [x] **Step 3: Implement the connection, the target and the route; add `github` to `buildTargets`**
 
 `saveGitHubConnection` validates with zod (`owner` and `repo` match `^[A-Za-z0-9_.-]+$`), requires a token starting with `github_pat_` unless one is stored, normalises the folder, then calls `GET /repos/{owner}/{repo}` and `GET /repos/{owner}/{repo}/branches/{branch}` with the messages in the test, and saves. The app can't read a fine-grained token's repository list, so the prefix check and the repository check are the enforcement; the Connections page tells the member to pick "Only select repositories". `commitMessage` is `docs: <verb> <title>`; if that is over 50 characters, the title is cut back to its last whole word that fits (a title without spaces is cut hard). `githubTarget.run`, with base path `<folder>/<dirName>` (or `<dirName>` when the folder is empty) and path segments URL-encoded:
 
@@ -1397,17 +1401,19 @@ Expected: FAIL with `Cannot find module './github'`.
 
 Errors: 401 throws `reconnect_needed`, "GitHub rejected the token. It may have expired; add a new one on the Connections page."; 403 or 404 on the ref or a write throws `not_found`, "TolongMeeting can't write to <owner>/<repo> on branch <branch> with this token. Check its repository access and Contents permission."; 429, or 403 with a `retry-after` header, throws `rate_limited`, "GitHub is limiting requests. Try again later.".
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/connections/github.test.ts packages/exports/src/targets/github.test.ts packages/exports/src/registry.test.ts`
 Expected: PASS (`0 fail`), with the registry test's expected keys updated to `['github', 'pdf', 'zip']`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports packages/web/app/api/connections/github
 git commit -m "feat(exports): add github target"
 ```
+
+> As built: the tests are in `packages/exports/test/` (`github-connection.test.ts`, `github-target.test.ts`, with `route-fetch.ts` for the plan's `fake-fetch.ts`), and the route test is `packages/web/test/github-connection-route.test.ts`. The repository holds the zip layout (the summary is `summary.md`, not `<title>.md`), and only layout files are written or deleted (a file of the member's own in the folder stays). `saveGitHubConnection(rawBody, { connections, http })` takes the member-bound store (no member id). A 403 that is not a rate limit throws `reconnect_needed` (the runner marks the connection), so the member is asked to check the token; every request sets `redirect: 'error'`; the settings are checked again at run time; a response that is not one of the fixed cases adds at most 200 characters of GitHub's text, passed through `redact` with the token.
 
 ### Task 9: Word renderer
 
@@ -1421,7 +1427,7 @@ git commit -m "feat(exports): add github target"
 - Consumes: `loadBundle`, `fixture` (task 1); `DocBlock`, `bundleDocument` (task 2); `Jpeg`, `bundleImages` (task 4).
 - Produces: `toDocx(doc: DocBlock[], images: Map<string, Jpeg>, title: string): Promise<Uint8Array>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the Word file holds text, headings, page breaks and images', async () => {
@@ -1436,21 +1442,21 @@ test('the Word file holds text, headings, page breaks and images', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/render/docx.test.ts`
 Expected: FAIL with `Cannot find module './docx'`.
 
-- [ ] **Step 3: Implement `toDocx` in `src/render/docx.ts`**
+- [x] **Step 3: Implement `toDocx` in `src/render/docx.ts`**
 
 The `docx` library: headings to `HeadingLevel.HEADING_1` to `HEADING_3`; runs keep bold, italic, monospace for `code`, and `ExternalHyperlink` for `href`; lists through one numbered and one bulleted numbering config; tables with a bold header row; images as `ImageRun` type `jpg`, scaled to at most 600 px wide; the block after a `break` gets `pageBreakBefore: true`; the document `title` property is `title`.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/render/docx.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/render/docx.ts packages/exports/src/render/docx.test.ts
@@ -1525,7 +1531,7 @@ export function createGdocsTarget(client: OAuthClient): ExportTarget // id 'gdoc
 
 Routes: `GET /api/connections/google/start` redirects to `googleAuthUrl` and sets the state cookie; `GET .../callback` runs `completeGoogleConnect`, clears the cookie and redirects to `/connections`; `GET .../picker` returns `pickerToken` with `Cache-Control: no-store`; `PUT .../folder` runs `setGoogleFolder`. `GOOGLE_API_KEY` and `GOOGLE_APP_ID` (the Cloud project number) feed the Picker.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // oauth.test.ts
@@ -1693,12 +1699,12 @@ test('gone folders, revoked access and a full Drive', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/connections/oauth.test.ts packages/exports/src/connections/google.test.ts packages/exports/src/targets/gdocs.test.ts`
 Expected: FAIL with `Cannot find module './oauth'`, `Cannot find module './google'` and `Cannot find module './gdocs'`.
 
-- [ ] **Step 3: Implement the OAuth helpers, the Google connection, the target and the routes; add `gdocs` to `buildTargets`**
+- [x] **Step 3: Implement the OAuth helpers, the Google connection, the target and the routes; add `gdocs` to `buildTargets`**
 
 State and verifier are 32 random bytes in base64url; the challenge is base64url SHA-256 of the verifier. Google endpoints: token `POST https://oauth2.googleapis.com/token` (form body; `authorization_code` with `code_verifier`, or `refresh_token`); account `GET https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)`; default folder `GET https://www.googleapis.com/drive/v3/files` with `q` `name = 'TolongMeeting Exports' and mimeType = 'application/vnd.google-apps.folder' and trashed = false` (with `drive.file` this sees only folders the app made), else `POST .../drive/v3/files` with that name and the folder MIME type. `setGoogleFolder` checks a picked folder with `GET .../files/{id}?fields=id,name,mimeType,trashed` (a file answers 400 "Pick a folder, not a file.", a trashed folder 400 "That folder is in the bin. Pick another."), saves it with `folderIsDefault: false`, and `{ useDefault: true }` switches back through `ensureDefaultFolder`. `createGdocsTarget(client).run`:
 
@@ -1706,14 +1712,16 @@ State and verifier are 32 random bytes in base64url; the challenge is base64url 
 1.  Check the folder: gone or trashed recreates it with `ensureDefaultFolder` and `ctx.saveConnection` when `folderIsDefault`, otherwise throws `not_found` with the test's message.
 1.  `toDocx(bundleDocument(bundle), await bundleImages(bundle), bundle.title)`.
 1.  Resumable upload: `POST https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,webViewLink` with the metadata in the test and `X-Upload-Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`, then `PUT` the bytes to the returned `Location`; a 403 with reason `storageQuotaExceeded` throws `failed` with the test's message.
-1.  Return `webViewLink`. A re-export always creates a new document; earlier documents are never changed or deleted.
+1.  Return the Doc's address. A re-export updates the Doc this export made: the first upload marks it with a private app property (`tmMeeting`, a hash of the member and the meeting folder name), and later runs search for a live Doc with that mark (`files.list`, `appProperties has {...}`) and replace its content with `PATCH /upload/drive/v3/files/{id}`. A file without the mark is never changed, and nothing is deleted. (Found in review: the plan said a new document each time; the TRD says one document per meeting.)
 
-- [ ] **Step 4: Run them to see them pass**
+**As built (differs from the signatures above):** T10a seals the state in a cookie (`sealOAuthState`, `verifyOAuthState`) instead of `stateCookie`/`readStateCookie`, so `startGoogleConnect(master, memberId, client)` returns `{ url, sealed }` and `completeGoogleConnect(memberId, url, sealedState, { connections, http, client, master })` takes the sealed value; the web cookie helpers are `packages/web/lib/oauth-cookie.ts`. `pickerToken` and `setGoogleFolder` take member-bound stores (no `memberId`) and `setGoogleFolder` takes the raw body text. `googleAccessToken` is `googleSession(...).accessToken()`; a 401 on a Drive call refreshes once. Tests live in `packages/exports/test/{google-connection,gdocs-target}.test.ts` and `packages/web/test/google-routes.test.ts`, with `google-fake.ts`. The `start` and `picker` GET routes check `Sec-Fetch-Site`/`Origin` (`lib/same-origin-read.ts`); `folder` uses `assertSameOrigin`; the callback is cross-site by nature and relies on the sealed state and PKCE.
+
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/connections/oauth.test.ts packages/exports/src/connections/google.test.ts packages/exports/src/targets/gdocs.test.ts packages/exports/src/registry.test.ts`
 Expected: PASS (`0 fail`), with a registry case added: `buildTargets({ google: client, notion: null })` has keys `github`, `gdocs`, `pdf`, `zip`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports packages/web/app/api/connections/google
@@ -1732,7 +1740,7 @@ git commit -m "feat(exports): add google docs target"
 - Consumes: `DocBlock`, `Run` (task 2).
 - Produces: `type NotionBlock = Record<string, unknown>` (a Notion block object); `toNotionBlocks(doc: DocBlock[], uploads: Map<string, string>): NotionBlock[]` (bundle image path to Notion file upload id); `chunkBlocks(blocks: NotionBlock[], maxCount?: number, maxBytes?: number): NotionBlock[][]` (defaults 100 and 400,000 bytes of JSON).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('long text is split at 2,000 characters', () => {
@@ -1800,21 +1808,21 @@ test('chunks by count and size', () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/render/notion.test.ts`
 Expected: FAIL with `Cannot find module './notion'`.
 
-- [ ] **Step 3: Implement `toNotionBlocks` and `chunkBlocks` in `src/render/notion.ts`**
+- [x] **Step 3: Implement `toNotionBlocks` and `chunkBlocks` in `src/render/notion.ts`**
 
 Headings 1 to 3 map to `heading_1` to `heading_3`; paragraphs to `paragraph`; list items to `numbered_list_item` or `bulleted_list_item`; tables to `table` with `table_row` children, split into tables of at most 99 rows that each repeat the header; images to `image` with `file_upload`; code to `code` with language `plain text`; `rule` and `break` to `divider`. Each run becomes text objects of at most 2,000 characters with `annotations` `{ bold, italic, code }` (false when unset) and `link` `{ url }` for `http` and `https` links, `null` otherwise; a block with more than 100 text objects is split into several blocks of the same type.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/render/notion.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/render/notion.ts packages/exports/src/render/notion.test.ts
@@ -1875,7 +1883,7 @@ export function createNotionTarget(client: OAuthClient): ExportTarget // id 'not
 
 Routes: `GET /api/connections/notion/start` (redirect plus state cookie), `GET .../callback` (then redirect to `/connections`), `GET .../parents` (`{ parents }`), `PUT .../parent` (`{ type, id }`, resolved and saved).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // connections/notion.test.ts
@@ -2018,12 +2026,12 @@ test('failures: no parent, lost parent, half-written page', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/connections/notion.test.ts packages/exports/src/targets/notion.test.ts`
 Expected: FAIL with `Cannot find module './notion'`.
 
-- [ ] **Step 3: Implement the client, the connection, the target and the routes; add `notion` to `buildTargets`**
+- [x] **Step 3: Implement the client, the connection, the target and the routes; add `notion` to `buildTargets`**
 
 Client: base `https://api.notion.com`, headers `Authorization: Bearer <accessToken>`, `Notion-Version: 2026-03-11`, JSON content type except for the upload `send`; every request except the client's first is preceded by `sleep(340)` (Notion allows about 3 per second on non-Business plans); 429 and 529 sleep `Retry-After` seconds (1 if absent) instead and resend, up to 5 retries, then throw `rate_limited`, "Notion is busy. Try again in a few minutes."; a 401 refreshes once through `POST /v1/oauth/token` (Basic auth, `grant_type: 'refresh_token'`; Notion rotates both tokens), saves the connection and retries, and otherwise throws `reconnect_needed` with the test's message. `upload`: `POST /v1/file_uploads` `{ filename, content_type }`, then `POST /v1/file_uploads/{id}/send` as multipart with field `file`. `completeNotionConnect` checks state like Google (Notion has no PKCE, so the cookie's verifier goes unused), exchanges the code with `POST /v1/oauth/token` (`grant_type: 'authorization_code'`, `code`, `redirect_uri`) and saves `{ accessToken, refreshToken, workspace: workspace_name, parent: null }`; during Notion's consent the member selects the pages to share. `listNotionParents` runs `POST /v1/search` twice, filtered to `page` and to `data_source`, page size 100, named by their titles. `resolveNotionParent`: a page reads `GET /v1/pages/{id}` and uses property `title`; a data source reads `GET /v1/data_sources/{id}` and uses the property of type `title`. `createNotionTarget(client).run` builds its client from `ctx.connection`, `ctx.http`, `ctx.sleep` and `ctx.saveConnection`, then:
 
@@ -2032,19 +2040,25 @@ Client: base `https://api.notion.com`, headers `Authorization: Bearer <accessTok
 1.  Upload every slide as `slide-NN.jpg` from `bundleImages` (JPEG, since Notion's WebP support isn't documented; uploads must be attached within 1 hour).
 1.  `chunkBlocks(toNotionBlocks(bundleDocument(bundle), uploads))`, each chunk sent in order with `PATCH /v1/blocks/{pageId}/children` `{ children }`.
 1.  Any error after step 2 sends `PATCH /v1/pages/{pageId}` `{ in_trash: true }` (its own failure ignored) and rethrows, so no half-written page is left.
-1.  Return the page `url`. A re-export always creates a new page; earlier pages are never changed.
+1.  Return the page `url`. A re-export updates the page this member's earlier export of the meeting made (`ExportContext.previousUrl`, from `RunnerStore.previousUrl`): its id is read from that address, `GET /v1/pages/{id}` must show the same id, not in the trash and still under the chosen parent, else a new page is made. The old blocks are listed, the new ones appended, and only then the old ones deleted (sub-pages the member added stay); a failure removes only the blocks just appended. No other page is ever written to.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/connections/notion.test.ts packages/exports/src/targets/notion.test.ts packages/exports/src/registry.test.ts`
 Expected: PASS (`0 fail`), with a registry case added: both clients set gives all five targets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports packages/web/app/api/connections/notion
 git commit -m "feat(exports): add notion target"
 ```
+
+Reconciled with Notion's docs and the built code (the tests listed above live in `packages/exports/test/notion-connection.test.ts`, `notion-target.test.ts` and `packages/web/test/notion-routes.test.ts`):
+
+- Notion's authorization flow has no PKCE (the PKCE guide is for MCP clients): the sealed state from `sealOAuthState` is the only check, and the verifier is sealed with it but unused. `completeNotionConnect(memberId, url, sealedState, { connections, http, client, master })` takes the sealed cookie value, and every mismatch gives `OAUTH_STATE_ERROR`.
+- The per-connection limit is 180 requests a minute (3 a second) on plans other than Business and Enterprise; `Retry-After` is whole seconds and at most 60. The client waits `Retry-After` (1, 2, 4 ... seconds, at most 30, when it is missing) for up to 5 resends and 120 s in all, then throws `rate_limited`; a 429 or 529 is handled the same. Web routes wait at most 10 s.
+- Routes use `lib/oauth-cookie.ts` for the state cookie, `assertSameOriginRead` on `start` and `parents`, and `assertSameOrigin` on `PUT parent`. The route logic is `notionParentsRequest` and `selectNotionParentRequest` in `connections/notion.ts`; ids are checked as Notion ids (32 hex digits) before any URL is built.
 
 ### Task 13: Connections page
 
@@ -2052,14 +2066,14 @@ git commit -m "feat(exports): add notion target"
 
 - Create: `packages/exports/src/connections/remove.ts`, `packages/web/app/api/connections/google/route.ts`, `packages/web/app/api/connections/notion/route.ts`, `packages/web/app/connections/page.tsx`, `packages/web/components/connections/github-card.tsx`, `packages/web/components/connections/google-card.tsx`, `packages/web/components/connections/notion-card.tsx`
 - Modify: `packages/web/app/api/connections/github/route.ts` (add `DELETE`), 01c's site navigation (add "Connections" next to the other pages)
-- Test: `packages/exports/src/connections/remove.test.ts`
+- Test: `packages/exports/test/remove.test.ts`, `packages/web/test/connection-remove-route.test.ts`
 
 **Interfaces:**
 
 - Consumes: `ConnectionKind` (task 1); `ConnectionStore` (task 5); `memoryStores` (task 6); `connectionsRequest`, `ApiResult` (task 7); `fakeFetch` and the GitHub route (task 8); the Google routes (task 10); the Notion routes (task 12).
-- Produces: `removeConnection(memberId: string, kind: ConnectionKind, deps: { connections: ConnectionStore; http: typeof fetch }): Promise<ApiResult>` (body `{ message }`); routes `DELETE /api/connections/github`, `DELETE /api/connections/google` and `DELETE /api/connections/notion` (one static route file each, since a dynamic `[kind]` route would lose to the static `github` folder); page `/connections`.
+- Produces: `removeConnection(kind: ConnectionKind, deps: { connections: Pick<MemberConnections, 'get' | 'remove'>; http: typeof fetch; notionClient: OAuthClient | null; log(line: string): void }): Promise<ApiResult>` (body `{ message }`; the stores are already bound to the member, so there is no member id, and a connection the member does not have is 404; Notion is revoked too, since its API has `POST /v1/oauth/revoke`); routes `DELETE /api/connections/github`, `DELETE /api/connections/google` and `DELETE /api/connections/notion` (one static route file each, since a dynamic `[kind]` route would lose to the static `github` folder); page `/connections`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('Google removal revokes with the token in the body, even if revoking fails', async () => {
@@ -2100,12 +2114,12 @@ test('GitHub and Notion removal explain the last step and touch only the caller'
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/connections/remove.test.ts`
 Expected: FAIL with `Cannot find module './remove'`.
 
-- [ ] **Step 3: Implement `removeConnection`, the route and the page**
+- [x] **Step 3: Implement `removeConnection`, the route and the page** (`removeConnection`, the three `DELETE` routes and a plain, unstyled page are done; the page is restyled after the Figma step. The page uses server actions for the GitHub form, Remove and the default folder, and the Picker and Notion chooser call the existing routes. Only `/connections` gets a nonce-based Content-Security-Policy, set in `proxy.ts` from `lib/connections-csp.ts`.)
 
 `removeConnection` for Google posts `token=<refreshToken>` form-encoded to `https://oauth2.googleapis.com/revoke` and ignores its result; for every kind it removes only the signed-in member's row. The page shows one card per connection from `GET /api/connections`, with its status ("Connected as <label>", "Reconnect needed" or "Not connected"), its detail, and Remove (`DELETE /api/connections/<kind>`, then the returned message is shown). Card copy:
 
@@ -2128,12 +2142,12 @@ Buttons: Connect Notion; then a list of shared pages and databases to choose fro
 
 "Pick a folder" loads `https://apis.google.com/js/api.js`, calls `gapi.load('picker')`, fetches `/api/connections/google/picker`, and opens a `google.picker.PickerBuilder` with `setOAuthToken`, `setDeveloperKey(apiKey)`, `setAppId(appId)` and a `DocsView(ViewId.FOLDERS)` with `setSelectFolderEnabled(true)` and `setMimeTypes('application/vnd.google-apps.folder')`; the picked id goes to `PUT /api/connections/google/folder`. If 01c sets a Content-Security-Policy, `/connections` allows scripts from `https://apis.google.com` and frames from `https://docs.google.com`.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
-Run: `bun test packages/exports/src/connections/remove.test.ts && bun run typecheck`
+Run: `bun test packages/exports/test/remove.test.ts && bun run typecheck`
 Expected: PASS (`0 fail`); typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/connections/remove.ts packages/exports/src/connections/remove.test.ts packages/web
@@ -2172,6 +2186,7 @@ Pass: a classic `ghp_` token is refused when saving; the first export makes one 
 
 Procedure: connect Google; export; pick a different folder with the Picker; export again; open the Google Account's third-party access page.
 Pass: "TolongMeeting Exports" appears in Drive with one document holding the summary, slides with images, transcript and chat; the second export lands in the picked folder as a new document and the first is unchanged; the access page lists only access to files the app uses. Eight or more days after connecting, a further export still succeeds (proving the client is in production).
+Also export the same meeting a second time to the same folder: the Google Doc keeps its address, its content shows the new export (not an old one, not a `.docx` file), and Drive lists it as a Google Doc, not a Word file. This checks that a resumable `PATCH` with `mimeType` set to the Docs type converts the Word media on update, which only a live account can prove.
 
 - [ ] **Step 5: Notion**
 

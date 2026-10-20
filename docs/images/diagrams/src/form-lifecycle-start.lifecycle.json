@@ -1,0 +1,185 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Attendance Form: Detected to Inspecting",
+    "output": ".archify/form-lifecycle-start/form-lifecycle-start.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Path to the form"
+    },
+    {
+      "id": "side",
+      "label": "Sign-in and distrust"
+    },
+    {
+      "id": "terminal",
+      "label": "Not submitted"
+    }
+  ],
+  "states": [
+    {
+      "id": "detected",
+      "type": "start",
+      "label": "Detected",
+      "sublabel": "QR, chat or watched chat",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "width": 160
+    },
+    {
+      "id": "resolving",
+      "type": "active",
+      "label": "Resolving",
+      "sublabel": "unwrap, 5 redirects at most",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "width": 160
+    },
+    {
+      "id": "checking_trust",
+      "type": "decision",
+      "label": "Checking trust",
+      "sublabel": "source must be trusted",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "width": 160
+    },
+    {
+      "id": "opening",
+      "type": "active",
+      "label": "Opening",
+      "sublabel": "new tab on the desk",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "inspecting",
+      "type": "decision",
+      "label": "Inspecting",
+      "sublabel": "attendance form?",
+      "lane": "main",
+      "col": 4,
+      "step": "05"
+    },
+    {
+      "id": "untrusted",
+      "type": "failure",
+      "label": "Untrusted",
+      "sublabel": "ping, link and reason",
+      "lane": "side",
+      "col": 2,
+      "width": 160
+    },
+    {
+      "id": "awaiting_signin",
+      "type": "waiting",
+      "label": "Awaiting sign-in",
+      "sublabel": "member signs in, once",
+      "lane": "side",
+      "col": 3,
+      "width": 160
+    },
+    {
+      "id": "not_attendance",
+      "type": "failure",
+      "label": "Not attendance",
+      "sublabel": "ping, normal priority",
+      "lane": "terminal",
+      "col": 3,
+      "width": 160
+    },
+    {
+      "id": "quiz",
+      "type": "failure",
+      "label": "Quiz",
+      "sublabel": "never submitted",
+      "lane": "terminal",
+      "col": 4
+    },
+    {
+      "id": "filling",
+      "type": "external",
+      "label": "Filling",
+      "sublabel": "next diagram",
+      "lane": "terminal",
+      "col": 1
+    }
+  ],
+  "transitions": [
+    {
+      "id": "detected-to-resolving",
+      "from": "detected",
+      "to": "resolving"
+    },
+    {
+      "id": "resolving-to-checking_trust",
+      "from": "resolving",
+      "to": "checking_trust"
+    },
+    {
+      "id": "checking_trust-to-opening",
+      "from": "checking_trust",
+      "to": "opening",
+      "label": "trusted"
+    },
+    {
+      "id": "opening-to-inspecting",
+      "from": "opening",
+      "to": "inspecting"
+    },
+    {
+      "id": "checking_trust-to-untrusted",
+      "from": "checking_trust",
+      "to": "untrusted",
+      "label": "untrusted",
+      "variant": "security"
+    },
+    {
+      "id": "opening-to-awaiting_signin",
+      "from": "opening",
+      "to": "awaiting_signin",
+      "label": "login page",
+      "variant": "dashed"
+    },
+    {
+      "id": "awaiting_signin-to-opening",
+      "from": "awaiting_signin",
+      "to": "opening",
+      "label": "signed in",
+      "variant": "emphasis"
+    },
+    {
+      "id": "inspecting-to-not_attendance",
+      "from": "inspecting",
+      "to": "not_attendance",
+      "label": "other form",
+      "variant": "security"
+    },
+    {
+      "id": "inspecting-to-quiz",
+      "from": "inspecting",
+      "to": "quiz",
+      "label": "points shown",
+      "variant": "security"
+    },
+    {
+      "id": "inspecting-to-filling",
+      "from": "inspecting",
+      "to": "filling",
+      "label": "attendance",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": []
+}

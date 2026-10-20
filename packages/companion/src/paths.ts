@@ -1,0 +1,44 @@
+import { join } from 'node:path'
+import type { LocalPaths } from './local/vault'
+
+/** `%APPDATA%\TolongMeeting`, `%LOCALAPPDATA%\TolongMeeting` and Documents. */
+export interface CompanionPaths {
+  userData: string
+  localData: string
+  documents: string
+}
+
+const DIR = 'TolongMeeting'
+
+export interface PathRoots {
+  platform: NodeJS.Platform
+  /** `%APPDATA%` (Electron `appData`). */
+  appData: string
+  /** `%LOCALAPPDATA%`. Required on Windows; other platforms only run the companion for development. */
+  localAppData: string | undefined
+  documents: string
+}
+
+export function resolvePaths(roots: PathRoots): CompanionPaths {
+  const userData = join(roots.appData, DIR)
+  if (roots.platform === 'win32') {
+    if (!roots.localAppData) throw new Error('LOCALAPPDATA is not set')
+    return { userData, localData: join(roots.localAppData, DIR), documents: roots.documents }
+  }
+  return { userData, localData: join(userData, 'local'), documents: roots.documents }
+}
+
+export const settingsFile = (p: CompanionPaths): string => join(p.userData, 'settings.json')
+export const stateFile = (p: CompanionPaths): string => join(p.userData, 'state.json')
+export const secretsFile = (p: CompanionPaths): string => join(p.userData, 'secrets.json')
+/** Scratch space for job files. */
+export const jobsDir = (p: CompanionPaths): string => join(p.localData, 'jobs')
+/** Where local runs keep their files: `<dataDir>/occurrences/<occurrenceId>` (`localPaths(...).data` on Windows). */
+export const localDataDir = (p: CompanionPaths): string => join(p.localData, 'data')
+/** The folders of local runs: `root` is the app's tree under `%LOCALAPPDATA%`, `data` is `localDataDir`. */
+export const localRunPaths = (p: CompanionPaths): LocalPaths => ({
+  root: p.localData,
+  data: localDataDir(p),
+  runs: join(p.localData, 'runs'),
+  profiles: join(p.localData, 'profiles')
+})

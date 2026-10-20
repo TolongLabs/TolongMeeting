@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Bun 1.x, Next.js (App Router), Drizzle ORM and drizzle-kit, Postgres 17, PGlite (tests), pg-boss, Better Auth (GitHub provider), Luxon, zod, noVNC, x11vnc, websockify, Caddy 2 (`forward_auth`), ntfy, Docker Compose, iptables.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -52,7 +52,7 @@ Contents:
 - **Pings**: meeting passcodes never appear in ping text; screenshots are never attached; every 1C ping's wording is fixed in `packages/notify/src/messages.ts`.
 - **Phasing**: only the `server` run location launches (plan 08 enables the others); chat link sources can't be saved yet (plan 02); native-mode occurrences stop at `waiting_for_pc` (plan 03); export buttons and Connections arrive with plan 07; plan 06 owns "Take over", so 1C's worker treats `take_over` as `leave_now`.
 - **Copy and time**: plain British English; times are shown in the member's IANA time zone (default `Asia/Kuala_Lumpur`) as `Wed 21 Oct, 14:00`.
-- **Contracts**: every name marked "adds to contracts" is copied into `docs/plans/architecture.md` in the commit of the task that introduces it.
+- **Contracts**: every name marked "adds to contracts" is copied into `docs/TRD.md` in the commit of the task that introduces it.
 
 ## Review Focus
 
@@ -70,20 +70,20 @@ Contents:
 
 **Files:**
 
-- Create: `packages/web/package.json`, `packages/web/tsconfig.json`, `packages/web/drizzle.config.ts`, `packages/web/db/schema.ts`, `packages/web/db/index.ts`, `packages/web/db/testing.ts`, `packages/web/db/migrations/` (generated), `packages/core/src/control.ts`
-- Test: `packages/web/db/schema.test.ts`
+- Create: `packages/web/package.json`, `packages/web/tsconfig.json`, `packages/web/drizzle.config.ts`, `packages/web/db/schema.ts`, `packages/web/db/index.ts`, `packages/web/db/testing.ts`, `packages/web/db/migrate.ts`, `packages/web/db/migrations/` (generated), `packages/core/src/control.ts`, and the package skeletons `packages/scheduler/{package.json,tsconfig.json,src/index.ts}`
+- Test: `packages/web/test/schema.test.ts` (against the shared Postgres on `TEST_DATABASE_URL`)
 
 **Interfaces:**
 
 - Consumes: `OccurrenceState`, `FormState`, `EventType`, `RunLocation`, `EntryType`, `TranscriptionMode`, `FormSource`, `FormProvider`, `TrustReason`, `SenderRole`, `LinkSource`, `JobConfig` from `packages/core` (architecture).
-- Produces: `schema` (tables below); `type Db = PgDatabase<PgQueryResultHKT, typeof schema>`; `getDb(): Db` (one node-postgres pool on `DATABASE_URL`); `createTestDb(): Promise<Db>` (a fresh PGlite database with every migration applied); `seedMember(db: Db, opts?: { githubLogin?: string; role?: 'member' | 'admin'; full?: boolean }): Promise<Seeded>`, where `Seeded = { memberId: string; identityId: string; ids: Record<keyof typeof MEMBER_OWNED, string> }` (`full`, the default, adds one row to every member-owned table; `full: false` adds only an identity, its profile and a tested AI key); `MEMBER_OWNED` (record of every table with `memberId`); `pkOf(table): PgColumn`; `type ArtefactKind = 'recording' | 'summary' | 'transcript' | 'slides' | 'slides_json' | 'slide_image' | 'chat' | 'form_screenshot'`.
+- Produces: `schema` (tables below); `type Db = PgDatabase<NodePgQueryResultHKT, typeof schema>` (the node-postgres result type, so `db.execute` returns `{ rows }`), `closeDb()`; `getDb(): Db` (one node-postgres pool on `DATABASE_URL`); `createTestDb(): Promise<Db>` (a fresh, uniquely named database on `TEST_DATABASE_URL`, a real Postgres, with every migration applied; `dropTestDb(db)` and `dropAllTestDbs()` drop it); `seedMember(db: Db, opts?: { githubLogin?: string; role?: 'member' | 'admin'; full?: boolean }): Promise<Seeded>`, where `Seeded = { memberId: string; identityId: string; ids: Record<keyof typeof MEMBER_OWNED, string> }` (`full`, the default, adds one row to every member-owned table; `full: false` adds only an identity, its profile and a tested AI key); `MEMBER_OWNED` (record of every table with `memberId`); `pkOf(table): PgColumn`; `type ArtefactKind = 'recording' | 'summary' | 'transcript' | 'slides' | 'slides_json' | 'slide_image' | 'chat' | 'form_screenshot'`.
 - Produces (adds to contracts), `packages/core/src/control.ts`: `ACCOUNT_KINDS = ['zoom', 'microsoft', 'google', 'whatsapp', 'discord', 'teams'] as const`, `type AccountKind`, `type AccountStatus = Partial<Record<AccountKind, { verifiedAt: string; signedIn: boolean }>>`; and the table `signin_sessions`.
 
 Schema ("member_id" always means `uuid not null` referencing `members` with `on delete cascade`; every `id uuid` defaults to `gen_random_uuid()`; `created_at` and `updated_at` are `timestamptz not null default now()`):
 
 ```text
 members            id; github_login text not null unique (stored lower-case); github_id bigint unique; auth_user_id text unique; display_name text not null; time_zone text not null default 'Asia/Kuala_Lumpur'; role text not null default 'member' check (member, admin); ntfy_topic text unique; ntfy_token_enc text; created_at
-identities         id; member_id; name text not null; run_location text not null default 'server' check RunLocation; zoom_guest_name text not null; created_at; unique (member_id, name)
+identities         id; member_id; name text not null; run_location text not null default 'server' check RunLocation; zoom_guest_name text not null; org_name text; org_email_domain text; created_at; unique (member_id, name)
 profiles           identity_id uuid pk -> identities cascade; member_id; location text not null default 'server' check (server, local); latest_checkpoint text; checkpoint_at timestamptz; account_status jsonb not null default '{}' (AccountStatus); held_by text; held_since timestamptz
 details            id; member_id; key text not null; value text not null; labels text[] not null default '{}'; position int not null default 0; unique (member_id, key)
 mention_names      id; member_id; name text not null; unique index (member_id, lower(name))
@@ -100,10 +100,10 @@ signin_sessions    id; member_id; identity_id -> identities cascade; mode text n
 
 Secret columns (`members.ntfy_token_enc`, `ai_keys.dashscope_key_enc`, `ai_keys.modelscope_key_enc`, `connections.token_enc`) hold only `sealColumn` output (Task 2).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
-// packages/web/db/schema.test.ts
+// packages/web/test/schema.test.ts (the shipped file also covers each constraint and the foreign-key actions)
 const TABLES = [
   'ai_keys',
   'artefacts',
@@ -171,27 +171,27 @@ test('an unknown occurrence state is rejected', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/web/db/schema.test.ts`
+Run: `bun test packages/web/test/schema.test.ts`
 
-Expected: FAIL with `Cannot find module './testing'`.
+Expected: FAIL with `Cannot find module '../db/testing'`.
 
-- [ ] **Step 3: Implement the schema in `packages/web/db/schema.ts` and generate the migration**
+- [x] **Step 3: Implement the schema in `packages/web/db/schema.ts` and generate the migration**
 
-Write each table with `pgTable`, with check constraints built from runtime lists such as `const OCCURRENCE_STATES = [...] as const satisfies readonly OccurrenceState[]`, plus a compile-time check that `Exclude<OccurrenceState, (typeof OCCURRENCE_STATES)[number]>` is `never` (same for `FormState`, `EventType`, `RunLocation`). Type the jsonb columns with `$type<...>()`. Then run `bunx drizzle-kit generate --config packages/web/drizzle.config.ts --name init`. `createTestDb` uses `drizzle-orm/pglite` and `migrate()` with `migrationsFolder: new URL('./migrations', import.meta.url).pathname`.
+Write each table with `pgTable`, with check constraints built from runtime lists such as `const OCCURRENCE_STATES = [...] as const satisfies readonly OccurrenceState[]`, plus a compile-time check that `Exclude<OccurrenceState, (typeof OCCURRENCE_STATES)[number]>` is `never` (same for `FormState`, `EventType`, `RunLocation`). Type the jsonb columns with `$type<...>()`. Then run `bunx drizzle-kit generate --config packages/web/drizzle.config.ts --name init`. `createTestDb` creates a uniquely named database on `TEST_DATABASE_URL` and runs `runMigrations` (`drizzle-orm/node-postgres/migrator` with `migrationsFolder: new URL('./migrations', import.meta.url).pathname`). Generate with `bun run --cwd packages/web db:generate -- --name init`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/web/db/schema.test.ts && bun run typecheck`
+Run: `TEST_DATABASE_URL=postgres://postgres:tmtest@127.0.0.1:55440/postgres bun test packages/web/test/schema.test.ts && bun run typecheck`
 
-Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
+Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web packages/core/src/control.ts
-git commit -m "feat(db): add schema and migrations"
+git add packages/web packages/scheduler packages/core/src/control.ts packages/core/package.json bun.lock
+git commit -m "feat(web): add database schema"
 ```
 
 ### Task 2: Secret sealing and keys
@@ -199,8 +199,8 @@ git commit -m "feat(db): add schema and migrations"
 **Files:**
 
 - Create: `packages/core/src/secrets.ts`, `packages/web/db/secrets.ts`, `packages/web/test/no-log.ts`, `packages/worker/src/profile/key.ts`
-- Modify: `packages/worker/src/run.ts` (the key passed to 1A's `checkpointProfile` comes from `loadProfileKey`)
-- Test: `packages/core/src/secrets.test.ts`, `packages/web/db/secrets.test.ts`, `packages/worker/src/profile/key.test.ts`
+- Modify: `packages/worker/src/profile/keys.ts` (`deriveProfileKey` delegates to core `profileKey`). The `run.ts` swap to `loadProfileKey` moves to Task 16 (C20).
+- Test: `packages/core/test/secrets.test.ts`, `packages/web/test/secrets.test.ts`, `packages/worker/test/profile-key.test.ts`
 
 **Interfaces:**
 
@@ -210,7 +210,7 @@ git commit -m "feat(db): add schema and migrations"
 - Produces, `packages/web/test/no-log.ts`: `expectNotLogged(secret: string, fn: () => Promise<unknown>): Promise<void>` (captures `console.*`, `process.stdout.write` and `process.stderr.write` while `fn` runs, and fails if any output contains `secret`).
 - Produces (adds to contracts), `packages/worker/src/profile/key.ts`: `loadProfileKey(identityId: string): Buffer`, which returns the 32-byte base64 key in the file named by the new variable `TM_PROFILE_KEY_FILE` when it is set (the launcher sets it, Task 13), and otherwise `profileKey(master from TM_MASTER_KEY_FILE, identityId)`, as 1A runs.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/secrets.test.ts
@@ -280,23 +280,23 @@ test('loadProfileKey prefers TM_PROFILE_KEY_FILE over deriving from the master k
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core/src/secrets.test.ts packages/web/db/secrets.test.ts packages/worker/src/profile/key.test.ts`
 
 Expected: FAIL with `Cannot find module './secrets'`.
 
-- [ ] **Step 3: Implement the three modules**
+- [x] **Step 3: Implement the three modules**
 
 Use `node:crypto` (`hkdfSync`, `createCipheriv('aes-256-gcm')`). `SecretError` and `MasterKeyError` carry fixed messages only, never input bytes. Replace the key that 1A's `run.ts` passes to `checkpointProfile` with `loadProfileKey(cfg.identity.id)`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/secrets.test.ts packages/web/db/secrets.test.ts packages/worker/src/profile/key.test.ts`
 
 Expected: PASS, `6 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/secrets* packages/web/db/secrets* packages/web/test/no-log.ts packages/worker/src/profile packages/worker/src/run.ts
@@ -308,14 +308,14 @@ git commit -m "feat(core): seal secrets with HKDF keys"
 **Files:**
 
 - Create: `packages/core/src/occurrence-machine.ts`, `packages/core/src/passcode.ts`, `packages/web/db/transitions.ts`
-- Test: `packages/core/src/occurrence-machine.test.ts`, `packages/core/src/passcode.test.ts`, `packages/web/db/transitions.test.ts`
+- Test: `packages/core/test/occurrence-machine.test.ts`, `packages/core/test/passcode.test.ts`, `packages/web/test/transitions.test.ts` (tests live in `test/`, not beside the source)
 
 **Interfaces:**
 
 - Consumes: `OccurrenceState` (architecture); `IllegalTransition` (1A, exported from `packages/core` beside `nextFormState`); `Db`, `schema` (Task 1).
 - Produces, `packages/core/src/occurrence-machine.ts`: `type WorkerState = 'starting' | 'verifying_accounts' | 'waiting_for_signin' | 'watching_for_link' | 'joining' | 'in_lobby' | 'in_meeting' | 'leaving' | 'uploading'`; `type OccurrenceTrigger` (below); `WORKER_STATES: ReadonlySet<WorkerState>`; `ACTIVE_STATES` (`WORKER_STATES` plus `restarting`: the states that hold an identity and a server slot); `nextOccurrenceState(from: OccurrenceState, event: OccurrenceTrigger): OccurrenceState` (throws `IllegalTransition`); `triggerFor(from: OccurrenceState, to: OccurrenceState): OccurrenceTrigger | null`.
 - Produces (adds to contracts): `stripPasscode(url: string): string` in `packages/core/src/passcode.ts`.
-- Produces, `packages/web/db/transitions.ts`: `applyTrigger(db: Db, occurrenceId: string, trigger: OccurrenceTrigger, opts?: { reason?: string; recordEvent?: boolean }): Promise<{ from: OccurrenceState; to: OccurrenceState }>`. It locks the row (`for update`), writes the new state and `state_reason`, and records a `state` event `{ from, to, trigger, reason }` unless `recordEvent` is false. On entering any state outside `ACTIVE_STATES` and `scheduled` it applies `stripPasscode` to `link_used`, `pasted_link` and `entry_snapshot.link.url`. An illegal trigger throws and writes nothing.
+- Produces, `packages/web/db/transitions.ts`: `applyTrigger(db: Db, occurrenceId: string, trigger: OccurrenceTrigger, opts?: { reason?: string; recordEvent?: boolean }): Promise<{ from: OccurrenceState; to: OccurrenceState; restarts: number; knocks: number }>` (the counts are the post-trigger values, so the caller can `fail` after 3 restarts and stop knocking after 2). It locks the row (`for update`), writes the new state and `state_reason`, and records a `state` event `{ from, to, trigger, reason }` unless `recordEvent` is false. Migration `0001_occurrence_resume_and_knocks` adds `occurrences.resume_state` (nullable `OccurrenceState`) and `occurrences.knocks` (int, default 0). In the same locked transaction, `crash` stores the pre-crash state in `resume_state` and adds 1 to `restarts` (a crash while already `restarting` also adds 1, keeps `resume_state` and records no state event); `resume:<s>` throws `IllegalTransition` unless `s` equals `resume_state`, then clears it; `knock_again` adds 1 to `knocks` and records no state event. On entering any state outside `ACTIVE_STATES` and `scheduled` it applies `stripPasscode` to `link_used`, `pasted_link` and `entry_snapshot.link.url`. An illegal trigger throws and writes nothing.
 
 ```ts
 export type OccurrenceTrigger =
@@ -368,12 +368,12 @@ all but deleted, failed                     fail -> failed
 all outside ACTIVE_STATES, except deleted   delete -> deleted
 ```
 
-`stripPasscode` removes the query parameters `pwd` and `passcode` on any host, and `p` on `teams.microsoft.com`, `*.teams.microsoft.com` and `teams.live.com`; it returns `''` for a string that doesn't parse as a URL.
+`stripPasscode` removes the query parameters `pwd` and `passcode` on any host, and `p` on `teams.microsoft.com`, `*.teams.microsoft.com` and `teams.live.com`; it returns `''` for a string that doesn't parse as a URL. Names match in any case, and only the matching pairs are cut from the raw query string, so the rest keeps its encoding.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/occurrence-machine.test.ts
+// packages/core/test/occurrence-machine.test.ts
 test('the main line runs from scheduled to completed', () => {
   const path: [OccurrenceTrigger, OccurrenceState][] = [
     ['launch', 'starting'],
@@ -424,7 +424,7 @@ test('triggerFor finds the trigger between two states', () => {
 ```
 
 ```ts
-// packages/core/src/passcode.test.ts
+// packages/core/test/passcode.test.ts
 test('passcodes are stripped from meeting links', () => {
   expect(stripPasscode('https://example.zoom.us/j/00000000000?pwd=PASSCODE')).toBe(
     'https://example.zoom.us/j/00000000000'
@@ -438,7 +438,7 @@ test('passcodes are stripped from meeting links', () => {
 ```
 
 ```ts
-// packages/web/db/transitions.test.ts
+// packages/web/test/transitions.test.ts
 test('a transition writes the state and a state event', async () => {
   const db = await createTestDb()
   const a = await seedMember(db)
@@ -478,23 +478,23 @@ test('an illegal trigger changes nothing', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/occurrence-machine.test.ts packages/core/src/passcode.test.ts packages/web/db/transitions.test.ts`
+Run: `bun test packages/core/test/occurrence-machine.test.ts packages/core/test/passcode.test.ts packages/web/test/transitions.test.ts`
 
 Expected: FAIL with `Cannot find module './occurrence-machine'`.
 
-- [ ] **Step 3: Implement the machine, `stripPasscode` and `applyTrigger`**
+- [x] **Step 3: Implement the machine, `stripPasscode` and `applyTrigger`**
 
 Hold the transitions above as one table (`Record<OccurrenceState, Partial<Record<OccurrenceTrigger, OccurrenceState>>>` plus the three group rules), so that `nextOccurrenceState` and `triggerFor` read the same data.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/occurrence-machine.test.ts packages/core/src/passcode.test.ts packages/web/db/transitions.test.ts`
+Run: `bun test packages/core/test/occurrence-machine.test.ts packages/core/test/passcode.test.ts packages/web/test/transitions.test.ts`
 
-Expected: PASS, `8 pass, 0 fail`.
+Expected: PASS, `12 pass, 0 fail` (the three files together).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/occurrence-machine* packages/core/src/passcode* packages/web/db/transitions*
@@ -506,7 +506,7 @@ git commit -m "feat(core): add occurrence state machine"
 **Files:**
 
 - Create: `packages/web/lib/scope.ts`
-- Test: `packages/web/lib/scope.test.ts`, `packages/web/lib/no-direct-db.test.ts`
+- Test: `packages/web/test/scope.test.ts`, `packages/web/test/no-direct-db.test.ts` (under `test/` per COMMON.md)
 
 **Interfaces:**
 
@@ -527,12 +527,14 @@ export interface MemberScope {
 }
 ```
 
-Every method adds `member_id = memberId` to its `where`, forces `memberId` on insert and drops `memberId` from an update's `set`. `artefactFile` returns `${TM_DATA_ROOT}/occurrences/<occurrenceId>/<relPath>` only when an `artefacts` row with that member, occurrence and path exists. Later tasks add `authScope` (Task 5) and `adminScope` (Task 11) to this file, both taking `db: Db = getDb()` so routes never call `getDb` themselves, and member-limited helpers to `MemberScope`.
+Every method adds `member_id = memberId` to its `where` (the caller's `where` is wrapped as `(where)` first, so a bare `or` can't escape the filter), forces `memberId` on insert and drops `memberId` from an update's `set`. `updateMe` keeps only its four keys at runtime. `artefactFile` returns `<resolved TM_DATA_ROOT>/occurrences/<occurrenceId>/<relPath>` only when `occurrenceId` is a UUID, the resolved path is inside that occurrence directory and an `artefacts` row with that member, occurrence and path exists; otherwise `null`. The serving route must also `realpath` the file, because a symlink passes the lexical check.
 
-- [ ] **Step 1: Write the failing tests**
+Isolation also holds in the database: every member-owned child references its parent with a composite `(parent_id, member_id)` foreign key (parents `identities`, `timetable_entries` and `occurrences` carry `unique (id, member_id)`), so inserting or updating a child with another member's parent fails even through raw `db`. The `no-direct-db` guard matches the db module with or without an extension, dynamic `import(` and `require(`, raw drivers (`drizzle-orm/node-postgres`, `postgres-js`, `bun-sql`, `pg`, `postgres`, `Bun.sql`), and scans `.ts/.tsx/.js/.mjs/.cjs` in every directory of `packages/web` except `db/`, `test/` and `lib/scope.ts`, `lib/auth.ts`, `lib/control.ts`. Later tasks add `authScope` (Task 5) and `adminScope` (Task 11) to this file, both taking `db: Db = getDb()` so routes never call `getDb` themselves, and member-limited helpers to `MemberScope`.
+
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/lib/scope.test.ts
+// packages/web/test/scope.test.ts
 for (const [name, table] of Object.entries(MEMBER_OWNED)) {
   test(`${name}: one member can't read or delete another member's rows`, async () => {
     const db = await createTestDb()
@@ -581,7 +583,7 @@ test("artefact files resolve only for the owner's registered paths", async () =>
 ```
 
 ```ts
-// packages/web/lib/no-direct-db.test.ts
+// packages/web/test/no-direct-db.test.ts
 test('only scope.ts, auth.ts and control.ts open the database in packages/web', async () => {
   const files = await Array.fromAsync(new Bun.Glob('{app,lib}/**/*.{ts,tsx}').scan({ cwd: 'packages/web' }))
   const offenders: string[] = []
@@ -594,26 +596,26 @@ test('only scope.ts, auth.ts and control.ts open the database in packages/web', 
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts`
+Run: `bun test packages/web/test/scope.test.ts packages/web/test/no-direct-db.test.ts`
 
 Expected: FAIL with `Cannot find module './scope'`.
 
-- [ ] **Step 3: Implement `createScope` and `scopeForAuthUser` in `packages/web/lib/scope.ts`**
+- [x] **Step 3: Implement `createScope` and `scopeForAuthUser` in `packages/web/lib/scope.ts`**
 
 Pages and routes import tables from `packages/web/db/schema.ts` for `where` clauses, never `packages/web/db/index.ts`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts`
+Run: `bun test packages/web/test/scope.test.ts packages/web/test/no-direct-db.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib/scope.ts packages/web/lib/scope.test.ts packages/web/lib/no-direct-db.test.ts
+git add packages/web/lib/scope.ts packages/web/test/scope.test.ts packages/web/test/no-direct-db.test.ts
 git commit -m "feat(web): add member scope"
 ```
 
@@ -622,7 +624,7 @@ git commit -m "feat(web): add member scope"
 **Files:**
 
 - Create: `packages/web/lib/auth.ts`, `packages/web/lib/github.ts`, `packages/web/lib/authorise.ts`, `packages/web/lib/session.ts`, `packages/web/app/api/auth/[...all]/route.ts`, `packages/web/app/sign-in/page.tsx`, `packages/web/db/auth-schema.ts` (generated), `packages/web/scripts/add-member.ts`, `packages/scheduler/package.json`, `packages/scheduler/src/org-check.ts`
-- Modify: `packages/web/db/schema.ts` (foreign key from `members.auth_user_id` to `auth_user.id`, on delete set null), `packages/web/db/testing.ts` (`seedAuthUser`, `seedLinkedMember`), `packages/web/lib/scope.ts` (`authScope`), `packages/web/db/schema.test.ts` (table list)
+- Modify: `packages/web/db/schema.ts` (foreign key from `members.auth_user_id` to `auth_user.id`, on delete set null), `packages/web/db/testing.ts` (`seedAuthUser`, `seedLinkedMember`, `TEST_MASTER`; they seal the test token as Better Auth does), `packages/web/lib/scope.ts` (`authScope`), `packages/web/db/schema.test.ts` (table list)
 - Test: `packages/web/lib/authorise.test.ts`, `packages/scheduler/src/org-check.test.ts`
 
 **Interfaces:**
@@ -630,12 +632,12 @@ git commit -m "feat(web): add member scope"
 - Consumes: `deriveKey`, `loadMasterKey` (Task 2); `scopeForAuthUser` (Task 4).
 - Produces (adds to contracts): Better Auth tables `auth_user`, `auth_session`, `auth_account`, `auth_verification`, generated with `bunx @better-auth/cli generate --config packages/web/lib/auth.ts --output packages/web/db/auth-schema.ts`.
 - Produces: `interface GitHubApi { user(token: string): Promise<{ id: number; login: string }>; orgMembership(token: string, org: string): Promise<'active' | 'pending' | 'none'> }`; `githubApi(fetchFn = fetch): GitHubApi` (`GET https://api.github.com/user` and `GET https://api.github.com/user/memberships/orgs/{org}` with `Authorization: Bearer`, `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28`; 403 or 404 means `'none'`; 401 throws `GitHubTokenError`).
-- Produces: `authScope(db: Db = getDb()): AuthScope` with `githubToken(authUserId: string): Promise<string | null>`, `memberForGithub(githubId: number, login: string): Promise<{ id: string } | null>` (match on `github_id`, else on lower-cased `github_login` where `github_id` is null), `linkMember(memberId: string, githubId: number, authUserId: string): Promise<void>`, `linkedMembers(): Promise<{ memberId: string; authUserId: string }[]>`, `endSessions(authUserId: string): Promise<void>`.
-- Produces: `authoriseSession(deps: { github: GitHubApi; auth: AuthScope; org: string }, authUserId: string): Promise<void>`, which throws `APIError('FORBIDDEN', { message: 'Not an active TolongLabs member. Ask an admin to add you.' })`; `checkMemberships(deps: { github: GitHubApi; auth: AuthScope; org: string }): Promise<{ ended: string[] }>` (member ids whose sessions ended); `requireMember(): Promise<MemberScope>` and `requireAdmin(): Promise<MemberScope>` (redirect to `/sign-in` without a session or member, and to `/` for a non-admin).
+- Produces: `authScope(master: Buffer, db: Db = getDb()): AuthScope` with `githubToken(authUserId: string): Promise<string | null>` (the token is stored encrypted by Better Auth, and this opens it with `symmetricDecrypt` from `better-auth/crypto` under `authSecret(master)`), `memberForGithub(githubId: number, login: string): Promise<{ id: string } | null>` (match on `github_id`, else on lower-cased `github_login` where `github_id` is null), `linkMember(memberId: string, githubId: number, authUserId: string): Promise<void>`, `linkedMembers(): Promise<{ memberId: string; authUserId: string }[]>`, `endSessions(authUserId: string): Promise<void>`, `discardUnlinkedUser(authUserId: string): Promise<void>` (deletes the auth user and, by cascade, its account and token, unless a member is linked to it).
+- Produces: `authoriseSession(deps: { github: GitHubApi; auth: AuthScope; org: string }, authUserId: string): Promise<void>`, which throws `APIError('FORBIDDEN', { message: 'Not an active TolongLabs member. Ask an admin to add you.', code: 'NOT_A_MEMBER' })` (the code makes the OAuth callback redirect to `/sign-in?error=NOT_A_MEMBER`; a refusal also ends that auth user's sessions and deletes the auth user when no member is linked, so a non-member's token is never kept); `checkMemberships(deps: { github: GitHubApi; auth: AuthScope; org: string; log?: (message: string) => void }): Promise<{ ended: string[] }>` (member ids whose sessions ended; a per-member failure is logged by member id without a token and raised after the rest are checked; a 403 with `x-ratelimit-remaining: 0` counts as an outage, not a removal); `requireMember(): Promise<MemberScope>` and `requireAdmin(): Promise<MemberScope>` (redirect to `/sign-in` without a session or member, and to `/` for a non-admin).
 
-`auth.ts` configures Better Auth with `baseURL: TM_PUBLIC_URL`, `secret: deriveKey(loadMasterKey(), 'better-auth').toString('base64')`, the Drizzle adapter (`provider: 'pg'`, model names `auth_user`, `auth_session`, `auth_account`, `auth_verification`), `socialProviders.github` with `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `scope: ['read:org']`, and `databaseHooks.session.create.before` calling `authoriseSession(..., session.userId)`. The sign-in page has one "Sign in with GitHub" button and shows the refusal text when sign-in fails. `add-member.ts` bootstraps the first admin: `bun run packages/web/scripts/add-member.ts --login <github-login> --name "<display name>" [--tz <IANA zone>] [--admin]`.
+`auth.ts` configures Better Auth with `baseURL: TM_PUBLIC_URL`, `secret: deriveKey(loadMasterKey(), 'better-auth').toString('base64')`, the Drizzle adapter (`provider: 'pg'`, model names `auth_user`, `auth_session`, `auth_account`, `auth_verification`), `socialProviders.github` with `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `scope: ['read:org']`, `account: { encryptOAuthTokens: true, accountLinking: { enabled: false } }`, `advanced.useSecureCookies` true exactly when `TM_PUBLIC_URL` is https, and `databaseHooks.session.create.before` calling `authoriseSession(..., session.userId)`. `better-auth` is pinned to an exact version in `packages/web/package.json`. The sign-in page has one "Sign in with GitHub" button and shows the refusal text when sign-in fails. `add-member.ts` bootstraps the first admin: `bun run packages/web/scripts/add-member.ts --login <github-login> --name "<display name>" [--tz <IANA zone>] [--admin]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/authorise.test.ts
@@ -645,7 +647,7 @@ const gh = (m: 'active' | 'pending' | 'none', user = { id: 42, login: 'Octo-Memb
 })
 const deps = (db: Db, m: 'active' | 'pending' | 'none', user?: { id: number; login: string }) => ({
   github: gh(m, user),
-  auth: authScope(db),
+  auth: authScope(TEST_MASTER, db),
   org: 'tolonglabs'
 })
 
@@ -702,7 +704,7 @@ test('the daily check ends the sessions of members who left or revoked the app',
   }
   const { ended } = await checkMemberships({
     github,
-    auth: authScope(db),
+    auth: authScope(TEST_MASTER, db),
     org: 'tolonglabs'
   })
   expect(ended.sort()).toEqual([left.memberId, revoked.memberId].sort())
@@ -711,23 +713,25 @@ test('the daily check ends the sessions of members who left or revoked the app',
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/authorise.test.ts packages/scheduler/src/org-check.test.ts`
 
 Expected: FAIL with `Cannot find module './authorise'`.
 
-- [ ] **Step 3: Implement the modules, then generate the auth schema and its migration**
+- [x] **Step 3: Implement the modules, then generate the auth schema and its migration**
 
 Run the Better Auth generator, then `bunx drizzle-kit generate --config packages/web/drizzle.config.ts --name auth`. Add the four `auth_*` tables to the `TABLES` list in `schema.test.ts`, and exclude them, like `members`, from the `member_id` check.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/authorise.test.ts packages/scheduler/src/org-check.test.ts packages/web/db/schema.test.ts && bun run typecheck`
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+Note: `app/sign-in/page.tsx` is built as a plain, unstyled page (the user chose to build the pages now and restyle them after the Figma step). The tests live in `packages/web/test/` and `packages/scheduler/test/`.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web packages/scheduler
@@ -739,23 +743,23 @@ git commit -m "feat(web): add GitHub sign-in with org check"
 **Files:**
 
 - Create: `packages/core/src/timetable.ts`, `packages/core/src/schedule.ts`, `packages/web/db/queues.ts`, `packages/web/db/occurrences.ts`
-- Modify: `packages/web/db/testing.ts` (`FakeQueue`, `withEntry`), `packages/web/lib/scope.ts` (`MemberScope.syncOccurrences`, `MemberScope.identityClashes`)
-- Test: `packages/core/src/schedule.test.ts`, `packages/web/db/occurrences.test.ts`
+- Modify: `packages/web/db/testing.ts` (`FakeQueue`, `withEntry`; both are in testing.ts, not queues.ts), `packages/web/lib/scope.ts` (`MemberScope.syncOccurrences`, `MemberScope.identityClashes`)
+- Test: `packages/core/test/schedule.test.ts`, `packages/web/test/occurrences.test.ts`
 
 **Interfaces:**
 
 - Consumes: `Db`, `schema` (Task 1); `ACTIVE_STATES` (Task 3).
 - Produces (adds to contracts), `packages/core/src/timetable.ts`: `type RepeatRule = { kind: 'once'; date: string } | { kind: 'weekly'; days: (1 | 2 | 3 | 4 | 5 | 6 | 7)[]; from: string }` (ISO weekdays, 1 is Monday; dates `YYYY-MM-DD`) and `RepeatRuleSchema`.
-- Produces (adds to contracts), `packages/core/src/schedule.ts`: `expandEntry(e: { repeat: RepeatRule; startTime: string; endTime: string }, timeZone: string, now: Date, horizonDays = 14): { start: Date; end: Date }[]` (slots with `now < start < now + horizon`; an end at or before the start falls on the next day; local times through Luxon); `findClashes(slots: { id: string; start: Date; end: Date; rank: number }[]): { winner: string; loser: string }[]` (slots clash when `a.start < b.end && b.start < a.end`; the earlier start wins, then the lower `rank`, which is the entry's creation time in milliseconds); `formatWhen(d: Date, timeZone: string): string` (Luxon `ccc d LLL, HH:mm`); `formatDay(d: Date, timeZone: string): string` (`ccc d LLL`).
-- Produces (adds to contracts), `packages/web/db/queues.ts`: `QUEUES = { expand: 'expand', launch: 'launch', pipeline: 'pipeline', signinStart: 'signin-start', deleteOccurrence: 'delete-occurrence', retention: 'retention', backup: 'backup', orgCheck: 'org-check' } as const`; `type QueueName`; `interface Queue { send(name: QueueName, data: Record<string, unknown>, opts?: { startAfter?: Date; singletonKey?: string }): Promise<string | null> }`; `bossQueue(boss: PgBoss): Queue`; `FakeQueue` (records `sent: { name, data, opts }[]`).
+- Produces (adds to contracts), `packages/core/src/schedule.ts`: `expandEntry(e: { repeat: RepeatRule; startTime: string; endTime: string }, timeZone: string, now: Date, horizonDays = 14): { start: Date; end: Date }[]` (slots with `now < start < now + horizon`; an end written at or before the start falls on the next day, decided on the `HH:MM` strings before the instants are resolved; local times through Luxon; a time in a spring-forward gap shifts forward by the gap length, and if that pushes the start to or past the end the end moves by the same amount, so the slot never becomes 24 hours); `findClashes(slots: { id: string; start: Date; end: Date; rank: number }[]): { winner: string; loser: string }[]` (slots clash when `a.start < b.end && b.start < a.end`; the earlier start wins, then the lower `rank`, which is the entry's creation time in milliseconds); `formatWhen(d: Date, timeZone: string): string` (`ccc d MMM, HH:mm` with fixed three-letter English names, so September is `Sep` whatever the locale data says); `formatDay(d: Date, timeZone: string): string` (`ccc d MMM`).
+- Produces (adds to contracts), `packages/web/db/queues.ts`: `QUEUES = { expand: 'expand', launch: 'launch', pipeline: 'pipeline', signinStart: 'signin-start', deleteOccurrence: 'delete-occurrence', retention: 'retention', backup: 'backup', orgCheck: 'org-check' } as const`; `type QueueName`; `interface Queue { send(name: QueueName, data: Record<string, unknown>, opts?: { startAfter?: Date; singletonKey?: string; db?: QueueDb }): Promise<string | null> }` (`db` is pg-boss's per-call connection; `queueDbOf(tx)` wraps a Drizzle transaction's client so a job commits or rolls back with the rows written beside it; `singletonKey` is informational on a standard queue, it does not deduplicate); `bossQueue(boss: PgBoss): Queue`; `FakeQueue` (records `sent: { name, data, opts }[]`).
 - Produces, `packages/web/db/occurrences.ts`: `syncOccurrences(db: Db, queue: Queue, now: Date, memberId?: string): Promise<{ created: number; removed: number }>`; `identityClashes(db: Db, identityId: string, from: Date, to: Date): Promise<{ winner: OccurrenceRow; loser: OccurrenceRow }[]>` (ignores `skipped_*`, `failed` and `deleted` occurrences).
 
-`syncOccurrences` covers members whose `ai_keys.test_ok` is true. For each unpaused entry it expands slots in the member's time zone and inserts the missing occurrences (`on conflict do nothing`) with `entry_name`, `entry_type`, `transcription` and `delete_after = scheduled_end + 30 days`; refreshes those three columns on future `scheduled` occurrences; deletes future `scheduled` occurrences that no longer match a slot of an unpaused entry; and for each created occurrence sends `launch` with data `{ occurrenceId, scheduledStart }` (ISO), `startAfter` at the start minus 60 minutes (or now, if that has passed) and `singletonKey` `launch:<occurrenceId>:<scheduledStart>`.
+`syncOccurrences` covers members whose `ai_keys.test_ok` is true. For each unpaused entry it expands slots in the member's time zone and inserts the missing occurrences (`on conflict do nothing`) with `entry_name`, `entry_type`, `transcription` and `delete_after = scheduled_end + 30 days`; refreshes those three columns on future `scheduled` occurrences; deletes future `scheduled` occurrences that no longer match a slot of an unpaused entry; and for each created occurrence sends `launch` with data `{ occurrenceId, scheduledStart }` (ISO), `startAfter` at the start minus 60 minutes (or now, if that has passed) and `singletonKey` `launch:<occurrenceId>:<scheduledStart>`, sent through the sync transaction's connection (`db: queueDbOf(tx)`) so the occurrence rows and their jobs commit or roll back together. Only `scheduled` rows are ever hard-deleted, and no machine edge returns to `scheduled`, so no events, forms or artefacts are lost. The launcher (Task 14) treats a missing occurrence row or a `scheduledStart` that differs from the job's as a stale job.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/schedule.test.ts
+// packages/core/test/schedule.test.ts
 const now = new Date('2026-10-20T00:00:00Z')
 
 test('a weekly entry expands 14 days ahead in the member time zone', () => {
@@ -839,7 +843,7 @@ test('times are shown in the member time zone', () => {
 ```
 
 ```ts
-// packages/web/db/occurrences.test.ts
+// packages/web/test/occurrences.test.ts
 const now = new Date('2026-10-20T00:00:00Z')
 const WEDNESDAY_14 = {
   repeat: { kind: 'weekly', days: [3], from: '2026-10-01' },
@@ -859,7 +863,8 @@ test('sync creates occurrences once and queues launches at T-60', async () => {
     },
     opts: {
       startAfter: new Date('2026-10-21T05:00:00.000Z'),
-      singletonKey: expect.stringMatching(/^launch:.+:2026-10-21T06:00:00\.000Z$/)
+      singletonKey: expect.stringMatching(/^launch:.+:2026-10-21T06:00:00\.000Z$/),
+      db: expect.anything()
     }
   })
   const [o] = await db
@@ -894,27 +899,27 @@ test('a member without a working AI key gets no occurrences', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/schedule.test.ts packages/web/db/occurrences.test.ts`
+Run: `bun test packages/core/test/schedule.test.ts packages/web/test/occurrences.test.ts`
 
 Expected: FAIL with `Cannot find module './schedule'`.
 
-- [ ] **Step 3: Implement the modules**
+- [x] **Step 3: Implement the modules**
 
 Add `syncOccurrences(queue, now)` and `identityClashes(identityId, from, to)` to `MemberScope`, both limited to the scope's member.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/schedule.test.ts packages/web/db/occurrences.test.ts`
+Run: `bun test packages/core/test/schedule.test.ts packages/web/test/occurrences.test.ts`
 
 Expected: PASS, `10 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/timetable.ts packages/core/src/schedule* packages/web/db packages/web/lib/scope.ts
-git commit -m "feat(scheduler): expand timetables"
+git add packages/core/src/timetable.ts packages/core/src/schedule.ts packages/core/test/schedule.test.ts packages/web/db packages/web/lib/scope.ts packages/web/test/occurrences.test.ts packages/web/test/queues.test.ts
+git commit -m "feat(web): expand timetable into occurrences"
 ```
 
 ### Task 7: Notifications and ping copy
@@ -934,7 +939,7 @@ git commit -m "feat(scheduler): expand timetables"
 
 ntfy's admin API: `POST /v1/users {username, password}`, `PUT /v1/users/access {username, topic, permission: 'read-write'}` and `DELETE /v1/users {username}`, each with `Authorization: Bearer <NTFY_ADMIN_TOKEN>`; then `POST /v1/account/token` with Basic auth as the new user and body `{ label: 'TolongMeeting', expires: 0 }` (a token that never expires). `ensureNtfy` is idempotent: a member who has a topic gets it back; otherwise it creates the user with a random 32-byte password that is never stored, grants a new topic `tm-` plus 24 random characters from `a-z2-7`, creates the token and stores it sealed as `members.ntfy_token`. Each member's topic is readable and writable only with their own token, so workers publish with the member's token and the admin token never leaves `tm-web`.
 
-The Notifications page calls `ensureNtfy` on load. It shows the server URL (`NTFY_URL`), the topic and, behind a "Show token" button, the token, with steps for the ntfy phone app (add a subscription on another server, with the access token) and for the desktop (the ntfy web app at `NTFY_URL` until plan 03's companion app), and a "Send a test ping" button.
+The Notifications page sets up through a "Set up notifications" button that calls `ensureNtfy`, not on load, so a page load has no side effect (a deviation from the first draft of this plan, which called it on load). It shows the server URL (`NTFY_URL`) and the topic. Its "Show token" button calls the same-origin `showNtfyTokenAction` on each click and renders the token client-side from that reply only: the token is never in the initial HTML, never logged, never in a redirect, and the reply is not cached. It gives steps for the ntfy phone app (add a subscription on another server, with the server URL, the topic and the access token) and for the desktop (the ntfy web app at `NTFY_URL` until plan 03's companion app), and a "Send a test ping" button.
 
 Ping copy (`<when>` is `formatWhen` and `<deleteOn>` is `formatDay`, in the member's time zone; action labels are exact):
 
@@ -953,7 +958,7 @@ Ping copy (`<when>` is `formatWhen` and `<deleteOn>` is `formatDay`, in the memb
 
 `workerFailed` takes one of these reasons: `it crashed 3 times`, `it couldn't start`, `it ran past the hard stop`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/notify/src/messages.test.ts
@@ -1029,23 +1034,25 @@ test("a failing ntfy doesn't throw and doesn't log the token", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/notify/src/messages.test.ts packages/web/db/notifier.test.ts packages/web/lib/ntfy-admin.test.ts`
 
 Expected: FAIL with `Cannot find module './messages'`.
 
-- [ ] **Step 3: Implement the copy, the notifier, the ntfy admin client and the page**
+- [x] **Step 3: Implement the copy, the notifier, the ntfy admin client and the page**
+
+  Done except the page: `app/notifications/page.tsx` is deferred behind the Figma gate (no UI in this task).
 
 The notifier's error log names the ping title only and never prints the error, whose text can carry the token.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/notify/src/messages.test.ts packages/web/db/notifier.test.ts packages/web/lib/ntfy-admin.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/notify/src/messages* packages/web/db packages/web/lib/ntfy-admin* packages/web/app/notifications
@@ -1054,10 +1061,12 @@ git commit -m "feat(web): provision ntfy and ping copy"
 
 ### Task 8: AI keys page
 
+> Non-UI parts only. The page (`app/ai-keys/page.tsx`, its copy and the `'use server'` wrappers that call `requireMember()`) is deferred at the Figma gate. Tests live in `packages/web/test/` (COMMON), not beside the sources.
+
 **Files:**
 
 - Create: `packages/web/db/job-config.ts`, `packages/web/lib/ai-keys.ts`, `packages/web/app/ai-keys/page.tsx`, `packages/web/app/ai-keys/actions.ts`
-- Test: `packages/web/db/job-config.test.ts`, `packages/web/lib/ai-keys.test.ts`
+- Test: `packages/web/test/job-config.test.ts`, `packages/web/test/ai-keys.test.ts`
 
 **Interfaces:**
 
@@ -1086,7 +1095,7 @@ Page copy (exact):
 
 The page never shows a saved key back; it shows "Saved" with the last test time and result, and a "Test again" button.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/db/job-config.test.ts
@@ -1161,21 +1170,21 @@ test('the key is never logged', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/db/job-config.test.ts packages/web/lib/ai-keys.test.ts`
 
 Expected: FAIL with `Cannot find module './job-config'`.
 
-- [ ] **Step 3: Implement `aiConfigFor`, the key functions and the page**
+- [x] **Step 3: Implement `aiConfigFor`, the key functions and the page**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/db/job-config.test.ts packages/web/lib/ai-keys.test.ts`
 
 Expected: PASS, `5 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/db/job-config* packages/web/lib/ai-keys* packages/web/app/ai-keys
@@ -1189,6 +1198,8 @@ git commit -m "feat(web): add AI keys page"
 - Create: `packages/web/lib/identities.ts`, `packages/web/lib/details.ts`, `packages/web/app/accounts/page.tsx`, `packages/web/app/accounts/actions.ts`, `packages/web/app/details/page.tsx`, `packages/web/app/details/actions.ts`
 - Test: `packages/web/lib/identities.test.ts`, `packages/web/lib/details.test.ts`
 
+**Deferred (Figma gate):** the two pages (`app/accounts/page.tsx`, `app/details/page.tsx`) and their markup wait for an approved design in Figma (`DESIGN.md` first). Step 3 stays open until they land. The actions files are plain functions until `requireMember()` (Task 5) exists. Tests live in `packages/web/test/` (COMMON.md), not beside the modules.
+
 **Interfaces:**
 
 - Consumes: `MemberScope` (Task 4); `ACCOUNT_KINDS`, `AccountKind` (Task 1); `SavedDetail`, `RunLocation` (architecture).
@@ -1197,7 +1208,9 @@ git commit -m "feat(web): add AI keys page"
 
 The Accounts page lists the member's identities, each with its settings form (run location select showing all three locations with the two non-server ones disabled and labelled "available later", Zoom guest display name defaulting to the member's display name), its account status, and a "Sign in" button that opens `/accounts/<identityId>/signin` (Task 18). The My details page shows the four built-in values first, then custom pairs, each with editable label variants, then the names the member answers to.
 
-- [ ] **Step 1: Write the failing tests**
+Deferred page step: the Accounts page must confirm a deletion before it runs, and list what will be removed with the identity: its past meetings and their records (finished occurrences cascade with the identity; their files go at the next nightly retention run), and name what blocks it instead when a timetable entry, an unfinished meeting or sign-in, or a hold stops the delete.
+
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/identities.test.ts
@@ -1298,21 +1311,21 @@ test('duplicate labels and a malformed university email are refused', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/identities.test.ts packages/web/lib/details.test.ts`
 
 Expected: FAIL with `Cannot find module './identities'`.
 
-- [ ] **Step 3: Implement the two modules and the two pages**
+- [x] **Step 3: Implement the two modules and the two pages**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/identities.test.ts packages/web/lib/details.test.ts && bun run typecheck`
 
 Expected: PASS, `6 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/identities* packages/web/lib/details* packages/web/app/accounts packages/web/app/details
@@ -1324,7 +1337,7 @@ git commit -m "feat(web): add accounts and details pages"
 **Files:**
 
 - Create: `packages/web/lib/timetable.ts`, `packages/web/lib/queue.ts`, `packages/web/app/timetable/page.tsx`, `packages/web/app/timetable/[id]/page.tsx`, `packages/web/app/timetable/actions.ts`
-- Test: `packages/web/lib/timetable.test.ts`
+- Test: `packages/web/test/timetable.test.ts`
 
 **Interfaces:**
 
@@ -1353,10 +1366,10 @@ For `type: 'work'` the schema empties `trustedSenders`, `formDetails` and `atten
 
 `saveEntry` checks `hasWorkingKey` (else `NoWorkingKeyError`), runs `deps.ensureNtfy()`, checks that the identity is the member's (else a not-found error), writes the entry, calls `scope.syncOccurrences(deps.queue, deps.now)`, then looks for clashes on that identity over the next 14 days. If any involve this entry's occurrences, it sends one `pings.identityClashSaved` (the first clash) and returns all of them for the form to show. `deleteEntry` throws `InUseError('This entry has a meeting in progress.')` while one of its occurrences is in `ACTIVE_STATES`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/lib/timetable.test.ts
+// packages/web/test/timetable.test.ts
 const base = {
   name: 'Data Mining',
   type: 'lecture',
@@ -1428,23 +1441,23 @@ test("an entry with a meeting in progress can't be deleted", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/lib/timetable.test.ts`
+Run: `bun test packages/web/test/timetable.test.ts`
 
 Expected: FAIL with `Cannot find module './timetable'`.
 
-- [ ] **Step 3: Implement the schema, the actions, the queue helper and the pages**
+- [x] **Step 3: Implement the schema, the actions, the queue helper and the pages**
 
 The list page shows each entry with its next occurrence (`formatWhen`), its identity and a pause toggle; the edit page is one form over `EntryInputSchema`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/timetable.test.ts && bun run typecheck`
+Run: `bun test packages/web/test/timetable.test.ts && bun run typecheck`
 
-Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
+Expected: PASS, all tests pass; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/timetable* packages/web/lib/queue.ts packages/web/app/timetable
@@ -1457,7 +1470,7 @@ git commit -m "feat(web): add timetable page"
 
 - Create: `packages/web/lib/home.ts`, `packages/web/lib/admin.ts`, `packages/web/app/layout.tsx`, `packages/web/app/page.tsx`, `packages/web/app/admin/page.tsx`, `packages/web/app/admin/actions.ts`
 - Modify: `packages/web/lib/scope.ts` (`adminScope`)
-- Test: `packages/web/lib/home.test.ts`, `packages/web/lib/admin.test.ts`
+- Test: `packages/web/test/home.test.ts`, `packages/web/test/admin.test.ts` (tests live in `test/`, COMMON.md)
 
 **Interfaces:**
 
@@ -1469,7 +1482,7 @@ git commit -m "feat(web): add timetable page"
 
 `removeMember` throws `MemberBusyError` while one of the member's occurrences is in `ACTIVE_STATES` or a sign-in session isn't ended, and `LastAdminError` for the last admin (so does `setRole` when it would demote the last admin). Otherwise it deletes the member's ntfy user (`ntfyUsername`), then the member row, which cascades to all their rows; their files on disk go in the next retention run (Task 20 removes directories without a database row). The admin page lists members with exactly the columns of `listMembers` and has add, role and remove controls; it never reads member-owned tables.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/home.test.ts
@@ -1523,21 +1536,21 @@ test("the last admin can't be removed or demoted", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/home.test.ts packages/web/lib/admin.test.ts`
 
 Expected: FAIL with `Cannot find module './home'`.
 
-- [ ] **Step 3: Implement `homeData`, `adminScope`, the layout and the two pages**
+- [x] **Step 3: Implement `homeData`, `adminScope`, the layout and the two pages**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/home.test.ts packages/web/lib/admin.test.ts && bun run typecheck`
 
 Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/home* packages/web/lib/admin* packages/web/lib/scope.ts packages/web/app/layout.tsx packages/web/app/page.tsx packages/web/app/admin
@@ -1560,7 +1573,7 @@ File URLs are `/api/meetings/<id>/files/<relPath>`; the route resolves them only
 
 Action rules: `makeBotLeave` appends `leave_now` to `pending_commands` only while the occurrence is in `ACTIVE_STATES`, else `InUseError('The bot is not in this meeting.')`; `pasteLink` needs an `https:` URL and a state of `scheduled`, `starting`, `verifying_accounts`, `waiting_for_signin` or `watching_for_link`, and sets `pasted_link`; `requestDeleteNow` throws `InUseError('Make the bot leave before deleting this meeting.')` in `ACTIVE_STATES`, and otherwise sets `state_reason` to `deleting` and sends `delete-occurrence` with `{ occurrenceId }` (the scheduler deletes, Task 20); `rerunPipeline` works only in `post_processing` with `state_reason` `ai_key_error`, and sends `pipeline` with `{ occurrenceId }`. Export buttons are plan 07's.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/meeting.test.ts
@@ -1627,21 +1640,21 @@ test('no range returns the whole file; a bad range returns 416', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/meeting.test.ts packages/web/lib/files.test.ts`
 
 Expected: FAIL with `Cannot find module './meeting'`.
 
-- [ ] **Step 3: Implement the loader, the file server, the actions, the route and the page**
+- [x] **Step 3: Implement the loader, the file server, the actions, the route and the page**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/meeting.test.ts packages/web/lib/files.test.ts && bun run typecheck`
 
 Expected: PASS, `6 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/meeting* packages/web/lib/files* packages/web/app/meetings packages/web/app/api/meetings
@@ -1654,14 +1667,14 @@ git commit -m "feat(web): add meeting page"
 
 - Create: `packages/scheduler/src/container-spec.ts`, `packages/scheduler/src/docker-gate/validate.ts`, `packages/scheduler/src/docker-gate/main.ts`
 - Modify: `packages/core/src/control.ts` (`SpecEnv`)
-- Test: `packages/scheduler/src/container-spec.test.ts`, `packages/scheduler/src/docker-gate/validate.test.ts`
+- Test: `packages/scheduler/test/container-spec.test.ts`, `packages/scheduler/test/docker-gate-validate.test.ts`, `packages/scheduler/test/docker-gate.test.ts`
 
 The design asks the proxy to block privileged mode, other images and other mounts. `tecnativa/docker-socket-proxy` filters by endpoint only and can't read request bodies, so 1C runs this small gate as the compose service `docker-proxy` instead.
 
 **Interfaces:**
 
 - Produces (adds to contracts): `type SpecEnv = { dataRoot: string; profileRoot: string; publicUrl: string; ntfyUrl: string }` in `packages/core/src/control.ts` (shared by the scheduler, `packages/web/db` and the pipeline); `WORKER_IMAGE = 'tolongmeeting/worker:current'`; `WORKER_NETWORK = 'tm-workers'`; `CADDY_WORKER_IP = '172.30.0.2'`; `containerSpec(p: SpecParams): CreateBody`, where `SpecParams = { kind: 'worker'; occurrenceId: string; attempt: number; identityId: string; env: SpecEnv } | { kind: 'signin'; sessionId: string; identityId: string; env: SpecEnv }`; `containerName(p: SpecParams): string` (`tm-worker-<occurrenceId>-a<attempt>` or `tm-signin-<sessionId>`); `jobFileBase(p: SpecParams): string` (`<profileRoot>/<identityId>/job/<containerName>`).
-- Produces: `validateRequest(r: { method: string; path: string; body: unknown }, cfg: { dataRoot: string; profileRoot: string }): { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect'; id?: string } | { ok: false; reason: string }`; `main.ts` serves `:2375` with `Bun.serve`, forwards allowed requests to `/var/run/docker.sock` (`fetch(..., { unix })`), and before `start`, `stop` or `inspect` inspects the target itself and refuses any container whose `tm.role` label isn't `worker` or `signin`.
+- Produces: `validateRequest(r: { method: string; path: string; body: unknown }, cfg: GateConfig /* = SpecEnv */): { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect'; id?: string } | { ok: false; reason: string }`; `main.ts` serves `:2375` through `serveGate` (`Bun.serve` with `maxRequestBodySize` 65536, `development` false and an error handler that answers a bare 502 when Docker is unreachable or inspect JSON is bad), forwards allowed requests to `/var/run/docker.sock` (`fetch(..., { unix })`), and before `start`, `stop` or `inspect` inspects the target itself and refuses any container unless `tm.role` is `worker` or `signin`, `Config.Image` is `WORKER_IMAGE`, `HostConfig.Privileged` is not true and its name matches the role's name pattern; it then acts on the full id and sends no client body. The gate reads `TM_DATA_ROOT`, `TM_PROFILE_ROOT`, `TM_PUBLIC_URL` and `NTFY_URL`.
 
 The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs only as noted after it):
 
@@ -1683,7 +1696,8 @@ The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs 
   "HostConfig": {
     "Binds": [
       "<dataRoot>/occurrences/<occurrenceId>:<dataRoot>/occurrences/<occurrenceId>",
-      "<profileRoot>/<identityId>:<profileRoot>/<identityId>"
+      "<profileRoot>/<identityId>:<profileRoot>/<identityId>",
+      "<profileRoot>/.machine-ids/<identityId>:/etc/machine-id:ro"
     ],
     "ShmSize": 2147483648,
     "NetworkMode": "tm-workers",
@@ -1697,11 +1711,11 @@ The worker body (`<...>` are filled from `SpecParams`; the sign-in body differs 
 }
 ```
 
-The sign-in body uses `"Cmd": ["--signin", "<profileRoot>/<identityId>/job/<name>.json"]`, labels `tm.role: signin` and `tm.session`, no `TM_DATA_ROOT` and only the profile bind, with `Memory` 2147483648 and `NanoCpus` 1000000000. Binds keep host paths inside the container, so `JobConfig.dataDir` and `profileDir` are the host paths (`<dataRoot>/occurrences/<occurrenceId>` and `<profileRoot>/<identityId>/work`), as in architecture's layout. `Memory` and `NanoCpus` follow spike 6's report.
+The machine-id file sits in `<profileRoot>/.machine-ids/`, a tree no container mounts, so a compromised container can't plant a symlink there for the next launch to bind-mount; Task 14's launcher must `lstat` it before every create and require a regular file with link count 1, else recreate it (temp file in that directory, `chmod 644`, `mv -f`; directory mode 755). The sign-in body uses `"Cmd": ["--signin", "<profileRoot>/<identityId>/job/<name>.json"]`, labels `tm.role: signin` and `tm.session`, no `TM_DATA_ROOT` and only the profile bind, with `Memory` 2147483648 and `NanoCpus` 1000000000. Binds keep host paths inside the container, so `JobConfig.dataDir` and `profileDir` are the host paths (`<dataRoot>/occurrences/<occurrenceId>` and `<profileRoot>/<identityId>/work`), as in architecture's layout. `Memory` and `NanoCpus` follow spike 6's report.
 
-Gate rules: paths may carry a `/v1.NN` prefix. Allowed: `GET /_ping`; `POST /containers/create?name=<name>`; `POST /containers/<id>/start`; `POST /containers/<id>/stop` (optional `?t=N`); `GET /containers/<id>/json`. Anything else gets 403 with `endpoint not allowed`. A create body must have only the keys `Image`, `Cmd`, `Env`, `Labels`, `HostConfig`; `Image` equal to `WORKER_IMAGE`; a role label of `worker` or `signin` that agrees with the name pattern and with `Cmd[0]`; `Cmd[1]` under `<profileRoot>/<uuid>/job/`; `Env` names only from the four above; `HostConfig` keys only from the body above, with `Binds` exactly the role's binds (source equals target, uuids only, no options), `NetworkMode` `tm-workers`, `ShmSize` 2147483648, `Dns` as above, every `ExtraHosts` entry ending `:172.30.0.2`, and `Sysctls` exactly the IPv6 one.
+Gate rules: paths may carry a `/v1.41` to `/v1.51` prefix (any other version is refused). Allowed: `GET /_ping`; `POST /containers/create?name=<name>`; `POST /containers/<id>/start`; `POST /containers/<id>/stop` (optional `?t=N`); `GET /containers/<id>/json`. Anything else gets 403 with `endpoint not allowed`. A create body must have only the keys `Image`, `Cmd`, `Env`, `Labels`, `HostConfig`; `Image` equal to `WORKER_IMAGE`; a role label of `worker` or `signin` that agrees with the name pattern and with `Cmd[0]`; `Cmd[1]` under `<profileRoot>/<uuid>/job/`; `Env` names only from the four above; `HostConfig` keys only from the body above, with `Binds` exactly the role's binds (source equals target, uuids only, no options), `NetworkMode` `tm-workers`, `ShmSize` 2147483648, `Dns` as above, and `Sysctls` exactly the IPv6 one. The gate rebuilds the whole body from its own `GateConfig` (roots, `publicUrl`, `ntfyUrl`) and the name, and the request must equal it: `TM_PUBLIC_URL`, `ExtraHosts` and every other value are not free.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/scheduler/src/docker-gate/validate.test.ts
@@ -1795,26 +1809,26 @@ test('the worker spec keeps host paths, the shm size and no secrets in its envir
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/container-spec.test.ts packages/scheduler/src/docker-gate/validate.test.ts`
+Run: `bun test packages/scheduler/test`
 
 Expected: FAIL with `Cannot find module './container-spec'`.
 
-- [ ] **Step 3: Implement `containerSpec`, `validateRequest` and the gate server**
+- [x] **Step 3: Implement `containerSpec`, `validateRequest` and the gate server**
 
 The gate logs method, path and the refusal reason, never bodies.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/scheduler/src/container-spec.test.ts packages/scheduler/src/docker-gate/validate.test.ts`
+Run: `bun test packages/scheduler/test`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/scheduler/src/container-spec* packages/scheduler/src/docker-gate
+git add packages/scheduler
 git commit -m "feat(scheduler): add docker socket gate"
 ```
 
@@ -1824,7 +1838,7 @@ git commit -m "feat(scheduler): add docker socket gate"
 
 - Create: `packages/scheduler/src/docker.ts`, `packages/scheduler/src/locks.ts`, `packages/scheduler/src/job-files.ts`, `packages/scheduler/src/launch.ts`
 - Modify: `packages/web/db/job-config.ts` (`buildEntrySnapshot`, `loadJobConfig`)
-- Test: `packages/scheduler/src/locks.test.ts`, `packages/scheduler/src/job-files.test.ts`, `packages/web/db/job-config.test.ts`, `packages/scheduler/src/launch.test.ts`
+- Test: `packages/scheduler/test/locks.test.ts`, `packages/scheduler/test/job-files.test.ts`, `packages/web/test/job-config.test.ts`, `packages/scheduler/test/launch.test.ts`
 
 **Interfaces:**
 
@@ -1846,7 +1860,7 @@ git commit -m "feat(scheduler): add docker socket gate"
 
 `startAttempt` makes a control token `<attempt>.<32 random bytes, base64url>`, stores its sha256 hex in `control_token_hash`, writes the `JobConfig` (control URL `<publicUrl>/api/control`) and `profileKey(master, identityId)` with `writeJobFiles(jobFileBase(spec), ...)`, creates and starts the container from `containerSpec`, and sets `attempt`, `container_name` and `last_heartbeat_at = now`. If Docker refuses, it applies `fail` with reason `launch_failed`, releases the profile, sends `pings.workerFailed` with `it couldn't start`, and `launchOccurrence` returns `failed`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/scheduler/src/launch.test.ts
@@ -1970,23 +1984,23 @@ test('the entry snapshot carries local start and end times with the offset', asy
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/launch.test.ts packages/scheduler/src/locks.test.ts packages/scheduler/src/job-files.test.ts packages/web/db/job-config.test.ts`
+Run: `bun test packages/scheduler/test/launch.test.ts packages/scheduler/test/locks.test.ts packages/scheduler/test/job-files.test.ts packages/web/test/job-config.test.ts`
 
 Expected: FAIL with `Cannot find module './launch'`.
 
-- [ ] **Step 3: Implement the Docker client, locks, job files, the job-config builders and the launch**
+- [x] **Step 3: Implement the Docker client, locks, job files, the job-config builders and the launch**
 
 `job-files.test.ts` checks the 0600 mode and that `removeJobFiles` deletes both files.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/scheduler/src/launch.test.ts packages/scheduler/src/locks.test.ts packages/scheduler/src/job-files.test.ts packages/web/db/job-config.test.ts`
+Run: `bun test packages/scheduler/test/launch.test.ts packages/scheduler/test/locks.test.ts packages/scheduler/test/job-files.test.ts packages/web/test/job-config.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src packages/web/db/job-config*
@@ -1999,7 +2013,7 @@ git commit -m "feat(scheduler): launch workers at T-60"
 
 - Create: `packages/web/lib/control.ts`, `packages/web/app/api/control/heartbeat/route.ts`, `packages/scheduler/src/monitor.ts`
 - Modify: `packages/core/src/types.ts` (`HeartbeatReply`), `packages/core/src/control.ts` (`HeartbeatSchema` and event data shapes)
-- Test: `packages/web/lib/control.test.ts`, `packages/scheduler/src/monitor.test.ts`
+- Test: `packages/web/test/control.test.ts`, `packages/scheduler/test/monitor.test.ts`
 
 **Interfaces:**
 
@@ -2024,10 +2038,10 @@ git commit -m "feat(scheduler): launch workers at T-60"
 - **Exit**: an occurrence outside `ACTIVE_STATES` that still has `container_name`, whose container `inspect` returns `null` or not running, gets `container_name` cleared, its profile released, and `profiles.latest_checkpoint` and `checkpoint_at` set from the newest file in `<profileRoot>/<identityId>/checkpoints/`.
 - **Job files**: the current attempt's job files are removed once `last_heartbeat_at` is later than the launch, or 120 seconds after the launch.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/web/lib/control.test.ts
+// packages/web/test/control.test.ts
 const ev = (type: EventType, data: object, at = '2026-10-21T05:00:05.000Z'): MeetingEvent => ({
   occurrenceId: ID,
   attempt: 1,
@@ -2190,7 +2204,7 @@ test('account checks and form events are recorded', async () => {
 ```
 
 ```ts
-// packages/scheduler/src/monitor.test.ts
+// packages/scheduler/test/monitor.test.ts
 const now = new Date('2026-10-21T06:30:00Z')
 
 test('30 seconds without a heartbeat restarts the worker as attempt 2 with a ping', async () => {
@@ -2266,42 +2280,42 @@ test('a finished container releases the identity and records the newest checkpoi
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/web/lib/control.test.ts packages/scheduler/src/monitor.test.ts`
+Run: `bun test packages/web/test/control.test.ts packages/scheduler/test/monitor.test.ts`
 
 Expected: FAIL with `Cannot find module './control'`.
 
-- [ ] **Step 3: Implement the contract change, `handleHeartbeat`, the route and `monitorTick`**
+- [x] **Step 3: Implement the contract change, `handleHeartbeat`, the route and `monitorTick`**
 
 The route reads `Authorization`, rejects bodies over 1 MB by `Content-Length`, and returns `Response.json(body, { status })`. Neither module logs tokens, links or event data.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/control.test.ts packages/scheduler/src/monitor.test.ts && bun run typecheck`
+Run: `bun test packages/web/test/control.test.ts packages/scheduler/test/monitor.test.ts && bun run typecheck`
 
 Expected: PASS, `11 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src packages/web/lib/control* packages/web/app/api/control packages/scheduler/src/monitor*
-git commit -m "feat: add heartbeat endpoint and monitor"
+git commit -m "feat(web): heartbeats and crash monitor"
 ```
 
 ### Task 16: Worker heartbeat and commands
 
 **Files:**
 
-- Create: `packages/worker/src/control/outbox.ts`, `packages/worker/src/control/heartbeat.ts`, `packages/worker/src/control/commands.ts`, `packages/worker/src/control/link-override.ts`, `packages/worker/src/control/links.ts`, `packages/worker/src/forms/handled.ts`
-- Modify: `packages/worker/src/profile/profile.ts` (`restoreCheckpoint`, `latestCheckpoint`), `packages/worker/src/run.ts`
-- Test: `packages/worker/src/control/heartbeat.test.ts`, `packages/worker/src/control/commands.test.ts`, `packages/worker/src/forms/handled.test.ts`, `packages/worker/src/profile/profile.test.ts`
+- Create: `packages/worker/src/control/outbox.ts`, `packages/worker/src/control/heartbeat.ts`, `packages/worker/src/control/commands.ts`, `packages/worker/src/control/link-override.ts`, `packages/worker/src/control/links.ts`
+- Modify: `packages/worker/src/profile/profile.ts` (`listCheckpoints`, `latestCheckpoint`), `packages/worker/src/events.ts` (`onEvent` hook), `packages/worker/src/alerts.ts`, `packages/worker/src/profile-setup.ts`, `packages/worker/src/run-deps.ts`, `packages/worker/src/run.ts`, `packages/notify/src/messages.ts` (optional `links`), `packages/core/src/control.ts` (`ControlCommandSchema`, `HeartbeatReplySchema`)
+- Test (final home: `packages/<pkg>/test/`): `packages/worker/test/control.test.ts`, `packages/worker/test/run-control.test.ts`, `packages/worker/test/profile.test.ts`, `packages/notify/test/messages.test.ts`, `packages/core/test/control.test.ts`
 
 **Interfaces:**
 
 - Consumes: `JobConfig`, `Heartbeat`, `HeartbeatReply` (with `link`, Task 15), `MeetingEvent`, `ControlCommand`, `StateEventData` (Task 15); 1A's `runOccurrence`, `checkpointProfile`, `prepareProfile`, `PlatformAdapter.leave`; 1A's `Stopper`; `loadProfileKey` (Task 2).
-- Changes contract: `startHeartbeat(cfg: JobConfig, getStatus: () => Heartbeat, onReply: (reply: HeartbeatReply) => void, opts?: { intervalMs?: number; fetchFn?: typeof fetch }): Stopper`. Architecture's signature had no reply callback, which the worker needs for acks, commands and the pasted link.
-- Produces: `class EventOutbox { push(e: MeetingEvent): void; pending(max = 500): MeetingEvent[]; ack(n: number): void }`; `dispatchCommands(cmds: ControlCommand[], h: { leave(): Promise<void>; stop(): Promise<void>; pause(): Promise<void>; resume(): Promise<void> }): Promise<void>` (in order; `leave_now` and `take_over` both call `h.leave` once per batch until plan 06; `stop` calls `h.stop`; `pause_for_signin` and `resume_after_signin` call `h.pause` and `h.resume`); `class LinkOverride { offer(url: string | null): void; current(): string | null; next(): Promise<string> }` (`next` resolves on the first new non-null URL); `siteLinks(cfg: JobConfig): { meetingPage: string; signIn: string } | null` (from `TM_PUBLIC_URL`: `/meetings/<occurrenceId>` and `/accounts/<identityId>/signin`; null when the variable is unset, as in 1A); `loadHandledForms(dataDir: string): Promise<Set<string>>` (the `finalUrl`, else `url`, of every `forms/*/record.json`); `latestCheckpoint(checkpointsDir: string): Promise<string | null>` (the greatest `<timestamp>.tar.enc` name); `restoreCheckpoint(checkpointPath: string, dir: string, key: Buffer): Promise<void>` (the inverse of 1A's `checkpointProfile`: decrypts and unpacks into an emptied `dir`).
+- Changes contract: `startHeartbeat(cfg: JobConfig, getStatus: () => Heartbeat, onReply: (reply: HeartbeatReply) => void, opts?: HeartbeatOptions): HeartbeatLoop` (a `Stopper` whose `stop()` is awaited, plus `flush()`). Architecture's signature had no reply callback, which the worker needs for acks, commands and the pasted link.
+- Produces: `class EventOutbox { static open(dir, attempt): Promise<EventOutbox>; push(e: MeetingEvent): void; pending(max = 500): MeetingEvent[]; ack(n: number): void; settled(): Promise<void> }` (durable, per attempt, adopted by the next attempt); `dispatchCommands(cmds: ControlCommand[], h: { leave(): Promise<void>; stop(): Promise<void>; pause(): Promise<void>; resume(): Promise<void> }): Promise<void>` (in order; `leave_now` and `take_over` both call `h.leave` once per batch until plan 06; `stop` calls `h.stop`; `pause_for_signin` and `resume_after_signin` call `h.pause` and `h.resume`); `class LinkOverride { constructor(opts?: { normalise?; onRefused? }); offer(url: string | null): void; current(): string | null; next(): Promise<string> }` (`next` resolves on the first new non-null URL); `siteLinks(cfg: JobConfig): { meetingPage: string; signIn: string } | null` (from `TM_PUBLIC_URL`: `/meetings/<occurrenceId>` and `/accounts/<identityId>/signin`; null when the variable is unset, as in 1A); `latestCheckpoint(checkpointsDir: string): Promise<string | null>` (the greatest `<timestamp>.tar.enc` path). Preflight C8: no `restoreCheckpoint` (1A's `restoreProfile` serves) and no `forms/handled.ts` (01b's dispatcher already skips handled forms after a restart).
 
 `startHeartbeat` posts to `<control.url>/heartbeat` with `Authorization: Bearer <control.token>` every 5000 ms, with a 4000 ms timeout and never two requests at once. A 410 reply is passed on as `{ ackedEvents: 0, commands: ['stop'], link: null }`; network errors and 5xx keep the events for the next tick; a 401 stops the timer and logs `heartbeat refused`. It returns a no-op `Stopper` when `cfg.control` is null.
 
@@ -2309,12 +2323,12 @@ git commit -m "feat: add heartbeat endpoint and monitor"
 
 - Start the heartbeat first, reporting `starting`; `getStatus` returns the current state, recording flag, participant count and `outbox.pending()`; `onReply` calls `outbox.ack`, `linkOverride.offer(reply.link)` and `dispatchCommands`.
 - Every event 1A appends to `events.jsonl` also goes to `outbox.push`; every change of state emits a `state` event with `StateEventData`, and every account check an `AccountCheckData` event.
-- When `cfg.attempt > 1`, restore `latestCheckpoint(<profileRoot>/<identityId>/checkpoints)` into `cfg.profileDir` with `loadProfileKey` before 1A's `prepareProfile`, and seed the meeting's form de-duplication set from `loadHandledForms(cfg.dataDir)`, so a restarted worker never submits a form twice. The occurrence directory is the same host directory across attempts.
+- `setupProfile` loads the key with `loadProfileKey` (C20) and restores the newest checkpoint that authenticates into an empty working copy; a restarted worker (`cfg.attempt > 1`) keeps its surviving working copy (TRD: the freshest session state). The occurrence directory is the same host directory across attempts, so 01b's dispatcher skips the forms already handled.
 - In `watching_for_link`, race 1A's link sources with `linkOverride.next()`; a pasted link wins until joining starts.
 - `leave`: `adapter.leave(stage)`, report `left_by_member`, then 1A's normal finish (stop recording, join segments, checkpoint). `stop`: report `leaving` and take the same finish as a meeting end. After the finish, report `transcribing` in a last heartbeat (the worker's "my part is done" marker), then exit 0.
 - Pings: the joined ping gets the action `Open meeting page`, and the expired-account ping `Sign in again`, from `siteLinks`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/control/heartbeat.test.ts
@@ -2447,21 +2461,21 @@ test('forms recorded by earlier attempts are handled', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/control packages/worker/src/forms/handled.test.ts packages/worker/src/profile/profile.test.ts`
 
 Expected: FAIL with `Cannot find module './heartbeat'`.
 
-- [ ] **Step 3: Implement the modules and wire `run.ts`**
+- [x] **Step 3: Implement the modules and wire `run.ts`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/control packages/worker/src/forms/handled.test.ts packages/worker/src/profile/profile.test.ts && bun run typecheck`
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src
@@ -2497,7 +2511,7 @@ x11vnc websockify xprintidle
 if [ "$1" = "--signin" ]; then exec node /app/dist/signin.js "$2"; fi
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/control/vnc.test.ts
@@ -2581,26 +2595,28 @@ test('15 idle minutes end the session', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/control/vnc.test.ts packages/worker/src/control/desk-pause.test.ts packages/worker/src/signin/run-signin.test.ts`
 
 Expected: FAIL with `Cannot find module './vnc'`.
 
-- [ ] **Step 3: Implement the modules, wire `run.ts`, and change the image and entrypoint**
+- [x] **Step 3: Implement the modules, wire `run.ts`, and change the image and entrypoint**
 
-- [ ] **Step 4: Run tests to verify they pass, and build the image**
+- [x] **Step 4: Run tests to verify they pass, and build the image**
 
 Run: `bun test packages/worker/src/control packages/worker/src/signin && docker build -f docker/worker/Dockerfile -t tolongmeeting/worker:current . && docker run --rm --entrypoint sh tolongmeeting/worker:current -c 'command -v x11vnc websockify xprintidle'`
 
 Expected: PASS, `0 fail`; the image builds and the last command prints three paths.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/control.ts packages/worker/src docker/worker
 git commit -m "feat(worker): add desk pause and sign-in"
 ```
+
+As built (deviations from the snippets above): the tests live in `packages/worker/test/` (`signin-vnc`, `desk-pause`, `run-signin`, `signin-post`, `run-desk-pause`, `forms-desk-pause`). Per the controller's VNC ruling `vncArgs(display, desk, passwordFile, opts?)` replaces `-nopw` with `-passwdfile` (the password is derived by core `vncSecret` from the hash of the control token, in a 0600 file) and `startVnc` takes the secret as its third argument. The idle time is the shorter of `xprintidle` and the time since the pause began. `SigninHeartbeat` gains an optional `accounts` (the last report only), `runSignin` takes an optional `signal` (SIGTERM ends it as `done`), and a reply with `resume_after_signin` ends it like `stop`. The entrypoint runs `--signin` as a mode (`run node packages/worker/dist/signin.js`) so the TERM trap applies. Step 4's image build is not done here (root filesystem full): the scripts pass `bash -n`, and the image is unbuilt.
 
 ### Task 18: Remote sign-in
 
@@ -2609,6 +2625,8 @@ git commit -m "feat(worker): add desk pause and sign-in"
 - Create: `packages/web/lib/signin.ts`, `packages/web/app/api/vnc/authorize/route.ts`, `packages/web/app/api/control/signin/route.ts`, `packages/web/app/accounts/[identityId]/signin/page.tsx`, `packages/web/app/accounts/[identityId]/signin/viewer.tsx`, `packages/scheduler/src/signin.ts`
 - Modify: `packages/web/lib/control.ts` (sign-in events, `authoriseVnc`, `handleSigninHeartbeat`), `packages/scheduler/src/monitor.ts` (silent sessions)
 - Test: `packages/web/lib/signin.test.ts`, `packages/scheduler/src/signin.test.ts`, `packages/scheduler/src/monitor.test.ts`
+
+**As built (non-UI parts):** the tests live in `packages/web/test/signin.test.ts` and `packages/scheduler/test/signin.test.ts` (the monitor cases are there too, not in `monitor.test.ts`). The server actions are in `app/accounts/[identityId]/signin/actions.ts` (`startSigninAction`, `finishSigninAction`, `signinStatusAction`, `vncPasswordAction`), thin wrappers over the scope-taking functions. `vncPassword(scope, sessionId)` is new: the viewer gets the noVNC password only through that action. `MemberScope` gains `sendCommand(occurrenceId, command)`. `startSigninContainer` can also answer `deferred`. Not done: `page.tsx` and `viewer.tsx` (deferred: Figma gate).
 
 **Interfaces:**
 
@@ -2626,7 +2644,7 @@ Flow:
 - **`authoriseVnc`**: `X-Forwarded-Uri` must match `^/vnc/<uuid>/`; no Better Auth session gives 401; a session row of another member, or one that isn't `ready`, gives 403; otherwise 200 with header `X-Vnc-Upstream: <upstream>`, where `upstream` must match `^tm-(worker|signin)-[0-9a-f-]+(-a\d+)?:6080$`. The route returns an empty body with that status and header.
 - **Page**: `/accounts/<identityId>/signin` starts or reuses a session, polls `signinStatus` every 2 seconds, then mounts noVNC's `RFB` (package `@novnc/novnc`) on `wss://<host>/vnc/<sessionId>/websockify` with `scaleViewport`. Beside the view it lists what to sign in to (Zoom, Microsoft, Google, WhatsApp Web by scanning the code with the phone, Discord, Teams), the note `This view shows only the unrecorded side of the bot's screen. It closes after 15 minutes without input.`, and a "Done" button calling `finishSignin`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/signin.test.ts
@@ -2755,21 +2773,21 @@ test('a sign-in session silent for 30 seconds is ended and its container stopped
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/signin.test.ts packages/scheduler/src/signin.test.ts packages/scheduler/src/monitor.test.ts`
 
 Expected: FAIL with `Cannot find module './signin'`.
 
-- [ ] **Step 3: Implement the sign-in functions, the two routes, the page and viewer, and the scheduler handler**
+- [x] **Step 3: Implement the sign-in functions, the two routes, the page and viewer, and the scheduler handler** (functions, routes, server actions and scheduler handler done; `page.tsx` and `viewer.tsx` are deferred: Figma gate)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/signin.test.ts packages/scheduler/src/signin.test.ts packages/scheduler/src/monitor.test.ts && bun run typecheck`
+Run: `bun test packages/web/test/signin.test.ts packages/scheduler/test/signin.test.ts && bun run typecheck`
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** (deferred: Figma gate; the non-UI parts are committed as `feat(web): remote sign-in sessions`)
 
 ```bash
 git add packages/web packages/scheduler/src
@@ -2782,7 +2800,7 @@ git commit -m "feat: add remote sign-in through noVNC"
 
 - Create: `packages/pipeline/src/consumer.ts`, `packages/pipeline/src/consumer-main.ts`, `packages/pipeline/src/remux.ts`, `packages/web/db/artefacts.ts`
 - Modify: `packages/scheduler/src/monitor.ts` (register artefacts when a container of a terminal occurrence is gone)
-- Test: `packages/pipeline/src/consumer.test.ts`, `packages/pipeline/src/remux.test.ts`, `packages/web/db/artefacts.test.ts`
+- Test: `packages/pipeline/test/consumer.test.ts`, `packages/pipeline/test/remux.test.ts`, `packages/web/test/artefacts.test.ts`, `packages/scheduler/test/monitor.test.ts`
 
 **Interfaces:**
 
@@ -2807,7 +2825,7 @@ forms/<formId>/filled.png, confirmation.png    form_screenshot
 
 The monitor (Task 15) calls `registerArtefacts` when it clears the container of an occurrence in `no_link`, `denied`, `left_by_member` or `failed`, so their recordings and form screenshots show on the meeting page.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/pipeline/src/consumer.test.ts
@@ -2907,25 +2925,25 @@ test('the recording is copied into a fast-start MP4', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/pipeline/src/consumer.test.ts packages/pipeline/src/remux.test.ts packages/web/db/artefacts.test.ts`
+Run: `bun test packages/pipeline/test/consumer.test.ts packages/pipeline/test/remux.test.ts packages/web/test/artefacts.test.ts`
 
 Expected: FAIL with `Cannot find module './consumer'`.
 
-- [ ] **Step 3: Implement the consumer, the remux, `registerArtefacts`, the consumer entry point and the monitor change**
+- [x] **Step 3: Implement the consumer, the remux, `registerArtefacts`, the consumer entry point and the monitor change**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/pipeline/src packages/web/db/artefacts.test.ts packages/scheduler/src/monitor.test.ts`
+Run: `bun test packages/pipeline packages/web/test/artefacts.test.ts packages/scheduler/test/monitor.test.ts`
 
 Expected: PASS, `0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/pipeline/src packages/web/db/artefacts* packages/scheduler/src/monitor.ts
-git commit -m "feat(pipeline): consume pipeline jobs"
+git add packages/pipeline packages/web/db/artefacts.ts packages/web/test/artefacts.test.ts packages/scheduler
+git commit -m "feat(pipeline): run the pipeline from the queue"
 ```
 
 ### Task 20: Retention and backups
@@ -2933,7 +2951,7 @@ git commit -m "feat(pipeline): consume pipeline jobs"
 **Files:**
 
 - Create: `packages/scheduler/src/retention.ts`, `packages/scheduler/src/backup.ts`
-- Test: `packages/scheduler/src/retention.test.ts`, `packages/scheduler/src/backup.test.ts`
+- Test: `packages/scheduler/test/retention.test.ts`, `packages/scheduler/test/backup.test.ts`
 
 **Interfaces:**
 
@@ -2950,10 +2968,10 @@ git commit -m "feat(pipeline): consume pipeline jobs"
 
 `runBackup`, nightly: run `backupCommands` in order with `Bun.spawn`, logging each step's first word and exit code only (never the arguments, which hold the database URL), then remove the local dump. The checkpoints are each identity's newest.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/scheduler/src/retention.test.ts
+// packages/scheduler/test/retention.test.ts
 const now = new Date('2026-11-17T08:00:00Z')
 
 test('a meeting 3 days from deletion gets one warning ping', async () => {
@@ -3018,12 +3036,11 @@ test('orphaned directories go and only 3 checkpoints stay', async () => {
 ```
 
 ```ts
-// packages/scheduler/src/backup.test.ts
-test('backups dump the database, copy checkpoints and expire copies older than 7 days', () => {
+// packages/scheduler/test/backup.test.ts
+test('backups dump the database, copy checkpoints and list the dated folders', () => {
   expect(
     backupCommands({
       date: '2026-10-21',
-      databaseUrl: 'postgres://tm@postgres/tm',
       remote: 'tm-backup:',
       workDir: '/tmp/tm-backup',
       checkpoints: [
@@ -3034,7 +3051,7 @@ test('backups dump the database, copy checkpoints and expire copies older than 7
       ]
     })
   ).toEqual([
-    ['pg_dump', '--format=custom', '--dbname=postgres://tm@postgres/tm', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
+    ['pg_dump', '--format=custom', '--file=/tmp/tm-backup/2026-10-21/db.dump'],
     ['rclone', 'copyto', '/tmp/tm-backup/2026-10-21/db.dump', 'tm-backup:2026-10-21/db.dump'],
     [
       'rclone',
@@ -3042,27 +3059,28 @@ test('backups dump the database, copy checkpoints and expire copies older than 7
       '/srv/tolongmeeting/profiles/i1/checkpoints/20261021T060500Z.tar.enc',
       'tm-backup:2026-10-21/profiles/i1.tar.enc'
     ],
-    ['rclone', 'delete', '--min-age', '7d', 'tm-backup:'],
-    ['rclone', 'rmdirs', '--leave-root', 'tm-backup:']
+    ['rclone', 'lsf', '--dirs-only', 'tm-backup:']
   ])
+  // runBackup then runs `rclone purge tm-backup:<date>` for each listed YYYY-MM-DD folder more than 7 days old
+  // (expiry by folder date, not file age), and passes the database URL to pg_dump as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE.
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/retention.test.ts packages/scheduler/src/backup.test.ts`
+Run: `bun test packages/scheduler/test/retention.test.ts packages/scheduler/test/backup.test.ts`
 
-Expected: FAIL with `Cannot find module './retention'`.
+Expected: FAIL with `Cannot find module '../src/retention'`.
 
-- [ ] **Step 3: Implement retention and backups**
+- [x] **Step 3: Implement retention and backups**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/scheduler/src/retention.test.ts packages/scheduler/src/backup.test.ts`
+Run: `bun test packages/scheduler/test/retention.test.ts packages/scheduler/test/backup.test.ts`
 
-Expected: PASS, `5 pass, 0 fail`.
+Expected: PASS, `19 pass, 0 fail` (the plan's 5 cases plus the symlink, UUID, checkpoint and runBackup cases).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src/retention* packages/scheduler/src/backup*
@@ -3074,15 +3092,15 @@ git commit -m "feat(scheduler): add retention and backups"
 **Files:**
 
 - Create: `packages/scheduler/src/jobs.ts`, `packages/scheduler/src/main.ts`, `packages/web/app/api/health/route.ts`, `docker/compose.yaml`, `docker/caddy/Caddyfile`, `docker/app/Dockerfile`, `docker/firewall/worker-egress.sh`, `docker/firewall/tm-worker-egress.service`, `docker/firewall/check-egress.sh`, `.env.example`
-- Test: `packages/scheduler/src/jobs.test.ts`, `packages/web/test/env-example.test.ts`
+- Test: `packages/scheduler/test/jobs.test.ts`, `packages/web/test/env-example.test.ts`
 
 **Interfaces:**
 
 - Consumes: every job handler from Tasks 5, 6, 14, 15, 18, 19 and 20; `QUEUES` (Task 6); `WORKER_IMAGE`, `CADDY_WORKER_IP` (Task 13).
-- Produces: `registerJobs(boss: BossLike, h: JobHandlers): Promise<void>`, where `BossLike = { createQueue(name: string): Promise<void>; schedule(name: string, cron: string, data: object, opts: { tz: string }): Promise<void>; work(name: string, opts: { localConcurrency: number }, handler: (jobs: { data: any }[]) => Promise<void>): Promise<string> }` and `JobHandlers = Record<'expand' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck', (data: any) => Promise<void>>`.
+- Produces: `registerJobs(boss: PgBoss, h: JobHandlers, hooks?: { beforeWorkers?(): Promise<void> }): Promise<void>` (`createQueues`, then `hooks.beforeWorkers`, then `startWorkers`, which works each queue and registers the schedules), where `JobHandlers = Record<'expand' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck', (data: unknown, signal: AbortSignal) => Promise<void>>`; `JOBS` (the queue, settings, polling interval and cron of each job), `createQueues(boss)`, `startWorkers(boss, h)`, `startLoop({ intervalMs, tick, onError, onBeat })`, `jobKeyOfQueue(queue)` and `PIPELINE_DEAD_OPTIONS` (`packages/scheduler/src/jobs.ts`); `readSchedulerEnv(source)`, `assertWorkerUid(source, uid)`, `buildHandlers(deps, env)`, `parseRunArgs(argv)`, `EnvError` and `HEALTH_FILE` (`packages/scheduler/src/main.ts`).
 - Produces (adds to contracts): compose services `caddy`, `web`, `scheduler`, `pipeline`, `postgres`, `ntfy`, `docker-proxy` and the build-only `worker`; networks `app`, `gate` and `tm-workers`; the environment variable `POSTGRES_PASSWORD` (compose only); the use of `TM_DATA_ROOT` by `web` (read-only, for serving artefacts), of `NTFY_URL` by `scheduler` and `pipeline`, and of `GITHUB_ORG` by `scheduler` (daily check).
 
-`main.ts` reads the environment, loads the master key, starts pg-boss on `DATABASE_URL`, calls `registerJobs`, runs `syncOccurrences` once, and runs `monitorTick` every 5 seconds, skipping a tick while the previous one runs; `main.ts --run <queue>` instead runs that queue's handler once and exits (the acceptance steps use it). Every job's `localConcurrency` is 1. Schedules, all `tz: 'UTC'`: `expand` `0 * * * *`, `retention` `7 * * * *`, `org-check` `30 18 * * *` (02:30 in Malaysia), `backup` `0 19 * * *` (03:00 in Malaysia). `pipeline` is created here but worked by `tm-pipeline`. `/api/health` answers `200 ok` after a `select 1`.
+`main.ts` starts in this order: it checks the environment (a bad or missing variable is named in one `EnvError`, never its value), checks the uid, applies the database migrations, starts pg-boss on `DATABASE_URL`, creates the queues, calls `resumeJobFileWatchers`, starts the workers and schedules, sends one `expand` job and runs `monitorTick` every 5 seconds, skipping a tick while the previous one runs; `main.ts --run <queue> [json]` instead runs that queue's handler once and exits (the acceptance steps use it). On SIGTERM it stops the monitor loop, drains pg-boss (30 s), waits for running remuxes (30 s) and exits. Every job's `localConcurrency` is 1. Schedules, all `tz: 'UTC'` with `missed: 'once'`: `expand` `0 * * * *`, `retention` `7 * * * *`, `org-check` `30 18 * * *` (02:30 in Malaysia), `backup` `0 19 * * *` (03:00 in Malaysia). `pipeline` and `pipeline-dead` are created here with the consumer's settings but worked by `tm-pipeline`. `/api/health` answers `200 ok` after a `select 1` (through `controlDeps`, because only `lib/` opens the database).
 
 `docker/compose.yaml` (key lines; run as `docker compose -f docker/compose.yaml --env-file .env ...`; host paths are the same inside containers so the gate's bind sources are host paths):
 
@@ -3144,7 +3162,7 @@ services:
     networks: [app]
   docker-proxy:
     build: { context: .., dockerfile: docker/app/Dockerfile, target: gate }
-    environment: [TM_DATA_ROOT, TM_PROFILE_ROOT]
+    environment: [TM_DATA_ROOT, TM_PROFILE_ROOT, TM_PUBLIC_URL, NTFY_URL]
     volumes: ['/var/run/docker.sock:/var/run/docker.sock']
     networks: [gate]
   worker:
@@ -3246,7 +3264,7 @@ TM_BACKUP_REMOTE=
 # TM_PROFILE_KEY_FILE is set per container by the launcher, never here.
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/scheduler/src/jobs.test.ts
@@ -3305,25 +3323,25 @@ test('.env.example names every variable and holds no values', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/jobs.test.ts packages/web/test/env-example.test.ts`
+Run: `bun test packages/scheduler/test/jobs.test.ts packages/web/test/env-example.test.ts`
 
 Expected: FAIL with `Cannot find module './jobs'`.
 
-- [ ] **Step 3: Write the processes and the deployment files**
+- [x] **Step 3: Write the processes and the deployment files**
 
-- [ ] **Step 4: Run tests and validate the deployment files**
+- [x] **Step 4: Run tests and validate the deployment files**
 
-Run: `bun test packages/scheduler/src/jobs.test.ts packages/web/test/env-example.test.ts && docker compose -f docker/compose.yaml --env-file .env config --quiet && docker run --rm -e TM_PUBLIC_URL=https://tm.example -e NTFY_URL=https://ntfy.tm.example -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sh -n docker/firewall/worker-egress.sh && sh -n docker/firewall/check-egress.sh && docker compose -f docker/compose.yaml --env-file .env build`
+Run: `bun test packages/scheduler/test/jobs.test.ts packages/web/test/env-example.test.ts && docker compose -f docker/compose.yaml --env-file .env config --quiet && docker run --rm -e TM_PUBLIC_URL=https://tm.example -e NTFY_URL=https://ntfy.tm.example -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sh -n docker/firewall/worker-egress.sh && sh -n docker/firewall/check-egress.sh && docker compose -f docker/compose.yaml --env-file .env build`
 
-Expected: PASS, `2 pass, 0 fail`; compose prints nothing and exits 0 (with a local `.env` filled with example values); Caddy prints `Valid configuration`; both shell checks exit 0; every image builds.
+Expected: PASS; compose prints nothing and exits 0 (with a local `.env` filled with example values); Caddy prints `Valid configuration`; both shell checks exit 0; every image builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src/jobs* packages/scheduler/src/main.ts packages/web/app/api/health packages/web/test/env-example.test.ts docker .env.example
-git commit -m "feat: add compose deployment"
+git commit -m "feat: compose, caddy and scheduler processes"
 ```
 
 ### Task 22: Milestone acceptance
@@ -3366,9 +3384,9 @@ Pass: every page and file returns 404, the VNC request 403, the heartbeat 401 an
 
 - [ ] **Step 6: Retention (design acceptance test "Retention")**
 
-Procedure: on a completed test occurrence, set `delete_after` to now plus 2 days and run `docker compose exec scheduler bun run packages/scheduler/src/main.ts --run retention`; then set it to now minus 1 minute and run it again; then run `--run backup`, and with `rclone touch --timestamp <9 days ago> <remote>old/x` plus another `backup` check expiry.
+Procedure: on a completed test occurrence, set `delete_after` to now plus 2 days and run `docker compose exec scheduler bun run packages/scheduler/src/main.ts --run retention`; then set it to now minus 1 minute and run it again; then run `--run backup`, and with `rclone copyto <any file> <remote><date 9 days ago, YYYY-MM-DD>/x` plus another `backup` check expiry.
 
-Pass: the "Deleting in 3 days" ping arrives once; afterwards the occurrence directory is gone, the database holds only the `deleted` tombstone and its one event, and the meeting page says it was deleted; `rclone lsf <remote>` shows the new dated backup and no object older than 7 days.
+Pass: the "Deleting in 3 days" ping arrives once; afterwards the occurrence directory is gone, the database holds only the `deleted` tombstone and its one event, and the meeting page says it was deleted; `rclone lsf <remote>` shows the new dated backup and no dated folder more than 7 days old.
 
 - [ ] **Step 7: Organisation check**
 

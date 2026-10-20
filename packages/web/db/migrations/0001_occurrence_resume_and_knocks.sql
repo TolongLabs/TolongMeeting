@@ -1,0 +1,3 @@
+ALTER TABLE "occurrences" ADD COLUMN "knocks" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "occurrences" ADD COLUMN "resume_state" text;--> statement-breakpoint
+ALTER TABLE "occurrences" ADD CONSTRAINT "occurrences_resume_state_check" CHECK ("occurrences"."resume_state" in ('scheduled', 'starting', 'verifying_accounts', 'waiting_for_signin', 'watching_for_link', 'no_link', 'joining', 'in_lobby', 'denied', 'in_meeting', 'restarting', 'left_by_member', 'leaving', 'uploading', 'transcribing', 'waiting_for_pc', 'post_processing', 'completed', 'skipped_capacity', 'skipped_identity_clash', 'skipped_pc_offline', 'failed', 'deleted'));

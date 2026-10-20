@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>#fixture | Discord</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #313338;
+        color: #dbdee1;
+      }
+      .messagesWrapper_fx {
+        height: 420px;
+      }
+      .scroller_fx {
+        height: 100%;
+        overflow-y: auto;
+      }
+      ol {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      li {
+        min-height: 44px;
+        padding: 4px 16px;
+        box-sizing: border-box;
+      }
+      .emptyChannel_fx {
+        padding: 16px;
+      }
+      .composer_fx {
+        padding: 8px 16px;
+      }
+      [contenteditable] {
+        min-height: 24px;
+        background: #383a40;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- The markup the selectors in config/selectors/discord.json match. Starting values, unverified against the live site. -->
+    <div class="messagesWrapper_fx">
+      <div class="scroller_fx" id="scroller">
+        <div class="emptyChannel_fx" id="start" hidden>This is the start of the channel.</div>
+        <ol id="list"></ol>
+      </div>
+    </div>
+    <div class="composer_fx">
+      <div role="textbox" contenteditable="true" aria-label="Message #fixture"></div>
+      <button data-action="react">React</button>
+      <button data-action="reply">Reply</button>
+      <button data-action="mark-read">Mark as read</button>
+    </div>
+    <script>
+      const PAGE = 25
+      const KEEP = 50
+      const FOLLOW_UP_MS = 5 * 60 * 1000
+      const fixture = window.__fixture
+      const channelId = fixture.channelPath.split('/').pop()
+      const model = [...fixture.messages].sort((a, b) => Date.parse(a.datetime) - Date.parse(b.datetime))
+      const scroller = document.getElementById('scroller')
+      const list = document.getElementById('list')
+      const start = document.getElementById('start')
+      let lo = Math.max(0, model.length - PAGE)
+      let hi = model.length
+      let prepending = false
+
+      window.__touched = false
+      const touch = (event) => {
+        if (event.target instanceof Element && event.target.closest('[role="textbox"][contenteditable="true"], [data-action]'))
+          window.__touched = true
+      }
+      for (const type of ['click', 'keydown', 'input']) document.addEventListener(type, touch, true)
+
+      const atBottom = () => scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2
+
+      function render() {
+        list.replaceChildren()
+        for (let i = lo; i < hi; i++) {
+          const m = model[i]
+          const before = model[i - 1]
+          const followUp =
+            before !== undefined &&
+            before.sender === m.sender &&
+            Date.parse(m.datetime) - Date.parse(before.datetime) <= FOLLOW_UP_MS
+          const li = document.createElement('li')
+          li.id = 'chat-messages-' + channelId + '-' + m.id
+          if (!followUp) {
+            const name = document.createElement('span')
+            name.id = 'message-username-' + m.id
+            name.textContent = m.sender
+            li.append(name, ' ')
+          }
+          const time = document.createElement('time')
+          time.setAttribute('datetime', m.datetime)
+          time.textContent = new Date(m.datetime).toLocaleTimeString('en-GB')
+          li.append(time)
+          const content = document.createElement('div')
+          content.id = 'message-content-' + m.id
+          content.append(m.text)
+          if (m.href) {
+            const a = document.createElement('a')
+            a.href = m.href
+            a.textContent = m.href
+            content.append(' ', a)
+          }
+          li.append(content)
+          list.append(li)
+        }
+        start.hidden = lo > 0
+      }
+
+      function jumpToPresent() {
+        lo = Math.max(0, model.length - PAGE)
+        hi = model.length
+        render()
+        scroller.scrollTop = scroller.scrollHeight
+      }
+
+      // Scrolling back to the bottom brings the newest messages in and keeps the older ones already loaded in the list.
+      function catchUp() {
+        hi = model.length
+        render()
+        scroller.scrollTop = scroller.scrollHeight
+      }
+
+      function prependOlder() {
+        prepending = false
+        if (lo === 0) return
+        const height = scroller.scrollHeight
+        lo = Math.max(0, lo - PAGE)
+        hi = Math.min(hi, lo + KEEP)
+        render()
+        // Keep the view where it was, as Discord does.
+        scroller.scrollTop = scroller.scrollHeight - height
+      }
+
+      scroller.addEventListener('scroll', () => {
+        if (scroller.scrollTop <= 1 && lo > 0 && !prepending) {
+          prepending = true
+          setTimeout(prependOlder, 100)
+        } else if (hi < model.length && atBottom()) catchUp()
+      })
+
+      window.__addMessage = (m) => {
+        const wasPresent = hi === model.length
+        const wasAtBottom = atBottom()
+        model.push(m)
+        if (!wasPresent) return
+        hi = model.length
+        render()
+        if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight
+      }
+
+      render()
+      scroller.scrollTop = scroller.scrollHeight
+    </script>
+  </body>
+</html>

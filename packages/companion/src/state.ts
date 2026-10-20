@@ -1,0 +1,52 @@
+import { readFileSync } from 'node:fs'
+import { z } from 'zod'
+import { isMissing, Queue, writeFileAtomic } from './atomic'
+
+/** Non-secret progress markers, so a restart carries on where the last run stopped. */
+export interface CompanionState {
+  ntfyLastId: string | null
+  summariesAfter: string | null
+  lastEventId: number
+  /** Where to follow the member's ntfy topic. Set by pairing; the ntfy token lives in the `SecretStore`, not here. */
+  ntfy?: { url: string; topic: string }
+  /** Where each summary was saved, by occurrence id (N17), so a name clash with another occurrence can be told apart. */
+  summaryFiles?: Record<string, string>
+}
+
+const StateSchema = z.strictObject({
+  ntfyLastId: z.string().min(1).max(256).nullable(),
+  summariesAfter: z.iso.datetime({ offset: true }).nullable(),
+  lastEventId: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  ntfy: z.strictObject({ url: z.url().max(2048), topic: z.string().min(1).max(256) }).optional(),
+  summaryFiles: z.record(z.string().min(1).max(64), z.string().min(1).max(4096)).optional()
+}) satisfies z.ZodType<CompanionState>
+
+const INITIAL: CompanionState = { ntfyLastId: null, summariesAfter: null, lastEventId: 0 }
+
+export class StateStore {
+  private current: CompanionState
+  private readonly writes = new Queue()
+
+  /** Reads the file once, synchronously; a missing file starts from scratch and a malformed one throws. */
+  constructor(private readonly file: string) {
+    try {
+      this.current = StateSchema.parse({ ...INITIAL, ...JSON.parse(readFileSync(file, 'utf8')) })
+    } catch (e) {
+      if (!isMissing(e)) throw e
+      this.current = { ...INITIAL }
+    }
+  }
+
+  get(): CompanionState {
+    return { ...this.current }
+  }
+
+  /** Saves before it returns; the in-memory state moves only once the file is written. */
+  update(patch: Partial<CompanionState>): Promise<void> {
+    return this.writes.run(async () => {
+      const next = StateSchema.parse({ ...this.current, ...patch })
+      await writeFileAtomic(this.file, `${JSON.stringify(next, null, 2)}\n`, 0o600)
+      this.current = next
+    })
+  }
+}

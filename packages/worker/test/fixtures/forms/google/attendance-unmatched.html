@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Week 5 attendance / Kehadiran minggu 5</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='radio'], [role='checkbox'], [role='option'], [role='listbox'], [role='button'] { cursor: pointer; padding: 4px }
+      [aria-checked='true']::before { content: '\2713 ' }
+    </style>
+  </head>
+  <body>
+    <div role="heading" aria-level="1">Week 5 attendance / Kehadiran minggu 5</div>
+    <div class="form-description">Fill in during the lecture.</div>
+    <div class="form-account">student@example.edu.my <a href="#switch">Switch account</a></div>
+    <div class="page"><div role="listitem"><div role="heading" aria-level="3">Full name <span aria-label="Required question">*</span></div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Matric No. <span aria-label="Required question">*</span></div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Course code <span aria-label="Required question">*</span></div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">Section <span aria-label="Required question">*</span></div><div role="listbox" tabindex="0" data-value="">Choose</div><div class="options" hidden><div role="option" data-value="">Choose</div><div role="option" data-value="01">01</div><div role="option" data-value="02">02</div><div role="option" data-value="03">03</div></div></div><div role="listitem"><div role="heading" aria-level="3">Programme of study</div><input type="text"></div><div role="listitem"><div role="heading" aria-level="3">What did you learn today? <span aria-label="Required question">*</span></div><textarea></textarea></div><div role="button" tabindex="0">Next</div></div>
+<div class="page" hidden><div role="listitem"><div role="heading" aria-level="3">Attendance <span aria-label="Required question">*</span></div><div role="radio" aria-checked="false" data-value="Present" tabindex="0"><span>Present</span></div><div role="radio" aria-checked="false" data-value="Absent" tabindex="0"><span>Absent</span></div></div><div role="listitem"><div role="heading" aria-level="3">Attendance declaration <span aria-label="Required question">*</span></div><div role="checkbox" aria-checked="false" data-value="I confirm I am attending this class" tabindex="0"><span>I confirm I am attending this class</span></div></div><div role="listitem"><div role="heading" aria-level="3">Any comments?</div><textarea></textarea></div><div role="button" tabindex="0">Submit</div></div>
+    <div class="copy"><div role="checkbox" aria-checked="false" aria-label="Send me a copy of my responses." tabindex="0"></div> Send me a copy of my responses.</div>
+    <div class="form-footer">This form was created inside of Example University.</div>
+    <script src="fixture.js"></script>
+  </body>
+</html>

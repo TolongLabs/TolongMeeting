@@ -1,0 +1,12 @@
+# ntfy server config for spike 8 (attachments). Keys are the ones the plan proves.
+# Deviation: base-url uses port 18090, because 8090 is held by another process on this machine.
+base-url: 'http://127.0.0.1:18090'
+listen-http: ':80'
+behind-proxy: true
+cache-file: '/var/lib/ntfy/cache.db'
+auth-file: '/var/lib/ntfy/user.db'
+auth-default-access: 'deny-all'
+attachment-cache-dir: '/var/lib/ntfy/attachments'
+attachment-total-size-limit: '1G'
+attachment-file-size-limit: '5M'
+attachment-expiry-duration: '3h'

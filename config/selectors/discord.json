@@ -1,0 +1,11 @@
+{
+  "_unverified": "Starting values from the session's discord-latest-messages.js. Not checked against the live Discord web app until acceptance (plan 02 task 9); the fixture in packages/worker/test/fixtures/discord mirrors them.",
+  "scroller": "[class*=\"messagesWrapper\"] [class*=\"scroller\"]",
+  "message": "li[id^=\"chat-messages-\"]",
+  "content": "[id^=\"message-content-\"]",
+  "username": "[id^=\"message-username-\"]",
+  "time": "time[datetime]",
+  "channelStart": "[class*=\"emptyChannel\"]",
+  "composer": "[role=\"textbox\"][contenteditable=\"true\"]",
+  "loginForm": "input[name=\"email\"]"
+}

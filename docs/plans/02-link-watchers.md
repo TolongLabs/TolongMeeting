@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright and Playwright Test on Node 24, `bun test`, zod, Next.js App Router (website notes), React server rendering for component tests.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -42,7 +42,7 @@ Contents:
 - **Selectors**: `config/selectors/discord.json` and `config/selectors/whatsapp.json`, read from `TM_SELECTORS_DIR` and validated with zod; a UI change is fixed there without rebuilding.
 - **Secrets**: meeting links (which may carry passcodes) never appear in ping text, logs or event data; events keep host and path only. Watched chat messages aren't stored; only form records keep a sender.
 - **Copy**: plain British English; ping and notice wording is exactly as written in the tasks; times through `formatWhen` (`Wed 21 Oct, 14:00`) in the member's time zone.
-- **Commits**: conventional commits, header at most 50 characters; each task's commit also copies its "adds to contracts" names into `docs/plans/architecture.md`.
+- **Commits**: conventional commits, header at most 50 characters; each task's commit also copies its "adds to contracts" names into `docs/TRD.md`.
 
 ## Review Focus
 
@@ -54,7 +54,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there by the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there by the task that creates them:
 
 - **Core**: `normaliseDiscordChannelUrl` (`packages/core/src/discord-chat.ts`); `ChatApp`, `WatchGate`, `WatchGateError`, `watchGateFromEnv`, `chatWatchAllowed`, `gateLinkSource` (`packages/core/src/watch-gate.ts`); `SpecEnv.watchGate`; the optional `StateEventData.link`.
 - **Worker**: `WatchPhase`, `POLL_MS`, `nextPollDelayMs`, `chooseMeetingLink`, `splitLinks`, `messageSignature` (`watchers/rules.ts`); `ChatSourceReader`, `WatcherEnv`, `WatcherStatus`, `WatcherSigninError`, `WatcherChatError`, `configureWatchers`, `resetWatcherEnv`, `runChatWatcher` (`watchers/loop.ts`); `discordSelectors`, `whatsappSelectors` (`watchers/selectors.ts`); `discordReader`, `whatsappReader`, `parseWhatsAppPrePlain`; `watcherFor` (`watchers/index.ts`); `decideLinkWait`, `waitForMeetingLink`, `LinkChoice` (`watchers/link-wait.ts`); test helpers `serveWatcherFixtures` and `watchHarness` (`packages/worker/test/watchers/`), which plan 04 reuses.
@@ -79,7 +79,7 @@ Assumed from earlier plans (use their real names if they differ, and fix this pl
 
 - Create: `packages/core/src/discord-chat.ts`, `packages/core/src/watch-gate.ts`
 - Modify: `packages/core/src/index.ts` (exports)
-- Test: `packages/core/src/discord-chat.test.ts`, `packages/core/src/watch-gate.test.ts`
+- Test: `packages/core/test/discord-chat.test.ts`, `packages/core/test/watch-gate.test.ts`
 
 **Interfaces:**
 
@@ -108,10 +108,10 @@ export function gateLinkSource(
 
 `normaliseDiscordChannelUrl` accepts `https:` only, hosts `discord.com`, `www.discord.com`, `ptb.discord.com`, `canary.discord.com` and `discordapp.com`, and paths `/channels/<server>/<channel>` with an optional trailing message id, where `<server>` is `@me` or 17 to 20 digits and `<channel>` is 17 to 20 digits; it drops the message id, query and fragment. `chatWatchAllowed` is true for `teams`; for WhatsApp and Discord, `allowed` is true, `home_only` is true unless `runLocation` is `server`, and `none` is false. `gateLinkSource` returns the link unchanged unless it is a chat the gate refuses, which becomes `{ kind: 'paste' }` with `blockedApp` set.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/core/src/discord-chat.test.ts
+// packages/core/test/discord-chat.test.ts
 const G = '123456789012345678',
   C = '234567890123456789'
 test.each([
@@ -127,7 +127,7 @@ test.each([
 ```
 
 ```ts
-// packages/core/src/watch-gate.test.ts
+// packages/core/test/watch-gate.test.ts
 test('the gate defaults to WhatsApp at home only and Discord everywhere', () => {
   expect(watchGateFromEnv({})).toEqual({
     whatsapp: 'home_only',
@@ -176,25 +176,25 @@ test('a refused chat becomes a pasted link', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/core/src/discord-chat.test.ts packages/core/src/watch-gate.test.ts`
+Run: `bun test packages/core/test/discord-chat.test.ts packages/core/test/watch-gate.test.ts`
 Expected: FAIL with `Cannot find module './discord-chat'`.
 
-- [ ] **Step 3: Implement both modules in `packages/core/src/` and export them from `index.ts`**
+- [x] **Step 3: Implement both modules in `packages/core/src/` and export them from `index.ts`**
 
 Parse with `new URL` inside `try`; a string that doesn't parse gives `null`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/core/src/discord-chat.test.ts packages/core/src/watch-gate.test.ts`
-Expected: PASS, `11 pass, 0 fail`.
+Run: `bun test packages/core/test/discord-chat.test.ts packages/core/test/watch-gate.test.ts`
+Expected: PASS, `15 pass, 0 fail` (the plan's 11 cases plus 4 added: userinfo, port, control character, bad value not echoed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/discord-chat* packages/core/src/watch-gate* packages/core/src/index.ts docs/plans/architecture.md
-git commit -m "feat(core): add chat ids and watch gate"
+git add packages/core/src/discord-chat.ts packages/core/src/watch-gate.ts packages/core/test/discord-chat.test.ts packages/core/test/watch-gate.test.ts packages/core/src/index.ts docs/TRD.md
+git commit -m "feat: identify chats and gate watching"
 ```
 
 ### Task 2: Watcher rules
@@ -202,7 +202,7 @@ git commit -m "feat(core): add chat ids and watch gate"
 **Files:**
 
 - Create: `packages/worker/src/watchers/rules.ts`
-- Test: `packages/worker/src/watchers/rules.test.ts`
+- Test: `packages/worker/test/watchers/rules.test.ts`
 
 **Interfaces:**
 
@@ -226,10 +226,10 @@ export function messageSignature(m: ChatMessage): string // `${key}|${sorted lin
 
 `splitLinks` keeps `https:` links only, removes duplicates and keeps message order; `meeting` holds those for which `adapterFor(url)` isn't null, `other` the rest.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/watchers/rules.test.ts
+// packages/worker/test/watchers/rules.test.ts
 const ZOOM = 'https://example.zoom.us/j/00000000001?pwd=PASSCODE'
 const FORM = 'https://forms.gle/TESTFORM1'
 const msg = (links: string[], key = 'k1'): ChatMessage => ({
@@ -266,23 +266,23 @@ test('an edited message with a new link has a new signature', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/watchers/rules.test.ts`
+Run: `bun test packages/worker/test/watchers/rules.test.ts`
 Expected: FAIL with `Cannot find module './rules'`.
 
-- [ ] **Step 3: Implement `packages/worker/src/watchers/rules.ts`**
+- [x] **Step 3: Implement `packages/worker/src/watchers/rules.ts`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/watchers/rules.test.ts`
+Run: `bun test packages/worker/test/watchers/rules.test.ts`
 Expected: PASS, `4 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/watchers/rules* docs/plans/architecture.md
-git commit -m "feat(worker): add watcher rules"
+git add packages/worker/src/watchers/rules* docs/TRD.md
+git commit -m "feat(worker): watcher link rules"
 ```
 
 ### Task 3: Watcher loop
@@ -338,7 +338,7 @@ process(msgs), in order:
 candidate = { url, source: 'watched_chat', sender: m.sender || null, senderRole: 'unknown', seenAt: m.seenAt }
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/watchers/loop.test.ts
@@ -489,24 +489,24 @@ test('stop ends a sleeping loop at once; an open error rejects the start', async
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/watchers/loop.test.ts`
 Expected: FAIL with `Cannot find module './loop'`.
 
-- [ ] **Step 3: Implement `packages/worker/src/watchers/loop.ts`**
+- [x] **Step 3: Implement `packages/worker/src/watchers/loop.ts`**
 
 Keep the env in one module-level object that `configureWatchers` merges into; read it on every use, so a phase or paste change applies at the next decision. Seen signatures live in a `Set` per watcher.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/watchers/loop.test.ts`
 Expected: PASS, `11 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/watchers/loop* docs/plans/architecture.md
+git add packages/worker/src/watchers/loop* docs/TRD.md
 git commit -m "feat(worker): add read-only watcher loop"
 ```
 
@@ -551,7 +551,7 @@ Reader behaviour:
 
 Fixture `channel.html` uses the markup the selectors above match, and reads `window.__fixture = { channelPath, messages: { id, sender, datetime, text, href? }[] }` from an init script. It renders the newest 25 messages; when the scroller reaches the top it prepends the next 25 older after 100 ms and drops rendered items beyond 50 from the bottom; at the oldest it shows the `channelStart` element. A message from the same sender within 5 minutes of the one before renders without a `username`. `window.__addMessage(m)` appends a message (rendered when the list is at the bottom). `window.__touched` becomes true on any click, key or input event in the composer or on a `[data-action]` button (react, reply, mark as read). `login.html` is Discord's sign-in form with `input[name="email"]`. `serveWatcherFixtures` routes `https://discord.com/**` with `context.route`: `/login` gets `login.html`; `__fixture.channelPath` gets `channel.html`, or a 302 to `/login` when `loginRequired` is set; any other `/channels/...` path gets a 302 to `/channels/@me`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/test/watchers/discord.spec.ts
@@ -705,24 +705,24 @@ test('a signed-out profile and an unreachable channel reject the start', async (
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/discord.spec.ts`
 Expected: FAIL, cannot resolve `../../src/watchers/discord`.
 
-- [ ] **Step 3: Implement `selectors.ts`, `discord.ts`, the fixtures, `serve.ts` and `harness.ts`**
+- [x] **Step 3: Implement `selectors.ts`, `discord.ts`, the fixtures, `serve.ts` and `harness.ts`** (tests live in `packages/worker/test/watchers/` and `test/discord-selectors.test.ts`; `discordSelectors()` is async and cached; specs use `stop.stop()`)
 
 Read each rendered message in one `page.evaluate` call per read, returning plain objects; never `click` or `type` in this reader.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/discord.spec.ts`
 Expected: PASS, `5 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add config/selectors/discord.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/discord docs/plans/architecture.md
+git add config/selectors/discord.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/discord docs/TRD.md
 git commit -m "feat(worker): add Discord watcher"
 ```
 
@@ -768,7 +768,7 @@ Reader behaviour:
 
 Fixture `web.html` reads `window.__fixture = { mode: 'chats' | 'qr', chats: { name, messages: { id, sender, at, text, href? }[] }[] }`. It renders the chat list, a search box that lists chats whose name contains the typed text (as `searchResultTitle` elements), and on a click the conversation with `headerTitle` and rows whose `data-pre-plain-text` is `[<time>, <date>] <sender>: `, formatted from `at` with the page locale (`en-GB` gives `14:05, 21/10/2026`; `en-US` gives `2:05 PM, 10/21/2026`). It virtualises the rows as Discord's fixture does, and offers `__addMessage(chatName, m)`, `__switchChat(name)` (the member opening another chat) and `__touched` (composer and `[data-action]` buttons only; the search box doesn't count). Mode `qr` shows only the `linkQr` canvas. `serveWatcherFixtures` routes `https://web.whatsapp.com/**` to it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/watchers/whatsapp-time.test.ts
@@ -925,24 +925,24 @@ test.describe('US date order', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/watchers/whatsapp-time.test.ts && bunx playwright test -c packages/worker/playwright.config.ts test/watchers/whatsapp.spec.ts`
 Expected: FAIL with `Cannot find module './whatsapp-time'`.
 
-- [ ] **Step 3: Implement `whatsapp-time.ts`, `whatsapp.ts`, the selectors, the fixture and the route**
+- [x] **Step 3: Implement `whatsapp-time.ts`, `whatsapp.ts`, the selectors, the fixture and the route**
 
 `parseWhatsAppPrePlain` matches `^\[(\d{1,2}):(\d{2})(?:[\s ]*([ap])\.?m\.?)?, (\d{1,2})/(\d{1,2})/(\d{4})\] (.+): $` (case-insensitive), maps 12 am to 0 and 12 pm to 12, rejects impossible dates by round-tripping through `Date.UTC`, and subtracts `offsetMinutes`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/watchers/whatsapp-time.test.ts && bunx playwright test -c packages/worker/playwright.config.ts test/watchers/whatsapp.spec.ts`
 Expected: PASS, `7 pass, 0 fail`, then `6 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add config/selectors/whatsapp.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/whatsapp docs/plans/architecture.md
+git add config/selectors/whatsapp.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/whatsapp docs/TRD.md
 git commit -m "feat(worker): add WhatsApp watcher"
 ```
 
@@ -1026,7 +1026,7 @@ signed_out  <App> signed the bot out while it was watching. Sign in again; until
 - **Status**: `signed_out` sends `pings.watcherProblem('signed_out')` and `AccountCheckData { signedIn: false }`; `signed_in` sends `{ signedIn: true }`; `chat_lost` sends `pings.watcherProblem('lost')`. Each non-ok status also adds an `error` event `{ reason: 'watcher_<kind>' }`.
 - **End**: stop the watcher when the worker leaves the meeting for any reason, before the profile checkpoint.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/watchers/link-wait.test.ts
@@ -1148,22 +1148,22 @@ test('no-link and watcher copy', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/watchers/link-wait.test.ts packages/worker/src/watchers/index.test.ts packages/notify/src/messages.test.ts`
 Expected: FAIL with `Cannot find module './link-wait'`.
 
-- [ ] **Step 3: Implement `link-wait.ts`, `index.ts` and the ping builders, then wire `run.ts` as listed**
+- [x] **Step 3: Implement `link-wait.ts`, `index.ts` and the ping builders, then wire `run.ts` as listed**
 
-- [ ] **Step 4: Run tests and the type check to verify they pass**
+- [x] **Step 4: Run tests and the type check to verify they pass**
 
 Run: `bun test packages/worker/src/watchers packages/notify && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src packages/notify/src packages/core/src/control.ts docs/plans/architecture.md
+git add packages/worker/src packages/notify/src packages/core/src/control.ts docs/TRD.md
 git commit -m "feat(worker): wait for links and ping no-link"
 ```
 
@@ -1217,7 +1217,7 @@ Schema and save rules:
 - `saveEntry` loads the identity's run location and throws `WatchingNotAllowedError` when `chatWatchAllowed(app, runLocation, deps.gate)` is false.
 - The entry form shows the chat field with `CHAT_FIELD_COPY`, the app choice from `chatAppOptions` (a disabled option shows its `note`), `BanRiskNotice` whenever `showsBanRiskNotice` is true, and `TRUSTED_SENDERS_CHAT_HINT` under trusted senders for chat sources. `actions.ts` passes `gate: watchGateFromEnv(process.env)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/link-notices.test.ts
@@ -1332,22 +1332,22 @@ test('saving a WhatsApp chat on a server identity follows the gate', async () =>
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/ban-risk-notice.test.tsx packages/web/lib/timetable.test.ts`
 Expected: FAIL with `Cannot find module './link-notices'`.
 
-- [ ] **Step 3: Implement `link-notices.ts`, `ban-risk-notice.tsx` and the schema, save and form changes**
+- [x] **Step 3: Implement `link-notices.ts`, `ban-risk-notice.tsx` and the schema, save and form changes** (lib, schema, save and action wiring done; `ban-risk-notice.tsx`, its test and the `[id]/page.tsx` form are deferred: Figma gate)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/ban-risk-notice.test.tsx packages/web/lib/timetable.test.ts && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib packages/web/app/timetable docs/plans/architecture.md
+git add packages/web/lib packages/web/app/timetable docs/TRD.md
 git commit -m "feat(web): add chat link sources and notice"
 ```
 
@@ -1367,7 +1367,7 @@ Rules:
 
 - **Identity settings**: `updateIdentity` refuses a run-location change after which `chatWatchAllowed` would be false for any unpaused entry of that identity, with `InUseError('This identity has entries that watch <App>, which is watched only at home or on your PC. Change those entries first.')`. Until plan 08 enables other run locations this can't trigger in the app, but plan 08 relies on it.
 - **Sign-in page**: the WhatsApp and Discord lines of 01c's list come from `signinNotes`, followed by `BAN_RISK_NOTICE`.
-- **Launch**: in `launchOccurrence` step 6, apply `gateLinkSource(snapshot.link, identity.runLocation, deps.env.watchGate)` to the snapshot before it is stored; when `blockedApp` is set, send `pings.watchingOff` with the meeting page and Accounts URLs. The occurrence then runs as a pasted-link entry. This covers a gate tightened after an entry was saved.
+- **Launch**: in `launchOccurrence` step 6, apply `gateLinkSource(snapshot.link, identity.runLocation, deps.env.watchGate)` to the snapshot before it is stored; when `blockedApp` is set, send `pings.watchingOff` with the meeting page and Accounts URLs. The launch then fails with `watching_not_allowed` (the accepted change from "runs as a pasted-link entry": a paste entry can't be told from one with no link). This covers a gate tightened after an entry was saved. The entry snapshot is gated again when it is rebuilt, and a restarted attempt (`startAttempt`) is gated too.
 - **Deployment**: `TM_WHATSAPP_FROM_SERVER` and `TM_DISCORD_FROM_SERVER` are set on `web` and `scheduler` in `docker/compose.yaml` from `.env`, and their values are copied from `watchers.whatsappFromServer` and `watchers.discordFromServer` in `spikes/DECISIONS.md`.
 
 `signinNotes` copy (exact):
@@ -1380,7 +1380,7 @@ discord, allowed     Discord: sign in at discord.com in this view. If Discord as
 discord, home_only   Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC.
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/link-notices.test.ts (added)
@@ -1428,33 +1428,33 @@ test('moving an identity to the server is refused while it has WhatsApp-watched 
 
 ```ts
 // packages/scheduler/src/launch.test.ts (added)
-test('a WhatsApp chat the gate refuses launches as a pasted-link entry, with a ping', async () => {
+test('a WhatsApp chat the gate refuses fails the launch, with a ping', async () => {
   const f = await launchFixture({
     link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' },
     watchGate: { whatsapp: 'home_only', discord: 'allowed' }
   })
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
-  expect((await f.job0()).entry.link).toEqual({ kind: 'paste' })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'watching_not_allowed' })
   expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Not watching WhatsApp: Data Mining'])
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/lib/identities.test.ts packages/scheduler/src/launch.test.ts`
 Expected: FAIL with `signinNotes is not a function` (and the identity and launch tests failing on their assertions).
 
-- [ ] **Step 3: Implement the rules above, and add the two variables to `docker/compose.yaml` and `.env.example`**
+- [x] **Step 3: Implement the rules above, and add the two variables to `docker/compose.yaml` and `.env.example`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web packages/scheduler && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/control.ts packages/web packages/scheduler docker/compose.yaml .env.example docs/plans/architecture.md
+git add packages/core/src/control.ts packages/web packages/scheduler docker/compose.yaml .env.example docs/TRD.md
 git commit -m "feat: apply spike 7 watch gate"
 ```
 

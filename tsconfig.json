@@ -10,6 +10,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "jsx": "preserve",
     "types": ["bun"]
   },
   "include": ["scripts", "test", "e2e", "packages/*/test", "packages/*/scripts"]

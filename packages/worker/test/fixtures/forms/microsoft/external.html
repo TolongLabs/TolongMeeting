@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Attendance</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='button'], [role='option'], button { cursor: pointer; padding: 4px }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div data-automation-id="formTitle">Attendance</div>
+      <div data-automation-id="formDescription">Hi, Test Student. When you submit this form, the owner will see your name and email address. student@example.edu.my</div>
+      
+      <div class="page"><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Full name</span><input data-automation-id="textInput" type="text"></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Matric No.</span><input data-automation-id="textInput" type="text"></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Attendance <span aria-label="Required">*</span></span><label><input type="radio" name="q4" value="Present"> <span>Present</span></label><label><input type="radio" name="q4" value="Absent"> <span>Absent</span></label></div><button type="button" data-automation-id="submitButton">Submit</button></div>
+    </div>
+    
+    <script src="fixture.js"></script>
+  </body>
+</html>

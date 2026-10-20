@@ -1,0 +1,167 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Meeting Occurrence: Leaving to Deleted",
+    "output": ".archify/occurrence-lifecycle-after/occurrence-lifecycle-after.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "After the meeting"
+    },
+    {
+      "id": "side",
+      "label": "Native mode wait"
+    },
+    {
+      "id": "terminal",
+      "label": "Ends here"
+    }
+  ],
+  "states": [
+    {
+      "id": "leaving",
+      "type": "external",
+      "label": "Leaving",
+      "sublabel": "from the previous diagram",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "uploading",
+      "type": "active",
+      "label": "Uploading",
+      "sublabel": "recording, files, profile",
+      "lane": "main",
+      "col": 1,
+      "width": 160
+    },
+    {
+      "id": "transcribing",
+      "type": "active",
+      "label": "Transcribing",
+      "sublabel": "live ASR or native job",
+      "lane": "main",
+      "col": 2,
+      "width": 160
+    },
+    {
+      "id": "post_processing",
+      "type": "active",
+      "label": "Post-processing",
+      "sublabel": "slides, chat, summary",
+      "lane": "main",
+      "col": 3,
+      "width": 160
+    },
+    {
+      "id": "completed",
+      "type": "success",
+      "label": "Completed",
+      "sublabel": "summary ping sent",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "waiting_for_pc",
+      "type": "waiting",
+      "label": "Waiting for PC",
+      "sublabel": "member's PC is off",
+      "lane": "side",
+      "col": 2,
+      "width": 160
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "Failed",
+      "sublabel": "from any state, with reason",
+      "lane": "terminal",
+      "col": 1,
+      "width": 160
+    },
+    {
+      "id": "deleted",
+      "type": "neutral",
+      "label": "Deleted",
+      "sublabel": "30 days after the meeting",
+      "lane": "terminal",
+      "col": 4,
+      "width": 160
+    }
+  ],
+  "transitions": [
+    {
+      "id": "leaving-to-uploading",
+      "from": "leaving",
+      "to": "uploading"
+    },
+    {
+      "id": "uploading-to-transcribing",
+      "from": "uploading",
+      "to": "transcribing"
+    },
+    {
+      "id": "transcribing-to-post_processing",
+      "from": "transcribing",
+      "to": "post_processing",
+      "label": "transcript ready",
+      "variant": "emphasis"
+    },
+    {
+      "id": "post_processing-to-completed",
+      "from": "post_processing",
+      "to": "completed",
+      "label": "summary done",
+      "variant": "emphasis"
+    },
+    {
+      "id": "transcribing-to-waiting_for_pc",
+      "from": "transcribing",
+      "to": "waiting_for_pc",
+      "label": "native, PC off",
+      "variant": "dashed"
+    },
+    {
+      "id": "waiting_for_pc-to-transcribing",
+      "from": "waiting_for_pc",
+      "to": "transcribing",
+      "label": "PC claims job",
+      "variant": "emphasis"
+    },
+    {
+      "id": "waiting_for_pc-to-post_processing",
+      "from": "waiting_for_pc",
+      "to": "post_processing",
+      "label": "transcript ready",
+      "variant": "dashed"
+    },
+    {
+      "id": "uploading-to-failed",
+      "from": "uploading",
+      "to": "failed",
+      "label": "any state",
+      "variant": "security"
+    },
+    {
+      "id": "completed-to-deleted",
+      "from": "completed",
+      "to": "deleted",
+      "label": "30 days",
+      "variant": "dashed"
+    },
+    {
+      "id": "failed-to-deleted",
+      "from": "failed",
+      "to": "deleted",
+      "label": "30 days",
+      "variant": "dashed"
+    }
+  ],
+  "cards": []
+}

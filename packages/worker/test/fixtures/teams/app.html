@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Microsoft Teams</title>
+    <!-- serveTeams inserts `window.__cfg = {...}` right after this line. -->
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      button { font: inherit; }
+      #toolbar { position: fixed; top: 0; left: 0; right: 0; height: 48px; display: flex; gap: 8px; align-items: center; padding: 0 8px; background: #eee; z-index: 2; }
+      #stage { position: fixed; inset: 48px 0 0 0; }
+      .pane { position: fixed; top: 48px; right: 0; bottom: 0; width: 360px; background: #fafafa; z-index: 1; }
+      [data-tid='message-pane-list-viewport'] { height: 300px; overflow: auto; position: relative; }
+      [role='menu'] { position: fixed; top: 48px; left: 200px; background: #fff; border: 1px solid #999; z-index: 3; display: flex; flex-direction: column; }
+      .notice { background: #ffd; margin: 4px; padding: 4px; }
+      main { padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <!--
+      An imitation of the Teams web client for the worker's tests. UNVERIFIED against the real client: every
+      data-tid, id, role and text here is copied from config/selectors/teams.json, which is itself unverified until a
+      real tenant is tried (plan 04 task 12). The scene comes from window.__cfg and changes with window.__scene().
+    -->
+    <div id="app"></div>
+    <script>
+      const DEFAULTS = {
+        mic: 'off',
+        camera: 'off',
+        audio: 'computer',
+        afterLauncher: 'prejoin',
+        afterJoin: 'meeting',
+        breakout: 'none',
+        chatOpen: false,
+        messages: [],
+        chatScroll: 'bottom',
+        roster: [],
+        notices: [],
+        incomingAudioOff: false,
+        organiser: false,
+        peopleCount: null,
+        share: null,
+        // Names shown on video tiles in the stage.
+        tiles: [],
+        omit: [],
+        // 'camera' or 'mic': that pre-join toggle ignores clicks, to test a device that cannot be turned off.
+        stuck: 'none',
+        // 'camera' or 'mic': that pre-join toggle has no aria-checked, so its state cannot be read.
+        unreadable: 'none'
+      }
+      const st = { ...DEFAULTS, ...window.__cfg }
+      // Every click on a control, by aria-label else trimmed text. __forbidden holds the ones the worker must never make.
+      window.__clicks = []
+      window.__forbidden = []
+      // The one list of controls the worker must never click: by label, or by selector for the in-meeting microphone and
+      // camera (their labels match the pre-join toggles, which are allowed, to turn devices off).
+      const FORBIDDEN = [
+        ...[
+          'Join in the Teams app',
+          'Share',
+          'React',
+          'Raise hand',
+          'Send',
+          'Allow',
+          'End meeting',
+          'Start recording',
+          'Turn off incoming video',
+          'Join room',
+          'Admit',
+          'Confirm'
+        ].map((label) => ({ label })),
+        { selector: '#microphone-button' },
+        { selector: '#video-button' }
+      ]
+      const isForbidden = (el, label) => FORBIDDEN.some((f) => (f.selector ? el.matches(f.selector) : f.label === label))
+      const ROW = 60
+      let pane = st.chatOpen ? 'chat' : 'none'
+      let menu = null
+      let permissionOpen = true
+      let scrollTop = null
+      const app = document.getElementById('app')
+
+      const esc = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+      function prejoin(anonymous, dialog) {
+        const on = (v) => (v === 'on' ? 'true' : 'false')
+        const checked = (kind, v) => (st.unreadable === kind ? '' : ` aria-checked="${on(v)}"`)
+        return `<main>
+          <h1>Choose your audio and video settings</h1>
+          ${anonymous ? `<input data-tid="prejoin-display-name-input" type="text" placeholder="Type your name" />` : ''}
+          <button role="switch" data-tid="toggle-video" data-act="camera" aria-label="Camera"${checked('camera', st.camera)}>Camera</button>
+          <button role="switch" data-tid="toggle-mute" data-act="mic" aria-label="Microphone"${checked('mic', st.mic)}>Microphone</button>
+          <div role="radiogroup" aria-label="Audio">
+            <button role="radio" data-tid="prejoin-audiosettings-computer-audio" data-act="audio-computer" aria-checked="${st.audio === 'computer'}">Computer audio</button>
+            <button role="radio" data-tid="prejoin-audiosettings-noaudio" data-act="audio-none" aria-checked="${st.audio !== 'computer'}">Don't use audio</button>
+          </div>
+          <button data-tid="prejoin-join-button" data-act="join">Join now</button>
+        </main>
+        ${
+          dialog && permissionOpen
+            ? `<div role="dialog" aria-label="Permissions"><p>Teams can't use your microphone and camera. Allow access, or carry on without them.</p><button data-act="allow">Allow</button><button data-act="permission">Continue without audio or video</button></div>`
+            : ''
+        }`
+      }
+
+      function chatPane() {
+        return `<aside class="pane" data-tid="chat-pane" aria-label="Chat">
+          <header><span>Chat</span><button aria-label="Close" data-act="pane-close">x</button></header>
+          <div data-tid="message-pane-list-viewport"><div></div></div>
+          <div role="textbox" contenteditable="true" aria-label="Type a message"></div>
+          <button aria-label="Send" data-act="send">Send</button>
+        </aside>`
+      }
+
+      function rosterPane() {
+        const items = st.roster
+          .map(
+            (p, i) =>
+              `<li data-tid="participantsInCall-${i}"><div>${esc(p.name)}</div>${p.role ? `<div>${esc(p.role)}</div>` : ''}</li>`
+          )
+          .join('')
+        return `<aside class="pane" data-tid="roster-pane" aria-label="People"><header><span>People</span><button aria-label="Close" data-act="pane-close">x</button></header><ul>${items}</ul></aside>`
+      }
+
+      function menuHtml() {
+        const item = (text, role = 'menuitem') => `<button role="${role}" data-act="menu-item">${text}</button>`
+        if (menu === 'more')
+          return `<div role="menu" aria-label="More">${
+            st.incomingAudioOff ? item('Turn on incoming audio') : item('Turn off incoming audio')
+          }${item('Turn off incoming video')}${item('Start recording')}</div>`
+        if (menu === 'view')
+          return `<div role="menu" aria-label="View">${['Gallery', 'Large gallery', 'Together mode', 'Focus on content']
+            .map((t) => item(t, 'menuitemradio'))
+            .join('')}</div>`
+        if (menu === 'hangup') return `<div role="menu" aria-label="Leave">${item('End meeting')}${item('Leave')}</div>`
+        return ''
+      }
+
+      function meeting() {
+        const n = st.peopleCount
+        const people = n === null ? 'People' : `People, ${n} participants`
+        const share = st.share
+          ? `<div data-stream-type="ScreenSharing" style="position:absolute;left:${st.share.box.x}px;top:${st.share.box.y - 48}px;width:${st.share.box.width}px;height:${st.share.box.height}px"><canvas width="${st.share.width}" height="${st.share.height}" style="width:100%;height:100%;object-fit:contain"></canvas></div>`
+          : ''
+        const notices = st.notices
+          .map(
+            (x, i) =>
+              `<div role="${x.role}" class="notice"><span>${esc(x.text)}</span><button data-act="notice" data-i="${i}">${esc(x.button)}</button></div>`
+          )
+          .join('')
+        const tiles = st.tiles.map((name) => `<div data-tid="video-tile">${esc(name)}</div>`).join('')
+        const breakout =
+          st.breakout === 'prompt'
+            ? `<div role="dialog" aria-label="Breakout rooms"><p>The organiser assigned you to a breakout room</p><button data-act="breakout-join">Join room</button><button data-act="breakout-dismiss">Dismiss</button></div>`
+            : st.breakout === 'moved'
+              ? `<div data-tid="breakout-room-banner">You've been moved to Room 1</div>`
+              : ''
+        const banner = st.incomingAudioOff ? `<div data-tid="incoming-audio-off-banner">Incoming audio is off</div>` : ''
+        return `<div id="toolbar" role="toolbar" aria-label="Meeting controls">
+            <button id="microphone-button" data-act="meeting-mic" aria-label="Microphone" data-state="${st.mic === 'on' ? 'mic' : 'mic-off'}">Microphone</button>
+            <button id="video-button" data-act="meeting-camera" aria-label="Camera" data-state="${st.camera === 'on' ? 'call-video' : 'call-video-off'}">Camera</button>
+            <button aria-label="Share" data-act="share">Share</button>
+            <button aria-label="React" data-act="react">React</button>
+            <button aria-label="Raise hand" data-act="raise">Raise hand</button>
+            <button id="chat-button" data-act="chat" aria-label="Chat">Chat</button>
+            <button id="roster-button" data-act="roster" aria-label="${people}">People${n === null ? '' : ` <span>${n}</span>`}</button>
+            <button id="view-mode-button" data-act="view" aria-label="View">View</button>
+            <button id="callingButtons-showMoreBtn" data-act="more" aria-label="More">More</button>
+            <button id="hangup-button" data-act="hangup" aria-label="Leave">Leave</button>
+          </div>
+          <div id="stage">${share}${tiles}${notices}${breakout}${banner}</div>
+          ${pane === 'chat' ? chatPane() : pane === 'roster' ? rosterPane() : ''}
+          ${menuHtml()}`
+      }
+
+      function endScreen(text, rejoin) {
+        return `<main><div data-tid="call-end-screen"><p>${text}</p>${rejoin ? '<button data-act="rejoin">Rejoin</button>' : ''}</div></main>`
+      }
+
+      function html(scene) {
+        switch (scene) {
+          case 'launcher':
+            return `<main><h1>How do you want to join your Teams meeting?</h1>
+              <button data-tid="joinOnWeb" data-act="launcher">Continue on this browser</button>
+              <button data-act="app">Join in the Teams app</button></main>`
+          case 'prejoin':
+            return prejoin(false, false)
+          case 'prejoin-anonymous':
+            return prejoin(true, false)
+          case 'prejoin-permissions':
+            return prejoin(false, true)
+          case 'invalid':
+            return '<main><h1>This meeting link is invalid</h1></main>'
+          case 'lobby':
+            return `<main><div data-tid="lobby-screen"><h1>Someone in the meeting should let you in soon</h1></div></main>`
+          case 'lobby-denied':
+            return '<main><h1>Someone in the meeting denied your request to join</h1></main>'
+          case 'lobby-expired':
+            return '<main><h1>No one responded to your request to join</h1></main>'
+          case 'meeting':
+            return meeting()
+          case 'ended':
+            return endScreen('The meeting has ended', true)
+          case 'ended-plain':
+            // An end page without the end-screen marker: only its text says the meeting is over.
+            return '<main><h1>The meeting has ended</h1></main>'
+          case 'left':
+            return endScreen('You left the meeting', true)
+          case 'removed':
+            return endScreen('Someone removed you from the meeting', false)
+          case 'blank':
+            return ''
+          default:
+            throw new Error(`unknown scene ${scene}`)
+        }
+      }
+
+      let scene = st.scene
+
+      function renderList() {
+        const vp = document.querySelector("[data-tid='message-pane-list-viewport']")
+        if (!vp) return
+        const inner = vp.firstElementChild
+        const list = st.messages
+        inner.style.cssText = `position:relative;height:${list.length * ROW}px`
+        const first = Math.max(0, Math.floor(vp.scrollTop / ROW) - 2)
+        const last = Math.min(list.length - 1, Math.ceil((vp.scrollTop + vp.clientHeight) / ROW) + 2)
+        let out = ''
+        for (let i = first; i <= last; i++) {
+          const m = list[i]
+          // Teams leaves the author out when the previous message has the same sender.
+          const author = i > 0 && list[i - 1].sender === m.sender ? '' : `<span data-tid="message-author-name">${esc(m.sender)}</span>`
+          const text = esc(m.text)
+          const body = m.href ? `<a href="${esc(m.href)}">${text}</a>` : text
+          out += `<div data-tid="chat-pane-item" style="position:absolute;left:0;right:0;top:${i * ROW}px;height:${ROW}px"><div data-tid="chat-pane-message" data-mid="${esc(m.id)}">${author}<time datetime="${esc(m.datetime)}">${esc(m.time)}</time><div id="content-${esc(m.id)}">${body}</div></div></div>`
+        }
+        inner.innerHTML = out
+      }
+
+      function render() {
+        if (scene === 'signin' || scene === 'device-blocked') {
+          app.innerHTML = ''
+          location.href =
+            'https://login.microsoftonline.com/common/oauth2/v2.0/authorize' + (scene === 'device-blocked' ? '?blocked=1' : '')
+          return
+        }
+        app.innerHTML = html(scene)
+        for (const css of st.omit) document.querySelectorAll(css).forEach((el) => el.remove())
+        const vp = document.querySelector("[data-tid='message-pane-list-viewport']")
+        if (vp) {
+          vp.firstElementChild.style.height = `${st.messages.length * ROW}px`
+          if (scrollTop === null) scrollTop = st.chatScroll === 'top' ? 0 : Math.max(0, st.messages.length * ROW - vp.clientHeight)
+          vp.scrollTop = scrollTop
+          // The list stays where it is when messages arrive; it moves only when the reader scrolls it.
+          vp.addEventListener('scroll', () => {
+            scrollTop = vp.scrollTop
+            renderList()
+          })
+          renderList()
+        }
+      }
+
+      function go(next) {
+        scene = next
+        menu = null
+        render()
+      }
+
+      window.__scene = (next, patch) => {
+        Object.assign(st, patch || {})
+        if (patch && 'chatOpen' in patch) pane = st.chatOpen ? 'chat' : 'none'
+        permissionOpen = true
+        go(next)
+      }
+      window.__addMessage = (m) => {
+        // Like Teams, a list that is at the bottom stays there as messages arrive; one scrolled up stays where it is.
+        const vp = document.querySelector("[data-tid='message-pane-list-viewport']")
+        const atBottom = vp && vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 2
+        st.messages.push(m)
+        renderList()
+        if (atBottom) {
+          vp.scrollTop = vp.scrollHeight
+          renderList()
+        }
+      }
+      window.__addRoster = (p) => {
+        st.roster.push(p)
+        if (pane === 'roster') render()
+      }
+
+      function act(el, act) {
+        switch (act) {
+          case 'launcher':
+            return go(st.afterLauncher)
+          case 'camera':
+            if (st.stuck !== 'camera') st.camera = st.camera === 'on' ? 'off' : 'on'
+            return render()
+          case 'mic':
+            if (st.stuck !== 'mic') st.mic = st.mic === 'on' ? 'off' : 'on'
+            return render()
+          case 'audio-computer':
+            st.audio = 'computer'
+            return render()
+          case 'audio-none':
+            st.audio = 'none'
+            return render()
+          case 'join':
+            return go(st.afterJoin)
+          case 'permission':
+            permissionOpen = false
+            return render()
+          case 'rejoin':
+            return go('prejoin')
+          case 'meeting-mic':
+            st.mic = st.mic === 'on' ? 'off' : 'on'
+            return render()
+          case 'meeting-camera':
+            st.camera = st.camera === 'on' ? 'off' : 'on'
+            return render()
+          case 'chat':
+            pane = pane === 'chat' ? 'none' : 'chat'
+            menu = null
+            return render()
+          case 'roster':
+            pane = pane === 'roster' ? 'none' : 'roster'
+            menu = null
+            return render()
+          case 'pane-close':
+            pane = 'none'
+            return render()
+          case 'view':
+          case 'more':
+            menu = menu === act ? null : act
+            return render()
+          case 'hangup':
+            if (!st.organiser) return go('left')
+            menu = menu === 'hangup' ? null : 'hangup'
+            return render()
+          case 'notice':
+            st.notices.splice(Number(el.dataset.i), 1)
+            return render()
+          case 'breakout-dismiss':
+            st.breakout = 'none'
+            return render()
+          case 'menu-item': {
+            const label = el.textContent.trim()
+            const was = menu
+            menu = null
+            if (label === 'Turn on incoming audio') st.incomingAudioOff = false
+            if (label === 'Leave' && was === 'hangup') return go('left')
+            return render()
+          }
+          default:
+            // Decoys (the Teams app, share, react, send, join room, ...): recorded and otherwise inert.
+            return
+        }
+      }
+
+      document.addEventListener('click', (event) => {
+        const el = event.target.closest('button, a, [role="switch"], [role="radio"], [role="menuitem"], [role="menuitemradio"]')
+        if (!el) return
+        const label = el.getAttribute('aria-label') || el.textContent.trim()
+        window.__clicks.push(label)
+        if (isForbidden(el, label)) window.__forbidden.push(label)
+        if (el.tagName === 'A') event.preventDefault()
+        act(el, el.dataset.act)
+      })
+
+      render()
+    </script>
+  </body>
+</html>

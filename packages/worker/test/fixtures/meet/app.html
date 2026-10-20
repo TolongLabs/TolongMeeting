@@ -1,0 +1,346 @@
+<!doctype html>
+<!--
+  Stand-in for the Google Meet web client, served on https://meet.google.com/** by test/meet/serve.ts. It is built from
+  the starting values in config/selectors/meet.json and has NOT been checked against the real client: every scene,
+  text and attribute here is a guess until plan 05 task 10 (acceptance) runs against a live meeting.
+
+  One page, many scenes. serve.ts prepends `window.__cfg` (see MeetFixtureConfig); window.__scene(scene, patch) switches
+  scene in place. Every clicked control is pushed to window.__clicks (its aria-label, else its trimmed text).
+
+  Skeleton (05-F0) owns this file: scene markup, config defaults and the declarative click rules below. Later tasks never
+  edit it. Each adds behaviour in its own script (join.js, state.js, controls.js, chat.js, layout.js), listed at the end
+  of this file and served from /__tm/, through window.__meet:
+    cfg                 the live config; change it, then call render()
+    render()            rebuild the scene from cfg (scroll of the chat list is kept)
+    scene(name)         cfg.scene = name, then render()
+    onClick(fn)         fn(event, label, control) runs after the click is recorded and the declarative rules ran
+    onRender(fn)        fn(root) runs after every render, for markup a task owns (appended to root)
+    loaded              names of the task scripts that ran
+  Declarative click rules, set as attributes on a control: data-goto="<scene>", data-set="<cfg key>=<value>",
+  data-toggle="mic|camera" (on <-> off; a 'denied' device does nothing).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Meet (fixture)</title>
+    <style>
+      body {
+        margin: 0;
+        font: 14px sans-serif;
+      }
+      main,
+      .notice,
+      [role='dialog'] {
+        padding: 12px;
+      }
+      button,
+      [role='button'] {
+        margin: 4px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .row,
+      [role='toolbar'] {
+        display: flex;
+      }
+      [role='complementary'] {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 360px;
+        height: 100%;
+        background: #f1f3f4;
+      }
+      [aria-live='polite'] {
+        height: 400px;
+        overflow: auto;
+      }
+      [data-message-id] {
+        height: 40px;
+        box-sizing: border-box;
+      }
+      .meta {
+        height: 20px;
+      }
+      [role='listitem'] {
+        height: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      ;(function () {
+        const DEFAULTS = {
+          scene: 'blank',
+          mic: 'off',
+          camera: 'off',
+          joinAs: 'join-now',
+          afterJoin: null,
+          breakout: false,
+          sidePanel: 'closed',
+          messages: [],
+          captions: null,
+          notices: [],
+          host: false,
+          audioElements: 2,
+          chatScroll: 'bottom',
+          people: [],
+          peopleCount: null,
+          share: null,
+          tiles: [],
+          mutedDecoy: false,
+          otherDialog: false,
+          omit: []
+        }
+        const cfg = Object.assign({}, DEFAULTS, window.__cfg)
+        const root = document.getElementById('root')
+        const meet = { cfg, loaded: [], clickHandlers: [], renderHooks: [] }
+        window.__meet = meet
+        window.__clicks = []
+        window.__scene = (scene, patch) => {
+          Object.assign(cfg, patch || {}, { scene })
+          render()
+        }
+
+        function el(tag, attrs, ...kids) {
+          const node = document.createElement(tag)
+          for (const [key, value] of Object.entries(attrs || {})) {
+            if (value !== null && value !== undefined && value !== false) node.setAttribute(key, value === true ? '' : String(value))
+          }
+          node.append(...kids.flat().filter((kid) => kid !== null && kid !== undefined && kid !== false))
+          return node
+        }
+
+        // A microphone or camera button. 'denied' is the permission-denied variant (no data-is-muted), see P5-12.
+        function device(kind, state) {
+          if (state === 'denied') {
+            return el('div', { role: 'button', 'aria-label': `${kind}: Permission needed` }, kind)
+          }
+          const on = state === 'on'
+          return el(
+            'div',
+            {
+              role: 'button',
+              'data-is-muted': String(!on),
+              'data-toggle': kind === 'microphone' ? 'mic' : 'camera',
+              'aria-label': `Turn ${on ? 'off' : 'on'} ${kind}`
+            },
+            kind
+          )
+        }
+
+        function joinBlock() {
+          if (cfg.joinAs === 'ask') {
+            return [el('button', { 'data-goto': cfg.afterJoin || 'lobby' }, 'Ask to join')]
+          }
+          if (cfg.joinAs === 'other-device') {
+            return [
+              el('p', {}, "You're already in this call on another device"),
+              el('button', {}, 'Switch here'),
+              el('button', { 'data-goto': cfg.afterJoin || 'meeting' }, 'Join here too')
+            ]
+          }
+          return [el('button', { 'data-goto': cfg.afterJoin || 'meeting' }, 'Join now')]
+        }
+
+        function prejoin() {
+          return el(
+            'main',
+            {},
+            el('h1', {}, 'Ready to join?'),
+            el('div', { class: 'row' }, device('microphone', cfg.mic), device('camera', cfg.camera)),
+            el('button', {}, 'Present'),
+            el('button', {}, 'Use Companion mode'),
+            ...joinBlock()
+          )
+        }
+
+        function page(...kids) {
+          return el('main', {}, ...kids)
+        }
+
+        function chatGroups() {
+          const groups = []
+          for (const message of cfg.messages) {
+            const last = groups[groups.length - 1]
+            if (last && last.sender === message.sender) last.items.push(message)
+            else groups.push({ sender: message.sender, time: message.time, items: [message] })
+          }
+          return groups.map((group) =>
+            el(
+              'div',
+              { 'data-sender-id': group.sender },
+              el(
+                'div',
+                { class: 'meta' },
+                el('span', { 'data-sender-name': '' }, group.sender),
+                ' ',
+                el('span', { 'data-formatted-timestamp': '' }, group.time)
+              ),
+              ...group.items.map((m) =>
+                el('div', { 'data-message-id': m.id }, m.text, m.href ? [' ', el('a', { href: m.href }, m.href)] : null)
+              )
+            )
+          )
+        }
+
+        function sidePanel() {
+          if (cfg.sidePanel === 'closed') return null
+          const body =
+            cfg.sidePanel === 'chat'
+              ? el('div', { 'aria-live': 'polite' }, ...chatGroups())
+              : el(
+                  'div',
+                  { role: 'list', 'aria-label': 'Participants' },
+                  ...cfg.people.map((p) =>
+                    el('div', { role: 'listitem' }, el('div', {}, p.name), p.label ? el('div', {}, p.label) : null)
+                  )
+                )
+          return el(
+            'div',
+            { role: 'complementary' },
+            el('button', { 'aria-label': 'Close', 'data-set': 'sidePanel=closed' }, 'x'),
+            body,
+            // A decoy: the worker never sends anything.
+            cfg.sidePanel === 'chat' ? el('button', { 'aria-label': 'Send a message' }, 'Send') : null
+          )
+        }
+
+        function meeting() {
+          const toolbar = el(
+            'div',
+            { role: 'toolbar' },
+            // A host's Leave opens a dialog (controls.js); anyone else leaves at once.
+            el('button', { 'aria-label': 'Leave call', 'data-goto': cfg.host ? null : 'left' }, 'Leave'),
+            device('microphone', cfg.mic),
+            device('camera', cfg.camera),
+            el('button', { 'aria-label': 'Chat with everyone', 'data-set': 'sidePanel=chat' }, 'Chat'),
+            el('button', { 'aria-label': 'People', 'data-set': 'sidePanel=people' }, 'People'),
+            el('button', { 'aria-label': 'More options' }, 'More')
+          )
+          return [
+            el(
+              'main',
+              {},
+              el('p', {}, 'Meeting fixture'),
+              ...cfg.tiles.map((name) => el('div', { class: 'tile' }, name)),
+              // A decoy: a participant's muted-microphone indicator, which matches the microphone selectors.
+              cfg.mutedDecoy
+                ? el('div', { role: 'button', 'data-is-muted': 'true', 'aria-label': 'Ali microphone' }, 'Ali')
+                : null
+            ),
+            toolbar,
+            ...Array.from({ length: cfg.audioElements }, () => el('audio')),
+            sidePanel(),
+            ...cfg.notices.map((n) => el('div', { role: n.role }, el('p', {}, n.text), el('button', {}, n.button))),
+            cfg.breakout
+              ? el(
+                  'div',
+                  { role: 'dialog' },
+                  el('p', {}, "You've been invited to join breakout room 1"),
+                  el('button', {}, 'Join'),
+                  el('button', {}, 'Cancel')
+                )
+              : null,
+            cfg.captions === null ? null : el('div', { role: 'region', 'aria-label': 'Captions' }, cfg.captions)
+          ]
+        }
+
+        const SCENES = {
+          prejoin,
+          'prejoin-anonymous': () =>
+            page(
+              el('h1', {}, 'What’s your name?'),
+              el('input', { 'aria-label': 'Your name', type: 'text', value: '' }),
+              el('button', { 'data-goto': 'lobby' }, 'Ask to join')
+            ),
+          'prejoin-permissions': () => [
+            prejoin(),
+            el(
+              'div',
+              { role: 'dialog' },
+              el('p', {}, 'Do people see and hear you?'),
+              el('button', {}, 'Use microphone and camera'),
+              el('button', {}, 'Allow microphone and camera'),
+              el('button', { 'data-goto': 'prejoin' }, 'Continue without microphone and camera')
+            )
+          ],
+          signin: () => {
+            location.href = 'https://accounts.google.com/v3/signin/identifier'
+            return page(el('p', {}, 'Redirecting to sign in'))
+          },
+          blocked: () => page(el('h1', {}, "You can't join this video call"), el('button', {}, 'Return to home screen')),
+          invalid: () => page(el('h1', {}, 'Check your meeting code'), el('p', {}, 'Make sure the code is right.')),
+          lobby: () => page(el('h1', {}, 'Asking to be let in…')),
+          'lobby-review': () => page(el('h1', {}, 'Your request to join is being reviewed')),
+          'lobby-denied': () => page(el('h1', {}, 'Someone in the call denied your request to join')),
+          'lobby-expired': () =>
+            page(el('h1', {}, 'No one responded to your request to join the call'), el('button', {}, 'Ask to join')),
+          meeting,
+          ended: () => page(el('h1', {}, 'The call has ended'), el('button', {}, 'Return to home screen')),
+          left: () =>
+            page(
+              el('h1', {}, 'You left the meeting'),
+              el('button', {}, 'Rejoin'),
+              el('button', {}, 'Return to home screen')
+            ),
+          removed: () => page(el('h1', {}, "You've been removed from the meeting")),
+          blank: () => []
+        }
+
+        function render() {
+          const build = SCENES[cfg.scene]
+          if (!build) throw new Error(`unknown meet fixture scene: ${cfg.scene}`)
+          const previous = root.querySelector('[aria-live="polite"]')
+          const kept = previous ? previous.scrollTop : null
+          root.replaceChildren(...[build()].flat().filter(Boolean))
+          for (const selector of cfg.omit) root.querySelectorAll(selector).forEach((node) => node.remove())
+          const chat = root.querySelector('[aria-live="polite"]')
+          if (chat) chat.scrollTop = kept ?? (cfg.chatScroll === 'bottom' ? chat.scrollHeight : 0)
+          for (const hook of meet.renderHooks) hook(root)
+        }
+
+        document.addEventListener(
+          'click',
+          (event) => {
+            const control = event.target.closest("button, [role='button'], [role='menuitem'], [role='radio'], a[href]")
+            if (!control) return
+            const label = control.getAttribute('aria-label') || control.textContent.trim()
+            window.__clicks.push(label)
+            const toggle = control.getAttribute('data-toggle')
+            if (toggle && cfg[toggle] !== 'denied') cfg[toggle] = cfg[toggle] === 'on' ? 'off' : 'on'
+            const set = control.getAttribute('data-set')
+            if (set) {
+              const at = set.indexOf('=')
+              cfg[set.slice(0, at)] = set.slice(at + 1)
+            }
+            const goto = control.getAttribute('data-goto')
+            if (goto) cfg.scene = goto
+            for (const handler of meet.clickHandlers) handler(event, label, control)
+            if (toggle || set || goto) render()
+          },
+          true
+        )
+
+        Object.assign(meet, {
+          render,
+          scene(name) {
+            cfg.scene = name
+            render()
+          },
+          onClick: (fn) => meet.clickHandlers.push(fn),
+          onRender: (fn) => meet.renderHooks.push(fn)
+        })
+      })()
+    </script>
+    <script src="/__tm/join.js"></script>
+    <script src="/__tm/state.js"></script>
+    <script src="/__tm/controls.js"></script>
+    <script src="/__tm/chat.js"></script>
+    <script src="/__tm/layout.js"></script>
+    <script>
+      window.__meet.render()
+    </script>
+  </body>
+</html>

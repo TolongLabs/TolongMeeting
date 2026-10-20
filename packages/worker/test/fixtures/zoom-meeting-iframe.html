@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zoom meeting on web</title>
+    <script src="fixture.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="webclient" class="pwa-webclient__iframe" title="Zoom"></iframe>
+    <script>
+      // The inner page gets this page's query (?seed=60, ?chat=closed), and the page-driving helpers act on it.
+      const frame = document.getElementById('webclient')
+      frame.src = 'zoom-meeting-top.html' + location.search
+      for (const name of [
+        'addMessage',
+        'scrollTop',
+        'endMeeting',
+        'remove',
+        'breakout',
+        'breakoutNotice',
+        'bareBreakout',
+        'startVideoNotice',
+        'recordingNotice',
+        'vanishingNotice',
+        'plainEnd',
+        'plainRemoved',
+        'nestedNotice',
+        'stopShare',
+        'showNotice'
+      ]) {
+        window.__fixture[name] = (...args) => frame.contentWindow.__fixture[name](...args)
+      }
+    </script>
+  </body>
+</html>

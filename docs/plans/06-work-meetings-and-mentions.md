@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Bun 1.x, `bun test`, zod, Playwright on Node 24 (worker), Next.js App Router with server actions, React server rendering for component tests, DashScope through 1A's `chatJson`, self-hosted ntfy.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -27,13 +27,13 @@ Contents:
 
 - **Work template**: exactly the design's work-meeting template; empty sections are left out; at most 5 items per section, most urgent first; action items that don't fit go under `More deadlines` (uncapped, after `Open questions`), as 1A's lecture renderer does with tasks; owners only as spoken, with no speaker identification.
 - **Work defaults already built**: work entries default to native transcription and show `EMPLOYER_NOTICE` next to the transcription choice, delivered by plan 01c Task 10 (`EntryInputSchema` and the entry form). This plan doesn't rebuild them; Task 6 only checks them.
-- **Mentions**: live transcription mode only, and only when the member has names on My details (`mention_names`); names and transcript text are compared after `normaliseName` (compatibility decomposition, accents removed, lower case, anything but letters and digits becomes a space, spaces collapsed), as whole-word sequences; names shorter than 2 characters after normalisation are ignored.
-- **Mention ping**: high priority, at most one per 2 minutes per worker attempt (`MENTION_DEBOUNCE_MS = 120_000`), with the last 30 seconds of transcript cut to its final 1,500 characters, and the buttons "Open meeting page" and "Take over". Every match is still logged as a `mention` event with its offset only. The bot never responds in the meeting.
+- **Mentions**: live transcription mode only, and only when the member has names on My details (`mention_names`); names and transcript text are compared after `normaliseName` (compatibility decomposition, accents removed, lower case, anything but letters and digits becomes a space, spaces collapsed), as whole-word sequences, except names in a script written without spaces (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar), which match as text anywhere inside the spoken text with spaces ignored; a name needs at least 3 letters (2 in those scripts), and shorter names are not watched (My details says so). Accents are removed only from Latin, Greek and Cyrillic letters; the combining marks of other scripts (Devanagari, Bengali, Tamil, Thai, kana voicing marks) are part of the letter and stay; `ß` is `ss`.
+- **Mention ping**: high priority, at most one per 2 minutes per occurrence (`MENTION_DEBOUNCE_MS = 120_000`; a restarted worker replays the occurrence's `mention` events from `events.jsonl` with `lastMentionPing` and starts from the last ping), with the last 30 seconds of transcript cut to its final 1,500 characters, and the buttons "Open meeting page" and "Take over". Every match is still logged as a `mention` event with its offset only. The bot never responds in the meeting.
 - **Commands**: ping buttons are ntfy `view` actions that open website pages; opening a page never acts; the page's button (a server action) queues `leave_now` or `take_over` only for the member's own occurrence while it is in `ACTIVE_STATES`.
 - **Take over**: the worker leaves first, confirms within 10 seconds that it is no longer in the meeting (otherwise closes the stage page), and only then reports `left_by_member`; the page opens the meeting link only after it sees that state, or after 60 seconds if the member chooses to open it anyway.
-- **Passcodes**: the meeting link reaches the browser only in the take-over action's response to the owning member; it never appears in ping text, URL query strings of the app's own API, events or logs.
+- **Passcodes**: the full meeting link (passcode included) reaches the browser only in the take-over action's response to the owning member (session, and Next's same-origin check on server actions). The server builds it from the occurrence's `entry_snapshot` fixed link or its `pasted_link`, whichever names the meeting the bot joined (`link_used`, passcode already cut); it is never stored anywhere new and never appears in ping text, URL query strings of the app's own API, events or logs. When the bot joined a link from a watched chat, which the server does not hold, the response carries the masked link (host and meeting id) and `passcodeFromChat: true`, and the page tells the member to enter the passcode from the chat. The meeting page shows only the host and meeting id of the joined link.
 - **Pings**: at most 3 actions each (ntfy's limit); wording exactly as in the tasks; times through `formatWhen` in the member's time zone.
-- **Copy and commits**: plain British English; conventional commits with headers of at most 50 characters; each task's commit copies its "adds to contracts" names into `docs/plans/architecture.md`.
+- **Copy and commits**: plain British English; conventional commits with headers of at most 50 characters; each task's commit copies its "adds to contracts" names into `docs/TRD.md`.
 
 ## Review Focus
 
@@ -45,7 +45,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there by the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there by the task that creates them:
 
 - **Pipeline**: `WorkInventorySchema`, `WorkInventory`, `buildWorkInventory`, `renderWorkSummary`, `pickDoNext` (`packages/pipeline/src/summary/work.ts`); `chooseDue` widened to `Pick<InventoryItem, 'source' | 'due' | 'conflicts'>`.
 - **Core**: `normaliseName` (`packages/core/src/names.ts`); `StateEventData.command`; `Heartbeat.linkUsed`.
@@ -77,7 +77,9 @@ Assumed from earlier plans (use their real names if they differ, and fix this pl
 
 ```ts
 // packages/core/src/names.ts
-export function normaliseName(s: string): string // NFKD, strip \p{M}, lower case, [^\p{L}\p{N}]+ -> ' ', trim
+export function normaliseName(s: string): string // NFKD, strip \p{M} after Latin, Greek or Cyrillic letters only, lower case, ß -> ss, [^\p{L}\p{N}\p{M}]+ -> ' ', trim, NFC
+export function isUnspacedName(normalised: string): boolean // Han, Hiragana, Katakana, Thai, Lao, Khmer or Myanmar
+export function isWatchableName(name: string): boolean // >= 3 letters, or >= 2 in an unspaced script
 
 // packages/pipeline/src/summary/work.ts
 export const WorkInventorySchema = z.object({
@@ -128,11 +130,11 @@ You extract an inventory from one work meeting. Reply with JSON for the given sc
 - Do not add a preamble, a recap or advice.
 ```
 
-- `pickDoNext` takes the action items whose `normaliseName(owner)` equals `normaliseName` of one of `memberNames`, and returns the one with the earliest due date from `chooseDue` (undated last), or null.
-- `renderWorkSummary` writes the design's work template: the title line as 1A's lecture title without a session label; `Do next: <task> (<due text>)` for `pickDoNext(inv, [...cfg.member.mentionNames, cfg.member.displayName])`, else `Do next: nothing assigned to you in this meeting`; `Decisions`, `What was discussed` and `Open questions` with their first 5 items; `Action items` sorted by due date (undated last), first 5, each `<owner>: <task> (<due text>)`, without `<owner>: ` when the owner is null and without the brackets when undated; `More deadlines` with every remaining action item in the same form; `Details: <meetingUrl>`, or 1A's `Details: transcript.md, slides.md and chat.md in <outDir>` when it is null. Due text is 1A's (`due Wed 28 Oct 2026`, `, HH:mm` when timed, `; <note>` from `chooseDue`).
-- `runPipeline` uses `buildWorkInventory` and `renderWorkSummary` when `cfg.entry.type` is `'work'`, with `meetingUrl` `${TM_PUBLIC_URL}/meetings/<occurrenceId>` when that variable is set, else null; lectures are unchanged.
+- `pickDoNext` takes the action items whose `normaliseName(owner)` equals `normaliseName` of one of `memberNames`, and returns the one with the earliest due date from `chooseDue` (undated last), or null. Items whose source is `participant_chat` are skipped: anyone can write there. `WorkInventorySchema` sources are the lecture ones plus `participant_chat`; the system prompt says to take owners and due dates only from the slides, the host's chat and speech, and to give an item that only the other chat holds `"source": "participant_chat"`, `"owner": null` and `"due": null`; the vetting step nulls the owner and every date of such an item and conflict whatever the model wrote. Dates in `conflicts` use the same strict `Due` schema as `due` (a real `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`), and the renderer's `dateText` gives no date for anything else, so model text never reaches the summary through a date.
+- `renderWorkSummary` writes the design's work template: the title line as 1A's lecture title without a session label; `Do next: <task> (<due text>)` for `pickDoNext(inv, [...cfg.member.mentionNames, cfg.member.displayName])`, else `Do next: nothing assigned to you in this meeting`; `Decisions`, `What was discussed` and `Open questions` with their first 5 items; `Action items` sorted by due date (undated last), first 5, each `<owner>: <task> (<due text>)`, without `<owner>: ` when the owner is null and without the brackets when undated; `More deadlines` with every remaining action item in the same form; `Details: <meetingUrl>`, or 1A's `Details: the transcript, slides and chat files in <outDir>` when it is null. Due text is 1A's (`due Wed 28 Oct 2026`, `, HH:mm` when timed, `; <note>` from `chooseDue`).
+- `runPipeline` uses `buildWorkInventory` and `renderWorkSummary` when `cfg.entry.type` is `'work'`, with `meetingUrl` `${TM_PUBLIC_URL}/meetings/<occurrenceId>` when that variable is set, else null; a value that is not an https URL is reported on stderr (`tm-pipeline: TM_PUBLIC_URL must be an https URL; the summary has no meeting link`) and the summary is written without the link; lectures are unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/names.test.ts
@@ -207,7 +209,7 @@ test('7 action items: the 5 most urgent, the rest under More deadlines; empty se
   expect(section(out, 'More deadlines')).toEqual(['1. Task 7 (due Fri 20 Nov 2026)', '2. Task 2'])
   expect(out).not.toContain('Decisions')
   expect(out).not.toContain('Attendance')
-  expect(out.split('\n').at(-2)).toBe('Details: transcript.md, slides.md and chat.md in /o')
+  expect(out.split('\n').at(-2)).toBe('Details: the transcript, slides and chat files in /o')
 })
 
 test("do next is the member's own most urgent item", () => {
@@ -236,24 +238,24 @@ test('a work entry gets the work inventory and summary, with no attendance line'
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `TZ=UTC bun test packages/core/src/names.test.ts packages/pipeline/src/summary/work.test.ts packages/pipeline/src/pipeline.test.ts`
 Expected: FAIL with `Cannot find module './names'`.
 
-- [ ] **Step 3: Implement `names.ts`, `work.ts`, the `chooseDue` widening and the dispatch in `pipeline.ts`**
+- [x] **Step 3: Implement `names.ts`, `work.ts`, the `chooseDue` widening and the dispatch in `pipeline.ts`**
 
 Share 1A's due-text and title helpers from `render.ts`, and its `Source` and due-pattern schemas (`Due` above) from `inventory.ts`, rather than copying them; export them if 1A kept them private.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `TZ=UTC bun test packages/core packages/pipeline && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/names* packages/core/src/index.ts packages/pipeline/src docs/plans/architecture.md
+git add packages/core/src/names* packages/core/src/index.ts packages/pipeline/src docs/TRD.md
 git commit -m "feat(pipeline): add work-meeting summary"
 ```
 
@@ -271,20 +273,20 @@ git commit -m "feat(pipeline): add work-meeting summary"
 
 ```ts
 export type CompiledName = { name: string; tokens: string[] }
-export function compileNames(names: string[]): CompiledName[] // normalised, < 2 characters dropped, duplicates removed
-export function findMention(text: string, names: CompiledName[]): string | null // the longest name whose tokens occur as a contiguous run of whole tokens in normaliseName(text)
+export function compileNames(names: string[]): CompiledName[] // normalised, names that are not `isWatchableName` dropped, duplicates removed
+export function findMention(text: string, names: CompiledName[]): string | null // the longest name whose tokens occur as a contiguous run of whole tokens in normaliseName(text); a name in an unspaced script matches as a substring of the text with spaces removed
 export function transcriptWindow(results: AsrResult[], endMs: number, spanMs = 30_000, maxChars = 1_500): string
 ```
 
 `transcriptWindow` joins, in order and with single spaces, the texts of results with `endMs > endMs - spanMs` and `startMs <= endMs`; text longer than `maxChars` keeps its last `maxChars - 1` characters after a leading `…`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/mentions/match.test.ts
-const names = compileNames(['Nur Aisyah', 'Aisyah', 'Zoë', 'A', '  '])
+const names = compileNames(['Nur Aisyah', 'Aisyah', 'Zoë', 'Al', '  '])
 
-test('names compile once each; one-letter and blank names are dropped', () => {
+test('names compile once each; names under 3 letters and blank names are dropped', () => {
   expect(names.map((n) => n.tokens)).toEqual([['nur', 'aisyah'], ['aisyah'], ['zoe']])
 })
 
@@ -310,22 +312,22 @@ test('the window holds the last 30 seconds, cut from the front', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/mentions/match.test.ts`
 Expected: FAIL with `Cannot find module './match'`.
 
-- [ ] **Step 3: Implement `packages/worker/src/mentions/match.ts`**
+- [x] **Step 3: Implement `packages/worker/src/mentions/match.ts`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/mentions/match.test.ts`
 Expected: PASS, `8 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/mentions docs/plans/architecture.md
+git add packages/worker/src/mentions docs/TRD.md
 git commit -m "feat(worker): match the member's names"
 ```
 
@@ -363,15 +365,15 @@ interface LiveAsrOptions { /* 1A's fields */ onResult?: (r: AsrResult) => void }
 siteLinks(cfg): { meetingPage: string; signIn: string; leave: string; takeOver: string } | null   // leave = <meetingPage>/leave, takeOver = <meetingPage>/take-over
 ```
 
-`onResult` keeps the last 60 seconds of results. A result that `findMention` matches calls `emit(r.endMs)`, and pings when no ping went out in the last `MENTION_DEBOUNCE_MS` of stream offset. A ping that fails is logged as `mention ping failed` and never reaches the speech path. In `run.ts`, live-mode occurrences start the watch with `cfg.member.mentionNames` and pass `onResult` to `startLiveAsr`; native-mode occurrences never do.
+`onResult` keeps the last 60 seconds of results. A result that `findMention` matches calls `emit(r.endMs)`, and pings when no ping went out in the last `MENTION_DEBOUNCE_MS` of stream offset. A result whose offset is behind the newest one seen is ignored (it neither pings nor moves the debounce back). A ping that fails is logged as `mention ping failed` and never reaches the speech path. The deps carry `joinedLinks` (the link as given and as normalised): the passcode they hold (`meetingPasscode`) is cut from the quoted speech as exact text, spaced out or not. The ping message is capped at 3,900 bytes, like the summary ping. In `run.ts`, live-mode occurrences start the watch with `cfg.member.mentionNames` and pass `onResult` to `startLiveAsr`; native-mode occurrences never do.
 
 Ping copy, added to 01c's `pings` (actions left out when `links` is null, as in 1A job-file runs):
 
-| Function                                                            | Priority | Title                              | Message                                                                    | Actions                          |
-| ------------------------------------------------------------------- | -------- | ---------------------------------- | -------------------------------------------------------------------------- | -------------------------------- |
-| `nameMentioned({ entry, at, transcript, meetingUrl, takeOverUrl })` | high     | `Your name was mentioned: <entry>` | `Heard at <at>. The last 30 seconds:` then a line break and `<transcript>` | `Open meeting page`, `Take over` |
+| Function                                                                       | Priority | Title                              | Message                                                                    | Actions                          |
+| ------------------------------------------------------------------------------ | -------- | ---------------------------------- | -------------------------------------------------------------------------- | -------------------------------- |
+| `nameMentioned({ entry, at, transcript, meetingUrl, takeOverUrl, passcode? })` | high     | `Your name was mentioned: <entry>` | `Heard at <at>. The last 30 seconds:` then a line break and `<transcript>` | `Open meeting page`, `Take over` |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/mentions/watch.test.ts
@@ -487,22 +489,22 @@ test('mention copy', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/mentions packages/worker/src/asr/live.test.ts packages/worker/src/control/links.test.ts packages/notify`
 Expected: FAIL with `Cannot find module './watch'`.
 
-- [ ] **Step 3: Implement `watch.ts`, `onResult`, the two links, `pings.nameMentioned` and the `run.ts` wiring**
+- [x] **Step 3: Implement `watch.ts`, `onResult`, the two links, `pings.nameMentioned` and the `run.ts` wiring**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src packages/notify && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src packages/notify/src docs/plans/architecture.md
+git add packages/worker/src packages/notify/src docs/TRD.md
 git commit -m "feat(worker): ping when the member is named"
 ```
 
@@ -535,10 +537,10 @@ Rules:
 
 - `leaveMeeting`: when `meetingState` is neither `in_meeting` nor `lobby`, return `'left'` without clicking. Otherwise call `adapter.leave(stage)` and poll `meetingState` every `pollMs` until it is neither; if that hasn't happened within `confirmMs`, or `leave` throws, close the stage page (`stage.close({ runBeforeUnload: false })`) and return `'closed'`.
 - `dispatchCommands` calls `h.leave` once per batch, with `'take_over'` when the batch holds one, else `'leave_now'`.
-- `run.ts`: 01c's leave handler calls `leaveMeeting` in place of `adapter.leave`, and only after it returns emits `left_by_member` with `command`; the rest of 01c's finish is unchanged. From the moment joining starts, `getStatus` sends `linkUsed`. The joined ping's actions become `Open meeting page`, `Make the bot leave` and `Take over`, from `siteLinks`.
-- `HeartbeatSchema` accepts an optional `linkUsed`: an `https:` URL of at most 2,048 characters.
+- `run.ts`: 01c's leave handler calls `leaveMeeting` in place of `adapter.leave`, and only after it returns emits `left_by_member` with `command`; the rest of 01c's finish is unchanged. From the moment joining starts, `getStatus` sends `linkUsed`. The joined ping's actions become `Open meeting page`, `Make the bot leave` and `Take over`, from `siteLinks`. The leave step's bound (`BOUND.leave`) is 20 s, so the 10 s confirmation of `leaveMeeting` is not cut; a leave that failed or was cut also closes the browser. A leave or take-over command waits first for the form submit in progress (the dispatcher settles its running forms, bounded by `BOUND.forms`), then leaves; no Submit is clicked twice. A take-over ends with `left_by_member` and no summary hand-over.
+- `HeartbeatSchema` accepts an optional `linkUsed`: an `https:` URL of at most 2,048 characters. Any other value is read as absent (`.catch(undefined)`), so a bad optional link never makes the whole heartbeat a 400.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/control/leave.test.ts
@@ -601,26 +603,27 @@ test('a heartbeat may carry the joined link', () => {
       linkUsed: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
     }).success
   ).toBe(true)
-  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'javascript:alert(1)' }).success).toBe(false)
+  // A value that is not an https URL is ignored, never a refused heartbeat.
+  expect(HeartbeatSchema.parse({ ...hb(), linkUsed: 'javascript:alert(1)' }).linkUsed).toBeUndefined()
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/control packages/core/src/control.test.ts`
 Expected: FAIL with `Cannot find module './leave'`.
 
-- [ ] **Step 3: Implement `leave.ts`, the command change, the schema and type changes, and the `run.ts` wiring**
+- [x] **Step 3: Implement `leave.ts`, the command change, the schema and type changes, and the `run.ts` wiring**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/control packages/core && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src packages/core/src docs/plans/architecture.md
+git add packages/worker/src packages/core/src docs/TRD.md
 git commit -m "feat(worker): leave first on take over"
 ```
 
@@ -639,7 +642,10 @@ git commit -m "feat(worker): leave first on take over"
 
 ```ts
 // packages/web/lib/meeting.ts
-export function takeOver(scope: MemberScope, id: string): Promise<{ link: string | null } | null> // null: not this member's occurrence
+export function takeOver(
+  scope: MemberScope,
+  id: string
+): Promise<{ link: string | null; passcodeFromChat: boolean; alreadyLeft: boolean } | null> // null: not this member's occurrence
 export function controlState(scope: MemberScope, id: string): Promise<{ state: OccurrenceState } | null>
 
 // packages/web/lib/meeting-control.ts
@@ -648,6 +654,8 @@ export const CONTROL_COPY: Record<
   | 'takeOverButton'
   | 'waiting'
   | 'takeOverNoLink'
+  | 'takeOverPasscodeFromChat'
+  | 'takeOverAlreadyLeft'
   | 'takeOverTimeout'
   | 'takeOverAnyway'
   | 'leaveIntro'
@@ -669,10 +677,10 @@ export function waitUntilLeft(
 
 Rules:
 
-- `takeOver`: null when the scope finds no such occurrence; `InUseError('The bot is not in this meeting.')` outside `ACTIVE_STATES`; otherwise append `take_over` to `pending_commands` unless it is already there, and return `{ link: link_used }`, read in the same transaction while the passcode is still stored.
+- `takeOver`: null when the scope finds no such occurrence; `InUseError('The bot is not in this meeting.')` outside `ACTIVE_STATES`; in `leaving` or `uploading` the bot is already out: nothing is queued and the result has `alreadyLeft: true`; otherwise append `take_over` to `pending_commands` unless it is already there. The result is `{ link, passcodeFromChat, alreadyLeft }`: `link` is the occurrence's `pasted_link`, else the `entry_snapshot` fixed link, whichever names the same meeting as `link_used` (full, passcode included, read in the same transaction); if neither does (a chat watcher found it) it is the masked link (`https://<host><meeting path>`, no query or fragment) with `passcodeFromChat: true`; null when `link_used` is not a Zoom, Teams or Meet link. Nothing is written for the link.
 - `handleHeartbeat`: when `body.linkUsed` is present and the occurrence is in `ACTIVE_STATES`, set `link_used` to it. It goes in no event.
-- `waitUntilLeft` resolves `'left'` as soon as `getState()` returns a state outside `ACTIVE_STATES`, else `'timeout'` after `timeoutMs`.
-- **Pages**: `/meetings/<id>/leave` and `/meetings/<id>/take-over` are server components that show the entry name and the intro and button from `CONTROL_COPY` (or `notRunning`, or a 404 when `meetingData` is null), and change nothing when opened. `ControlPanel` (client) calls `leaveAction(id)` (01c's `makeBotLeave`) or `takeOverAction(id)` (`takeOver`), shows `waiting`, then runs `waitUntilLeft` over `GET /api/meetings/<id>/state` (`controlState`, 404 for other members). On `'left'`, take over calls `window.location.assign(link)`, or shows `takeOverNoLink` when the link is null; leave shows `leaveDone`. On `'timeout'`, take over shows `takeOverTimeout` with a `takeOverAnyway` button, and leave shows `leaveTimeout`. The link lives only in the component's memory.
+- `waitUntilLeft` resolves `'left'` as soon as `getState()` returns a state outside `ACTIVE_STATES` or `leaving` or `uploading` (the bot is then only wrapping up its files), else `'timeout'` after `timeoutMs`.
+- **Pages**: `/meetings/<id>/leave` and `/meetings/<id>/take-over` are server components that show the entry name and the intro and button from `CONTROL_COPY` (or `notRunning`, or a 404 when `meetingData` is null), and change nothing when opened. `ControlPanel` (client) calls `leaveAction(id)` (01c's `makeBotLeave`) or `takeOverAction(id)` (`takeOver`), shows `waiting`, then runs `waitUntilLeft` over `GET /api/meetings/<id>/state` (`controlState`, 404 for other members). When `alreadyLeft` the page shows `takeOverAlreadyLeft` and does not wait. On `'left'`, take over calls `window.location.assign(link)` (with `takeOverPasscodeFromChat` shown first when `passcodeFromChat`), or shows `takeOverNoLink` when the link is null; leave shows `leaveDone`. On `'timeout'`, take over shows `takeOverTimeout` with a `takeOverAnyway` button, and leave shows `leaveTimeout`. The link lives only in the component's memory.
 
 `CONTROL_COPY` (exact; `<entry>` is the entry name):
 
@@ -681,6 +689,8 @@ takeOverIntro    The bot will leave <entry> first, then this page opens the meet
 takeOverButton   Take over now
 waiting          Waiting for the bot to leave…
 takeOverNoLink   The bot has left. Open the meeting from where its link was posted.
+takeOverPasscodeFromChat  The bot joined with a link from a chat, so this link has no passcode. Enter the passcode from that chat.
+takeOverAlreadyLeft       The bot has already left. You can open the meeting now.
 takeOverTimeout  The bot hasn't confirmed that it left. If you join now, the meeting may disconnect one of you.
 takeOverAnyway   Open the meeting anyway
 leaveIntro       The bot will leave <entry> and stop recording. What it recorded so far stays on the meeting page.
@@ -690,7 +700,7 @@ leaveTimeout     The bot hasn't confirmed that it left yet. Check the meeting pa
 notRunning       The bot is not in this meeting.
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/meeting.test.ts (added)
@@ -768,24 +778,24 @@ test('the take-over copy warns before it acts', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/meeting-control.test.ts packages/web/lib/meeting.test.ts packages/web/lib/control.test.ts`
 Expected: FAIL with `Cannot find module './meeting-control'`.
 
-- [ ] **Step 3: Implement the library functions, the actions, the route, the two pages and the panel, and add the button to the meeting page**
+- [x] **Step 3: Implement the library functions, the actions, the route, the two pages and the panel, and add the button to the meeting page**
 
 Server actions get the scope from `scopeForAuthUser` for the signed-in user, as 01c's meeting actions do; Next.js checks their origin, and nothing acts on a `GET`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web docs/plans/architecture.md
+git add packages/web docs/TRD.md
 git commit -m "feat(web): add leave and take-over pages"
 ```
 

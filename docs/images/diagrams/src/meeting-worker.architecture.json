@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Meeting Worker Inside One Container",
+    "output": ".archify/meeting-worker/meeting-worker.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "components": [
+    {
+      "id": "server",
+      "type": "external",
+      "label": "Server",
+      "sublabel": "server, or companion",
+      "pos": [225, 50],
+      "size": [140, 60]
+    },
+    {
+      "id": "control",
+      "type": "backend",
+      "label": "Control client",
+      "sublabel": "heartbeat every 5 s",
+      "pos": [225, 200],
+      "size": [140, 60]
+    },
+    {
+      "id": "chatapps",
+      "type": "external",
+      "label": "Chat web apps",
+      "sublabel": "WhatsApp, Discord, Teams",
+      "pos": [420, 50],
+      "size": [140, 60]
+    },
+    {
+      "id": "forms",
+      "type": "external",
+      "label": "Attendance forms",
+      "sublabel": "Google, Microsoft Forms",
+      "pos": [615, 50],
+      "size": [140, 60]
+    },
+    {
+      "id": "member",
+      "type": "external",
+      "label": "Member",
+      "sublabel": "remote view via Caddy",
+      "pos": [810, 50],
+      "size": [140, 60],
+      "icon": "person"
+    },
+    {
+      "id": "stage",
+      "type": "frontend",
+      "label": "Stage",
+      "sublabel": "1920x1080, recorded",
+      "pos": [30, 330],
+      "size": [140, 450]
+    },
+    {
+      "id": "tmworker",
+      "type": "backend",
+      "label": "tm-worker",
+      "sublabel": "Playwright + Chrome",
+      "pos": [225, 330],
+      "size": [140, 70]
+    },
+    {
+      "id": "desk",
+      "type": "frontend",
+      "label": "Desk",
+      "sublabel": "right half, not recorded: chats, forms, sign-in",
+      "pos": [420, 330],
+      "size": [335, 70]
+    },
+    {
+      "id": "signin",
+      "type": "frontend",
+      "label": "Sign-in view",
+      "sublabel": "x11vnc + noVNC",
+      "pos": [810, 330],
+      "size": [140, 60]
+    },
+    {
+      "id": "frames",
+      "type": "backend",
+      "label": "Frame loop",
+      "sublabel": "2 s: QR, slides",
+      "pos": [225, 460],
+      "size": [140, 60]
+    },
+    {
+      "id": "pulse",
+      "type": "messagebus",
+      "label": "PulseAudio sink",
+      "sublabel": "meeting audio only",
+      "pos": [225, 720],
+      "size": [140, 60]
+    },
+    {
+      "id": "asr",
+      "type": "backend",
+      "label": "Live ASR client",
+      "sublabel": "16 kHz mono PCM",
+      "pos": [420, 720],
+      "size": [140, 60]
+    },
+    {
+      "id": "ffmpeg",
+      "type": "backend",
+      "label": "ffmpeg",
+      "sublabel": "5 min .mkv segments",
+      "pos": [225, 590],
+      "size": [140, 60]
+    },
+    {
+      "id": "outputs",
+      "type": "database",
+      "label": "Occurrence directory",
+      "sublabel": "written incrementally",
+      "pos": [810, 560],
+      "size": [150, 120]
+    },
+    {
+      "id": "platform",
+      "type": "external",
+      "label": "Meeting web client",
+      "sublabel": "Zoom, Teams, Meet",
+      "pos": [30, 870],
+      "size": [140, 60]
+    },
+    {
+      "id": "dashscope",
+      "type": "external",
+      "label": "DashScope",
+      "sublabel": "qwen3-asr-flash-realtime",
+      "pos": [420, 870],
+      "size": [156, 60]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Worker container (Xvfb 3840x1080, started with --shm-size=2g)",
+      "wraps": ["control", "tmworker", "frames", "pulse", "ffmpeg", "stage", "desk", "signin", "asr", "outputs"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "platform-to-stage",
+      "from": "platform",
+      "to": "stage",
+      "label": "joins",
+      "variant": "emphasis"
+    },
+    {
+      "id": "stage-to-tmworker",
+      "from": "tmworker",
+      "to": "stage",
+      "label": "drives"
+    },
+    {
+      "id": "tmworker-to-desk",
+      "from": "tmworker",
+      "to": "desk",
+      "label": "drives"
+    },
+    {
+      "id": "stage-to-frames",
+      "from": "stage",
+      "to": "frames",
+      "label": "frame"
+    },
+    {
+      "id": "stage-to-pulse",
+      "from": "stage",
+      "to": "pulse",
+      "label": "audio"
+    },
+    {
+      "id": "stage-to-ffmpeg",
+      "from": "stage",
+      "to": "ffmpeg",
+      "label": "x11grab"
+    },
+    {
+      "id": "pulse-to-ffmpeg",
+      "from": "pulse",
+      "to": "ffmpeg",
+      "label": "monitor",
+      "variant": "dashed"
+    },
+    {
+      "id": "pulse-to-asr",
+      "from": "pulse",
+      "to": "asr",
+      "label": "PCM"
+    },
+    {
+      "id": "asr-to-dashscope",
+      "from": "asr",
+      "to": "dashscope",
+      "label": "stream"
+    },
+    {
+      "id": "frames-to-tmworker",
+      "from": "frames",
+      "to": "tmworker",
+      "label": "form links"
+    },
+    {
+      "id": "frames-to-outputs",
+      "from": "frames",
+      "to": "outputs",
+      "label": "keyframes"
+    },
+    {
+      "id": "ffmpeg-to-outputs",
+      "from": "ffmpeg",
+      "to": "outputs",
+      "label": "segments"
+    },
+    {
+      "id": "asr-to-outputs",
+      "from": "asr",
+      "to": "outputs",
+      "label": "live.jsonl"
+    },
+    {
+      "id": "tmworker-to-control",
+      "from": "tmworker",
+      "to": "control",
+      "label": "state, events"
+    },
+    {
+      "id": "control-to-server",
+      "from": "control",
+      "to": "server",
+      "label": "heartbeat, commands",
+      "variant": "emphasis"
+    },
+    {
+      "id": "desk-to-chatapps",
+      "from": "desk",
+      "to": "chatapps",
+      "label": "read only"
+    },
+    {
+      "id": "desk-to-forms",
+      "from": "desk",
+      "to": "forms",
+      "label": "open, fill"
+    },
+    {
+      "id": "desk-to-signin",
+      "from": "desk",
+      "to": "signin"
+    },
+    {
+      "id": "signin-to-member",
+      "from": "signin",
+      "to": "member"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One screen, two halves",
+      "items": [
+        "Xvfb 3840x1080 with openbox: stage on the left, desk on the right, never overlapping",
+        "Only the stage is recorded, scanned for QR codes and used for slides",
+        "Chat watchers, form tabs and the sign-in view stay on the unrecorded desk"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Capture",
+      "items": [
+        "ffmpeg grabs the stage and the PulseAudio sink into 5-minute attempt_N_seg_NNN.mkv segments, 1920x1080 at 15 fps",
+        "The frame loop saves a stage frame every 2 s for QR decoding and slide keyframes",
+        "Live mode streams the sink's audio to DashScope; results are timestamped by stream offset"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Control",
+      "items": [
+        "A heartbeat every 5 s carries state, recording status and events; the reply carries commands",
+        "pause_for_signin hands the desk to the member's remote view; resume_after_signin takes it back",
+        "Files are written incrementally, so a crash loses a few seconds at most"
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Build plans
 
-The step-by-step plans for building TolongMeeting, one per milestone of the [design's build order](../app-design/2026-10-20-meeting-bot-design.md#build-order). Every plan builds against the shared [architecture and contracts](architecture.md). Nothing has been built yet; one person builds it, with no deadline.
+The step-by-step plans for building TolongMeeting, one per milestone of the [PRD's milestones](../PRD.md#milestones). Every plan builds against the shared [architecture and contracts](../TRD.md). Nothing has been built yet; one person builds it, with no deadline.
 
 Contents:
 
@@ -29,7 +29,7 @@ The effort figures come from the expert review and total about 26 to 37 person-w
 
 ## Exit criteria
 
-A milestone is done when its plan's tasks pass and the matching [acceptance tests](../app-design/2026-10-20-meeting-bot-design.md#acceptance-tests) pass on real meetings:
+A milestone is done when its plan's tasks pass and the matching [acceptance tests](../PRD.md#acceptance-tests) pass on real meetings:
 
 - **00**: every spike has a `REPORT.md` with measurements and a recommendation, and the design is updated where a spike changed a decision.
 - **01a**: a real Zoom test lecture is attended from a job file. The member gets the "joined" ping, a ping for each trusted form link within 30 seconds, and the summary within 10 minutes of the end. The recording contains only the stage.
@@ -39,7 +39,7 @@ A milestone is done when its plan's tasks pass and the matching [acceptance test
 
 ## How to execute a plan
 
-1.  Read the design and [architecture and contracts](architecture.md) first, then the plan.
+1.  Read the design and [architecture and contracts](../TRD.md) first, then the plan.
 1.  Execute the plan with the superpowers `subagent-driven-development` skill (a fresh implementer and a fresh reviewer per task), or `executing-plans` (one session, one review at the end).
 1.  Tick the checkboxes in the plan as tasks land, so the plan doubles as a progress record.
 1.  If reality disagrees with a plan, for example a selector or an API response, fix the plan in the same commit as the code.

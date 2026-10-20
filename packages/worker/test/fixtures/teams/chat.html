@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Microsoft Teams</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      button { font: inherit; }
+      main { padding: 16px; }
+      [data-tid='message-pane-list-viewport'] { height: 300px; overflow: auto; position: relative; }
+      [data-tid='chat-pane-item'] { height: 60px; box-sizing: border-box; overflow: hidden; }
+      [data-tid='ckeditor'] { border: 1px solid #999; min-height: 24px; margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <!--
+      An imitation of a Teams chat page at a /l/chat/ URL for the worker's watcher tests. UNVERIFIED against the real
+      client: the data-tids and ids are copied from config/selectors/teams.json (the meeting chat's markup), itself
+      unverified until a real tenant is tried (plan 04 task 12). The scene comes from window.__fixture
+      ({ launcher?, scroll?, messages }). It shows the newest 20 messages and, each time the list is scrolled to the top,
+      loads the next 20 older ones after 500 ms, as Teams does. window.__addMessage(m) appends one.
+    -->
+    <div id="app"></div>
+    <script>
+      const fx = window.__fixture
+      const BATCH = 20
+      const LOAD_MS = 500
+      const messages = fx.messages.slice()
+      // How many of the newest messages are rendered.
+      let shown = Math.min(BATCH, messages.length)
+      let launcher = fx.launcher === true
+      let loading = false
+      // Every click on a control, by aria-label else trimmed text. __touched turns true when the chat is written to.
+      window.__clicks = []
+      window.__touched = false
+      const WRITES = new Set(['Send', 'React'])
+      const app = document.getElementById('app')
+
+      const esc = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+      function rows() {
+        const list = messages.slice(messages.length - shown)
+        return list
+          .map((m, i) => {
+            // Teams leaves the author out when the message before has the same sender. The first rendered row keeps it.
+            const author =
+              i > 0 && list[i - 1].sender === m.sender ? '' : `<span data-tid="message-author-name">${esc(m.sender)}</span>`
+            const text = esc(m.text)
+            const body = m.href ? `<a href="${esc(m.href)}">${text}</a>` : text
+            return `<div data-tid="chat-pane-item"><div data-tid="chat-pane-message" data-mid="${esc(m.id)}">${author}<time datetime="${esc(m.datetime)}">${esc(m.time)}</time><div id="content-${esc(m.id)}">${body}</div><button aria-label="React" data-act="react">React</button></div></div>`
+          })
+          .join('')
+      }
+
+      function viewport() {
+        return document.querySelector("[data-tid='message-pane-list-viewport']")
+      }
+
+      function renderRows(olderAdded) {
+        const vp = viewport()
+        const heightBefore = vp.scrollHeight
+        const topBefore = vp.scrollTop
+        vp.innerHTML = rows()
+        // Older rows are added above: the list keeps what the reader was looking at in place.
+        vp.scrollTop = olderAdded ? topBefore + (vp.scrollHeight - heightBefore) : topBefore
+      }
+
+      function onScroll() {
+        const vp = viewport()
+        if (vp.scrollTop > 0 || loading || shown >= messages.length) return
+        loading = true
+        setTimeout(() => {
+          shown = Math.min(messages.length, shown + BATCH)
+          loading = false
+          renderRows(true)
+        }, LOAD_MS)
+      }
+
+      function render() {
+        if (launcher) {
+          app.innerHTML = `<main><h1>How do you want to join your Teams meeting?</h1>
+            <button data-tid="joinOnWeb" data-act="launcher">Continue on this browser</button>
+            <button data-act="app">Join in the Teams app</button></main>`
+          return
+        }
+        app.innerHTML = `<main><div data-tid="message-pane-list-viewport"></div>
+          <div data-tid="ckeditor" role="textbox" contenteditable="true" aria-label="Type a message"></div>
+          <button aria-label="Send" data-act="send">Send</button></main>`
+        const vp = viewport()
+        vp.innerHTML = rows()
+        vp.scrollTop = fx.scroll === 'top' ? 0 : vp.scrollHeight
+        vp.addEventListener('scroll', onScroll)
+        const box = document.querySelector("[data-tid='ckeditor']")
+        for (const type of ['focus', 'input', 'keydown']) box.addEventListener(type, () => (window.__touched = true))
+      }
+
+      window.__addMessage = (m) => {
+        messages.push(m)
+        shown += 1
+        const vp = viewport()
+        if (!vp) return
+        // Like Teams, a list at the bottom stays there as messages arrive; one scrolled up stays where it is.
+        const atBottom = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 2
+        renderRows(false)
+        if (atBottom) vp.scrollTop = vp.scrollHeight
+      }
+
+      document.addEventListener('click', (event) => {
+        const el = event.target.closest('button, a')
+        if (!el) return
+        const label = el.getAttribute('aria-label') || el.textContent.trim()
+        window.__clicks.push(label)
+        if (WRITES.has(label)) window.__touched = true
+        if (el.tagName === 'A') event.preventDefault()
+        if (el.dataset.act === 'launcher') {
+          launcher = false
+          render()
+        }
+      })
+
+      render()
+    </script>
+  </body>
+</html>

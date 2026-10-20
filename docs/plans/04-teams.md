@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright on Node 24 driving the pinned Chrome, Playwright Test, `bun test`, zod, Next.js (the Teams chat option and presence note).
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -56,13 +56,13 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there in the commit of the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there in the commit of the task that creates them:
 
 - **Selector map**: `config/selectors/teams.json` and `TeamsSelectorsSchema` (Task 1), in the layout of 01a's `zoom.json`.
 - **Worker**: `teamsAdapter`, `TEAMS_TIMEOUTS` and the modules under `packages/worker/src/adapters/teams/` (Tasks 1 to 8); `teamsChatReader` (Task 9).
 - **Run and pings** (Task 8): `AlertKind` gains `teams_signin`; new `breakout` copy; `runOccurrence` calls `ensureLayout` on its 10-second refresh, and pings `teams_signin` when a Teams join needs a sign-in.
 - **Smoke test** (Task 11): `SmokeEntry`, `SMOKE_ENTRIES`, `runSmokeEntry`, `zoomSmoke`, `teamsSmoke`, `tm-worker --smoke --job <path>`, `run-job.sh <job> smoke` and `docker/worker/smoke.crontab`.
-- **Core and website**: `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-chat.ts`, used for Teams chats in plan 01c's `ChatLinkSchema` (Task 9); `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote`, the `teams` entries of `CHAT_FIELD_COPY` and `chatAppOptions` in plan 02's `packages/web/lib/link-notices.ts`, and `TeamsPresenceNote` (Task 10).
+- **Core and website**: `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-link.ts`, used for Teams chats in plan 01c's `ChatLinkSchema` (Task 9); `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote`, the `teams` entries of `CHAT_FIELD_COPY` and `chatAppOptions` in plan 02's `packages/web/lib/link-notices.ts`, and `TeamsPresenceNote` (Task 10).
 
 Names used from earlier plans:
 
@@ -87,7 +87,7 @@ Names used from earlier plans:
 - Consumes: `loadSelectors<T>(platform: Platform, schema: z.ZodType<T>): Promise<T>` from plan 01a (Task 13).
 - Produces: `TeamsSelectorsSchema` (zod, strict at every level, the shape of `teams.json` below), `type TeamsSelectors = z.infer<typeof TeamsSelectorsSchema>` and `teamsSelectors(): Promise<TeamsSelectors>` (`loadSelectors('teams', TeamsSelectorsSchema)`) in `packages/worker/src/adapters/teams/selectors.ts`. The map follows 01a's `zoom.json` layout: `selectors` holds CSS selectors usable in `document.querySelectorAll`; `texts` holds regular expressions matched case-insensitively against visible text, with apostrophes written as `.` so straight and curly ones both match; `noticeAllowlist` holds exact button texts; `signInHosts` holds host names.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -118,12 +118,12 @@ test('a missing key fails loudly and names the key', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/teams/selectors.test.ts`
 Expected: FAIL, module `./selectors` not found.
 
-- [ ] **Step 3: Create `config/selectors/teams.json` and `teamsSelectors(): Promise<TeamsSelectors>`**
+- [x] **Step 3: Create `config/selectors/teams.json` and `teamsSelectors(): Promise<TeamsSelectors>`**
 
 Starting values, mirrored by the fixtures and confirmed or corrected in Task 12:
 
@@ -180,12 +180,12 @@ Starting values, mirrored by the fixtures and confirmed or corrected in Task 12:
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/teams/selectors.test.ts`
 Expected: PASS (2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/teams.json packages/worker/src/adapters/teams/selectors.ts packages/worker/src/adapters/teams/selectors.test.ts
@@ -196,15 +196,15 @@ git commit -m "feat(worker): add teams selector map"
 
 **Files:**
 
-- Create: `packages/worker/src/adapters/teams/link.ts`
-- Test: `packages/worker/src/adapters/teams/link.test.ts`
+- Create: `packages/core/src/teams-link.ts` (`normaliseTeamsLink`, `normaliseTeamsChatUrl`), `packages/core/src/meeting-link.ts` (`normaliseMeetingLink`); Task 8 adds the worker re-export `packages/worker/src/adapters/teams/link.ts`
+- Test: `packages/core/test/teams-link.test.ts` (done in core per pre-flight TE1; Task 9 reuses `normaliseTeamsChatUrl` from it)
 
 **Interfaces:**
 
 - Consumes: `unwrapLink(url: string): string` from plan 01a (Task 12). Plan 01c's `stripPasscode(url: string): string` in `packages/core/src/passcode.ts` already removes the Teams `p` passcode where links are stored, and 01a's `redact` keeps only host and path of URLs in logs.
-- Produces: `normaliseTeamsLink(url: string): string | null` in `packages/worker/src/adapters/teams/link.ts`, which Task 8 exposes as `teamsAdapter.normaliseLink`.
+- Produces: `normaliseTeamsLink(url: string): string | null` in `packages/core/src/teams-link.ts`, which Task 8 exposes as `teamsAdapter.normaliseLink`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -253,12 +253,12 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/worker/src/adapters/teams/link.test.ts`
-Expected: FAIL, module `./link` not found.
+Run: `bun test packages/core/test/teams-link.test.ts`
+Expected: FAIL, module `../src` has no `normaliseTeamsLink`.
 
-- [ ] **Step 3: Implement `normaliseTeamsLink(url: string): string | null` in `packages/worker/src/adapters/teams/link.ts`**
+- [x] **Step 3: Implement `normaliseTeamsLink(url: string): string | null` in `packages/core/src/teams-link.ts`**
 
 Rules, in order:
 
@@ -269,16 +269,16 @@ Rules, in order:
 1.  `/meet/<digits>` returns `https://<host>/meet/<digits>`, plus `?p=<enc(dec(p))>` when `p` is present.
 1.  Anything else, including `/l/chat/` and `/l/channel/` links, returns `null`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/worker/src/adapters/teams/link.test.ts`
+Run: `bun test packages/core/test/teams-link.test.ts`
 Expected: PASS (17 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/adapters/teams/link.ts packages/worker/src/adapters/teams/link.test.ts
-git commit -m "feat(worker): normalise teams meeting links"
+git add packages/core/src/teams-link.ts packages/core/src/meeting-link.ts packages/core/test/teams-link.test.ts
+git commit -m "feat(core): teams link rules"
 ```
 
 ### Task 3: Pre-join and join
@@ -302,7 +302,7 @@ git commit -m "feat(worker): normalise teams meeting links"
   - `joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_000): Promise<JoinResult>` in `packages/worker/src/adapters/teams/join.ts`. It starts on the page the caller has already opened at the normalised link (01a's run sequence) and never navigates itself.
   - Test harness in `packages/worker/test/teams/serve.ts`: `type TeamsScene`, `interface TeamsFixtureConfig`, `serveTeams(page: Page, cfg: TeamsFixtureConfig): Promise<void>` (replaces earlier routes), `setTeamsScene(page: Page, scene: TeamsScene, patch?: Partial<TeamsFixtureConfig>): Promise<void>`, `teamsClicks(page: Page): Promise<string[]>`. Later tasks add fields to `TeamsFixtureConfig` and scenes to `app.html`.
 
-- [ ] **Step 1: Build the fixtures and harness**
+- [x] **Step 1: Build the fixtures and harness**
 
 `app.html` imitates the Teams web client as one page whose scene comes from `window.__cfg` (injected by `serveTeams`) and switches through `window.__scene(scene, patch)`. Every element uses the attribute values in `teams.json`. It must contain:
 
@@ -319,7 +319,7 @@ git commit -m "feat(worker): normalise teams meeting links"
 
 `signin.html` shows a Microsoft sign-in form (an `input[name='loginfmt']`), or, when the URL has `blocked=1`, the text "You can't get there from here" with "AADSTS53000". `serveTeams` routes `https://teams.microsoft.com/**` and `https://teams.live.com/**` to `app.html` with `<script>window.__cfg = ...</script>` prepended, and `https://login.microsoftonline.com/**` to `signin.html`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -426,12 +426,12 @@ test('an unrecognised page times out', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/join.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/join`.
 
-- [ ] **Step 4: Implement `teamsState`, `teamsTextSignal` and `joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
+- [x] **Step 4: Implement `teamsState`, `teamsTextSignal` and `joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
 
 Every 500 ms until `timeoutMs`, classify the page and act on the first rule that matches (text checks through `teamsTextSignal`):
 
@@ -446,12 +446,12 @@ Every 500 ms until `timeoutMs`, classify the page and act on the first rule that
 
 At the deadline return `{ kind: 'failed', reason: 'prejoin_timeout' }`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/join.spec.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/page-state.ts packages/worker/src/adapters/teams/text.ts packages/worker/src/adapters/teams/join.ts
@@ -471,11 +471,11 @@ git commit -m "feat(worker): join teams meetings with devices off"
 - Consumes: `TeamsSelectors` (Task 1); `teamsState`, `teamsTextSignal`, `serveTeams`, `setTeamsScene`, `teamsClicks` (Task 3); `MeetingState`, `AdmissionResult` from `packages/worker/src/adapters/types.ts`.
 - Produces: `teamsMeetingState(page: Page, sel: TeamsSelectors): Promise<MeetingState>` and `waitTeamsAdmitted(page: Page, sel: TeamsSelectors, deadline: Date, pollMs = 2_000): Promise<AdmissionResult>` in `packages/worker/src/adapters/teams/state.ts`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add scenes `lobby-denied` ("Someone in the meeting denied your request to join"), `lobby-expired` ("No one responded to your request to join"), `ended` (`[data-tid='call-end-screen']` with "The meeting has ended" and a "Rejoin" button), `left` (the end screen with "You left the meeting") and `removed` (the end screen with "Someone removed you from the meeting"). Add `TeamsFixtureConfig.breakout: 'none' | 'prompt' | 'moved'`: `prompt` adds a `role="dialog"` "The organiser assigned you to a breakout room" with "Join room" and "Dismiss" buttons; `moved` adds `[data-tid='breakout-room-banner']` "You've been moved to Room 1". Add `TeamsFixtureConfig.chatOpen: boolean` and `messages: FixtureMessage[]` (`{ id: string; sender: string; time: string; datetime: string; text: string; href?: string }`), rendered in `[data-tid='chat-pane']` as Teams renders them: `[data-tid='chat-pane-item']` holding `[data-tid='chat-pane-message'][data-mid]`, `[data-tid='message-author-name']` (left out when the previous item has the same sender), `time[datetime]` and `[id^='content-']`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -567,21 +567,21 @@ test('the deadline ends the wait as lobby_expired', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/state.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/state`.
 
-- [ ] **Step 4: Implement `teamsMeetingState` and `waitTeamsAdmitted` in `packages/worker/src/adapters/teams/state.ts`**
+- [x] **Step 4: Implement `teamsMeetingState` and `waitTeamsAdmitted` in `packages/worker/src/adapters/teams/state.ts`**
 
 `teamsMeetingState` returns the first match, with every text check through `teamsTextSignal`: `texts.removed` → `removed`; `endScreen` visible or `texts.ended` → `ended`; `texts.breakoutPrompt` or `breakoutRoomBanner` visible → `breakout_prompt`; `lobbyScreen` visible or any lobby text → `lobby`; `hangupButton` visible → `in_meeting`; otherwise `unknown` (a missing Leave button without an end signal is left to 01a's drop handling, never read as an end). `waitTeamsAdmitted` polls every `pollMs`: `texts.lobbyDenied` → `lobby_denied`; `texts.lobbyExpired` → `lobby_expired`; `hangupButton` visible with no lobby signal → set `joinedAt` and return `admitted`; past `deadline` → `lobby_expired`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/state.spec.ts test/teams/join.spec.ts`
 Expected: PASS (11 state tests; the 8 join tests still pass on the extended fixture).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/state.ts
@@ -605,11 +605,11 @@ git commit -m "feat(worker): read teams lobby and meeting state"
   - `connectTeamsOutputAudio(page: Page, sel: TeamsSelectors): Promise<void>`.
   - `leaveTeams(page: Page, sel: TeamsSelectors): Promise<void>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `TeamsFixtureConfig.notices: { role: 'dialog' | 'alert' | 'status'; text: string; button: string }[]` (each rendered as a container with that role, its text and one button), `incomingAudioOff: boolean` (renders `[data-tid='incoming-audio-off-banner']`; "More" opens a `role="menu"` with "Turn on incoming audio", which clears the banner, plus "Turn off incoming video" and "Start recording" decoys) and `organiser: boolean` (clicking `#hangup-button` opens a `role="menu"` with "End meeting" and "Leave"; otherwise it switches to `left`). Give the chat pane a header button `aria-label="Close"`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -700,23 +700,23 @@ test('leaves without ending the meeting, even as organiser', async ({ page }) =>
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/controls.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/controls`.
 
-- [ ] **Step 4: Implement the four functions in `packages/worker/src/adapters/teams/controls.ts`**
+- [x] **Step 4: Implement the four functions in `packages/worker/src/adapters/teams/controls.ts`**
 
 - `dismissTeamsNotices`: for each visible `noticeContainers` element that isn't inside `chatPane` or `rosterPane` and whose text matches no `texts.breakoutPrompt`, click each visible button whose trimmed text or `aria-label` equals an entry of `noticeAllowlist` (case-insensitive).
 - `connectTeamsOutputAudio`: only when `incomingAudioOff` is visible, click `moreButton`, then the menu item whose text matches `texts.incomingAudioOn`, and wait up to 5 seconds for the banner to go. It never touches device controls. The sink-level check after it is 01a's.
 - `leaveTeams`: click `hangupButton`; if a `role="menu"` appears within 2 seconds, click the item whose text matches `texts.hangupLeave`; then wait up to 15 seconds for `endScreen`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/controls.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/controls.ts
@@ -743,7 +743,7 @@ git commit -m "feat(worker): add teams devices, notices, leave"
   - `readTeamsChat(page: Page, sel: TeamsSelectors, cursor: ChatCursor): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>` and `sweepTeamsChat(page: Page, sel: TeamsSelectors): Promise<ChatMessage[]>` in `packages/worker/src/adapters/teams/chat.ts`.
   - `TEAMS_CHAT_HISTORY_MS = 60 * 60 * 1000` in `packages/worker/src/adapters/teams/chat.ts`.
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -825,25 +825,25 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/teams/chat.test.ts`
 Expected: FAIL, module `./chat` not found.
 
-- [ ] **Step 3: Implement `toTeamsChatMessages` and `roleFromTeamsLabel`**
+- [x] **Step 3: Implement `toTeamsChatMessages` and `roleFromTeamsLabel`**
 
 `toTeamsChatMessages` drops messages whose `datetime` is earlier than `cutoffMs` (messages without a `datetime` are kept), sets `key` to `id` or `${sender}|${time}|${text.slice(0, 200)}`, looks up `senderRole` by the trimmed lower-cased sender (`unknown` when absent or when `roles` is null), and sets `links` to the `http`/`https` `hrefs` followed by 01a's `extractLinks(text)`, de-duplicated in order; `replyTo` is always `null`, because Teams meeting chat quotes replies inline instead of threading them. `roleFromTeamsLabel` returns `co_host` when the label matches `/co-?organi[sz]er/i`, `host` when it matches `/organi[sz]er/i`, otherwise `participant`.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/teams/chat.test.ts`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Extend the fixture**
+- [x] **Step 5: Extend the fixture**
 
 Make the chat list virtualised like Teams: messages are 60 px tall inside `[data-tid='message-pane-list-viewport']`, and only the items within the visible window plus 2 on each side are in the DOM. Add `TeamsFixtureConfig.chatScroll: 'top' | 'bottom'` (start position, default `bottom`; the list stays where it is when messages arrive), `roster: { name: string; role?: string }[]` (rendered in `[data-tid='roster-pane']` as `[data-tid^='participantsInCall-']` items whose first text line is the name and second line the role), and `window.__addMessage(m)` and `window.__addRoster(p)`. Clicking `#roster-button` replaces the chat pane with the roster pane; clicking `#chat-button` brings the chat pane back with its full history, as Teams does.
 
-- [ ] **Step 6: Write the failing browser test**
+- [x] **Step 6: Write the failing browser test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -961,23 +961,23 @@ test('a sender still missing from the roster is unknown, after one roster read',
 })
 ```
 
-- [ ] **Step 7: Run it to verify it fails**
+- [x] **Step 7: Run it to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/chat.spec.ts`
 Expected: FAIL, `readTeamsChat` is not exported from `../../src/adapters/teams/chat`.
 
-- [ ] **Step 8: Implement `parseTeamsMessages`, `readTeamsRoles`, `readTeamsChat` and `sweepTeamsChat`**
+- [x] **Step 8: Implement `parseTeamsMessages`, `readTeamsRoles`, `readTeamsChat` and `sweepTeamsChat`**
 
 - `readTeamsRoles`: click `rosterButton`, wait for `rosterPane`, map each `rosterItem`'s first text line (trimmed, lower-cased) to `roleFromTeamsLabel` of its remaining lines, click `chatButton`, wait for `chatPane`, store the map in `teamsState(page).roles` and return it.
 - `readTeamsChat`: if `chatPane` isn't visible, return no messages and the cursor unchanged (Task 7's `ensureTeamsLayout` reopens it). Otherwise set `chatScroller.scrollTop` to its `scrollHeight`, parse, and keep messages whose key isn't in `cursor.seenKeys`. The cutoff is `(joinedAt ?? the first call's time) - TEAMS_CHAT_HISTORY_MS`; set `joinedAt` on the first call when it is null. If any kept message has links and a sender absent from the role map (or the map is null), call `readTeamsRoles` once, re-parse and map again. Return the messages and a cursor with their keys appended; the caller adopts the cursor only after writing the messages (CHAT-03).
 - `sweepTeamsChat`: call `readTeamsRoles` first, then scroll `chatScroller` from the top to the bottom in steps of `max(200, clientHeight / 2)` px with a random 300 to 350 ms pause, parsing at each step, and return the union by key, ordered as the list orders it, after the same cutoff.
 
-- [ ] **Step 9: Run it to verify it passes**
+- [x] **Step 9: Run it to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/chat.spec.ts`
 Expected: PASS (5 tests).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/chat-dom.ts packages/worker/src/adapters/teams/roles.ts packages/worker/src/adapters/teams/chat.ts packages/worker/src/adapters/teams/chat.test.ts
@@ -997,11 +997,11 @@ git commit -m "feat(worker): read teams meeting chat with roles"
 - Consumes: `TeamsSelectors` (Task 1); `teamsState`, `serveTeams`, `setTeamsScene`, `teamsClicks` (Task 3); `Rect` from `packages/worker/src/adapters/types.ts`.
 - Produces, in `packages/worker/src/adapters/teams/layout.ts`: `teamsParticipantCount(page: Page, sel: TeamsSelectors): Promise<number | null>`, `ensureTeamsLayout(page: Page, sel: TeamsSelectors): Promise<void>`, `teamsSharedScreenRegion(page: Page, sel: TeamsSelectors): Promise<Rect | null>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `TeamsFixtureConfig.peopleCount: number | null` (the `#roster-button` shows it as a badge, and its `aria-label` becomes "People, <n> participants") and `share: { box: Rect; width: number; height: number } | null`, rendered as `<div data-stream-type="ScreenSharing"><canvas width=<width> height=<height> style="object-fit: contain"></canvas></div>` placed at `box`. Clicking `#view-mode-button` opens a `role="menu"` with `menuitemradio` items "Gallery", "Large gallery", "Together mode" and "Focus on content".
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -1063,23 +1063,23 @@ test('the shared-screen region is the picture inside the letterbox', async ({ pa
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/layout.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/layout`.
 
-- [ ] **Step 4: Implement the three functions in `packages/worker/src/adapters/teams/layout.ts`**
+- [x] **Step 4: Implement the three functions in `packages/worker/src/adapters/teams/layout.ts`**
 
 - `teamsParticipantCount`: the first integer in `rosterButton`'s text, else in its `aria-label`, else `null`; it never clicks.
 - `ensureTeamsLayout`: click `chatButton` when `chatPane` isn't visible; when `sharedScreen` is visible and `teamsState(page).shareSeen` is false, click `viewButton`, then the menu item whose text matches `texts.focusOnContent`, and set `shareSeen`; reset `shareSeen` when no share is visible. It clicks nothing else.
 - `teamsSharedScreenRegion`: the first visible `sharedScreen` element's box, shrunk to the picture inside it by its intrinsic size (`videoWidth`/`videoHeight` for a video, `width`/`height` for a canvas, contain-fit and centred), rounded to whole pixels, in page coordinates, which are stage coordinates as in 01a's Zoom adapter; `null` when no share is visible, so 01a falls back to its brightness crop.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/layout.spec.ts`
 Expected: PASS (3 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/layout.ts
@@ -1100,7 +1100,7 @@ git commit -m "feat(worker): keep teams share large and chat open"
 - Produces: `teamsAdapter: PlatformAdapter` (with `platform: 'teams'`) and `TEAMS_TIMEOUTS` in `packages/worker/src/adapters/teams/index.ts`; `adapterFor(url)` returns `teamsAdapter` for any URL `normaliseTeamsLink` accepts.
 - Produces (adds to contracts): `AlertKind` gains `teams_signin`; the `breakout` alert copy changes (below); `runOccurrence` calls `adapter.ensureLayout` on its 10-second refresh as well as after joining, and pings `teams_signin` instead of `zoom_signin` when a Teams `join` returns `signin_required`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -1160,12 +1160,12 @@ test('the layout is kept on every refresh, not only after joining', async () => 
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/adapters/teams/index.test.ts packages/worker/src/run.test.ts packages/notify/src/messages.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/teams/adapter.spec.ts`
 Expected: FAIL: `adapterFor` returns `null` for the Teams link; `teams_signin` is not an `AlertKind`; `ensureLayout` is called once; `../../src/adapters/teams` not found.
 
-- [ ] **Step 3: Implement `teamsAdapter`, register it and change the run**
+- [x] **Step 3: Implement `teamsAdapter`, register it and change the run**
 
 Each method loads `teamsSelectors()` once (on first use) and delegates: `normaliseLink` → `normaliseTeamsLink`; `join` → `joinTeams`; `connectOutputAudio` → `connectTeamsOutputAudio`; `ensureLayout` → `ensureTeamsLayout`; `waitUntilAdmitted` → `waitTeamsAdmitted`; `assertDevicesOff` → `assertTeamsDevicesOff`; `readChat` → `readTeamsChat`; `sweepChat` → `sweepTeamsChat`; `sharedScreenRegion` → `teamsSharedScreenRegion`; `participantCount` → `teamsParticipantCount`; `meetingState` → `teamsMeetingState`; `dismissNotices` → `dismissTeamsNotices`; `leave` → `leaveTeams`. Like 01a's Zoom adapter, it enforces its own timeouts: every method except `normaliseLink` and `waitUntilAdmitted` (bounded by its deadline) races its step against these limits and rejects with `Error('teams <method> timed out after <ms> ms')`; `runOccurrence` then saves the screenshot and `ariaSnapshot()` under `errors/` and pings, as it does for Zoom.
 
@@ -1187,20 +1187,20 @@ export const TEAMS_TIMEOUTS = {
 
 `adapterFor` tries the Zoom adapter, then `teamsAdapter`, and returns the first whose `normaliseLink` isn't null. In `run.ts`, step 5 pings `teams_signin` (with plan 01c's "Sign in again" action, as for `zoom_signin`) when the adapter's platform is `teams`, and step 8 calls `ensureLayout` with each 10-second refresh of `sharedScreenRegion` and `participantCount` (harmless for Zoom, whose `ensureLayout` only reopens a closed chat). In `messages.ts`, add `teams_signin` with the copy in the test, and replace the `breakout` copy with the one in the test, because Teams can move participants into a room without asking.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: the commands of Step 2
 Expected: PASS, including 01a's existing `run.test.ts` and `messages.test.ts` cases.
 
-- [ ] **Step 5: Run the whole worker suite and the type check**
+- [x] **Step 5: Run the whole worker suite and the type check**
 
 Run: `bun test packages/worker packages/notify` then `bunx playwright test -c packages/worker/playwright.config.ts` then `bun run typecheck`
 Expected: all pass; `tsc` reports no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/teams/adapter.spec.ts docs/plans/architecture.md
+git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/teams/adapter.spec.ts docs/TRD.md
 git commit -m "feat(worker): register the teams adapter"
 ```
 
@@ -1208,24 +1208,25 @@ git commit -m "feat(worker): register the teams adapter"
 
 **Files:**
 
-- Create: `packages/core/src/teams-chat.ts`
-- Test: `packages/core/src/teams-chat.test.ts`
-- Modify: `packages/web/lib/timetable.ts` (01c's `ChatLinkSchema`: Teams chats by link, stored normalised; plan 02's Teams refusal removed), `packages/web/lib/timetable.test.ts` (plan 02's "Teams waits for plan 04" case)
+- Test: `packages/core/test/teams-link.test.ts` (done in Task 2: `normaliseTeamsChatUrl` lives in `core/src/teams-link.ts`, so there is no `teams-chat.ts`)
+- Modify: `packages/web/lib/timetable.ts` (01c's `ChatLinkSchema`: Teams chats by link, stored normalised; plan 02's Teams refusal removed), `packages/web/test/timetable.test.ts` (plan 02's "Teams waits for plan 04" case)
 - Create: `packages/worker/test/fixtures/teams/chat.html`
 - Modify: plan 02's `packages/worker/test/watchers/serve.ts` (a `teams` fixture)
 - Create: `packages/worker/src/watchers/teams.ts`
 - Modify: plan 02's `packages/worker/src/watchers/index.ts` and `packages/worker/src/watchers/index.test.ts` (`watcherFor('teams')`)
 - Test: `packages/worker/test/watchers/teams.spec.ts`
 
+**Split:** Task 9a (web side: Steps 1 to 4 for `timetable.ts`, `FixedLinkSchema` and `maskedLink` via core `normaliseMeetingLink`) is done; Task 9b (the watcher: Steps 5 to 10) comes later. Any website UI for the Teams chat field is Task 10 and stays behind the Figma gate.
+
 **Interfaces:**
 
 - Consumes: `TeamsSelectors`, `teamsSelectors()` (Task 1); `parseTeamsMessages`, `toTeamsChatMessages`, `FixtureMessage` (Tasks 4 and 6); `teamsClicks` (Task 3); `adapterFor` with Teams registered (Task 8), which is how plan 02's loop recognises Teams meeting links; `LinkSource`, `FormCandidate`, `ChatMessage` from `@tm/core`; from plan 02, `ChatSourceReader`, `runChatWatcher`, `WatcherSigninError`, `WatcherChatError`, `resetWatcherEnv` (Task 3), `serveWatcherFixtures` and `watchHarness` (Task 4), `watcherFor` (Task 6) and its Teams refusal in `ChatLinkSchema` (Task 7).
 - Produces:
-  - `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-chat.ts` (adds to contracts): `https://<host>/l/chat/<enc(dec(thread))>/conversations` for a chat or group-chat link on `teams.microsoft.com` or `teams.live.com`, unwrapping one Safe Links level; `null` for anything else.
+  - `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-link.ts` (adds to contracts): `https://<host>/l/chat/<enc(dec(thread))>/conversations` for a chat or group-chat link on `teams.microsoft.com` or `teams.live.com`, unwrapping one Safe Links level; `null` for anything else.
   - `teamsChatReader(chatUrl: string, sel: TeamsSelectors): ChatSourceReader` and `startWatcher(desk: Page, src: LinkSource, onLink: (c: FormCandidate | { meetingUrl: string }) => void): Promise<Stopper>` in `packages/worker/src/watchers/teams.ts`; `watcherFor('teams')` returns this `startWatcher`.
   - `TeamsChatFixture { chatUrl: string; launcher?: boolean; loginRequired?: boolean; scroll?: 'top' | 'bottom'; messages: FixtureMessage[] }`, accepted as `serveWatcherFixtures(context, { teams })`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 ```ts
 // packages/core/src/teams-chat.test.ts
@@ -1280,25 +1281,25 @@ test('a Teams chat must be given by its link, and is stored normalised', () => {
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
-Run: `bun test packages/core/src/teams-chat.test.ts packages/web/lib/timetable.test.ts`
+Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: FAIL, module `./teams-chat` not found, and the Teams entry is still refused with "Watching a Teams chat arrives with Teams support."
 
-- [ ] **Step 3: Implement `normaliseTeamsChatUrl` and accept Teams chats**
+- [x] **Step 3: Implement `normaliseTeamsChatUrl` and accept Teams chats**
 
 Unwrap one Safe Links level by its `url` parameter (core can't import the worker's `unwrapLink`), then parse and canonicalise as `normaliseTeamsLink` does (Task 2), accepting only `/l/chat/<thread>/conversations`. In `ChatLinkSchema`, the `app: 'teams'` case transforms `chat` through `normaliseTeamsChatUrl` and fails with the message in the test when that returns `null`; remove plan 02's Teams refusal. WhatsApp and Discord are untouched, and `chatWatchAllowed` already allows Teams everywhere.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
-Run: `bun test packages/core/src/teams-chat.test.ts packages/web/lib/timetable.test.ts`
+Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: PASS (9 new core cases; the timetable tests, with the replaced Teams case).
 
-- [ ] **Step 5: Build the chat fixture**
+- [x] **Step 5: Build the chat fixture**
 
 `chat.html` imitates a Teams chat page at a `/l/chat/` URL, using the meeting chat's item markup (Task 4) inside `[data-tid='message-pane-list-viewport']`. With `launcher` it first shows the launcher from `app.html`. It renders the newest 20 messages and, each time the list is scrolled to the top, loads the next 20 older ones after 500 ms, as Teams does; `window.__addMessage(m)` appends one. It has a compose box `[data-tid='ckeditor']` (`contenteditable`), a "Send" button and a "React" button on every message; focusing or typing in the compose box, or clicking "Send" or "React", sets `window.__touched = true`. In `serveWatcherFixtures`, `teams` routes `chatUrl` to `chat.html` (or, with `loginRequired`, a 302 to `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`, served by Task 3's `signin.html`).
 
-- [ ] **Step 6: Write the failing browser tests**
+- [x] **Step 6: Write the failing browser tests**
 
 ```ts
 // packages/worker/test/watchers/teams.spec.ts
@@ -1415,12 +1416,12 @@ test('a signed-out profile rejects the start with the sign-in host', async ({ co
 
 In plan 02's `packages/worker/src/watchers/index.test.ts`, the Teams line becomes `expect(watcherFor('teams')).toBe(teams.startWatcher);`.
 
-- [ ] **Step 7: Run them to verify they fail**
+- [x] **Step 7: Run them to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/teams.spec.ts` and `bun test packages/worker/src/watchers/index.test.ts`
 Expected: FAIL, cannot resolve `../../src/watchers/teams`; `watcherFor('teams')` is still `null`.
 
-- [ ] **Step 8: Implement `teamsChatReader` and `startWatcher`, and register the watcher**
+- [x] **Step 8: Implement `teamsChatReader` and `startWatcher`, and register the watcher**
 
 Like plan 02's Discord reader, it reads in one `page.evaluate` per read and never clicks or types, except the launcher's "Continue on this browser":
 
@@ -1430,15 +1431,15 @@ Like plan 02's Discord reader, it reads in one `page.evaluate` per read and neve
 - `startWatcher` accepts only `{ kind: 'chat', app: 'teams' }` (else a `TypeError`), normalises `chat` with `normaliseTeamsChatUrl` (null throws `WatcherChatError('not_found')`) and returns `runChatWatcher(desk, teamsChatReader(url, await teamsSelectors()), onLink)`. The 24-hour scan, poll intervals, newest-link rule, pasted-link override and form candidates are plan 02's loop, unchanged.
 - `watcherFor('teams')` returns this `startWatcher`.
 
-- [ ] **Step 9: Run them to verify they pass**
+- [x] **Step 9: Run them to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/teams.spec.ts` and `bun test packages/worker/src/watchers/index.test.ts`
 Expected: PASS (4 browser tests; the `watcherFor` test).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
-git add packages/core/src/teams-chat.ts packages/core/src/teams-chat.test.ts packages/web/lib/timetable.ts packages/web/lib/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/plans/architecture.md
+git add packages/web/lib/timetable.ts packages/web/test/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/TRD.md
 git commit -m "feat(worker): watch a teams chat for links"
 ```
 
@@ -1456,7 +1457,7 @@ git commit -m "feat(worker): watch a teams chat for links"
 - Consumes: `LinkSource` from `@tm/core`; `ChatApp`, `WatchGate` (plan 02, Task 1); `CHAT_FIELD_COPY`, `chatAppOptions`, `BanRiskNotice` (plan 02, Task 7); `accountStatus` rows (kind `teams`, label `Teams`) from plan 01c's `packages/web/lib/identities.ts`.
 - Produces (adds to contracts): in `packages/web/lib/link-notices.ts`, `TEAMS_PRESENCE_NOTE: string` and `showsTeamsPresenceNote(link: LinkSource): boolean`; `CHAT_FIELD_COPY` keyed by every `ChatApp`, with a `teams` entry; `chatAppOptions` returning a `teams` option (its `app` typed `ChatApp`); `TeamsPresenceNote(): JSX.Element` in `packages/web/app/timetable/teams-presence-note.tsx`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // added to packages/web/lib/link-notices.test.ts
@@ -1529,24 +1530,30 @@ test('renders the presence note as a note', () => {
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
+
+  Not done: the lib code was written before this run, so no failing run was captured.
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/teams-presence-note.test.tsx`
 Expected: FAIL, `showsTeamsPresenceNote` is not exported and `./teams-presence-note` is not found.
 
-- [ ] **Step 3: Implement the copy, the option and the note, and show them**
+- [x] **Step 3: Implement the copy, the option and the note, and show them**
+
+  Lib part done (`link-notices.ts`: `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote` via core `normaliseTeamsLink`, `CHAT_FIELD_COPY` keyed by `ChatApp`, Teams option). Plan 02's existing `chatAppOptions` expectations now include the Teams option. **Deferred (Figma gate):** `packages/web/app/timetable/teams-presence-note.tsx` and its `.test.tsx`, and showing the note and the Teams field on `app/timetable/[id]/page.tsx` and `app/accounts/page.tsx`. No page exists yet (see preflight section 4).
 
 `showsTeamsPresenceNote` is true for a `fixed` link whose `decodeURIComponent`-decoded URL contains `teams.microsoft.com` or `teams.live.com`, and for a `chat` source with `app: 'teams'`. `chatAppOptions` appends `{ app: 'teams', enabled: true, note: null }`, because Teams watching isn't gated (plan 02's `chatWatchAllowed`). `TeamsPresenceNote` mirrors `BanRiskNotice`. On the entry edit page, the Teams chat option uses `CHAT_FIELD_COPY.teams`, and `<TeamsPresenceNote />` shows under the link source whenever `showsTeamsPresenceNote` holds for the link being edited; the ban-risk notice stays off for Teams. On the Accounts page, the note shows in every identity's `Teams` status row.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
+
+  Lib part: `link-notices.test.ts` and `timetable.test.ts` pass (38 tests), web `tsc` clean. The `.tsx` test is deferred with Step 3.
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/teams-presence-note.test.tsx` then `bun run typecheck`
 Expected: PASS (the 8 new tests and plan 02's existing ones); `tsc` reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib/link-notices.ts packages/web/lib/link-notices.test.ts packages/web/app/timetable packages/web/app/accounts docs/plans/architecture.md
+git add packages/web/lib/link-notices.ts packages/web/lib/link-notices.test.ts packages/web/app/timetable packages/web/app/accounts docs/TRD.md
 git commit -m "feat(web): offer teams chats and presence note"
 ```
 
@@ -1569,7 +1576,7 @@ No earlier plan builds the design's monthly smoke test, so this task builds its 
   - `runSmokeEntry(page: Page, entry: SmokeEntry, url: string): Promise<{ missing: string[] }>` in `run.ts`.
   - CLI `tm-worker --smoke --job <path>` and `run-job.sh <job> smoke`, where the job's fixed link is the platform's standing test meeting; exit code 0 when nothing is missing, 1 otherwise.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/smoke/entries.test.ts
@@ -1623,12 +1630,12 @@ test('fails loudly, naming the key, when the roster button is gone', async ({ pa
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/smoke/entries.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/teams/smoke.spec.ts`
 Expected: FAIL, modules `./entries` and `../../src/smoke/run` not found.
 
-- [ ] **Step 3: Build the runner, the entries and the monthly run**
+- [x] **Step 3: Build the runner, the entries and the monthly run**
 
 Add `TeamsFixtureConfig.omit: string[]` (selectors whose elements the fixture leaves out). `runSmokeEntry` opens `adapterFor(url).normaliseLink(url)`, calls `join` (no guest name) and, on `lobby`, `waitUntilAdmitted` for at most 2 minutes; then it checks `inMeeting`, runs `assertDevicesOff`, `connectOutputAudio` and `ensureLayout`, checks `afterLayout`, runs `readChat`, `sweepChat`, `participantCount` and `meetingState` (which must be `in_meeting`), checks `afterSweep`, runs `leave` and checks `afterLeave`. A key is missing when its selector from `entry.selectors()` matches no element in any frame of the page (a Playwright locator, so `zoom.json`'s `text=` and `:text-matches` selectors work); a step that throws or gives an unexpected result adds `step:<name>`; the run goes on after a failure so that one report lists everything. The entries:
 
@@ -1667,21 +1674,21 @@ export const teamsSmoke: SmokeEntry = {
 
 `tm-worker --smoke --job <path>` prepares and launches the job's profile as `--seed` does, runs the entry for the platform of `entry.link.url` on the stage, prints the missing keys, and when any are missing sends `alertPing('Smoke test: <platform>', 'join_failed', 'missing ' + missing.join(', '))` to the job's ntfy topic and exits 1. `docker/worker/smoke.crontab` runs `run-job.sh <job> smoke` at 03:00 on the 1st of each month for each platform's smoke job (one line per platform, job paths as placeholders). The Teams test meeting is a standing meeting organised by the TolongLabs test account, with "Who can bypass the lobby" set to everyone and one message posted in its chat (Teams keeps meeting chat, so the chat checkpoints always have an item to find).
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: `bun test packages/worker/src/smoke/entries.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/teams/smoke.spec.ts`
 Expected: PASS (1 and 2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/teams docs/plans/architecture.md
+git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/teams docs/TRD.md
 git commit -m "test(worker): add teams monthly smoke entry"
 ```
 
 ### Task 12: Milestone acceptance
 
-Manual verification on real Teams meetings, mapped to the design's [acceptance tests](../app-design/2026-10-20-meeting-bot-design.md#acceptance-tests) and to spike 2's open question. Record each result (date, pass or fail, evidence path) in this task.
+Manual verification on real Teams meetings, mapped to the PRD's [acceptance tests](../PRD.md#acceptance-tests) and to spike 2's open question. Record each result (date, pass or fail, evidence path) in this task.
 
 **Files:**
 

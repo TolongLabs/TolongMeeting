@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Form Detection to Ping",
+    "output": ".archify/form-dataflow/form-dataflow.html",
+    "viewBox": [1080, 540],
+    "legend": {
+      "mode": "hidden"
+    },
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    {
+      "label": "Sources"
+    },
+    {
+      "label": "Resolve"
+    },
+    {
+      "label": "Filter and trust"
+    },
+    {
+      "label": "Check"
+    },
+    {
+      "label": "Outcome"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "qr",
+      "type": "frontend",
+      "label": "QR on stage",
+      "sublabel": "2 consecutive frames",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "mchat",
+      "type": "frontend",
+      "label": "Meeting chat",
+      "sublabel": "links in messages",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "wchat",
+      "type": "frontend",
+      "label": "Watched chat",
+      "sublabel": "links with sender",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "resolve",
+      "type": "cloud",
+      "label": "Resolve link",
+      "sublabel": "unwrap, 5 redirects, 5 s",
+      "stage": 1,
+      "row": 1
+    },
+    {
+      "id": "domain",
+      "type": "backend",
+      "label": "Domain filter",
+      "sublabel": "Forms domains only",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "dup",
+      "type": "backend",
+      "label": "Duplicate key",
+      "sublabel": "once per meeting",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "trust",
+      "type": "security",
+      "label": "Trust check",
+      "sublabel": "QR, host, trusted sender",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "ignored",
+      "type": "external",
+      "label": "Logged, ignored",
+      "sublabel": "other domain or repeat",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "attend",
+      "type": "backend",
+      "label": "Attendance check",
+      "sublabel": "terms, not a quiz",
+      "stage": 3,
+      "row": 1
+    },
+    {
+      "id": "submit",
+      "type": "backend",
+      "label": "Fill and submit",
+      "sublabel": "trusted attendance form",
+      "stage": 4,
+      "row": 1,
+      "tag": "within 2 min"
+    },
+    {
+      "id": "ping",
+      "type": "messagebus",
+      "label": "Ping the member",
+      "sublabel": "link and reason",
+      "stage": 4,
+      "row": 2,
+      "tag": "within 30 s"
+    }
+  ],
+  "flows": [
+    {
+      "id": "qr-to-resolve",
+      "from": "qr",
+      "to": "resolve",
+      "variant": "emphasis",
+      "label": "QR text",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [185, 157],
+        [185, 271]
+      ],
+      "labelAt": [185, 205]
+    },
+    {
+      "id": "mchat-to-resolve",
+      "from": "mchat",
+      "to": "resolve",
+      "variant": "default",
+      "label": "link",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [225, 258]
+    },
+    {
+      "id": "wchat-to-resolve",
+      "from": "wchat",
+      "to": "resolve",
+      "variant": "default",
+      "label": "link, sender",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [185, 385],
+        [185, 271]
+      ],
+      "labelAt": [185, 335]
+    },
+    {
+      "id": "resolve-to-domain",
+      "from": "resolve",
+      "to": "domain",
+      "variant": "emphasis",
+      "label": "final URL",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [422.5, 271],
+        [422.5, 157]
+      ],
+      "labelAt": [422, 214],
+      "classification": "no cookies, no scripts"
+    },
+    {
+      "id": "domain-to-ignored",
+      "from": "domain",
+      "to": "ignored",
+      "variant": "dashed",
+      "label": "not a form",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [637, 145],
+      "classification": "logged"
+    },
+    {
+      "id": "domain-to-dup",
+      "from": "domain",
+      "to": "dup",
+      "variant": "emphasis",
+      "label": "Forms URL",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [580, 214]
+    },
+    {
+      "id": "dup-to-ignored",
+      "from": "dup",
+      "to": "ignored",
+      "variant": "dashed",
+      "label": "seen before",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [620, 271],
+        [620, 215],
+        [745, 215]
+      ],
+      "labelAt": [683, 203]
+    },
+    {
+      "id": "dup-to-trust",
+      "from": "dup",
+      "to": "trust",
+      "variant": "emphasis",
+      "label": "new form",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [572, 328]
+    },
+    {
+      "id": "trust-to-attend",
+      "from": "trust",
+      "to": "attend",
+      "variant": "emphasis",
+      "label": "trusted",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [655, 385],
+        [655, 271]
+      ],
+      "labelAt": [655, 330]
+    },
+    {
+      "id": "trust-to-ping",
+      "from": "trust",
+      "to": "ping",
+      "variant": "security",
+      "label": "untrusted",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [790, 373],
+      "classification": "high priority"
+    },
+    {
+      "id": "attend-to-submit",
+      "from": "attend",
+      "to": "submit",
+      "variant": "emphasis",
+      "label": "attendance",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [852, 259]
+    },
+    {
+      "id": "attend-to-ping",
+      "from": "attend",
+      "to": "ping",
+      "variant": "security",
+      "label": "quiz or other",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [745, 330],
+        [852, 330],
+        [852, 385]
+      ],
+      "labelAt": [798, 318],
+      "classification": "normal priority"
+    },
+    {
+      "id": "submit-to-ping",
+      "from": "submit",
+      "to": "ping",
+      "variant": "security",
+      "label": "unmatched question",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [1020, 328],
+      "classification": "high priority"
+    }
+  ],
+  "cards": []
+}

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Ubuntu 24.04 LTS server (Singapore, 8 vCPUs, 16 GB, 200 GB), Docker Engine, Xvfb, openbox, PulseAudio, pinned Google Chrome, Node 24 and Playwright, x11vnc and noVNC, ffmpeg, Bun for scripts run on the server itself, zxing-wasm (zxing-cpp's WebAssembly build), OpenCV's WeChat QR detector (`opencv-contrib-python-headless`), DashScope real-time speech recognition, Tailscale, ntfy, Caddy.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`
 
 Contents:
 
@@ -936,7 +936,7 @@ attachment-expiry-duration: '3h'
 
 `ntfy.attachSummary=true` only if N1 to N4 all pass; N2 is required because anything less would let one member's summary reach another (anti-goal 6).
 
-- [ ] **Step 1: Start ntfy and create two members**
+- [x] **Step 1: Start ntfy and create two members**
 
 ```bash
 cd /srv/spikes/repo/spikes/08-ntfy && docker compose up -d ntfy
@@ -951,7 +951,7 @@ docker compose exec ntfy ntfy token add member2
 
 `ntfy-pw.env` holds a random `NTFY_PASSWORD`; copy the two tokens into `/srv/spikes/secrets/ntfy.env` as `NTFY_TOKEN_1` and `NTFY_TOKEN_2` without echoing them elsewhere. Expected: `docker compose exec ntfy ntfy user list` shows both users with access to their own topic only.
 
-- [ ] **Step 2: Run the access and expiry checks**
+- [x] **Step 2: Run the access and expiry checks**
 
 `check.sh` reads the tokens inside a subshell, publishes `printf '# Test summary\n' > /tmp/summary.md` with `curl -s -H "Authorization: Bearer $NTFY_TOKEN_1" -H "Filename: 2026-11-02 1900 Test.md" -T /tmp/summary.md http://127.0.0.1:8090/tm-spike-member1`, reads `attachment.url` and `attachment.expires` from the reply, runs the N1 and N2 requests with `curl -s -o /dev/null -w '%{http_code}'`, and starts a background check that runs N3 after 11,100 seconds. Run: `bash /srv/spikes/repo/spikes/08-ntfy/check.sh`. Expected: `ntfy.json` filled; N3 completes 3 hours 5 minutes later.
 
@@ -959,7 +959,7 @@ docker compose exec ntfy ntfy token add member2
 
 Point a throwaway DNS name at the server (a TolongLabs test subdomain), set `base-url` to `https://<ntfy-host>`, run `ufw allow 80/tcp && ufw allow 443/tcp`, and `docker compose --profile phone up -d`. Subscribe the ntfy app to `tm-spike-member1` with member 1's credentials, run `check.sh` against the public URL, and check the app shows and downloads the attachment. Then `docker compose --profile phone down`, `ufw delete allow 80/tcp && ufw delete allow 443/tcp`, and delete the DNS name. Expected: N4 holds, and `ufw status` lists only 22/tcp again.
 
-- [ ] **Step 4: Record, write the report and apply the outcome's edits**
+- [x] **Step 4: Record, write the report and apply the outcome's edits**
 
 Run `sync.sh pull 08-ntfy`, write `REPORT.md` with the N table, the ntfy version and the decision, and apply the spike 8 rows of Task 9's outcome table.
 
@@ -978,9 +978,9 @@ Expected: the check prints nothing; the commit succeeds.
 **Files:**
 
 - Create: `spikes/DECISIONS.md`
-- Modify: `docs/app-design/2026-10-20-meeting-bot-design.md` ("Early spikes", and the sections the outcome table names)
+- Modify: `docs/PRD.md`, `docs/TRD.md`, `docs/trd/*.md` and `docs/DESIGN.md` ("Early spikes", and the sections the outcome table names; the section map is under the outcome table)
 - Modify: `docs/plans/README.md` ("Roadmap", "When the spikes change things")
-- Modify, only where an outcome row says so: `docs/plans/architecture.md`, `docs/plans/01a-recorder-and-pings.md`, `docs/plans/01b-form-submission.md`, `docs/plans/01c-website-and-scheduler.md`, `docs/plans/02-link-watchers.md`, `docs/plans/03-companion-and-native.md`, `docs/plans/04-teams.md`, `docs/plans/05-meet.md`, `docs/plans/08-run-locations.md`
+- Modify, only where an outcome row says so: `docs/TRD.md`, `docs/plans/01a-recorder-and-pings.md`, `docs/plans/01b-form-submission.md`, `docs/plans/01c-website-and-scheduler.md`, `docs/plans/02-link-watchers.md`, `docs/plans/03-companion-and-native.md`, `docs/plans/04-teams.md`, `docs/plans/05-meet.md`, `docs/plans/08-run-locations.md`
 
 **Interfaces:**
 
@@ -1010,7 +1010,7 @@ Expected: the check prints nothing; the commit succeeds.
 | `watchers.whatsappFromServer`, `watchers.discordFromServer`                                                 | 7     | 01c, 02      |
 | `ntfy.attachSummary`, `ntfy.version`                                                                        | 8     | 01a, 01c, 03 |
 
-Outcome table. Each spike task applies its matching rows in its own commit; this task checks them and applies row 0. "Design" means `docs/app-design/2026-10-20-meeting-bot-design.md`; plan names are files in `docs/plans/`; quoted text is the design's current wording.
+Outcome table. Each spike task applies its matching rows in its own commit; this task checks them and applies row 0. "Design" means the documents that replaced the single design page; plan names are files in `docs/plans/`; quoted text is their current wording. Section names in the table below sit in these files: "Early spikes", "Platform realities", "Tech stack", "Deployment and cost" and "Security and privacy" in `docs/TRD.md`; "Meeting worker" and "Platform adapters" in `docs/trd/meeting-worker.md`; "Scheduler" in `docs/trd/scheduler-and-control.md`; "Link watchers" in `docs/trd/link-watchers.md`; "Attendance form handler" in `docs/trd/attendance-forms.md` (rules in `docs/PRD.md`, "Attendance forms"); "Transcription" in `docs/trd/transcription-and-summaries.md` (rules in `docs/PRD.md`, "Transcription"); "Notifications" in `docs/trd/notifications-and-companion.md` (priorities and buttons in `docs/DESIGN.md`, "Pings"); "Run locations" in `docs/trd/notifications-and-companion.md` (rules in `docs/PRD.md`, "Run locations"); "Build order" is "Milestones" in `docs/PRD.md`; "Website" is "Website pages" in `docs/DESIGN.md`.
 
 | Row  | Outcome                                                                                                                                                                               | Design edits                                                                                                                                                                                                                                                                                                                                                       | Plan edits                                                                                                                                                                                                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1044,7 +1044,7 @@ Outcome table. Each spike task applies its matching rows in its own commit; this
 | 4.5  | Wrappers or redirects differ from the design                                                                                                                                          | "Attendance form handler", Unwrapping: list the wrappers observed                                                                                                                                                                                                                                                                                                  | `01a`: `resolveFormLink` tests add each observed URL shape, with placeholder IDs                                                                                                                                                                                                                                                                                                |
 | 4.6  | `forms.fillP95Ms` above 60,000                                                                                                                                                        | "Attendance form handler", Speed: record the measured time and what dominates it                                                                                                                                                                                                                                                                                   | `01b`: per-step timeouts that sum to at most 120 seconds minus the measured detection and resolution times                                                                                                                                                                                                                                                                      |
 | 5.1  | `qwen3-asr-flash-realtime` stays                                                                                                                                                      | "Transcription", Swapping models: "Spike 5 found no Singapore streaming model with native timestamps and vocabulary that did better, so this one stays."; Timestamps: add the measured median error                                                                                                                                                                | `01a`: `openAsrStream` in `packages/ai` and `startLiveAsr` in `packages/worker/src/asr/live.ts` use `asr.url`, `asr.eventNames`, and Task 5's reconnection and de-duplication rules                                                                                                                                                                                             |
-| 5.2  | A candidate replaces it                                                                                                                                                               | Decision 35, "Tech stack" live speech recognition, "Transcription" live mode (native timestamps; vocabulary from the entry's names and slide terms), "Deployment and cost" speech price, and Swapping models: the result                                                                                                                                           | `architecture.md`: the default for `AiConfig.models.asr`; `01a`: `openAsrStream`'s protocol and tests for the new model                                                                                                                                                                                                                                                         |
+| 5.2  | A candidate replaces it                                                                                                                                                               | Decision 35, "Tech stack" live speech recognition, "Transcription" live mode (native timestamps; vocabulary from the entry's names and slide terms), "Deployment and cost" speech price, and Swapping models: the result                                                                                                                                           | `TRD.md`: the default for `AiConfig.models.asr`; `01a`: `openAsrStream`'s protocol and tests for the new model                                                                                                                                                                                                                                                                  |
 | 5.3  | `asr.sessionCapMinutes` isn't 120                                                                                                                                                     | "Transcription", Long meetings: "before 110 minutes" becomes "before <cap minus 10> minutes", or the reconnection is dropped if no cap appeared in 125 minutes                                                                                                                                                                                                     | `01a`: the reconnection constant in `live.ts`                                                                                                                                                                                                                                                                                                                                   |
 | 5.4  | A1 or A2 fails for every live model                                                                                                                                                   | "Transcription": live results feed name-mention alerts only, and after the meeting `qwen3-asr-flash-filetrans` (scored the same way first) builds the transcript the summary uses; goal 4's 10 minutes rechecked                                                                                                                                                   | `01a`: the pipeline task adds a file-transcription step before the summary                                                                                                                                                                                                                                                                                                      |
 | 5.5  | A3 fails                                                                                                                                                                              | "Transcription", Timestamps: the offset method that passed                                                                                                                                                                                                                                                                                                         | `01a`: the offset rule in `live.ts`                                                                                                                                                                                                                                                                                                                                             |
@@ -1107,13 +1107,13 @@ For each spike, find its rows in the outcome table from its decisions, confirm t
 
 ```bash
 ls spikes/0*/REPORT.md | wc -l
-grep -nE "spike [1-8]" docs/app-design/2026-10-20-meeting-bot-design.md
+grep -nE "spike [1-8]" docs/PRD.md docs/TRD.md docs/trd/*.md docs/DESIGN.md
 diff <(grep -v '^#' docker/worker/versions.env) <(grep -v '^#' spikes/00-setup/worker/versions.env)
-grep -rnE "at most [0-9] (server workers|meetings)" docs/app-design docs/plans
+grep -rnE "at most [0-9] (server workers|meetings)" docs/PRD.md docs/TRD.md docs/trd docs/plans
 bunx prettier --check "docs/**/*.md" "spikes/**/*.md"
 ```
 
-Expected: `9`; every spike mention in the design states a result (none left saying "verify", "tests it", "decide", "compared in" or "measures"); no `diff` output; every cap matches `worker.concurrencyCap`; Prettier reports all files formatted.
+Expected: `9`; every spike mention in the PRD, TRD and design states a result (none left saying "verify", "tests it", "decide", "compared in" or "measures"); no `diff` output; every cap matches `worker.concurrencyCap`; Prettier reports all files formatted.
 
 - [ ] **Step 4: Tear down**
 

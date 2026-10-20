@@ -9,12 +9,121 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # packages/web and packages/scheduler tests create and drop their own database on this server.
+      TEST_DATABASE_URL: postgres://postgres:tmtest@127.0.0.1:5432/postgres
+      # The QR tests default to these paths; the steps below fill them.
+      TM_WECHAT_PYTHON: ${{ github.workspace }}/spikes/03-qr/.venv/bin/python
+      TM_WECHAT_MODELS_DIR: ${{ github.workspace }}/spikes/03-qr/models
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: tmtest
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      # Worker tests fail under CI when these are missing. xdpyinfo comes from x11-utils, ffplay from ffmpeg.
+      - name: Install media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg xvfb x11-utils
+      # The WeChat QR bridge needs Python 3.12 and the hash-pinned wheels the worker image installs.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install the WeChat QR bridge
+        run: |
+          python -m venv spikes/03-qr/.venv
+          spikes/03-qr/.venv/bin/python -m pip install --require-hashes --no-deps --only-binary :all: -r docker/worker/wechat-requirements.txt
+          bash spikes/03-qr/fetch-models.sh
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      # The remote view's Caddy contract runs the real Caddyfile in the image Compose names. With CI set, the test fails
+      # rather than skips when the image is missing.
+      - name: Pull the Caddy image
+        run: docker pull "$(grep -oP 'image:\s*\Kcaddy:\S+' docker/compose.yaml)"
+      - name: Caddy remote view contract
+        run: bun test packages/web/test/caddy-vnc.test.ts
+      - run: bun run test
+
+  # The private-range egress rules (docker/egress/deny-private.sh) are applied with real iptables inside a throwaway
+  # user and network namespace. Ubuntu runners block unprivileged user namespaces through AppArmor, and lifting that for
+  # the whole check job changes how Chrome sandboxes itself in the worker tests, so these run in a job of their own.
+  firewall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun run test
+      - name: Enable unprivileged user namespaces and iptables
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          command -v iptables >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends iptables; }
+      - name: Real iptables rules
+        run: bun test test/deny-private.test.ts
+        env:
+          TM_REQUIRE_NAMESPACES: '1'
+
+  # Playwright specs are not part of `bun run test` (bunfig.toml ignores *.spec.ts). The image and host projects need the
+  # worker image or a Chrome host setup and are not run here.
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: Fixture specs
+        run: bunx playwright test -c packages/worker/playwright.config.ts --project=fixtures
+      # The forms project runs headed, so it needs a display.
+      - name: Forms specs
+        run: xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts --project=forms
+
+  # The whole meeting run against local fakes (fake Zoom, forms, AI, ntfy) in headed Chrome, so it needs a display and
+  # the media tools. No Postgres: the e2e run uses no database.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The run decodes the QR slide through the WeChat bridge, like the check job's QR tests.
+      TM_WECHAT_PYTHON: ${{ github.workspace }}/spikes/03-qr/.venv/bin/python
+      TM_WECHAT_MODELS_DIR: ${{ github.workspace }}/spikes/03-qr/models
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg xvfb x11-utils
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install the WeChat QR bridge
+        run: |
+          python -m venv spikes/03-qr/.venv
+          spikes/03-qr/.venv/bin/python -m pip install --require-hashes --no-deps --only-binary :all: -r docker/worker/wechat-requirements.txt
+          bash spikes/03-qr/fetch-models.sh
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: End-to-end run
+        run: xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts --project=e2e

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Playwright on Node 24 driving the pinned Chrome, Playwright Test, `bun test`, zod.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 Contents:
 
@@ -51,7 +51,7 @@ Contents:
 
 ## Contract additions
 
-Names this plan adds to [architecture and contracts](architecture.md), copied there in the commit of the task that creates them:
+Names this plan adds to [architecture and contracts](../TRD.md), copied there in the commit of the task that creates them:
 
 - **Selector map**: `config/selectors/meet.json` and `MeetSelectorsSchema` (Task 1), in the layout of 01a's `zoom.json`.
 - **Worker**: `meetAdapter`, `MEET_TIMEOUTS` and the modules under `packages/worker/src/adapters/meet/` (Tasks 1 to 8).
@@ -74,14 +74,14 @@ Names used from earlier plans:
 
 - Create: `config/selectors/meet.json`
 - Create: `packages/worker/src/adapters/meet/selectors.ts`
-- Test: `packages/worker/src/adapters/meet/selectors.test.ts`
+- Test: `packages/worker/test/meet-selectors.test.ts`
 
 **Interfaces:**
 
-- Consumes: `loadSelectors<T>(platform: Platform, schema: z.ZodType<T>): Promise<T>` from plan 01a (Task 13).
+- Consumes: `loadSelectors<T>(name: string, schema: z.ZodType<T>, dir?: string): Promise<T>` from plan 01a (Task 13), which takes a map name, not a `Platform`.
 - Produces: `MeetSelectorsSchema` (zod, strict at every level, the shape of `meet.json` below), `type MeetSelectors = z.infer<typeof MeetSelectorsSchema>` and `meetSelectors(): Promise<MeetSelectors>` (`loadSelectors('meet', MeetSelectorsSchema)`) in `packages/worker/src/adapters/meet/selectors.ts`. The map follows 01a's `zoom.json` layout: `selectors` holds CSS selectors usable in `document.querySelectorAll`; `texts` holds regular expressions matched case-insensitively against visible text, with apostrophes written as `.` so straight and curly ones both match; `noticeAllowlist` holds exact button texts; `signInHosts` holds host names; `joinButtons` holds exact join-button texts in order of preference.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -112,12 +112,12 @@ test('a missing key fails loudly and names the key', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/worker/src/adapters/meet/selectors.test.ts`
-Expected: FAIL, module `./selectors` not found.
+Run: `bun test packages/worker/test/meet-selectors.test.ts`
+Expected: FAIL, module `../src/adapters/meet/selectors` not found.
 
-- [ ] **Step 3: Create `config/selectors/meet.json` and `meetSelectors(): Promise<MeetSelectors>`**
+- [x] **Step 3: Create `config/selectors/meet.json` and `meetSelectors(): Promise<MeetSelectors>`**
 
 "Switch here", "Present" and "Use Companion mode" are deliberately absent from `joinButtons`. Starting values, mirrored by the fixtures and confirmed or corrected in Task 10:
 
@@ -168,16 +168,16 @@ Expected: FAIL, module `./selectors` not found.
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/worker/src/adapters/meet/selectors.test.ts`
-Expected: PASS (2 tests).
+Run: `bun test packages/worker/test/meet-selectors.test.ts`
+Expected: PASS (6 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add config/selectors/meet.json packages/worker/src/adapters/meet/selectors.ts packages/worker/src/adapters/meet/selectors.test.ts
-git commit -m "feat(worker): add meet selector map"
+git add config/selectors/meet.json packages/worker/src/adapters/meet/selectors.ts packages/worker/test/meet-selectors.test.ts
+git commit -m "feat(worker): meet selector map"
 ```
 
 ### Task 2: Link normalisation
@@ -192,7 +192,7 @@ git commit -m "feat(worker): add meet selector map"
 - Consumes: `unwrapLink(url: string): string` from plan 01a (Task 12).
 - Produces: `normaliseMeetLink(url: string): string | null` in `packages/worker/src/adapters/meet/link.ts`; Task 8 exposes it as `meetAdapter.normaliseLink`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -225,12 +225,12 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/meet/link.test.ts`
 Expected: FAIL, module `./link` not found.
 
-- [ ] **Step 3: Implement `normaliseMeetLink(url: string): string | null` in `packages/worker/src/adapters/meet/link.ts`**
+- [x] **Step 3: Implement `normaliseMeetLink(url: string): string | null` in `packages/worker/src/adapters/meet/link.ts`**
 
 Rules, in order:
 
@@ -240,12 +240,12 @@ Rules, in order:
 1.  A path code matching `/^[a-z]{3}-?[a-z]{4}-?[a-z]{3}$/i` returns `https://meet.google.com/<xxx>-<xxxx>-<xxx>` in lower case; `/lookup/<name>` returns `https://meet.google.com/lookup/<name>`; every query parameter is dropped.
 1.  Anything else returns `null`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/meet/link.test.ts`
 Expected: PASS (14 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/adapters/meet/link.ts packages/worker/src/adapters/meet/link.test.ts
@@ -273,7 +273,7 @@ git commit -m "feat(worker): normalise meet links"
   - `joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_000): Promise<JoinResult>` in `packages/worker/src/adapters/meet/join.ts`. It starts on the page the caller has already opened at the normalised link (01a's run sequence) and never navigates itself.
   - Test harness in `packages/worker/test/meet/serve.ts`: `type MeetScene`, `interface MeetFixtureConfig`, `serveMeet(page: Page, cfg: MeetFixtureConfig): Promise<void>` (replaces earlier routes), `setMeetScene(page: Page, scene: MeetScene, patch?: Partial<MeetFixtureConfig>): Promise<void>`, `meetClicks(page: Page): Promise<string[]>`. Later tasks add fields and scenes.
 
-- [ ] **Step 1: Build the fixtures and harness**
+- [x] **Step 1: Build the fixtures and harness**
 
 `app.html` imitates the Meet web client as one page whose scene comes from `window.__cfg` and switches through `window.__scene(scene, patch)`, using the attribute values in `meet.json`. It must contain:
 
@@ -289,7 +289,7 @@ git commit -m "feat(worker): normalise meet links"
 
 `signin.html` shows a Google sign-in form (`input[type='email']`). `serveMeet` routes `https://meet.google.com/**` to `app.html` with `<script>window.__cfg = ...</script>` prepended, and `https://accounts.google.com/**` to `signin.html`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -395,18 +395,19 @@ test('an invalid code fails; an unrecognised page times out', async ({ page }) =
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/join.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/join`.
 
-- [ ] **Step 4: Implement `meetState`, `meetTextSignal` and `joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
+- [x] **Step 4: Implement `meetState`, `meetTextSignal` and `joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
 
 Every 500 ms until `timeoutMs`, act on the first rule that matches (text checks through `meetTextSignal`):
 
 1.  Page host in `signInHosts`: `{ kind: 'signin_required', host }`.
 1.  `texts.blocked`: `{ kind: 'failed', reason: 'meet_blocked' }`.
 1.  `texts.invalidLink`: `{ kind: 'failed', reason: 'invalid_link' }`.
+1.  `texts.ended` or `texts.endScreen`: `{ kind: 'failed', reason: 'meeting_ended' }` (a rejoin after the call ended or the member left; tested with the `ended` and `left` scenes).
 1.  A visible button whose text matches `texts.permissionContinue`: click it.
 1.  `prejoinNameInput` visible: `{ kind: 'signin_required', host: 'meet.google.com' }`, without typing.
 1.  A visible button whose whole text equals an entry of `joinButtons` (taking the earliest entry present): click `micToggle` if `micOff` doesn't match, then `cameraToggle` if `cameraOff` doesn't match; re-read both and return `{ kind: 'failed', reason: 'device_toggle_stuck' }` if either is still on; then click that join button once.
@@ -415,12 +416,12 @@ Every 500 ms until `timeoutMs`, act on the first rule that matches (text checks 
 
 At the deadline return `{ kind: 'failed', reason: 'prejoin_timeout' }`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/join.spec.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/page-state.ts packages/worker/src/adapters/meet/text.ts packages/worker/src/adapters/meet/join.ts
@@ -440,11 +441,11 @@ git commit -m "feat(worker): join meet calls with devices off"
 - Consumes: `MeetSelectors` (Task 1); `meetTextSignal`, `serveMeet`, `setMeetScene`, `meetClicks` (Task 3); `MeetingState`, `AdmissionResult` from `packages/worker/src/adapters/types.ts`.
 - Produces: `meetMeetingState(page: Page, sel: MeetSelectors): Promise<MeetingState>` and `waitMeetAdmitted(page: Page, sel: MeetSelectors, deadline: Date, pollMs = 2_000): Promise<AdmissionResult>` in `packages/worker/src/adapters/meet/state.ts`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add scenes `lobby-review` ("Your request to join is being reviewed"), `lobby-denied` ("Someone in the call denied your request to join"), `lobby-expired` ("No one responded to your request to join the call", with an "Ask to join" button), `ended` ("The call has ended" and "Return to home screen"), `left` ("You left the meeting", "Rejoin" and "Return to home screen") and `removed` ("You've been removed from the meeting"). Add `MeetFixtureConfig.breakout: boolean` (a `role="dialog"` "You've been invited to join breakout room 1" with "Join" and "Cancel"), `sidePanel: 'chat' | 'people' | 'closed'` (a `role="complementary"` panel holding the chat or the participant list), `messages: { id: string; sender: string; time: string; text: string; href?: string }[]` (rendered in the chat panel as `[data-sender-id]` groups, each with `[data-sender-name]`, `[data-formatted-timestamp]` and one `[data-message-id]` per message; consecutive messages from one sender share a group) and `captions: string | null` (a `[aria-label='Captions']` region with that text).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -524,21 +525,21 @@ test('denied, expired and deadline outcomes', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/state.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/state`.
 
-- [ ] **Step 4: Implement `meetMeetingState` and `waitMeetAdmitted` in `packages/worker/src/adapters/meet/state.ts`**
+- [x] **Step 4: Implement `meetMeetingState` and `waitMeetAdmitted` in `packages/worker/src/adapters/meet/state.ts`**
 
 `meetMeetingState` returns the first match, with every text check through `meetTextSignal`: `texts.removed` → `removed`; `texts.ended` or `texts.endScreen` → `ended`; `texts.breakoutPrompt` → `breakout_prompt`; any lobby text → `lobby`; `leaveButton` visible → `in_meeting`; otherwise `unknown` (a missing Leave button without an end signal is left to 01a's drop handling). `waitMeetAdmitted` polls every `pollMs`: `texts.lobbyDenied` → `lobby_denied`; `texts.lobbyExpired` → `lobby_expired`; `leaveButton` visible with no lobby text → `admitted`; past `deadline` → `lobby_expired`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/state.spec.ts`
 Expected: PASS (11 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/state.ts
@@ -562,11 +563,11 @@ git commit -m "feat(worker): read meet lobby and call state"
   - `connectMeetOutputAudio(page: Page, sel: MeetSelectors): Promise<void>`.
   - `leaveMeet(page: Page, sel: MeetSelectors): Promise<void>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `MeetFixtureConfig.notices: { role: 'dialog' | 'alert'; text: string; button: string }[]` (each a container with that role, its text and one button) and `host: boolean` (clicking "Leave call" opens a `role="dialog"` with "End the call for everyone" and "Just leave the call"; otherwise it switches to `left`). Give the side panel a header button `aria-label="Close"`. Add `MeetFixtureConfig.audioElements: number` (default 2) for the `meeting` scene.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -662,23 +663,23 @@ test('leaves without ending the call for everyone, even as host', async ({ page 
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/controls.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/controls`.
 
-- [ ] **Step 4: Implement the four functions in `packages/worker/src/adapters/meet/controls.ts`**
+- [x] **Step 4: Implement the four functions in `packages/worker/src/adapters/meet/controls.ts`**
 
 - `dismissMeetNotices`: for each visible `noticeContainers` element outside `sidePanel` whose text matches no `texts.breakoutPrompt`, click each visible button whose trimmed text or `aria-label` equals an entry of `noticeAllowlist` (case-insensitive).
 - `connectMeetOutputAudio`: Meet has no output control to click and plays call audio through page `audio` elements. Wait up to 10 seconds for at least one `audio` element and throw `Error('no meeting audio element')` if none appears; the sink-level check after it is 01a's.
 - `leaveMeet`: click `leaveButton`; if a dialog appears within 2 seconds, click the button whose text matches `texts.leaveConfirm`; then wait up to 15 seconds for `texts.ended` or `texts.endScreen`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/controls.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/controls.ts
@@ -704,7 +705,7 @@ git commit -m "feat(worker): add meet devices, notices, leave"
   - `roleFromMeetLabel(label: string): SenderRole` and `readMeetRoles(page: Page, sel: MeetSelectors): Promise<Map<string, SenderRole>>` in `packages/worker/src/adapters/meet/roles.ts`.
   - `readMeetChat(page: Page, sel: MeetSelectors, cursor: ChatCursor): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>` and `sweepMeetChat(page: Page, sel: MeetSelectors): Promise<ChatMessage[]>` in `packages/worker/src/adapters/meet/chat.ts`.
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -762,25 +763,25 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/meet/chat.test.ts`
 Expected: FAIL, module `./chat` not found.
 
-- [ ] **Step 3: Implement `toMeetChatMessages` and `roleFromMeetLabel`**
+- [x] **Step 3: Implement `toMeetChatMessages` and `roleFromMeetLabel`**
 
 `toMeetChatMessages` sets `key` to `id` or `${sender}|${time}|${text.slice(0, 200)}`, looks up `senderRole` by the trimmed lower-cased sender (`unknown` when absent or when `roles` is null), and sets `links` to the `http`/`https` `hrefs` followed by 01a's `extractLinks(text)`, de-duplicated in order; `replyTo` is always `null`, because Meet chat has no threads. `roleFromMeetLabel` returns `co_host` when the label matches `/co-?host/i`, `host` when it matches `/host/i`, otherwise `participant`.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/meet/chat.test.ts`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Extend the fixture**
+- [x] **Step 5: Extend the fixture**
 
 Make the chat list scrollable (40 px per message, 10 visible) with `MeetFixtureConfig.chatScroll: 'top' | 'bottom'` (start position; it stays put when messages arrive). Add `people: { name: string; label?: string }[]`, rendered in the people panel as `[role='list'][aria-label='Participants']` with one `[role='listitem']` each (first text line the name, second the label), plus `window.__addMessage(m)` and `window.__addPerson(p)`. Clicking "People" shows the participant list in the side panel, hiding chat; clicking "Chat with everyone" shows chat again with its full history; while chat is hidden, new messages still enter the history, as in Meet.
 
-- [ ] **Step 6: Write the failing browser test**
+- [x] **Step 6: Write the failing browser test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -856,23 +857,23 @@ test('the chat panel closed means no messages and no clicks', async ({ page }) =
 })
 ```
 
-- [ ] **Step 7: Run it to verify it fails**
+- [x] **Step 7: Run it to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/chat.spec.ts`
 Expected: FAIL, `readMeetChat` is not exported from `../../src/adapters/meet/chat`.
 
-- [ ] **Step 8: Implement `parseMeetMessages`, `readMeetRoles`, `readMeetChat` and `sweepMeetChat`**
+- [x] **Step 8: Implement `parseMeetMessages`, `readMeetRoles`, `readMeetChat` and `sweepMeetChat`**
 
 - `readMeetRoles`: click `peopleButton`, wait for `peopleList`, map each `peopleItem`'s first text line (trimmed, lower-cased) to `roleFromMeetLabel` of its remaining lines, click `chatButton`, wait for `chatScroller`, store the map in `meetState(page).roles` and return it.
 - `readMeetChat`: if `chatScroller` isn't visible, return no messages and the cursor unchanged (Task 7's `ensureMeetLayout` reopens chat). Otherwise scroll `chatScroller` to the bottom, parse, keep messages whose key isn't in `cursor.seenKeys`, and if any kept message has links and a sender missing from the role map (or the map is null), call `readMeetRoles` once, re-parse and map again. Return the messages and a cursor with their keys appended; the caller adopts it only after writing them (CHAT-03).
 - `sweepMeetChat`: call `readMeetRoles` first, then scroll `chatScroller` top to bottom in steps of `max(200, clientHeight / 2)` px with a random 300 to 350 ms pause, parsing at each step, and return the union by key in list order.
 
-- [ ] **Step 9: Run it to verify it passes**
+- [x] **Step 9: Run it to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/chat.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/chat-dom.ts packages/worker/src/adapters/meet/roles.ts packages/worker/src/adapters/meet/chat.ts packages/worker/src/adapters/meet/chat.test.ts
@@ -892,11 +893,11 @@ git commit -m "feat(worker): read meet chat with roles"
 - Consumes: `MeetSelectors` (Task 1); `meetState`, `serveMeet`, `setMeetScene`, `meetClicks` (Task 3); `Rect` from `packages/worker/src/adapters/types.ts`.
 - Produces, in `packages/worker/src/adapters/meet/layout.ts`: `meetParticipantCount(page: Page, sel: MeetSelectors): Promise<number | null>`, `ensureMeetLayout(page: Page, sel: MeetSelectors): Promise<void>`, `meetSharedScreenRegion(page: Page, sel: MeetSelectors): Promise<Rect | null>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `MeetFixtureConfig.peopleCount: number | null` (shown as a badge inside the "People" button). Whenever `captions` (Task 4) isn't null, the toolbar shows a "Turn off captions" button, which removes the `[aria-label='Captions']` region and becomes "Turn on captions". Add `share: { box: Rect; width: number; height: number } | null`, rendered as `<div data-is-presentation="true"><video></video></div>` at `box` with the stream size given through a canvas `captureStream()` of `width` by `height`, so `videoWidth` and `videoHeight` are real. "More options" opens a `role="menu"` with "Adjust view", "Turn on captions" and "Settings"; "Adjust view" opens a `role="dialog"` with radio options "Auto", "Tiled", "Spotlight" and "Sidebar" and a `aria-label="Close"` button.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -959,23 +960,23 @@ test('the shared-screen region is the picture inside the letterbox', async ({ pa
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/layout.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/layout`.
 
-- [ ] **Step 4: Implement the three functions in `packages/worker/src/adapters/meet/layout.ts`**
+- [x] **Step 4: Implement the three functions in `packages/worker/src/adapters/meet/layout.ts`**
 
 - `meetParticipantCount`: the first integer in `peopleButton`'s text, else in its `aria-label`, else `null`; it never clicks.
 - `ensureMeetLayout`, in this order: click `captionsOnButton` when visible (it never turns captions on); click `chatButton` when `chatScroller` isn't visible; when `sharedScreen` is visible and `meetState(page).shareSeen` is false, click `moreButton`, the menu item whose text matches `texts.layoutMenu`, the option whose text matches `texts.spotlight`, then `dialogClose`, and set `shareSeen`; reset `shareSeen` when no share is visible.
 - `meetSharedScreenRegion`: the first visible `sharedScreen` element's box, shrunk to the picture inside it by `videoWidth`/`videoHeight` (contain-fit, centred), rounded to whole pixels, in page coordinates, which are stage coordinates as in 01a's Zoom adapter; `null` when no share is visible, so 01a falls back to its brightness crop.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/layout.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/layout.ts
@@ -996,7 +997,7 @@ git commit -m "feat(worker): keep meet share large and chat open"
 - Produces: `meetAdapter: PlatformAdapter` (with `platform: 'meet'`) and `MEET_TIMEOUTS` in `packages/worker/src/adapters/meet/index.ts`; `adapterFor(url)` returns `meetAdapter` for any URL `normaliseMeetLink` accepts.
 - Produces (adds to contracts): `AlertKind` gains `meet_signin`; `runOccurrence` calls `adapter.ensureLayout` on its 10-second refresh as well as after joining (plan 04 makes the same change; whichever plan lands second finds it in place and keeps its test), and pings `meet_signin` instead of `zoom_signin` when a Meet `join` returns `signin_required`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -1053,12 +1054,12 @@ test('the layout is kept on every refresh, not only after joining', async () => 
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/adapters/meet/index.test.ts packages/worker/src/run.test.ts packages/notify/src/messages.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/meet/adapter.spec.ts`
 Expected: FAIL: `adapterFor` returns `null` for the Meet link; `meet_signin` is not an `AlertKind`; `../../src/adapters/meet` not found; the layout test fails too unless plan 04 has landed.
 
-- [ ] **Step 3: Implement `meetAdapter`, register it and change the run**
+- [x] **Step 3: Implement `meetAdapter`, register it and change the run**
 
 Each method loads `meetSelectors()` once (on first use) and delegates to the function of the same role: `normaliseMeetLink`, `joinMeet`, `connectMeetOutputAudio`, `ensureMeetLayout`, `waitMeetAdmitted`, `assertMeetDevicesOff`, `readMeetChat`, `sweepMeetChat`, `meetSharedScreenRegion`, `meetParticipantCount`, `meetMeetingState`, `dismissMeetNotices`, `leaveMeet`. Like 01a's Zoom adapter, it enforces its own timeouts: every method except `normaliseLink` and `waitUntilAdmitted` (bounded by its deadline) races its step against these limits and rejects with `Error('meet <method> timed out after <ms> ms')`; `runOccurrence` then saves the screenshot and `ariaSnapshot()` under `errors/` and pings, as it does for Zoom.
 
@@ -1080,20 +1081,20 @@ export const MEET_TIMEOUTS = {
 
 `adapterFor` gains `meetAdapter` after the adapters it already tries; the first whose `normaliseLink` isn't null wins. In `run.ts`, step 5 pings `meet_signin` (with plan 01c's "Sign in again" action, as for `zoom_signin`) when the adapter's platform is `meet`, and step 8 calls `ensureLayout` with each 10-second refresh of `sharedScreenRegion` and `participantCount`, so chat comes back after a roster read and a new presentation is spotlighted. In `messages.ts`, add `meet_signin` with the copy in the test.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: the commands of Step 2
 Expected: PASS, including 01a's existing `run.test.ts` and `messages.test.ts` cases.
 
-- [ ] **Step 5: Run the whole worker suite and the type check**
+- [x] **Step 5: Run the whole worker suite and the type check**
 
 Run: `bun test packages/worker packages/notify` then `bunx playwright test -c packages/worker/playwright.config.ts` then `bun run typecheck`
 Expected: all pass; `tsc` reports no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/meet/adapter.spec.ts docs/plans/architecture.md
+git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/meet/adapter.spec.ts docs/TRD.md
 git commit -m "feat(worker): register the meet adapter"
 ```
 
@@ -1113,7 +1114,7 @@ No earlier plan builds the design's monthly smoke test. Plan 04's Task 11 specif
 - Consumes: `MeetSelectorsSchema`, `meetSelectors()` (Task 1); `meetAdapter` (Task 8); `serveMeet` (Task 3); `SmokeEntry`, `SMOKE_ENTRIES`, `runSmokeEntry` (plan 04, Task 11).
 - Produces: `meetSmoke: SmokeEntry` in `packages/worker/src/smoke/meet.ts`, registered in `SMOKE_ENTRIES`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -1159,12 +1160,12 @@ test('fails loudly, naming the key, when the chat button is gone', async ({ page
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/smoke/meet.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/meet/smoke.spec.ts`
 Expected: FAIL, module `./meet` not found.
 
-- [ ] **Step 3: Create `meetSmoke` and register it**
+- [x] **Step 3: Create `meetSmoke` and register it**
 
 Add `MeetFixtureConfig.omit: string[]` (selectors whose elements the fixture leaves out). Meet keeps no chat before someone writes, so the chat item keys aren't checked:
 
@@ -1192,21 +1193,21 @@ export const meetSmoke: SmokeEntry = {
 
 The Meet test meeting is a standing meeting owned by a Google Workspace test account with access set to "Open", so the smoke identity joins without knocking. Add its line to `docker/worker/smoke.crontab`.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: `bun test packages/worker/src/smoke/meet.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/meet/smoke.spec.ts`
 Expected: PASS (1 and 2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/meet docs/plans/architecture.md
+git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/meet docs/TRD.md
 git commit -m "test(worker): add meet monthly smoke entry"
 ```
 
 ### Task 10: Milestone acceptance
 
-Manual verification on real Meet meetings, mapped to the design's [acceptance tests](../app-design/2026-10-20-meeting-bot-design.md#acceptance-tests) and to spike 2's Meet findings. Record each result (date, pass or fail, evidence path) in this task.
+Manual verification on real Meet meetings, mapped to the PRD's [acceptance tests](../PRD.md#acceptance-tests) and to spike 2's Meet findings. Record each result (date, pass or fail, evidence path) in this task.
 
 **Files:**
 
@@ -1219,7 +1220,7 @@ Manual verification on real Meet meetings, mapped to the design's [acceptance te
 
 - [ ] **Step 1: Selector check**
 
-Run `docker/worker/run-job.sh <meet-smoke-job> smoke` (Task 9) on the server against the standing Meet test meeting, and make sure `docker/worker/smoke.crontab` has its Meet line. Pass: exit code 0, no missing keys, and Meet never shows "You can't join this video call". If it does show it, stop the milestone, record it in spike 2's `REPORT.md`, and revisit the Chrome settings there. Where a selector or text differs, correct `meet.json`, the fixtures and the tests in one commit, then rerun the suites of Tasks 1 to 9.
+Run `docker/worker/run-job.sh <meet-smoke-job> smoke` (Task 9) on the server against the standing Meet test meeting, and make sure `docker/worker/smoke.crontab` has its Meet line. Pass: exit code 0, no missing keys, and Meet never shows "You can't join this video call". If it does show it, stop the milestone, record it in spike 2's `REPORT.md`, and revisit the Chrome settings there. Where a selector or text differs, correct `meet.json`, the fixtures and the tests in one commit, then rerun the suites of Tasks 1 to 9. Also check one assumption the tests rest on: Meet's chat list is not virtualised, so a burst of messages is still in the DOM when it is read (the burst test in `test/meet/chat.spec.ts` shows no more than that). If the live list drops rows that scroll out of view, add a virtualised fixture mode and an in-page observer like Teams' `teamsChatProbe`.
 
 - [ ] **Step 2: Joining and admission**
 

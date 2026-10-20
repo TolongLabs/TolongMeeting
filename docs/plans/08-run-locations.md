@@ -8,7 +8,7 @@
 
 **Tech Stack:** Docker Desktop (WSL 2 backend) and the Docker CLI, Electron, `node:http`, iptables, Tailscale (pinned `tailscale/tailscale` image, API v2 through an OAuth client), x11vnc and noVNC (from plan 01c), Next.js, Drizzle, pg-boss.
 
-**Spec:** `docs/app-design/2026-10-20-meeting-bot-design.md` plus `docs/plans/architecture.md`.
+**Spec:** `docs/PRD.md`, `docs/DESIGN.md` and `docs/TRD.md`.
 
 **Order:** Spike 1 can move this plan to right after 01c, if university sign-ins fail from the server; plan 03 then moves with it, because local mode runs inside the companion app. The home-route tasks (11 to 13) need only plan 01c.
 
@@ -129,7 +129,7 @@ export function deleteServerProfile(identityId: string, profileRoot?: string): P
 
 - Routes (adds to contracts): `PUT /api/identities/<id>/run-location` (member session, body `RunLocationChoice`); `GET /api/companion/identities` (device token) answers `{ identities: { id: string; name: string }[]; image: string }`, where `image` is `TM_WORKER_IMAGE_REF`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // companion.test.ts (added)
@@ -193,21 +193,21 @@ test('deleteServerProfile removes only that identity', async () => {
 
 `scheduled` records `scheduleJob` calls (through `mock.module`); `identityRow`, `touchDevice` and `profileRootWith` are local helpers; `t0` and `plus` are as in plan 03.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core/src/companion.test.ts packages/web/lib/run-locations packages/scheduler/src/profile-delete.test.ts`
 Expected: FAIL with "Export named 'shortTime' not found" and missing modules
 
-- [ ] **Step 3: Implement the contracts, the column and queries, `setRunLocation`, the routes, `deleteServerProfile` and the settings page**
+- [x] **Step 3: Implement the contracts, the column and queries, `setRunLocation`, the routes, `deleteServerProfile` and the settings page**
 
 `setRunLocation` writes `identities.run_location`, `identities.local_device_id` (null unless `local`) and `profiles.location` (`local` for My PC, else `server`); moving to `local` schedules `profile-delete` and emits `local_identities_changed` to the chosen device; moving away from `local` emits it to the previously bound device. The settings page warns before switching to My PC: "The server's copy of this identity's sign-ins will be deleted. You'll sign in again on <PC name>." and, for My PC, links to Docker Desktop's install page and says a PC needs about 4 GB free for Docker. `revokeDevice` sets `local_device_id = NULL` on the member's identities bound to the device, in the same transaction. Register the `profile-delete` handler in plan 01c's scheduler queue setup.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/companion.test.ts packages/web/lib/run-locations packages/scheduler/src/profile-delete.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src packages/web packages/scheduler/src/profile-delete.ts packages/scheduler/src/profile-delete.test.ts .env.example
@@ -257,7 +257,7 @@ export function releaseJob(db: Db, device: DeviceAuth, jobId: string): Promise<b
 
 - Routes (adds to contracts): `GET /api/companion/jobs/<id>/secrets` (200 `LocalSecrets` with `Cache-Control: no-store`; 404 outside the active window or for any other job); `POST /api/companion/jobs/<id>/release` (204).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // dispatch.test.ts. Entry "Data Mining", 14:00 to 16:00 Asia/Kuala_Lumpur, identity "University" bound to f.a1 named "DESKTOP-ABC"; T-60 is 13:00.
@@ -341,21 +341,21 @@ test('local runs keep their claim when the lease lapses; release keeps the attem
 
 `at('HH:mm[:ss]')` is that time on 21 October 2026 in Kuala Lumpur; `deps` records `pings`, `transitions`, `failed` and `scheduled`; `claimedLocalRun(device, { error? })` creates and claims a `local_run` job, setting its `error` column.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/scheduler/src/local packages/web/lib/companion/local.test.ts`
 Expected: FAIL with "Cannot find module './dispatch'" and "Cannot find module './local'"
 
-- [ ] **Step 3: Implement dispatch, the secrets and release routes, and the plan 01c hooks**
+- [x] **Step 3: Implement dispatch, the secrets and release routes, and the plan 01c hooks**
 
-`startLocalRun`: identity lock and clash rules have already run (plan 01c). If the identity has no bound device, or `isDeviceOnline` is false, apply `skip_pc_offline` and ping as above; otherwise create the job with `targetDeviceId`, payload `toLocalPayload(cfg, identityName, process.env.TM_WORKER_IMAGE_REF)`, emit `job_available` to that device, and schedule `local-claim-check` after 120 seconds and `local-start-check` at T-10. `checkLocalClaim` cancels a still-`pending` job and applies `skip_pc_offline` with the same ping. `checkLocalStart` fails the occurrence and marks the job `failed` when the occurrence is still `starting` at T-10, with the job's `error` or `pc_lost`; the companion then gets 404s and stops retrying. `localHeartbeatTimeout` answers `pc_lost` only for states before `uploading` and after `LOCAL_HEARTBEAT_TIMEOUT_MS`. `localSecrets` reads the AI key and saved details the way `buildJobConfig` does, only for a `local_run` job this device holds, between the entry's start minus 70 minutes and its end plus 30 minutes.
+`startLocalRun`: identity lock and clash rules have already run (plan 01c). If the identity has no bound device, or `isDeviceOnline` is false, apply `skip_pc_offline` and ping as above; otherwise create the job with `targetDeviceId`, payload `toLocalPayload(cfg, identityName, process.env.TM_WORKER_IMAGE_REF)`, emit `job_available` to that device, and schedule `local-claim-check` after 120 seconds and `local-start-check` at T-10. A PC runs one meeting at a time: if an earlier meeting of an identity on the same PC is still active (`starting` through `uploading`, or `transcribing` while the PC holds its `local_run`), the launch is deferred 15 seconds at a time like a busy server profile; if the earlier one is still active when this meeting is due, this one fails (`pc_busy`) with its own ping, "Your PC is still busy with <earlier meeting>, so the bot won't join <this one>", not "asleep or off". The start check runs at the later of T-10 and 5 minutes after the offer, so a late offer still gives the PC time to start. A PC that restarts gives back each claimed `local_run` it holds that has no folder and no worker (`release`, allowed only while the occurrence is `starting` with no heartbeat), so the offer is made again. `checkLocalClaim` cancels a still-`pending` job and applies `skip_pc_offline` with the same ping. `checkLocalStart` fails the occurrence and marks the job `failed` when the occurrence is still `starting` at T-10, with the job's `error` or `pc_lost`; the companion then gets 404s and stops retrying. `localHeartbeatTimeout` answers `pc_lost` only for states before `uploading` and after `LOCAL_HEARTBEAT_TIMEOUT_MS`. `localSecrets` reads the AI key and saved details the way `buildJobConfig` does, only for a `local_run` job this device holds, between the entry's start minus 70 minutes and its end plus 30 minutes.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/scheduler/src/local packages/web/lib/companion/local.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src packages/web packages/notify/src/messages.ts
@@ -398,7 +398,7 @@ export function completeLocalRun(
 
 - Routes (adds to contracts): `POST .../heartbeat` (body `Heartbeat`, answers `HeartbeatReply`); `POST .../preflight` (body `PreflightReport`, 204); `HEAD .../files/<path>` (header `Upload-Offset`); `PUT .../files/<path>` (header `Content-Range: bytes <start>-<end>/<total>`, 204, or 409 with `Upload-Offset`); `POST .../complete` (204, or 400 with `{ missing }`). All under `/api/companion/jobs/<id>/`, for the device holding that `local_run` job.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test.each([
@@ -497,12 +497,12 @@ test('complete needs events.jsonl, and the native transcript when there is a rec
 
 The fixture is Task 2's (entry "Data Mining" at 14:00, PC "DESKTOP-ABC"). `hb(occurrenceId, state)` builds a `Heartbeat` with attempt 1, `recording: true`, `participants: 12`, no events; `applyTrigger` (recording `triggers`), `handleHeartbeat`, `pingRestart`, `pingWorkerFailed`, `enqueuePipeline` and `sendPing` are replaced by recorders through `mock.module`; `uploaded(id, paths)` uploads small files.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/lib/companion/local-runs.test.ts`
 Expected: FAIL with "Cannot find module './local-runs'"
 
-- [ ] **Step 3: Implement `local-runs.ts`, the routes and the `reportFailure` branch**
+- [x] **Step 3: Implement `local-runs.ts`, the routes and the `reportFailure` branch**
 
 `isUploadPath` accepts exactly these patterns and nothing with `..`, a backslash or a leading slash:
 
@@ -518,12 +518,12 @@ Expected: FAIL with "Cannot find module './local-runs'"
 
 Uploads append to `<path>.part` under `$TM_DATA_ROOT/occurrences/<occurrenceId>/` and rename when `end + 1 === total`; a chunk over `UPLOAD_CHUNK_MAX_BYTES` is a 400. `relayHeartbeat` reads the occurrence's state before calling `handleHeartbeat` and calls `pingRestart` when it changes into `restarting`. `recordPreflight`: `ok` clears the job's `error`; `docker_unavailable` and `image_unavailable` store it and ping only when it differs from the stored `error`; `docker_memory_low` marks the job `failed`, calls `applyTrigger(db, occurrenceId, 'fail', { reason: 'docker_memory_low' })` and pings. The three pings' copy goes into `packages/notify/src/messages.ts`. The image ping reads: title `Can't get the meeting worker`, message `<Entry name> (<HH:mm>) can't start on <PC name>: Docker couldn't download the TolongMeeting worker. Run docker login ghcr.io with your GitHub account; the PC tries again every 30 seconds.` All three pings are high priority with the "Open meeting page" action. GB in the memory message is `bytes / 1024 ** 3` to one decimal. `completeLocalRun` calls `completeJob` and `enqueuePipeline`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/lib/companion/local-runs.test.ts`
-Expected: PASS (20 tests)
+Expected: PASS (48 tests in `packages/web/test/local-runs.test.ts`)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib packages/web/app packages/notify/src/messages.ts
@@ -567,7 +567,7 @@ export function checkBeforeFirstRun(d: {
 }): Promise<PreflightReport>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('preflight: unavailable, low memory, missing image, ok', async () => {
@@ -620,21 +620,21 @@ test('checkBeforeFirstRun explains low memory in a notification', async () => {
 
 `REF` is `ghcr.io/tl/tolongmeeting-worker:1.0.0`; `fakeDocker` answers from its options; `processPrinting(text)` is a `SpawnLike` result that prints `text` and exits 0.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/local/preflight.test.ts`
 Expected: FAIL with "Cannot find module './preflight'"
 
-- [ ] **Step 3: Implement `docker.ts`, `preflight.ts` and the wiring**
+- [x] **Step 3: Implement `docker.ts`, `preflight.ts` and the wiring**
 
 `preflight` checks in order: `info()` (null means `docker_unavailable`), `memTotal >= MIN_DOCKER_MEM_BYTES`, then `imagePresent(ref)` or `pull(ref)`. `checkBeforeFirstRun` shows a notification only for `docker_memory_low` (above), `docker_unavailable` (title `Start Docker Desktop`, body `TolongMeeting runs meetings on this PC through Docker Desktop. Start it, and turn on "Start Docker Desktop when you sign in".`) or `image_unavailable` (title `Can't get the meeting worker`, body `Run docker login ghcr.io with your GitHub account, then restart TolongMeeting.`); clicking any of them does nothing beyond closing it. At bind time the image reference comes from `api.identities()`, so the first pull happens long before the first run; at run time it comes from the job's payload. Every `docker` call goes through `SpawnLike` with `windowsHide: true` and no shell.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/local/preflight.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -646,8 +646,8 @@ git commit -m "feat(companion): check Docker before local runs"
 **Files:**
 
 - Create: `packages/companion/src/local/vault.ts`, `packages/companion/src/local/ephemeral.ts`
-- Modify: `packages/companion/src/secrets.ts` (`SecretName` adds `'profileKey'`); `packages/worker/src/profile/key.ts` (add `profileKeyOnce`); `packages/worker/src/run.ts` (call `profileKeyOnce` before the first heartbeat and use it for every checkpoint, in place of plan 01c's `loadProfileKey` call); `packages/worker/src/profile/profile.ts` (add `restoreProfile` unless plan 01c already exports it there); the worker CLI entry from plan 01a (`tm-worker`): restore the newest checkpoint when `work/` is empty, and add `--checkpoint-only <identityId>` (checkpoint `work/` and exit 0)
-- Test: `packages/companion/src/local/vault.test.ts`, `packages/worker/src/profile/key.test.ts`, `packages/worker/src/profile/restore.test.ts`
+- Modify: `packages/companion/src/secrets.ts` (`SecretName` adds `'profileKey'`); `packages/worker/src/cli.ts` and `docker/worker/entrypoint.sh` (`--checkpoint-only <identityId>` / mode `checkpoint-only <identityId>`: checkpoint `vol/work` and exit 0, starting nothing else); new `packages/worker/src/profile/checkpoint-only.ts`. No `profileKeyOnce` and no `run.ts` change (`setupProfile` already restores the newest checkpoint into an empty profile and reads the key once); `restoreProfile` already exists in `profile/profile.ts`
+- Test: `packages/companion/test/local-vault.test.ts`, `packages/worker/test/checkpoint-only.test.ts`
 
 **Interfaces:**
 
@@ -680,12 +680,11 @@ export function recoverStaleVolumes(d: {
   docker: DockerLike
   checkpoint(identityId: string): Promise<void>
 }): Promise<string[]>
-// worker
-export function profileKeyOnce(identityId: string): Buffer // loadProfileKey on the first call, then the cached buffer
-export function restoreProfile(archive: string, dir: string, key: Buffer): Promise<void>
+// also: profileMounts(p, id) (volume at /tm/profiles/<id>/vol, profile at vol/work), checkpointVolume(d, id)
+// worker: checkpointOnly(identityId, { root }): Promise<string | null> // profile/checkpoint-only.ts
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // vault.test.ts
@@ -761,21 +760,21 @@ test('restoreProfile brings back what checkpointProfile saved', async () => {
 
 `dirWith` writes a temporary folder; `fakeDocker` is Task 4's, recording `removedVolumes`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/companion/src/local/vault.test.ts packages/worker/src/profile`
 Expected: FAIL with "Cannot find module './vault'" and "Export named 'profileKeyOnce' not found"
 
-- [ ] **Step 3: Implement the vault, the short-lived files, `profileKeyOnce`, `restoreProfile` and the CLI changes**
+- [x] **Step 3: Implement the vault, the short-lived files, `profileKeyOnce`, `restoreProfile` and the CLI changes**
 
 `writeEphemeral` creates `<runs>\<random>\` and writes each file with owner-only permissions; `remove` deletes the folder and ignores a missing one. `recoverStaleVolumes` treats a `tm-profile-<id>` volume as stale when no running container carries the label `tm.identity=<id>`. On the PC the worker's checkpoints go to the bind-mounted `checkpointsDir`; `restoreProfile` picks the newest `<timestamp>.tar.enc` there.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/companion/src/local/vault.test.ts packages/worker/src/profile`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src packages/worker/src
@@ -787,8 +786,8 @@ git commit -m "feat(companion): keep local profiles encrypted"
 **Files:**
 
 - Create: `packages/companion/src/local/relay.ts`
-- Modify: `packages/companion/src/api.ts` (`heartbeat(jobId, hb): Promise<HeartbeatReply>`)
-- Test: `packages/companion/src/local/relay.test.ts`
+- Modify: none; `api.ts` (03 Task 11) satisfies the local `RelayApi`. `serverHeartbeatApi` in `relay.ts` is the https-only upstream (`redirect: 'error'`, device token in `Authorization`)
+- Test: `packages/companion/test/relay.test.ts`
 
 **Interfaces:**
 
@@ -799,7 +798,7 @@ git commit -m "feat(companion): keep local profiles encrypted"
 export interface Relay {
   port: number
   token: string // 32 random bytes, base64url, per run
-  containerUrl: string // http://host.docker.internal:<port>/heartbeat
+  containerUrl: string // http://host.docker.internal:<port> (origin only: the worker adds /heartbeat and /signin, R8)
   firstHeartbeat(attempt: number): Promise<void>
   lastHeartbeatAt(): number | null // epoch ms
   inject(c: ControlCommand): void // delivered in the next reply, once
@@ -813,7 +812,7 @@ export function startRelay(d: {
 }): Promise<Relay>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the relay listens on 127.0.0.1 only', async () => {
@@ -859,7 +858,7 @@ test('a heartbeat for another occurrence is a 400', async () => {
   expect((await post(r, r.token, hb('o2'))).status).toBe(400)
   await r.close()
 })
-test('when the server is unreachable the relay answers 503 and keeps injected commands', async () => {
+test('when the server is unreachable the relay answers a fixed 502 and keeps injected commands', async () => {
   const api = failingThenReplying([])
   const r = await startRelay({ api, jobId: 'j1', occurrenceId: 'o1' })
   r.inject('resume_after_signin')
@@ -883,26 +882,28 @@ test("firstHeartbeat(attempt) resolves on that attempt's first heartbeat", async
 
 `replying(commands)` is a fake `api.heartbeat` that records `sent` and answers `{ ackedEvents: 0, commands }`; `post(relay, token, body)` posts to `http://127.0.0.1:<port>/heartbeat` with the bearer token.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/companion/src/local/relay.test.ts`
+Run: `bun test packages/companion/test/relay.test.ts`
 Expected: FAIL with "Cannot find module './relay'"
 
-- [ ] **Step 3: Implement `relay.ts` with `node:http` and the API method**
+- [x] **Step 3: Implement `relay.ts` with `node:http` and the API method**
 
 Listen on `127.0.0.1` port `0`; accept only `POST /heartbeat` with `Authorization: Bearer <token>` and a body that parses as `Heartbeat` for this occurrence; forward through `api.heartbeat`; append injected commands not already in the reply and clear them only after a 200 reply reaches the worker. The worker's heartbeat client (plan 01c's `startHeartbeat`) posts `Heartbeat` JSON to `control.url` with `Authorization: Bearer <control.token>` and reads a `HeartbeatReply`, so it needs no change.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/companion/src/local/relay.test.ts`
-Expected: PASS (6 tests)
+Run: `bun test packages/companion/test/relay.test.ts`
+Expected: PASS (35 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/companion/src
+git add packages/companion/src/local/relay.ts packages/companion/test/relay.test.ts
 git commit -m "feat(companion): relay worker heartbeats"
 ```
+
+**Built as (security rulings):** bind host is loopback or a private Docker bridge IP only (`isAllowedBindHost`); `POST /heartbeat` and, with an `onSignin` handler, `POST /signin` only, everything else a fixed 404; the token is compared in constant time after hashing and is never logged; bodies are capped at 1 MB (heartbeat) and 16 KB (sign-in), server replies at 64 KB; an unreachable or refusing server is a fixed 502.
 
 ### Task 7: Egress rules
 
@@ -910,58 +911,30 @@ git commit -m "feat(companion): relay worker heartbeats"
 
 - Create: `docker/egress/deny-private.sh`
 - Modify: `docker/worker/Dockerfile` (install `iptables`; copy the script to `/usr/local/bin/deny-private.sh`, mode 0755)
-- Test: `docker/egress/deny-private.test.ts`
+- Test: `test/deny-private.test.ts`
 
 **Interfaces:**
 
 - Consumes: nothing.
-- Produces: `deny-private.sh [--print] [--out-iface <iface>] [--allow-tcp <host-or-ip>:<port>]... [--hold]`, used by the local network holder (Task 8) and the home-route sidecar (Task 13). Names are resolved with `getent ahostsv4`; `--print` prints the commands instead of running them and doesn't resolve names; `--hold` ends with `exec sleep infinity`.
+- Produces: `deny-private.sh [--print] [--out-iface <iface>] [--allow-tcp <host-or-ip>:<port>]... [--hold]`, used by the local network holder (Task 8) and the home-route sidecar (Task 13). Names are resolved with `getent ahostsv4`; `--print` prints the commands instead of running them and doesn't resolve names; `--hold` ends with `exec sleep infinity`. The rules live in the chain `TM-DENY-PRIVATE`, filled in one `iptables-restore --noflush` transaction (and `ip6tables-restore`), hooked from `OUTPUT` only afterwards and read back (rule count, last rule, hook first), as `docker/firewall/worker-egress.sh` does; any failure exits non-zero before `--hold`. Order: `--allow-tcp` accepts, replies (`ESTABLISHED,RELATED`), loopback (`-o lo`, left out with `--out-iface`), then a REJECT per range: the server firewall's IPv4 list (adds `0.0.0.0/8`, `127.0.0.0/8`, `192.0.0.0/24`, `198.18.0.0/15`, `224.0.0.0/3`) and the IPv6 `::/128`, `fe80::/10`, `fc00::/7`, `fec0::/10`, `::ffff:0:0/96`, `64:ff9b::/96`, `ff00::/8`. IPv6 is skipped only when ip6tables is unavailable and `net.ipv6.conf.all.disable_ipv6` is 1.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
-```ts
-const run = (...args: string[]) =>
-  Bun.spawnSync(['bash', 'docker/egress/deny-private.sh', '--print', ...args])
-    .stdout.toString()
-    .trim()
-    .split('\n')
+The test (`test/deny-private.test.ts`) covers: `--print` order (relay accepted before the first REJECT), the ranges equal `worker-egress.sh`'s `DENY`, `--out-iface` prefixes every rule, host names are printed unresolved, bad arguments fail; and with real iptables in `unshare -Urn`: both families applied, a re-run leaves the same rules, a re-run with other options replaces the relay rule, an unresolvable name leaves no chain or hook, the IPv6 skip rule, and `--hold`.
 
-test('local holder rules: allow the relay, then reject private ranges', () => {
-  expect(run('--allow-tcp', '192.168.65.254:41234')).toEqual([
-    'iptables -A OUTPUT -p tcp -d 192.168.65.254 --dport 41234 -j ACCEPT',
-    'iptables -A OUTPUT -d 10.0.0.0/8 -j REJECT',
-    'iptables -A OUTPUT -d 172.16.0.0/12 -j REJECT',
-    'iptables -A OUTPUT -d 192.168.0.0/16 -j REJECT',
-    'iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT',
-    'iptables -A OUTPUT -d 100.64.0.0/10 -j REJECT',
-    'ip6tables -A OUTPUT -d fe80::/10 -j REJECT',
-    'ip6tables -A OUTPUT -d fc00::/7 -j REJECT'
-  ])
-})
-test('home-route rules apply to the tunnel interface only', () => {
-  const lines = run('--out-iface', 'tailscale0')
-  expect(lines[0]).toBe('iptables -A OUTPUT -o tailscale0 -d 10.0.0.0/8 -j REJECT')
-  expect(lines).toHaveLength(7)
-  expect(lines.every((l) => l.includes('-o tailscale0'))).toBe(true)
-})
-test('an unknown option fails', () => {
-  expect(Bun.spawnSync(['bash', 'docker/egress/deny-private.sh', '--print', '--allow-all']).exitCode).not.toBe(0)
-})
-```
+- [x] **Step 2: Run test to verify it fails**
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `bun test docker/egress/deny-private.test.ts`
+Run: `bun test test/deny-private.test.ts`
 Expected: FAIL (bash: docker/egress/deny-private.sh: No such file or directory)
 
-- [ ] **Step 3: Write `deny-private.sh` (`set -eu`, POSIX `sh`-compatible so it runs on Alpine and Debian) and update the worker Dockerfile**
+- [x] **Step 3: Write `deny-private.sh` (`set -eu`, POSIX `sh`-compatible so it runs on Alpine and Debian) and update the worker Dockerfile**
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test docker/egress/deny-private.test.ts`
-Expected: PASS (3 tests)
+Run: `bun test test/deny-private.test.ts`
+Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docker/egress docker/worker/Dockerfile
@@ -974,7 +947,7 @@ git commit -m "feat(docker): add private-range egress rules"
 
 - Create: `packages/companion/src/local/containers.ts`, `packages/companion/src/local/run.ts`
 - Modify: `packages/companion/src/api.ts` (`secrets(jobId)`, `release(jobId)`); `packages/companion/src/jobs/native-runner.ts` (`pause(): Promise<void>` stops whisper and releases the current job; `resume(): void`); `packages/companion/src/jobs/poller.ts` consumer in `main/index.ts` (`local_run` jobs go to `LocalRunner`, native jobs to `NativeRunner`; on start, `recoverStaleVolumes`)
-- Test: `packages/companion/src/local/run.test.ts`
+- Test: `packages/companion/test/local-run.test.ts`, `packages/companion/test/native-runner-pause.test.ts` (R5, R6, R7, R8: arg lists end in the entrypoint's `--job <file>` mode or in `deny-private.sh`'s flags; the holder takes the host name and the worker binds the machine-id file; the profile volume mounts at `vol`, the profile is `vol/work`; `control.url` is the relay origin; the checkpoint is `checkpointVolume` from Task 5, so `checkpointArgs` is not built; `api.ts` gets `secrets`/`release` with Task 3's endpoints, so `LocalRunApi` names what the runner needs; a worker joins the holder only after `deny-private.sh --hold` prints `deny-private: ready` (read with `DockerLike.logs`, 30 s deadline), not after a settle timer, and a holder that exits, errors or stays silent fails the run closed)
 
 **Interfaces:**
 
@@ -1028,7 +1001,7 @@ export class LocalRunner {
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const mounts = {
@@ -1201,12 +1174,12 @@ test('an open sign-in container for the identity is stopped and checkpointed bef
 
 `runnerWith(opts)` builds a `LocalRunner` over fakes that append to `log` (`DockerLike`, relay, `KeepAwake`, `NativeRunner`, `after`) and an `api` fake recording `preflights` and `failures`; `localJob` is a claimed `local_run` job for occurrence `o1`, identity `u1`; `REF`, `payload`, `details` and `ntfy` are fixtures.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/companion/src/local/run.test.ts`
+Run: `bun test packages/companion/test/local-run.test.ts`
 Expected: FAIL with "Cannot find module './containers'"
 
-- [ ] **Step 3: Implement `containers.ts`, `run.ts` and the wiring**
+- [x] **Step 3: Implement `containers.ts`, `run.ts` and the wiring**
 
 `LocalRunner.run`, in order:
 
@@ -1218,15 +1191,15 @@ Expected: FAIL with "Cannot find module './containers'"
 
 Containers are created with `docker run -d`; `workerArgs` is `run -d --name tm-run-<occurrenceId>-<attempt> --label tm.identity=<identityId> --shm-size=2g --network container:tm-net-<occurrenceId>`, the four `-v` mounts and three `-e` paths above, the image, then `tm-worker --job /run/tm/job.json`. `checkpointArgs` runs the image with the profile volume, checkpoints mount and a short-lived `/run/tm` folder, `--network none` and `tm-worker --checkpoint-only <identityId>`; it backs `recoverStaleVolumes`' `checkpoint`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/companion/src/local/run.test.ts`
-Expected: PASS (10 tests)
+Run: `bun test packages/companion/test/local-run.test.ts packages/companion/test/native-runner-pause.test.ts`
+Expected: PASS (34 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/companion/src
+git add packages/companion/src/local/containers.ts packages/companion/src/local/run.ts packages/companion/src/jobs/native-runner.ts packages/companion/test
 git commit -m "feat(companion): run meeting workers locally"
 ```
 
@@ -1263,7 +1236,7 @@ export function finishLocalRun(
 ): Promise<void> // retryMs default 60000
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the upload set skips the FLAC, and segments once meeting.mkv exists', async () => {
@@ -1360,21 +1333,21 @@ test('a crashed run uploads what exists, reports worker_crashed and cleans up, w
 
 `occWith(paths)` and `occWithSized(path, bytes)` build an occurrence folder; `uploadApi({ offset })` answers `uploadOffset` with `offset` and records each chunk's `Content-Range`; `afterFixture` returns fakes that append to `log`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/local/after.test.ts`
 Expected: FAIL with "Cannot find module './upload'"
 
-- [ ] **Step 3: Implement `upload.ts`, `after.ts`, the API methods and the resume on start**
+- [x] **Step 3: Implement `upload.ts`, `after.ts`, the API methods and the resume on start**
 
 `uploadSet` returns every file under the occurrence folder that matches Task 3's patterns, except `transcript/native/*` (sent after transcription) and, when `recording/meeting.mkv` exists, the attempt segments. `finishLocalRun`: `report('uploading')`, upload the set; in native mode with a recording, `report('transcribing')`, extract the FLAC (`docker.run(flacArgs(...))`), run whisper exactly as plan 03's runner does (outputs copied to `transcript/native/audio.txt|srt|json`), upload those three, delete `audio.flac`; then `complete`. With outcome `crashed` it uploads the set, then calls `api.fail(jobId, 'worker_crashed')` instead of transcribing and completing, so the meeting page keeps the partial recording and chat. Retry any failed request every `retryMs`; delete the occurrence folder only after `complete` (or that `fail`) succeeds. Whisper gets two tries, as in plan 03; after the second failure the companion calls `api.fail(jobId, 'native_transcription_failed')` and deletes the folder, since the recording is already on the server. `report(state)` sends `api.heartbeat(jobId, { occurrenceId, attempt: <last attempt>, state, recording: false, participants: null, events: [] })` directly, so it also works after the relay has closed or the companion has restarted.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/local/after.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1414,7 +1387,7 @@ export class SigninController {
 
 - Route (adds to contracts): `POST /api/identities/<id>/open-signin` (member session) answers `{ opened: true, pcName }` or `{ opened: false, reason: 'pc_offline' | 'not_local' }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // signin.test.ts
@@ -1474,21 +1447,21 @@ test('open-signin explains an offline PC or a server identity', async () => {
 
 `controllerWith` builds a `SigninController` over fakes recording `injected`, `opened` and `log`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/companion/src/local/signin.test.ts packages/web/app/api/identities/open-signin.test.ts`
 Expected: FAIL with "Cannot find module './signin'" and a missing route
 
-- [ ] **Step 3: Implement the controller, the window, the route and the entrypoint change**
+- [x] **Step 3: Implement the controller, the window, the route and the entrypoint change** _(Done: `signin.ts`, the route, and now the window: `renderer/signin.html` (one `Done` button) and `Windows.openSignin` in `main/windows.ts` (a `WebContentsView` with only the loopback noVNC address, its own CSP, navigation and new windows blocked), wired as `local.openSigninWindow` in `main/index.ts`, plus the tray's `Sign in to <name>` items. The tests live in `packages/companion/test/local-signin.test.ts`, `ui-security.test.ts`, `tray-menu.test.ts`, the smoke test and `packages/web/test/open-signin.test.ts`. Per R9 there is no entrypoint, `vnc.pass` or fourth `-e` change. The Accounts page's "Sign in on my PC" button and the sign-in page's hand-off call the route (plain pages, `app/accounts/open-on-pc.tsx`).)_
 
 The sign-in container is `run -d --name tm-signin-<identityId> --label tm.identity=<identityId> --shm-size=2g --network container:tm-net-signin-<identityId>`, the profile volume, checkpoints and a short-lived `/run/tm` (with `profile.key` and `vnc.pass`), the three path variables plus `TM_VNC_PASSWORD_FILE`, then `tm-worker --signin`. Its holder is `holderArgs({ scope: 'signin-<identityId>', allowTcp: [] })`. The VNC password is 24 random base64url characters per session, held in memory for `vncUrl`. The window (`signin.html`, toolbar with a single `Done` button) is a `BrowserWindow` with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`; `will-navigate` and `setWindowOpenHandler` refuse any URL that fails `isAllowedSigninUrl`. It opens only on a tray click or an `open_signin` event, both started by the member. During a run, `noVncPort` is the host port Docker published for the run's holder. The Accounts page shows "Opened on <PC name>" or "Your PC <PC name> is offline".
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/companion/src/local/signin.test.ts packages/web/app/api/identities/open-signin.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src packages/web/app docker/worker/entrypoint.sh
@@ -1528,17 +1501,22 @@ export class TailscaleApi {
   devices(): Promise<TailscaleDevice[]>
 }
 export type HomeRouteStatus = 'ready' | 'offline' | 'not_exit_node' | 'not_enrolled'
-export function homeHostname(memberId: string): string // 'tm-home-' + the first 8 hex characters of the member id
-export function enrolKey(api: TailscaleApi, memberId: string): Promise<{ key: string; hostname: string }>
-export function checkHomeRoute(
-  db: Db,
+export function homeHostname(master: Buffer, memberId: string): string // 'tm-home-' + 24 hex characters of a keyed hash
+export function enrolKey(
   api: TailscaleApi,
+  master: Buffer,
+  memberId: string
+): Promise<{ key: string; hostname: string }>
+export function checkHomeRoute(
+  store: HomeNodeStore,
+  api: TailscaleApi,
+  master: Buffer,
   memberId: string,
   now?: Date
 ): Promise<{ status: HomeRouteStatus; hostname: string; ipv4: string | null }>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the OAuth token is fetched once and keys are single-use, pre-authorised and tagged', async () => {
@@ -1628,14 +1606,14 @@ test('the tailnet policy: workers reach only the internet; home devices reach no
 
 `memberA`'s id starts with `1a2b3c4d`; `tsFake(seen)` answers the token, key and device endpoints and records requests; `apiWithDevices(list)` and `readyApi` return a `TailscaleApi` over such a fake.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/db/home-route.test.ts`
 Expected: FAIL with "Cannot find module './home-route'"
 
-- [ ] **Step 3: Implement the client, status, routes, policy file and setup page**
+- [x] **Step 3: Implement the client, status, routes, policy file and setup page** (the plain setup page is `app/accounts/home/page.tsx` with `home-setup.tsx`, linked from the Accounts page; it replaces the planned `app/settings/home-route/page.tsx`, and the setup key lives in client state only. Built as `db/home-route.ts` (stores), `lib/home-route.ts` (client, `checkHomeRoute(store, api, memberId)`, handlers), tests in `packages/web/test/home-route.test.ts`; the key is not ephemeral: a home exit node is long-lived)
 
-The token is `POST https://api.tailscale.com/api/v2/oauth/token` (`grant_type=client_credentials`, form-encoded), cached until 60 seconds before `expires_in`; keys are `POST /api/v2/tailnet/{tailnet}/keys`; devices are `GET /api/v2/tailnet/{tailnet}/devices?fields=all`. A device matches a member when it has `tag:tm-home` and `hostname === homeHostname(memberId)`; `ready` needs `connectedToControl` and both `0.0.0.0/0` and `::/0` in `enabledRoutes`. An admin applies `config/tailscale/policy.json` to the TolongLabs tailnet once and creates the OAuth client with the `auth_keys` and `devices:core` scopes and both tags. The key route (`POST /api/home-route/key`) shows the key once and never stores it. The setup page (`/settings/home-route`) shows this guide, with the member's hostname filled in:
+The token is `POST https://api.tailscale.com/api/v2/oauth/token` (`grant_type=client_credentials`, form-encoded), cached until 60 seconds before `expires_in`; keys are `POST /api/v2/tailnet/{tailnet}/keys`; devices are `GET /api/v2/tailnet/{tailnet}/devices?fields=all`. A device matches a member when it has `tag:tm-home`, `hostname === homeHostname(master, memberId)` (a keyed hash of the member id, not its prefix) and, once a node is stored, that node's id; `ready` needs `connectedToControl` and both `0.0.0.0/0` and `::/0` in `enabledRoutes`. An admin applies `config/tailscale/policy.json` to the TolongLabs tailnet once and creates the OAuth client with the `auth_keys` and `devices:core` scopes and both tags. The key route (`POST /api/home-route/key`) shows the key once and never stores it. The setup page (`/settings/home-route`) shows this guide, with the member's hostname filled in:
 
 ```text
 Your bot can join through your home internet connection, so your university and work sign-ins come from your usual address.
@@ -1653,12 +1631,12 @@ Your bot can join through your home internet connection, so your university and 
 Only your bot's traffic goes through this device, and only during your meetings. TolongMeeting can't reach other devices on your home network, and your other devices aren't affected.
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/db/home-route.test.ts`
 Expected: PASS (8 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web config/tailscale .env.example
@@ -1669,29 +1647,25 @@ git commit -m "feat(web): enrol a home exit node"
 
 **Files:**
 
-- Create: `packages/scheduler/src/home-route/check.ts`
-- Modify: plan 01c's T-60 start handler (`server_via_home` calls `startViaHome`); register the `home-route-recheck` queue; `packages/notify/src/messages.ts` (the "Home connection offline" ping)
-- Test: `packages/scheduler/src/home-route/check.test.ts`
+- Create: `packages/scheduler/src/home-route/types.ts` (`HomeDeps`, `HomeRouteUnavailable`); replace the P0-Q stub `packages/scheduler/src/home-route/check.ts` (the queues, the `main.ts` handler wiring, `jobs.ts` rows and the ping `pings.homeConnectionOffline` already exist; the recheck chains itself with `startAfter`, so no cron and no `launch.ts` edit)
+- Test: `packages/scheduler/test/home-route-check.test.ts` (`test/`, with a fake Tailscale `fetch`)
 
 **Interfaces:**
 
-- Consumes: `checkHomeRoute`, `TailscaleApi` (Task 11); `LocalDeps` (Task 2); `shortTime` (Task 1); `launchViaHome` and `HomeRouteUnavailable` (Task 13, injected).
+- Consumes: `checkHomeRoute`, `TailscaleApi` (Task 11); `shortTime` (Task 1); `launchViaHome` (Task 13, injected; `HomeRouteUnavailable` lives in `home-route/types.ts` and Task 13 throws it).
 - Produces (adds to contracts): pg-boss queue `home-route-recheck`; and:
 
 ```ts
-export interface HomeDeps extends LocalDeps {
+export interface HomeDeps extends Pick<LaunchDeps, 'db' | 'queue' | 'notifier' | 'master' | 'env'> {
   api: TailscaleApi
   launchViaHome(cfg: JobConfig, exitNodeIp: string): Promise<void>
 }
-export function startViaHome(
-  db: Db,
-  cfg: JobConfig,
-  deps: HomeDeps,
-  now?: Date
-): Promise<'launched' | 'waiting' | 'failed'>
+export function startViaHomeWith(home: HomeDeps, cfg: JobConfig, now: Date): Promise<'launched' | 'waiting' | 'failed'>
+// The P0-Q stub signature, which T2's launch hook calls; it builds `HomeDeps` from `deps` and `process.env`.
+export function startViaHome(deps: LaunchDeps, cfg: JobConfig, now: Date): Promise<'launched' | 'waiting' | 'failed'>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('a ready exit node launches the worker through it', async () => {
@@ -1737,24 +1711,24 @@ test('a tunnel that does not come up counts as offline', async () => {
 
 `deps({ status, ipv4, launchThrows? })` fakes `checkHomeRoute` through the injected API and records `pings`, `failed`, `scheduled` and `launched`; `cfgHome` is the "Data Mining" entry for an identity of member A set to `server_via_home`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/scheduler/src/home-route/check.test.ts`
+Run: `bun test packages/scheduler/test/home-route-check.test.ts`
 Expected: FAIL with "Cannot find module './check'"
 
-- [ ] **Step 3: Implement `startViaHome` and the hooks**
+- [x] **Step 3: Implement `startViaHome` and the hooks**
 
-The ping goes out once per occurrence (recorded as an `alert` event with `{ kind: 'home_route_offline' }`; no ping when one exists). Reason phrases: `offline` "isn't online", `not_exit_node` "isn't sharing its connection", `not_enrolled` "isn't set up". From T-10 on, `deps.fail(occurrenceId, 'home_exit_node_offline')`, which also sends plan 01c's worker-failed ping. The `home-route-recheck` handler rebuilds the `JobConfig` with `buildJobConfig` and calls `startViaHome` again.
+The ping goes out once per occurrence (recorded as an `alert` event with `{ kind: 'home_route_offline' }`; no ping when one exists). Reason phrases: `offline` "isn't online", `not_exit_node` "isn't sharing its connection", `not_enrolled` "isn't set up". From T-10 on the occurrence fails with `home_exit_node_offline` (`applyTrigger` `fail`, profile released, plan 01c's worker-failed ping). A Tailscale API error is logged by name and HTTP status only, sends no ping, queues another look, and from T-10 fails the occurrence with `launch_failed`. `handleHomeRouteDead` queues a fresh recheck before T-10 and fails the occurrence from T-10. The `home-route-recheck` handler rebuilds the `JobConfig` with `buildJobConfig` and calls `startViaHome` again.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/scheduler/src/home-route/check.test.ts`
-Expected: PASS (4 tests)
+Run: `bun test packages/scheduler/test/home-route-check.test.ts`
+Expected: PASS (11 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/scheduler/src packages/notify/src/messages.ts
+git add packages/scheduler/src/home-route packages/scheduler/test/home-route-check.test.ts
 git commit -m "feat(scheduler): check the home route at T-60"
 ```
 
@@ -1764,7 +1738,7 @@ git commit -m "feat(scheduler): check the home route at T-60"
 
 - Create: `docker/home-route/Dockerfile`, `docker/home-route/start.sh`, `packages/scheduler/src/home-route/sidecar.ts`
 - Modify: `docker/worker/versions.env` (`TAILSCALE_VERSION`, set to the current stable release and changed only with a passing acceptance run); `docker/compose.yaml` (build `tm-home-route:${TAILSCALE_VERSION}`); plan 01c's docker-proxy create policy (`allowCreate`); plan 01c's `launchWorker` (`opts.networkMode`), its restart path (reuse a healthy sidecar, else start a new one) and its worker-exit handler (stop `tm-home-<occurrenceId>`)
-- Test: `packages/scheduler/src/home-route/sidecar.test.ts`
+- Test: `packages/scheduler/test/home-route-sidecar.test.ts` (bodies, `launchViaHome`, restart and teardown), `home-route-gate.test.ts` (the real validator), `home-route-scripts.test.ts` (`exit-node.sh`, `start.sh`)
 
 **Interfaces:**
 
@@ -1801,7 +1775,9 @@ export function launchViaHome(
 ): Promise<void> // healthTimeoutMs default 60000
 ```
 
-- [ ] **Step 1: Write the failing test**
+**As built (preflight R16, R17, the T11 fix):** `launchViaHome(cfg, node, d)` takes the member's stored `HomeNode` (the scheduler's `homeDepsOf` reads it right after the check and refuses an address that differs). The sidecar body is `buildSidecarBody` in `container-spec.ts`: `CapAdd NET_ADMIN` with `CapDrop ALL`, the tun device, one read-only mount for the auth key file (`TS_AUTHKEY=file:/run/tm/authkey`, never an environment value), and the hostname, hosts, DNS and IPv6 sysctl of the worker that joins it; the worker body (`SpecParams.via`) drops those four. The sidecar, not the worker, pins the exit node: `start.sh` picks the peer whose node id and keyed hostname match `TM_EXIT_NODE_ID` / `TM_EXIT_NODE_HOSTNAME` with `tailscale set`. The Docker gate takes `TAILSCALE_VERSION` (`GateConfig.tailscaleVersion`) and accepts exactly the sidecar and the worker via it. The exit watcher is not used for the sidecar (it would stop the sidecar that a restart reuses); the monitor removes it in `releaseFinished`, restarts a home-route attempt through `startViaHome`, and treats a dead sidecar as a crash. Remote sign-in for `server_via_home` identities also launches behind this sidecar (`tm-home-<sessionId>`) via `ensureSidecar` and joins its network namespace, with the sidecar removed on session teardown.
+
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the sidecar body: kernel networking, in-memory state, the exit node and nothing else', () => {
@@ -1886,12 +1862,12 @@ test('the proxy allows the sidecar exactly as built, and nothing more', () => {
 
 `sidecarDeps` records `keys`, `workerLaunches` and `stopped`, and reports the sidecar healthy after `healthyAfter` polls; `workerCreateBody` is plan 01c's worker create body fixture.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/scheduler/src/home-route/sidecar.test.ts`
+Run: `bun test packages/scheduler/test/home-route-sidecar.test.ts packages/scheduler/test/home-route-gate.test.ts packages/scheduler/test/home-route-scripts.test.ts`
 Expected: FAIL with "Cannot find module './sidecar'"
 
-- [ ] **Step 3: Implement the image, the start script, `sidecar.ts` and the plan 01c changes**
+- [x] **Step 3: Implement the image, the start script, `sidecar.ts` and the plan 01c changes**
 
 `docker/home-route/Dockerfile`:
 
@@ -1906,12 +1882,12 @@ ENTRYPOINT ["/usr/local/bin/start.sh"]
 
 `start.sh`: run `deny-private.sh --out-iface tailscale0` first, so no tunnelled packet reaches a private range; start `containerboot` in the background; poll `tailscale status --json` every second and write `/tmp/tm-ready` once `.BackendState == "Running"` and `.ExitNodeStatus.Online == true`; then wait on `containerboot`. Tailscale drops traffic rather than falling back when the exit node goes away, so a mid-meeting outage shows up as plan 01c's dropped-meeting handling, never as traffic from the server's address. `launchViaHome`: mint a key with `createAuthKey({ tags: ['tag:tm-worker'], ephemeral: true, expirySeconds: 600, description: 'tm-worker <occurrenceId>' })` (reusable false and pre-authorised are fixed in the client for worker keys), create and start `sidecarName(occurrenceId)`, poll `healthy` every second until `healthTimeoutMs`, then `launchWorker(cfg, { networkMode: 'container:tm-home-<occurrenceId>' })`. The key sits in the sidecar's environment; it is single-use, ephemeral and expires in 10 minutes, and only the scheduler can reach the Docker API to read it. `allowCreate` accepts `tm-home-route:<TAILSCALE_VERSION>` only with exactly this `HostConfig`, and still refuses `CapAdd` on the worker image.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/scheduler/src/home-route/sidecar.test.ts`
-Expected: PASS (4 tests)
+Run: `bun test packages/scheduler/test/home-route-sidecar.test.ts packages/scheduler/test/home-route-gate.test.ts packages/scheduler/test/home-route-scripts.test.ts`
+Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docker/home-route docker/worker/versions.env docker/compose.yaml packages/scheduler/src
