@@ -705,7 +705,7 @@ git commit -m "feat(worker): add meet devices, notices, leave"
   - `roleFromMeetLabel(label: string): SenderRole` and `readMeetRoles(page: Page, sel: MeetSelectors): Promise<Map<string, SenderRole>>` in `packages/worker/src/adapters/meet/roles.ts`.
   - `readMeetChat(page: Page, sel: MeetSelectors, cursor: ChatCursor): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>` and `sweepMeetChat(page: Page, sel: MeetSelectors): Promise<ChatMessage[]>` in `packages/worker/src/adapters/meet/chat.ts`.
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -763,25 +763,25 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/meet/chat.test.ts`
 Expected: FAIL, module `./chat` not found.
 
-- [ ] **Step 3: Implement `toMeetChatMessages` and `roleFromMeetLabel`**
+- [x] **Step 3: Implement `toMeetChatMessages` and `roleFromMeetLabel`**
 
 `toMeetChatMessages` sets `key` to `id` or `${sender}|${time}|${text.slice(0, 200)}`, looks up `senderRole` by the trimmed lower-cased sender (`unknown` when absent or when `roles` is null), and sets `links` to the `http`/`https` `hrefs` followed by 01a's `extractLinks(text)`, de-duplicated in order; `replyTo` is always `null`, because Meet chat has no threads. `roleFromMeetLabel` returns `co_host` when the label matches `/co-?host/i`, `host` when it matches `/host/i`, otherwise `participant`.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/meet/chat.test.ts`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Extend the fixture**
+- [x] **Step 5: Extend the fixture**
 
 Make the chat list scrollable (40 px per message, 10 visible) with `MeetFixtureConfig.chatScroll: 'top' | 'bottom'` (start position; it stays put when messages arrive). Add `people: { name: string; label?: string }[]`, rendered in the people panel as `[role='list'][aria-label='Participants']` with one `[role='listitem']` each (first text line the name, second the label), plus `window.__addMessage(m)` and `window.__addPerson(p)`. Clicking "People" shows the participant list in the side panel, hiding chat; clicking "Chat with everyone" shows chat again with its full history; while chat is hidden, new messages still enter the history, as in Meet.
 
-- [ ] **Step 6: Write the failing browser test**
+- [x] **Step 6: Write the failing browser test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -857,23 +857,23 @@ test('the chat panel closed means no messages and no clicks', async ({ page }) =
 })
 ```
 
-- [ ] **Step 7: Run it to verify it fails**
+- [x] **Step 7: Run it to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/chat.spec.ts`
 Expected: FAIL, `readMeetChat` is not exported from `../../src/adapters/meet/chat`.
 
-- [ ] **Step 8: Implement `parseMeetMessages`, `readMeetRoles`, `readMeetChat` and `sweepMeetChat`**
+- [x] **Step 8: Implement `parseMeetMessages`, `readMeetRoles`, `readMeetChat` and `sweepMeetChat`**
 
 - `readMeetRoles`: click `peopleButton`, wait for `peopleList`, map each `peopleItem`'s first text line (trimmed, lower-cased) to `roleFromMeetLabel` of its remaining lines, click `chatButton`, wait for `chatScroller`, store the map in `meetState(page).roles` and return it.
 - `readMeetChat`: if `chatScroller` isn't visible, return no messages and the cursor unchanged (Task 7's `ensureMeetLayout` reopens chat). Otherwise scroll `chatScroller` to the bottom, parse, keep messages whose key isn't in `cursor.seenKeys`, and if any kept message has links and a sender missing from the role map (or the map is null), call `readMeetRoles` once, re-parse and map again. Return the messages and a cursor with their keys appended; the caller adopts it only after writing them (CHAT-03).
 - `sweepMeetChat`: call `readMeetRoles` first, then scroll `chatScroller` top to bottom in steps of `max(200, clientHeight / 2)` px with a random 300 to 350 ms pause, parsing at each step, and return the union by key in list order.
 
-- [ ] **Step 9: Run it to verify it passes**
+- [x] **Step 9: Run it to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/chat.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/chat-dom.ts packages/worker/src/adapters/meet/roles.ts packages/worker/src/adapters/meet/chat.ts packages/worker/src/adapters/meet/chat.test.ts
