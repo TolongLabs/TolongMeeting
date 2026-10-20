@@ -1,4 +1,5 @@
 import { localParts, type JobConfig, type SavedDetail } from '@tm/core'
+import { formatDate, parseDateFormat } from './datetime'
 
 // Label variants per member detail key. A form question matches a detail when its label equals one of these.
 export const DEFAULT_LABELS: Record<string, string[]> = {
@@ -16,6 +17,9 @@ export const DERIVED_LABELS: Record<string, string[]> = {
   section: ['Section', 'Seksyen'],
   lecturer: ['Lecturer', 'Lecturer name', 'Pensyarah', 'Nama pensyarah']
 }
+
+// How the pool writes `session_date` (a text value for text and choice questions). plan.ts reads it back with this.
+export const POOL_DATE_FORMAT = parseDateFormat('dd/MM/yyyy')!
 
 function keyWords(key: string): string {
   return key.replace(/_/g, ' ')
@@ -40,8 +44,10 @@ export function buildDetailPool(cfg: JobConfig): SavedDetail[] {
 
   // Derived from the entry's start in the entry's own time zone, not the offset written in the start string.
   const parts = localParts(cfg.entry.start, cfg.entry.timeZone)
-  const [year, month, day] = parts.date.split('-')
-  put('session_date', `${day}/${month}/${year}`, [...DERIVED_LABELS.session_date, keyWords('session_date')])
+  put('session_date', formatDate(parts.date, POOL_DATE_FORMAT), [
+    ...DERIVED_LABELS.session_date,
+    keyWords('session_date')
+  ])
   put('session_start', `${parts.hhmm.slice(0, 2)}:${parts.hhmm.slice(2)}`, [
     ...DERIVED_LABELS.session_start,
     keyWords('session_start')

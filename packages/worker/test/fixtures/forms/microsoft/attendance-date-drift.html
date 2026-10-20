@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-drift>
+  <head>
+    <meta charset="utf-8" />
+    <title>Week 5 attendance / Kehadiran minggu 5</title>
+    <style>
+      [hidden] { display: none !important }
+      [role='button'], [role='option'], button { cursor: pointer; padding: 4px }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div data-automation-id="formTitle">Week 5 attendance / Kehadiran minggu 5</div>
+      <div data-automation-id="formDescription">Fill in during the lecture.</div>
+      <div data-automation-id="userEmail">student@example.edu.my</div>
+      <div data-automation-id="respondentNotice">Hi, Test Student. When you submit this form, the owner will see your name and email address.</div>
+      <div class="page"><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Full name <span aria-label="Required">*</span></span><input data-automation-id="textInput" type="text"></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Date <span aria-label="Required">*</span></span><input data-automation-id="dateInput" type="text" placeholder="Please input date (M/d/yyyy)" aria-label="Date"></div><div data-automation-id="questionItem"><span data-automation-id="questionTitle">Attendance <span aria-label="Required">*</span></span><label><input type="radio" name="q0" value="Present"> <span>Present</span></label><label><input type="radio" name="q0" value="Absent"> <span>Absent</span></label></div><button type="button" data-automation-id="submitButton">Submit</button></div><div class="copy"><label><input type="checkbox" aria-label="Send me an email receipt of my responses"> Send me an email receipt of my responses</label></div>
+    </div>
+    
+    <script src="fixture.js"></script>
+  </body>
+</html>

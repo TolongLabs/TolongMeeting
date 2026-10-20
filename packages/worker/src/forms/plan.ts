@@ -1,4 +1,6 @@
 import type { SavedDetail } from '@tm/core'
+import { clockTime, parseDate } from './datetime'
+import { POOL_DATE_FORMAT } from './details'
 import { confirmsAttendance, normaliseText } from './rules'
 import type { Answer, FormPage, FormQuestion, MatchQuestion, PagePlan } from './types'
 
@@ -27,19 +29,42 @@ function cut(text: string): string {
   return [...text].slice(0, MODEL_TEXT_LIMIT).join('')
 }
 
+// The key of the one detail that carries the question's normalised label; null for none or several.
+function exactKey(q: FormQuestion, pool: SavedDetail[]): string | null {
+  const label = normaliseText(q.label)
+  if (label === '') return null
+  const keys = new Set(pool.filter((d) => d.labels.some((l) => normaliseText(l) === label)).map((d) => d.key))
+  return keys.size === 1 ? [...keys][0]! : null
+}
+
 // A question maps to a detail only when exactly one detail carries its normalised label.
 export function exactLabelMatches(page: FormPage, pool: SavedDetail[]): Map<string, string> {
   const found = new Map<string, string>()
   for (const q of page.questions) {
-    const label = normaliseText(q.label)
-    if (label === '') continue
-    const keys = new Set(pool.filter((d) => d.labels.some((l) => normaliseText(l) === label)).map((d) => d.key))
-    if (keys.size === 1) {
-      const [key] = keys
-      found.set(q.id, key)
-    }
+    const key = exactKey(q, pool)
+    if (key !== null) found.set(q.id, key)
   }
   return found
+}
+
+// A date or time answer needs a required date or time widget (typed by the driver from the DOM) whose label equals a
+// variant of session_date (date widget) or session_start (time widget), and a pool value that is a real date or time.
+// The model never sees these questions, and an optional one stays blank. The pool value comes from the entry's own time
+// zone, so the host clock is never read.
+export function dateTimeAnswer(q: FormQuestion, pool: SavedDetail[]): Answer | null {
+  if (!q.required || (q.type !== 'date' && q.type !== 'time')) return null
+  const key = exactKey(q, pool)
+  const detail = pool.find((d) => d.key === key)
+  if (detail === undefined) return null
+  if (q.type === 'date' && key === 'session_date') {
+    const value = parseDate(detail.value, POOL_DATE_FORMAT)
+    return value === null ? null : { questionId: q.id, kind: 'date', value, detailKey: 'session_date', via: 'label' }
+  }
+  if (q.type === 'time' && key === 'session_start') {
+    const value = clockTime(detail.value)
+    return value === null ? null : { questionId: q.id, kind: 'time', value, detailKey: 'session_start', via: 'label' }
+  }
+  return null
 }
 
 // A required radio or checkbox that asks about attendance (label), with exactly one confirming option.
@@ -78,8 +103,9 @@ function planQuestion(
   const confirmation = confirmationAnswer(q)
   if (confirmation) return confirmation
   if (isCopyBox(q)) return null
-  const exactKey = exact.get(q.id)
-  if (exactKey !== undefined) return answerFrom(q, exactKey, 'label', pool)
+  if (q.type === 'date' || q.type === 'time') return dateTimeAnswer(q, pool)
+  const labelKey = exact.get(q.id)
+  if (labelKey !== undefined) return answerFrom(q, labelKey, 'label', pool)
   const modelKey = model.get(q.id)
   if (modelKey !== undefined) return answerFrom(q, modelKey, 'model', pool)
   return null
@@ -104,10 +130,18 @@ export function planPage(
 }
 
 // Questions the model may map to a detail: not exact-matched, not an attendance confirmation, not the copy box,
-// and not a date, time or grid widget. Labels and options are cut to 120 characters.
+// and not a date, time or grid widget (a date or time is planned by dateTimeAnswer). Labels and options are cut to 120 characters.
 export function questionsForModel(page: FormPage, exact: Map<string, string>): MatchQuestion[] {
   return page.questions
-    .filter((q) => !exact.has(q.id) && q.type !== 'other' && !isCopyBox(q) && confirmationAnswer(q) === null)
+    .filter(
+      (q) =>
+        !exact.has(q.id) &&
+        q.type !== 'other' &&
+        q.type !== 'date' &&
+        q.type !== 'time' &&
+        !isCopyBox(q) &&
+        confirmationAnswer(q) === null
+    )
     .map((q) => ({ id: q.id, label: cut(q.label), options: q.options.map(cut) }))
 }
 
@@ -118,6 +152,8 @@ function selected(value: FormQuestion['value']): string[] {
 
 function shows(q: FormQuestion, a: Answer): boolean {
   if (a.kind === 'text') return q.value === a.value
+  // The read-back must be the planned value, in the same normal form: a widget that kept another value fails.
+  if (a.kind === 'date' || a.kind === 'time') return q.type === a.kind && q.value === a.value
   const chosen = selected(q.value)
   return chosen.length === 1 && chosen[0] === a.option
 }

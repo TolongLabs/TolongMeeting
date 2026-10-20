@@ -1,5 +1,6 @@
 import type { FormProvider } from '@tm/core'
 import type { Locator, Page } from 'playwright'
+import { clockTime, formatDate, isoDate, joinTime, parseDate, parseDateFormat } from '../datetime'
 import { isPointsLine, normaliseText } from '../rules'
 import type { Answer, FormPage, FormQuestion, PageKind, QuestionType, Restriction } from '../types'
 import type { FormSelectors } from './selectors'
@@ -61,6 +62,16 @@ interface RawQuestion {
   options: { text: string; checked: boolean }[] // radio and checkbox options
   inputValue: string // text and paragraph
   triggerText: string // dropdown
+  widget: RawWidget | null // date and time
+}
+
+// What a date or time widget shows, read in the page. The type comes from the DOM, never from the label.
+interface RawWidget {
+  type: string // the input's type attribute; '' when the widget is not an input (a group of inputs)
+  placeholder: string
+  value: string // the input's value
+  hour: string | null // a group's hour and minute inputs; null when absent
+  minute: string | null
 }
 
 interface QuestionSelectors {
@@ -71,6 +82,10 @@ interface QuestionSelectors {
   radio: string
   checkbox: string
   listbox: string
+  date: string
+  time: string
+  hour: string | null
+  minute: string | null
   unsupported: string
   attrs: string[]
 }
@@ -99,8 +114,32 @@ function extractQuestions(elements: Element[], s: QuestionSelectors): RawQuestio
     const required = q.querySelector(s.required)
     const first = q.querySelector(kinds.map(([, selector]) => selector).join(', '))
     let kind: QuestionType = 'other'
-    if (first !== null && q.querySelector(s.unsupported) === null)
+    let widget: RawWidget | null = null
+    const dates = [...q.querySelectorAll(s.date)]
+    const times = [...q.querySelectorAll(s.time)]
+    if (dates.length + times.length === 1) {
+      // One date or time widget and nothing else that takes an answer. Text inputs inside a time group are its parts.
+      const el = (dates[0] ?? times[0]) as HTMLInputElement
+      const others = [...q.querySelectorAll([...kinds.map(([, selector]) => selector), s.unsupported].join(', '))]
+      const stray = others.some((other) =>
+        other === el || other.contains(el) ? false : el.contains(other) ? !other.matches(s.text) : true
+      )
+      if (!stray) {
+        kind = dates.length === 1 ? 'date' : 'time'
+        const part = (selector: string | null) =>
+          selector === null ? null : ((el.querySelector(selector) as HTMLInputElement | null)?.value ?? null)
+        const isInput = el.tagName === 'INPUT'
+        widget = {
+          type: isInput ? el.type : '',
+          placeholder: isInput ? el.placeholder : '',
+          value: isInput ? el.value : '',
+          hour: part(s.hour),
+          minute: part(s.minute)
+        }
+      }
+    } else if (dates.length + times.length === 0 && first !== null && q.querySelector(s.unsupported) === null) {
       kind = kinds.find(([, sel]) => first.matches(sel))![0]
+    }
     const options =
       kind === 'radio' || kind === 'checkbox' ? [...q.querySelectorAll(kind === 'radio' ? s.radio : s.checkbox)] : []
     return {
@@ -113,7 +152,8 @@ function extractQuestions(elements: Element[], s: QuestionSelectors): RawQuestio
       kind,
       options: options.map((el) => ({ text: optionText(el), checked: isChosen(el) })),
       inputValue: kind === 'text' || kind === 'paragraph' ? (first as HTMLInputElement).value : '',
-      triggerText: kind === 'dropdown' ? clean(q.querySelector(s.listbox)?.textContent) : ''
+      triggerText: kind === 'dropdown' ? clean(q.querySelector(s.listbox)?.textContent) : '',
+      widget
     }
   })
 }
@@ -170,6 +210,38 @@ function stripLabel(raw: RawQuestion): string {
   return label
 }
 
+// A date or time widget is typed only when the driver can write it and read it back: an input[type=date] or
+// input[type=time], a text date input that names its format, or a time group with hour and minute inputs. Any other
+// widget is 'other', so a question the driver cannot verify is never answered.
+function settle(raw: RawQuestion): RawQuestion {
+  const w = raw.widget
+  if (w === null) return raw
+  const writable =
+    raw.kind === 'date'
+      ? w.type === 'date' || (w.type === 'text' && parseDateFormat(w.placeholder) !== null)
+      : w.type === 'time' || (w.type === '' && w.hour !== null && w.minute !== null)
+  return writable ? raw : { ...raw, kind: 'other', widget: null }
+}
+
+// What the widget shows, normalised to `YYYY-MM-DD` or `HH:MM`; null when empty. Text that does not parse is kept as
+// shown, so it can never equal a planned value.
+function widgetValue(raw: RawQuestion): string | null {
+  const w = raw.widget!
+  let shown: string
+  let normal: string | null
+  if (raw.kind === 'date') {
+    shown = w.value.trim()
+    normal = w.type === 'date' ? isoDate(shown) : parseDate(shown, parseDateFormat(w.placeholder)!)
+  } else if (w.type === 'time') {
+    shown = w.value.trim()
+    normal = clockTime(shown)
+  } else {
+    shown = `${w.hour!.trim()}:${w.minute!.trim()}`
+    normal = joinTime(w.hour!, w.minute!)
+  }
+  return shown === '' || shown === ':' ? null : (normal ?? shown)
+}
+
 const isTimeout = (error: unknown) => error instanceof Error && error.name === 'TimeoutError'
 // A read that raced a navigation: the page is moving, so the poll tries again.
 const isNavigating = (error: unknown) => /Execution context was destroyed|detached/i.test(String(error))
@@ -191,6 +263,10 @@ export function createDriver(
     radio: map.radioOption,
     checkbox: map.checkboxOption,
     listbox: map.listbox,
+    date: map.dateInput,
+    time: map.timeInput,
+    hour: map.timeHour,
+    minute: map.timeMinute,
     unsupported: map.unsupported,
     attrs: map.optionTextAttrs
   }
@@ -280,7 +356,7 @@ export function createDriver(
 
   async function readPage(page: Page, index: number): Promise<FormPage> {
     await assertForm(page)
-    const raws = await questions(page).evaluateAll(extractQuestions, selectors)
+    const raws = (await questions(page).evaluateAll(extractQuestions, selectors)).map(settle)
     const list: FormQuestion[] = []
     for (const [n, raw] of raws.entries()) {
       let options = raw.options.map((o) => o.text)
@@ -290,7 +366,8 @@ export function createDriver(
       else if (raw.kind === 'checkbox') {
         const chosen = raw.options.filter((o) => o.checked).map((o) => o.text)
         value = chosen.length > 0 ? chosen : null
-      } else if (raw.kind === 'dropdown') {
+      } else if (raw.kind === 'date' || raw.kind === 'time') value = widgetValue(raw)
+      else if (raw.kind === 'dropdown') {
         value = raw.triggerText === '' || placeholders.has(normaliseText(raw.triggerText)) ? null : raw.triggerText
         options = await dropdownOptions(page, questions(page).nth(n), stripLabel(raw))
       }
@@ -319,19 +396,60 @@ export function createDriver(
     }
   }
 
+  // Writes the value the way the widget expects it, then leaves the field so the widget commits it. The caller reads the
+  // page back and compares: a widget that changed the value on commit shows the change there.
+  async function fillWidget(
+    element: Locator,
+    widget: RawWidget,
+    answer: Extract<Answer, { kind: 'date' | 'time' }>
+  ): Promise<void> {
+    if (answer.kind === 'date') {
+      const input = element.locator(map.dateInput).first()
+      const text =
+        widget.type === 'date' ? answer.value : formatDate(answer.value, parseDateFormat(widget.placeholder)!)
+      await input.fill(text)
+      await input.blur()
+      return
+    }
+    if (widget.type === 'time') {
+      const input = element.locator(map.timeInput).first()
+      await input.fill(answer.value)
+      await input.blur()
+      return
+    }
+    const group = element.locator(map.timeInput).first()
+    const [hour, minute] = answer.value.split(':') as [string, string]
+    for (const [selector, text] of [
+      [map.timeHour!, hour],
+      [map.timeMinute!, minute]
+    ] as const) {
+      const input = group.locator(selector).first()
+      await input.fill(text)
+      await input.blur()
+    }
+  }
+
   async function fillAnswer(page: Page, form: FormPage, answer: Answer): Promise<void> {
     const question = form.questions.find((q) => q.id === answer.questionId)
     if (question === undefined) throw new Error(`no question ${answer.questionId} on page ${form.index}`)
     const position = Number(/q(\d+)$/.exec(question.id)?.[1])
     const element = questions(page).nth(position)
     // The same reading as readPage: the stripped label must equal the planned one, and an empty label never matches.
-    const [live] = await element.evaluateAll(extractQuestions, selectors)
+    const [read] = await element.evaluateAll(extractQuestions, selectors)
+    const live = read === undefined ? undefined : settle(read)
     if (live === undefined) {
       throw new FormStepError('not_a_form', `question ${question.id} is gone: the page left the form during the fill`)
     }
     const liveLabel = stripLabel(live)
     if (liveLabel === '' || liveLabel !== question.label || live.kind !== question.type) {
       throw new Error(`question ${question.id} is not "${question.label}" on the page: the form changed under the fill`)
+    }
+    if (answer.kind === 'date' || answer.kind === 'time') {
+      if (question.type !== answer.kind || live.widget === null) {
+        throw new Error(`question ${question.id} (${question.type}) cannot take a ${answer.kind} answer`)
+      }
+      await fillWidget(element, live.widget, answer)
+      return
     }
     if (answer.kind === 'text') {
       if (question.type !== 'text' && question.type !== 'paragraph') {

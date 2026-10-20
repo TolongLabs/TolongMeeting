@@ -132,3 +132,18 @@ if (location.hash === '#copy-on') {
   const copy = document.querySelector(COPY)
   if (copy) copy.checked = true
 }
+
+// "#drift", or data-drift on <html>, makes a date or time widget commit a different value from the one typed, as a picker that re-parses its
+// input in another locale or rounds it can: a date is read as d/M/yyyy whatever its format, a time moves one hour on.
+if (location.hash.includes('drift') || document.documentElement.hasAttribute('data-drift')) {
+  document.addEventListener('change', (event) => {
+    const input = event.target
+    if (input.dataset.automationId === 'dateInput') {
+      const [a, b, year] = input.value.split('/')
+      if (year) input.value = `${b}/${a}/${year}`
+    } else if (input.type === 'time' && input.value) {
+      const [hour, minute] = input.value.split(':')
+      input.value = `${String((Number(hour) + 1) % 24).padStart(2, '0')}:${minute}`
+    }
+  })
+}

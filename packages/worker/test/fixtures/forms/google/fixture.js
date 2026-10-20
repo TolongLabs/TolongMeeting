@@ -22,6 +22,12 @@ function answerOf(question) {
   }
   const listbox = question.querySelector("div[role='listbox']")
   if (listbox) return listbox.dataset.value || null
+  // The time widget: an hour and a minute input in a group, answered as HH:MM once both are filled in.
+  const group = question.querySelector("div[role='group']")
+  if (group) {
+    const [hour, minute] = all(group, 'input').map((input) => input.value.trim())
+    return hour && minute ? `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}` : null
+  }
   const input = question.querySelector('input, textarea')
   return input && input.value.trim() !== '' ? input.value : null
 }
@@ -119,3 +125,18 @@ if (location.hash.includes('overlay')) {
 }
 
 if (location.hash === '#copy-on') document.querySelector(COPY)?.setAttribute('aria-checked', 'true')
+
+// "#drift", or data-drift on <html>, makes a date or time widget commit a different value from the one typed, as a picker that re-parses its
+// input in another locale or rounds it can: a date moves one day on, an hour moves one hour on.
+if (location.hash.includes('drift') || document.documentElement.hasAttribute('data-drift')) {
+  document.addEventListener('change', (event) => {
+    const input = event.target
+    if (input.type === 'date' && input.value) {
+      const next = new Date(`${input.value}T00:00:00Z`)
+      next.setUTCDate(next.getUTCDate() + 1)
+      input.value = next.toISOString().slice(0, 10)
+    } else if (input.getAttribute('aria-label') === 'Hour' && input.value) {
+      input.value = String((Number(input.value) + 1) % 24)
+    }
+  })
+}

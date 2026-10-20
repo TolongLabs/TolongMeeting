@@ -351,3 +351,105 @@ test('verifyFill accepts only the single chosen option', () => {
   expect(verifyFill(plan, pageOf([{ ...attendance, value: ['Present', 'Absent'] }]))).toBe(false)
   expect(verifyFill(plan, pageOf([attendance]))).toBe(false)
 })
+
+const dateAnswer = (id: string, value: string) => ({
+  questionId: id,
+  kind: 'date' as const,
+  value,
+  detailKey: 'session_date' as const,
+  via: 'label' as const
+})
+const timeAnswer = (id: string, value: string) => ({
+  questionId: id,
+  kind: 'time' as const,
+  value,
+  detailKey: 'session_start' as const,
+  via: 'label' as const
+})
+
+test('a required date or time widget whose label is a session_date or session_start variant is answered', () => {
+  const p = pageOf([
+    q('p1q0', 'Date', 'date', [], true),
+    q('p1q1', 'Start time', 'time', [], true),
+    q('p1q2', 'Tarikh kelas', 'date', [], true),
+    q('p1q3', 'Masa:', 'time', [], true)
+  ])
+  const plan = planPage(p, pool, exactLabelMatches(p, pool), new Map())
+  expect(plan.answers).toEqual([
+    dateAnswer('p1q0', '2026-10-20'),
+    timeAnswer('p1q1', '20:00'),
+    dateAnswer('p1q2', '2026-10-20'),
+    timeAnswer('p1q3', '20:00')
+  ])
+  expect(plan.unmatchedRequired).toEqual([])
+})
+
+test('date and time values come from the entry time zone, not the host clock or the written offset', () => {
+  const base = testJob(DIR)
+  const late = buildDetailPool({ ...base, entry: { ...base.entry, start: '2026-10-20T16:30:00Z' } })
+  const p = pageOf([q('p1q0', 'Date', 'date', [], true), q('p1q1', 'Time', 'time', [], true)])
+  expect(planPage(p, late, exactLabelMatches(p, late), new Map()).answers).toEqual([
+    dateAnswer('p1q0', '2026-10-21'),
+    timeAnswer('p1q1', '00:30')
+  ])
+  const london = buildDetailPool({ ...base, entry: { ...base.entry, timeZone: 'Europe/London' } })
+  expect(planPage(p, london, exactLabelMatches(p, london), new Map()).answers).toEqual([
+    dateAnswer('p1q0', '2026-10-20'),
+    timeAnswer('p1q1', '13:00')
+  ])
+})
+
+test('an optional date or time stays blank and does not block', () => {
+  const p = pageOf([q('p1q0', 'Date', 'date'), q('p1q1', 'Time', 'time')])
+  const plan = planPage(p, pool, exactLabelMatches(p, pool), new Map())
+  expect(plan).toEqual({ answers: [], unmatchedRequired: [] })
+})
+
+test('a date question with another label stays unmatched, and the model cannot match it', () => {
+  const p = pageOf([q('p1q0', 'When did the class run?', 'date', [], true)])
+  expect(questionsForModel(p, exactLabelMatches(p, pool)).map((x) => x.id)).toEqual([])
+  const plan = planPage(p, pool, exactLabelMatches(p, pool), new Map([['p1q0', 'session_date']]))
+  expect(plan.answers).toEqual([])
+  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q0'])
+})
+
+test('the widget type must agree with the label: a time widget labelled Date is not answered', () => {
+  const p = pageOf([q('p1q0', 'Date', 'time', [], true), q('p1q1', 'Time', 'date', [], true)])
+  const plan = planPage(p, pool, exactLabelMatches(p, pool), new Map())
+  expect(plan.answers).toEqual([])
+  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q0', 'p1q1'])
+})
+
+test('a session_date a form detail overrode with a non-date is not written into a date widget', () => {
+  const base = testJob(DIR)
+  const odd = buildDetailPool({
+    ...base,
+    entry: {
+      ...base.entry,
+      formDetails: { ...base.entry.formDetails, session_date: 'next Tuesday', session_start: '8pm' }
+    }
+  })
+  const p = pageOf([q('p1q0', 'Date', 'date', [], true), q('p1q1', 'Time', 'time', [], true)])
+  const plan = planPage(p, odd, exactLabelMatches(p, odd), new Map())
+  expect(plan.answers).toEqual([])
+  expect(plan.unmatchedRequired).toHaveLength(2)
+})
+
+test('verifyFill compares a date or time read-back to the planned value', () => {
+  const plan = { answers: [dateAnswer('p1q0', '2026-10-20'), timeAnswer('p1q1', '20:00')], unmatchedRequired: [] }
+  const shown = (date: string | null, time: string | null) =>
+    pageOf([
+      { ...q('p1q0', 'Date', 'date', [], true), value: date },
+      { ...q('p1q1', 'Time', 'time', [], true), value: time }
+    ])
+  expect(verifyFill(plan, shown('2026-10-20', '20:00'))).toBe(true)
+  expect(verifyFill(plan, shown('2026-10-21', '20:00'))).toBe(false) // the widget moved the day
+  expect(verifyFill(plan, shown('2026-10-20', '21:00'))).toBe(false) // the widget moved the hour
+  expect(verifyFill(plan, shown('2026-10-20', null))).toBe(false) // nothing stayed
+  expect(verifyFill(plan, shown('20/10/2026', '20:00'))).toBe(false) // text the driver could not read as a date
+})
+
+test('verifyFill refuses a date or time left in a question that was not answered', () => {
+  const stray = pageOf([{ ...q('p1q0', 'Date', 'date'), value: '2026-10-20' }])
+  expect(verifyFill({ answers: [], unmatchedRequired: [] }, stray)).toBe(false)
+})

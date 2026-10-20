@@ -3,15 +3,18 @@ import type { Ping } from '@tm/notify'
 import type { Page } from 'playwright'
 import type { FormLinks } from './pings'
 
-export type QuestionType = 'text' | 'paragraph' | 'radio' | 'checkbox' | 'dropdown' | 'other' // other: date, time, grid, file upload
+// date and time are set from the widget in the DOM (never from the label); other: grid, file upload, any widget not recognised
+export type QuestionType = 'text' | 'paragraph' | 'radio' | 'checkbox' | 'dropdown' | 'date' | 'time' | 'other'
 
 export interface FormQuestion {
   id: string // `p<page>q<n>`, n = 0-based position among the page's questions
   label: string // without the required marker or points line
   type: QuestionType
-  options: string[] // [] for text, paragraph and other
+  options: string[] // [] for text, paragraph, date, time and other
   required: boolean
-  value: string | string[] | null // current answer; null when empty
+  // Current answer; null when empty. A date reads as `YYYY-MM-DD` and a time as `HH:MM` when the widget shows one;
+  // anything the driver cannot normalise is kept as shown, so it never equals a planned value.
+  value: string | string[] | null
 }
 
 export interface Restriction {
@@ -55,6 +58,21 @@ export type Answer =
       option: string
       detailKey: string | null
       via: 'label' | 'model' | 'confirmation'
+    }
+  // Only from a required date or time question whose label equals a session_date or session_start label variant.
+  | {
+      questionId: string
+      kind: 'date'
+      value: string // YYYY-MM-DD in the entry's time zone
+      detailKey: 'session_date'
+      via: 'label'
+    }
+  | {
+      questionId: string
+      kind: 'time'
+      value: string // HH:MM, 24 hours, in the entry's time zone
+      detailKey: 'session_start'
+      via: 'label'
     }
 
 export interface PagePlan {

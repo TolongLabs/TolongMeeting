@@ -34,7 +34,9 @@ const CASES = [
       signedInAs: 'student@example.edu.my',
       orgOnly: false
     },
-    assets: [] as string[]
+    assets: [] as string[],
+    dateInput: "input[type='date']",
+    dateShown: '2026-03-04'
   },
   {
     provider: 'microsoft' as const,
@@ -46,7 +48,9 @@ const CASES = [
     ],
     // Microsoft org trust is off (no org-specific signal yet): a signed-in account is necessary, never sufficient.
     org: { organisation: null, signedInAs: 'student@example.edu.my', orgOnly: false },
-    assets: ['https://forms.office.com/Pages/fixture.js']
+    assets: ['https://forms.office.com/Pages/fixture.js'],
+    dateInput: "input[data-automation-id='dateInput']",
+    dateShown: '3/4/2026'
   }
 ]
 
@@ -68,7 +72,7 @@ for (const c of CASES)
         ['p1q2', 'Pick one', 'radio', true],
         ['p1q3', 'Pick some', 'checkbox', false],
         ['p1q4', 'Choose a section', 'dropdown', true],
-        ['p1q5', 'Date', 'other', false]
+        ['p1q5', 'Date', 'date', false]
       ])
       expect([p.questions[2]!.options, p.questions[4]!.options, p.questions[4]!.value]).toEqual([
         ['Present', 'Absent'],
@@ -488,6 +492,56 @@ for (const c of CASES)
         expect(fx.submissions).toHaveLength(1)
       })
 
+    test('types date and time widgets from the DOM, whatever the label says', async ({ page }) => {
+      await page.goto(c.url('attendance-datetime'))
+      const p = await driver.readPage(page, 1)
+      expect(p.questions.map((q) => [q.label, q.type, q.required, q.value])).toEqual([
+        ['Full name', 'text', true, null],
+        ['Date', 'date', true, null],
+        ['Start time', 'time', true, null],
+        ['Attendance', 'radio', true, null]
+      ])
+      await page.goto(c.url('attendance-date-odd'))
+      expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({
+        label: 'When did the class run?',
+        type: 'date'
+      })
+    })
+
+    test('writes a date and a time in the widget format and reads them back normalised', async ({ page }) => {
+      await page.goto(c.url('attendance-datetime'))
+      const form = await driver.readPage(page, 1)
+      await driver.fill(page, form, [
+        { questionId: 'p1q1', kind: 'date', value: '2026-03-04', detailKey: 'session_date', via: 'label' },
+        { questionId: 'p1q2', kind: 'time', value: '08:05', detailKey: 'session_start', via: 'label' }
+      ])
+      const after = await driver.readPage(page, 1)
+      expect(after.questions.map((q) => q.value)).toEqual([null, '2026-03-04', '08:05', null])
+      expect(await page.locator(c.dateInput).inputValue()).toBe(c.dateShown)
+    })
+
+    test('a widget that moves the value on commit reads back the moved value', async ({ page }) => {
+      await page.goto(c.url('attendance-datetime') + '#drift')
+      const form = await driver.readPage(page, 1)
+      await driver.fill(page, form, [
+        { questionId: 'p1q1', kind: 'date', value: '2026-10-20', detailKey: 'session_date', via: 'label' },
+        { questionId: 'p1q2', kind: 'time', value: '20:00', detailKey: 'session_start', via: 'label' }
+      ])
+      const values = (await driver.readPage(page, 1)).questions.map((q) => q.value)
+      expect(values[1]).not.toBe('2026-10-20')
+      expect(values[2]).toBe('21:00')
+    })
+
+    test('a date answer for a question that is not a date widget is refused', async ({ page }) => {
+      await page.goto(c.url('attendance-datetime'))
+      const form = await driver.readPage(page, 1)
+      await expect(
+        driver.fill(page, form, [
+          { questionId: 'p1q0', kind: 'date', value: '2026-10-20', detailKey: 'session_date', via: 'label' }
+        ])
+      ).rejects.toThrow('cannot take a date answer')
+    })
+
     test('a stale alert does not fail a Next that moves on', async ({ page }) => {
       await page.goto(c.url('attendance'))
       await expect(driver.next(page)).rejects.toMatchObject({ code: 'next_failed' })
@@ -501,3 +555,15 @@ for (const c of CASES)
       expect((await driver.readPage(page, 2)).questions[0]!.label).toBe('Attendance')
     })
   })
+
+test('a Microsoft date input that names no format is typed other, and one that names it is a date', async ({
+  page,
+  context
+}) => {
+  await routeFormFixtures(context)
+  const driver = await driverFor('microsoft')
+  await page.goto(microsoftUrl('attendance-date-unknown'))
+  expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({ label: 'Date', type: 'other' })
+  await page.goto(microsoftUrl('attendance-date-dmy'))
+  expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({ label: 'Date', type: 'date' })
+})

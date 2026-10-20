@@ -404,3 +404,100 @@ test('fails loudly when seenAt is unreadable instead of dropping the deadline', 
   expect(fx.requests).toHaveLength(0)
   expect(JSON.stringify(events.filter((e) => e.type === 'error'))).toContain('seenAt')
 })
+
+// Date and time questions. The picker formats differ: Google's date input takes ISO, Microsoft's text picker names
+// M/d/yyyy in its placeholder. Both fixtures are modelled on the provider's markup and unverified against a live form.
+const PICKERS = [
+  { provider: 'google' as const, date: '2026-10-20', nextDate: '2026-10-21' },
+  { provider: 'microsoft' as const, date: '10/20/2026', nextDate: '10/21/2026' }
+]
+for (const c of PICKERS) {
+  test.describe(`${c.provider} date and time`, () => {
+    test('fills a required date in the widget format and submits it', async ({ page: desk }) => {
+      const { ctx, pings } = testContext(desk, testJob(dir))
+      const rec = await handleForm(candidate(c.provider, 'attendance-date', 'qr'), ctx)
+      expect(rec.state).toBe('submitted')
+      expect(rec.fieldsFilled.filter((f) => f.detailKey === 'session_date').map((f) => f.value)).toEqual(['2026-10-20'])
+      expect(fx.submissions.map((s) => s.answers)).toEqual([
+        { 'Full name': 'Test Student', Date: c.date, Attendance: 'Present' }
+      ])
+      expect(pings.map((p) => p.ping.title)).toEqual(['Attendance submitted'])
+    })
+
+    test('fills a required time and submits it', async ({ page: desk }) => {
+      const rec = await handleForm(candidate(c.provider, 'attendance-time', 'qr'), testContext(desk, testJob(dir)).ctx)
+      expect(rec.state).toBe('submitted')
+      expect(fx.submissions.map((s) => s.answers)).toEqual([
+        { 'Full name': 'Test Student', Time: '20:00', Attendance: 'Present' }
+      ])
+    })
+
+    test('fills a date and a time on one page', async ({ page: desk }) => {
+      const rec = await handleForm(
+        candidate(c.provider, 'attendance-datetime', 'qr'),
+        testContext(desk, testJob(dir)).ctx
+      )
+      expect(rec.state).toBe('submitted')
+      expect(fx.submissions[0]!.answers).toMatchObject({ Date: c.date, 'Start time': '20:00' })
+    })
+
+    test('writes the entry time zone, not the host clock or the offset in the start string', async ({ page: desk }) => {
+      const job = testJob(dir)
+      // 16:30 UTC is 00:30 the next day in Kuala Lumpur.
+      const late = { ...job, entry: { ...job.entry, start: '2026-10-20T16:30:00Z', end: '2026-10-20T18:30:00Z' } }
+      const rec = await handleForm(candidate(c.provider, 'attendance-datetime', 'qr'), testContext(desk, late).ctx)
+      expect(rec.state).toBe('submitted')
+      expect(fx.submissions[0]!.answers).toMatchObject({ Date: c.nextDate, 'Start time': '00:30' })
+    })
+
+    test('leaves an optional date blank', async ({ page: desk }) => {
+      const rec = await handleForm(
+        candidate(c.provider, 'attendance-date-optional', 'qr'),
+        testContext(desk, testJob(dir)).ctx
+      )
+      expect(rec.state).toBe('submitted')
+      expect(fx.submissions[0]!.answers).toEqual({ 'Full name': 'Test Student', Attendance: 'Present' })
+    })
+
+    test('a date question with another label stays unmatched: the member is pinged and nothing is sent', async ({
+      page: desk
+    }) => {
+      const { ctx, pings, matchCalls } = testContext(desk, testJob(dir))
+      const rec = await handleForm(candidate(c.provider, 'attendance-date-odd', 'qr'), ctx)
+      expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual([
+        'needs_member',
+        ['When did the class run?'],
+        0
+      ])
+      expect(pings.map((p) => p.ping.title)).toEqual(['Form needs you'])
+      expect(matchCalls).toEqual([]) // the model never sees a date question
+    })
+
+    for (const kind of ['date', 'time'] as const) {
+      test(`refuses to submit when the widget changes the ${kind} on commit`, async ({ page: desk, context }) => {
+        const { ctx, pings } = testContext(desk, testJob(dir))
+        const rec = await handleForm(candidate(c.provider, `attendance-${kind}-drift`, 'qr'), ctx)
+        expect([rec.state, rec.reason]).toEqual(['failed', 'fill_failed'])
+        expect(rec.history.map((h) => h.state)).not.toContain('submitting')
+        expect(fx.submissions).toHaveLength(0)
+        expect(pings).toHaveLength(1)
+        expect(pings[0]!.ping.message).toContain("an answer didn't stay filled in")
+        expect(context.pages()).toHaveLength(1)
+      })
+    }
+  })
+}
+
+test('a Microsoft date picker that names day-first writes day-first', async ({ page: desk }) => {
+  const rec = await handleForm(candidate('microsoft', 'attendance-date-dmy', 'qr'), testContext(desk, testJob(dir)).ctx)
+  expect(rec.state).toBe('submitted')
+  expect(fx.submissions[0]!.answers).toMatchObject({ Date: '20/10/2026' })
+})
+
+test('a Microsoft date picker that names no format is not answered', async ({ page: desk }) => {
+  const rec = await handleForm(
+    candidate('microsoft', 'attendance-date-unknown', 'qr'),
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual(['needs_member', ['Date'], 0])
+})

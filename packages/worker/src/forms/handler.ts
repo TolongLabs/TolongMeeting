@@ -310,7 +310,7 @@ class FormRun {
       page: n,
       question: cut(page.questions.find((q) => q.id === a.questionId)!.label),
       detailKey: a.detailKey,
-      value: a.kind === 'text' ? a.value : a.option,
+      value: a.kind === 'choose' ? a.option : a.value,
       via: a.via
     }))
   }

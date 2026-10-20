@@ -19,7 +19,7 @@ const capturePattern = z.string().refine(
 
 // `question`, `title`, `description`, the buttons, `validationError`, `sendCopy`, `accountLine`, `orgFooter`,
 // `orgOnlyNotice` and `captcha` are Playwright selectors. Every selector that runs inside a question (`label`
-// through `unsupported`) and `optionTextAttrs` are evaluated in the page, so they must be plain CSS.
+// through `unsupported`, `timeHour` and `timeMinute`) and `optionTextAttrs` are evaluated in the page, so they must be plain CSS.
 export const FormSelectorsSchema = z
   .object({
     formHosts: z.array(phrase).min(1), // any other host means a sign-in or MFA step
@@ -33,6 +33,10 @@ export const FormSelectorsSchema = z
     listbox: selector, // dropdown trigger, inside question
     listboxOption: selector, // options, searched page-wide once the listbox is open
     listboxPlaceholders: z.array(phrase), // trigger texts that mean nothing is chosen
+    dateInput: selector, // inside question: the date picker, an input[type=date] or a text input that names its format
+    timeInput: selector, // inside question: the time widget, an input[type=time] or a group of hour and minute inputs
+    timeHour: selector.nullable(), // inside timeInput; null when the widget is itself the input
+    timeMinute: selector.nullable(), // inside timeInput; null when the widget is itself the input
     unsupported: selector, // inside question: makes its type 'other'
     optionTextAttrs: z.array(phrase), // attributes tried in order for an option's text, then its text content
     title: selector,
