@@ -27,7 +27,10 @@ export const PIPELINE_QUEUE = {
   deadLetter: PIPELINE_DEAD_QUEUE
 }
 
-/** The dead-letter worker retries too: a ping that throws (ntfy down) must not lose the job. Same budget as the pipeline. */
+/**
+ * The dead-letter worker retries too, so a ping that throws (ntfy down) gets the same budget as the pipeline. On its
+ * last attempt the occurrence is failed even if the ping throws (`handleDeadPipelineJob`).
+ */
 const DEAD_QUEUE = { retryLimit: 20, retryDelay: 180, retryBackoff: false }
 
 /**
@@ -35,16 +38,18 @@ const DEAD_QUEUE = { retryLimit: 20, retryDelay: 180, retryBackoff: false }
  * carries only the occurrence id; the member's keys are read from the database inside `handlePipelineJob`. A bad job
  * body or an error thrown by the handler fails the job, and pg-boss retries it. The job's abort signal (it expired) is
  * passed down, so an expired handler stops instead of racing its retry. A job whose retries run out is dead-lettered,
- * and the same process works `pipeline-dead` with `handleDeadPipelineJob`, so the member hears about it.
+ * and the same process works `pipeline-dead` with `handleDeadPipelineJob`, so the member hears about it. That job's
+ * last attempt is the one at `deadQueue.retryLimit` (pg-boss counts a dead-letter job's retries from 0).
  */
 export async function workPipeline(
   boss: PgBoss,
   deps: PipelineDeps,
-  queue: typeof PIPELINE_QUEUE = PIPELINE_QUEUE
+  queue: typeof PIPELINE_QUEUE = PIPELINE_QUEUE,
+  deadQueue: typeof DEAD_QUEUE = DEAD_QUEUE
 ): Promise<void> {
   // The dead-letter queue exists before the pipeline queue names it.
   await boss.createQueue(PIPELINE_DEAD_QUEUE)
-  await boss.updateQueue(PIPELINE_DEAD_QUEUE, DEAD_QUEUE)
+  await boss.updateQueue(PIPELINE_DEAD_QUEUE, deadQueue)
   await boss.createQueue(QUEUES.pipeline)
   await boss.updateQueue(QUEUES.pipeline, queue)
   await boss.work(QUEUES.pipeline, { localConcurrency: 1 }, async (jobs) => {
@@ -56,7 +61,8 @@ export async function workPipeline(
   await boss.work(PIPELINE_DEAD_QUEUE, { localConcurrency: 1 }, async (jobs) => {
     for (const job of jobs) {
       const { occurrenceId } = JobData.parse(job.data)
-      console.log(`pipeline-dead: ${occurrenceId}: ${await handleDeadPipelineJob(deps, occurrenceId)}`)
+      const lastAttempt = job.retryCount >= deadQueue.retryLimit
+      console.log(`pipeline-dead: ${occurrenceId}: ${await handleDeadPipelineJob(deps, occurrenceId, lastAttempt)}`)
     }
   })
 }

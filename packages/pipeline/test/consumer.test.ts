@@ -458,8 +458,82 @@ describe('workPipeline', () => {
 describe('handleDeadPipelineJob', () => {
   test('an occurrence that already finished is dropped, with no ping', async () => {
     const f = await pipelineFixture({ state: 'completed', transcription: 'live' })
-    expect(await handleDeadPipelineJob(f.deps, f.id)).toBe('stale')
+    expect(await handleDeadPipelineJob(f.deps, f.id, true)).toBe('stale')
     expect((await f.occurrence()).state).toBe('completed')
     expect(f.notifier.sent).toEqual([])
   })
+
+  test('an earlier attempt whose ping throws leaves the occurrence unfailed, so the queue retries it', async () => {
+    const f = await pipelineFixture({ state: 'transcribing', transcription: 'live' })
+    f.notifier.notify = async () => {
+      throw new Error('ntfy down')
+    }
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(handleDeadPipelineJob(f.deps, f.id, false)).rejects.toThrow('ntfy down')
+      expect(await f.occurrence()).toMatchObject({ state: 'transcribing', stateReason: null })
+      expect((await f.db.select().from(events).where(eq(events.occurrenceId, f.id))).length).toBe(0)
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  test('the last attempt fails the occurrence when the ping throws, and records ping_not_sent', async () => {
+    const f = await pipelineFixture({ state: 'post_processing', transcription: 'live' })
+    f.notifier.notify = async () => {
+      throw new Error('ntfy down')
+    }
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(await handleDeadPipelineJob(f.deps, f.id, true)).toBe('failed')
+    } finally {
+      logged.mockRestore()
+    }
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'pipeline_never_ran' })
+    const errors = (await f.db.select().from(events).where(eq(events.occurrenceId, f.id))).filter(
+      (e) => e.type === 'error'
+    )
+    expect(errors.map((e) => e.data)).toEqual([expect.objectContaining({ reason: 'ping_not_sent' })])
+  })
+
+  test('a dead job whose ping always throws fails its occurrence on the last dead-letter attempt', async () => {
+    const f = await pipelineFixture({ state: 'transcribing', transcription: 'live' })
+    await f.db.update(occurrences).set({ containerName: 'tm-worker-x-a1' }).where(eq(occurrences.id, f.id))
+    let pingsTried = 0
+    f.notifier.notify = async () => {
+      pingsTried++
+      throw new Error('ntfy down')
+    }
+    const boss = new PgBoss(testDbUrl(f.db))
+    boss.on('error', (error) => {
+      throw error
+    })
+    await boss.start()
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // The dead-letter budget is 2 retries 1 s apart here (production: 20 at 180 s); the pipeline job's budget is shrunk the same way.
+      await workPipeline(
+        boss,
+        f.deps,
+        { ...PIPELINE_QUEUE, retryLimit: 2, retryDelay: 1 },
+        { retryLimit: 2, retryDelay: 1, retryBackoff: false }
+      )
+      await bossQueue(boss).send(QUEUES.pipeline, { occurrenceId: f.id })
+      const deadline = Date.now() + 30_000
+      while ((await f.occurrence()).state !== 'failed') {
+        if (Date.now() > deadline) throw new Error('the occurrence was not failed')
+        await Bun.sleep(200)
+      }
+    } finally {
+      logged.mockRestore()
+      await boss.stop({ graceful: false })
+    }
+    // Every dead-letter attempt tried the ping: the first two threw and the last one failed the occurrence anyway.
+    expect(pingsTried).toBe(3)
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'pipeline_never_ran' })
+    const errors = (await f.db.select().from(events).where(eq(events.occurrenceId, f.id))).filter(
+      (e) => e.type === 'error'
+    )
+    expect(errors.map((e) => e.data)).toEqual([expect.objectContaining({ reason: 'ping_not_sent' })])
+  }, 40_000)
 })

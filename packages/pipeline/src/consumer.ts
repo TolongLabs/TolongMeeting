@@ -96,10 +96,17 @@ async function queueRequestedDelete(deps: PipelineDeps, id: string): Promise<voi
 /**
  * Runs for a pipeline job that failed for good: its retries are spent and pg-boss copied it to the dead-letter queue
  * (`PIPELINE_QUEUE.deadLetter`). Such a job never got its summary. A `transcribing` or `post_processing` occurrence is
- * failed with `pipeline_never_ran` and the member gets one ping; any other state is dropped (`stale`). The ping goes
- * first, as in `stopped`: a ping that throws leaves the occurrence unfailed, and the queue runs this again.
+ * failed with `pipeline_never_ran` and the member gets one ping; any other state is dropped (`stale`).
+ *
+ * On the earlier attempts of this dead-letter job the ping goes first, as in `stopped`: a ping that throws leaves the
+ * occurrence unfailed, and the queue runs this again. On the last attempt (`lastAttempt`: the dead-letter budget is
+ * spent) the occurrence is failed even if the ping throws, and an `error` event `ping_not_sent` records the lost ping.
  */
-export async function handleDeadPipelineJob(deps: PipelineDeps, occurrenceId: string): Promise<'failed' | 'stale'> {
+export async function handleDeadPipelineJob(
+  deps: PipelineDeps,
+  occurrenceId: string,
+  lastAttempt: boolean
+): Promise<'failed' | 'stale'> {
   return withOccurrenceLock(deps, occurrenceId, async () => {
     const [occ] = await deps.db.select().from(occurrences).where(eq(occurrences.id, occurrenceId))
     if (!occ || (occ.state !== 'transcribing' && occ.state !== 'post_processing')) {
@@ -108,8 +115,18 @@ export async function handleDeadPipelineJob(deps: PipelineDeps, occurrenceId: st
     }
     console.error(`pipeline: ${occurrenceId}: the job never ran the pipeline; its retries are spent`)
     const meetingUrl = `${new URL(deps.env.publicUrl).origin}/meetings/${occurrenceId}`
-    await deps.notifier.notify(occ.memberId, pings.pipelineFailed({ entry: occ.entryName, meetingUrl }))
-    await applyTrigger(deps.db, occurrenceId, 'fail', { reason: 'pipeline_never_ran' })
+    let pingNotSent: string | null = null
+    try {
+      await deps.notifier.notify(occ.memberId, pings.pipelineFailed({ entry: occ.entryName, meetingUrl }))
+    } catch (e) {
+      if (!lastAttempt) throw e
+      pingNotSent = describeError(e)
+      console.error(`pipeline: ${occurrenceId}: the ping was not sent, failing it anyway: ${pingNotSent}`)
+    }
+    await deps.db.transaction(async (tx) => {
+      if (pingNotSent !== null) await recordError(tx, occ, { reason: 'ping_not_sent', message: pingNotSent })
+      await applyTrigger(tx, occurrenceId, 'fail', { reason: 'pipeline_never_ran' })
+    })
     return 'failed'
   })
 }
@@ -199,21 +216,25 @@ async function remuxed(deps: PipelineDeps, occ: OccurrenceRow, dir: string, sign
     if (signal?.aborted) throw e
     const message = describeError(e)
     console.error(`pipeline: ${occ.id}: REMUX FAILED, the meeting page will have no player: ${message}`)
-    const data = { reason: 'remux_failed', message }
-    await deps.db
-      .insert(events)
-      .values({
-        occurrenceId: occ.id,
-        memberId: occ.memberId,
-        attempt: occ.attempt,
-        at: new Date(),
-        type: 'error',
-        data,
-        dataHash: hashEventData(data)
-      })
-      .onConflictDoNothing()
+    await recordError(deps.db, occ, { reason: 'remux_failed', message })
     return false
   }
+}
+
+/** Records an `error` event of the occurrence's current attempt; an event already stored with the same data is kept once. */
+async function recordError(db: Db, occ: OccurrenceRow, data: { reason: string; message: string }): Promise<void> {
+  await db
+    .insert(events)
+    .values({
+      occurrenceId: occ.id,
+      memberId: occ.memberId,
+      attempt: occ.attempt,
+      at: new Date(),
+      type: 'error',
+      data,
+      dataHash: hashEventData(data)
+    })
+    .onConflictDoNothing()
 }
 
 /** Sets `state_reason` of an occurrence that is in `post_processing`; throws when it is not (it changed during the run). */
