@@ -10,6 +10,8 @@ import {
   canonicalFormUrl,
   isFormPageUrl,
   isPlainHttpsUrl,
+  normaliseMeetingLink,
+  stripPasscode,
   triggerFor,
   type ControlCommand,
   type Heartbeat,
@@ -253,6 +255,16 @@ export async function handleHeartbeat(
   })
 }
 
+/**
+ * The link the worker joined with, as it may be stored: the passcode is cut (the container is untrusted and a link may
+ * carry one), and only a Zoom, Teams or Meet join link passes. Anything else is ignored, not an error. It goes in no event.
+ */
+function storableLinkUsed(link: string | undefined): string | null {
+  if (link === undefined) return null
+  const clean = stripPasscode(link)
+  return clean !== '' && normaliseMeetingLink(clean) !== null ? clean : null
+}
+
 /** Stores what an account check saw in `profiles.account_status`, stamped with the server's clock. */
 async function recordAccount(
   tx: Db,
@@ -440,9 +452,16 @@ async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, h
   }
   await moveTo(hb.state)
 
+  const linkUsed = ACTIVE_STATES.has(current) ? storableLinkUsed(hb.linkUsed) : null
   await tx
     .update(occurrences)
-    .set({ lastHeartbeatAt: now, recording: hb.recording, participants: hb.participants, pendingCommands: [] })
+    .set({
+      lastHeartbeatAt: now,
+      recording: hb.recording,
+      participants: hb.participants,
+      pendingCommands: [],
+      ...(linkUsed === null ? {} : { linkUsed })
+    })
     .where(eq(occurrences.id, row.id))
   return { ackedEvents: hb.events.length, commands: row.pendingCommands as ControlCommand[], link: row.pastedLink }
 }

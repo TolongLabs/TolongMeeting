@@ -2,6 +2,8 @@ import { and, eq, inArray, ne, notInArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   ACTIVE_STATES,
+  normaliseMeetingLink,
+  normaliseZoomLink,
   stripPasscode,
   type EntryType,
   type EventType,
@@ -105,6 +107,8 @@ export interface MeetingOccurrence {
   actualEnd: string | null
   participants: number | null
   recording: boolean
+  /** Where the bot joined, masked like the timetable's `maskedLink`: the host and the meeting id, never the passcode. */
+  joinedLink: { host: string; meetingId: string | null } | null
 }
 
 export interface MeetingView {
@@ -183,6 +187,36 @@ function redact(value: unknown, depth = 0): unknown {
   )
 }
 
+/**
+ * The link the bot joined with, without its passcode, or null when it is not an https meeting link. `link_used` is
+ * written by the worker's heartbeat (passcode already cut) and by the launch (from a fixed link, which may carry one), so
+ * every read cuts it again.
+ */
+const MAX_JOINED_LINK_LENGTH = 2048
+
+function cleanJoinedLink(stored: string | null): string | null {
+  if (stored === null) return null
+  const clean = stripPasscode(stored)
+  return clean !== '' &&
+    clean.length <= MAX_JOINED_LINK_LENGTH &&
+    URL.canParse(clean) &&
+    new URL(clean).protocol === 'https:'
+    ? clean
+    : null
+}
+
+function maskedJoinedLink(stored: string | null): MeetingOccurrence['joinedLink'] {
+  const clean = cleanJoinedLink(stored)
+  if (clean === null) return null
+  const zoom = normaliseZoomLink(clean)
+  if (zoom !== null) {
+    const { host, pathname } = new URL(zoom)
+    return { host, meetingId: pathname.slice('/wc/join/'.length) }
+  }
+  const meeting = normaliseMeetingLink(clean)
+  return meeting === null ? null : { host: new URL(meeting).host, meetingId: null }
+}
+
 /** The largest artefact the page reads into memory. Bigger files (a chat or transcript that size is not real) are refused. */
 export const MAX_ARTEFACT_BYTES = 20 * 1024 * 1024
 
@@ -255,7 +289,8 @@ export async function meetingData(scope: MemberScope, occurrenceId: string): Pro
       actualStart: row.actualStart?.toISOString() ?? null,
       actualEnd: row.actualEnd?.toISOString() ?? null,
       participants: row.participants,
-      recording: row.recording
+      recording: row.recording,
+      joinedLink: maskedJoinedLink(row.linkUsed)
     },
     summaryMd: await textOf('summary'),
     forms: formRows.map((f) => ({
@@ -318,6 +353,30 @@ export async function makeBotLeave(scope: MemberScope, id: string): Promise<void
     and(eq(occurrences.id, id), inArray(occurrences.state, ACTIVE))!
   )
   if (changed === 0) throw new InUseError('The bot is not in this meeting.')
+}
+
+/**
+ * Asks the bot to leave and hands the member the link it joined with, so the page can open the meeting once the bot is
+ * out. Null when this is not the member's meeting. Only while the bot is in the meeting (or on its way in or out). The
+ * command is queued once however often this is called. The link has no passcode.
+ */
+export async function takeOver(scope: MemberScope, id: string): Promise<{ link: string | null } | null> {
+  if (!UUID.test(id)) return null
+  return scope.transaction(async (s) => {
+    const [row] = await s.select(occurrences, eq(occurrences.id, id))
+    if (!row) return null
+    if (!ACTIVE_STATES.has(row.state)) throw new InUseError('The bot is not in this meeting.')
+    // `sendCommand` adds the word once and only while the state is active; 0 rows means it is already queued.
+    await s.sendCommand(id, 'take_over')
+    return { link: cleanJoinedLink(row.linkUsed) }
+  })
+}
+
+/** The state of one of the member's meetings, for the page that waits for the bot to leave. Null: not theirs. */
+export async function controlState(scope: MemberScope, id: string): Promise<{ state: OccurrenceState } | null> {
+  if (!UUID.test(id)) return null
+  const [row] = await scope.select(occurrences, eq(occurrences.id, id))
+  return row ? { state: row.state } : null
 }
 
 /** Stores a link the member pasted for a meeting that has not started. The link is never echoed in an error. */

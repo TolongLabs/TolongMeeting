@@ -10,7 +10,9 @@ import { InputError, InUseError } from '../lib/identities'
 import {
   ArtefactTooLargeError,
   MAX_ARTEFACT_BYTES,
+  controlState,
   makeBotLeave,
+  takeOver,
   meetingData,
   parseTranscript,
   pasteLink,
@@ -214,9 +216,11 @@ test('the meeting data never holds the meeting link or the passcode', async () =
       'could not open https://example.zoom.us/j/00000000000?pwd=SECRETPWD or https://forms.example.org/a?pwd=SECRETPWD&b=1',
     nested: [{ note: 'Passcode: SECRETPWD', url: 'https://teams.microsoft.com/l/meetup-join/abc?p=SECRETPWD' }]
   })
-  const text = JSON.stringify(await meetingData(scope, occurrenceId))
+  const v = (await meetingData(scope, occurrenceId))!
+  const text = JSON.stringify(v)
   expect(text).not.toContain('SECRETPWD')
-  expect(text).not.toContain('00000000000')
+  // Only the masked `joinedLink` (host and meeting id) may carry the meeting id; the events and the rest never do.
+  expect(JSON.stringify({ ...v, occurrence: { ...v.occurrence, joinedLink: null } })).not.toContain('00000000000')
   expect(text).not.toContain('11111111111')
   expect(text).not.toContain('forms.example.org')
 })
@@ -397,4 +401,54 @@ test('submitting a re-run twice queues one job, and a failed send puts the reaso
   const broken = { send: async () => Promise.reject(new Error('queue down')) }
   await expect(rerunPipeline(scope, occurrenceId, broken)).rejects.toThrow('queue down')
   expect((await stateOf(scope, occurrenceId)).stateReason).toBe('ai_key_error')
+})
+
+test('take over queues once and returns the link without its passcode', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await scope.update(
+    occurrences,
+    { state: 'in_meeting', linkUsed: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE' },
+    eq(occurrences.id, occurrenceId)
+  )
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: 'https://example.zoom.us/j/00000000000' })
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: 'https://example.zoom.us/j/00000000000' })
+  expect((await stateOf(scope, occurrenceId)).pendingCommands).toEqual(['take_over'])
+})
+
+test('take over gives no link when the stored one is not an https meeting link', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await scope.update(
+    occurrences,
+    { state: 'in_meeting', linkUsed: 'javascript:alert(1)' },
+    eq(occurrences.id, occurrenceId)
+  )
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: null })
+  await scope.update(occurrences, { linkUsed: null }, eq(occurrences.id, occurrenceId))
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: null })
+})
+
+test("a finished meeting refuses take over; another member's is not found", async () => {
+  const { a, b, scopeA, scopeB } = await twoMembers()
+  await scopeA.update(occurrences, { state: 'completed' }, eq(occurrences.id, a.ids.occurrences))
+  await expect(takeOver(scopeA, a.ids.occurrences)).rejects.toThrow('The bot is not in this meeting.')
+  expect(await takeOver(scopeB, a.ids.occurrences)).toBeNull()
+  expect(await controlState(scopeB, a.ids.occurrences)).toBeNull()
+  expect(await takeOver(scopeB, 'not-a-uuid')).toBeNull()
+  expect(await controlState(scopeA, a.ids.occurrences)).toEqual({ state: 'completed' })
+  expect(b.ids.occurrences).not.toBe(a.ids.occurrences)
+})
+
+test("another member can't make the bot leave, and nothing is queued for it", async () => {
+  const { a, scopeA, scopeB } = await twoMembers()
+  await scopeA.update(occurrences, { state: 'in_meeting' }, eq(occurrences.id, a.ids.occurrences))
+  await expect(makeBotLeave(scopeB, a.ids.occurrences)).rejects.toThrow('The bot is not in this meeting.')
+  await expect(takeOver(scopeB, a.ids.occurrences)).resolves.toBeNull()
+  expect((await stateOf(scopeA, a.ids.occurrences)).pendingCommands).toEqual([])
+})
+
+test('the meeting page data shows where the bot joined without the passcode', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  const v = (await meetingData(scope, occurrenceId))!
+  expect(v.occurrence.joinedLink).toEqual({ host: 'example.zoom.us', meetingId: '00000000000' })
+  expect(JSON.stringify(v)).not.toContain('SECRETPWD')
 })

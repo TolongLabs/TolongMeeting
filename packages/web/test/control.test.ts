@@ -27,6 +27,7 @@ interface Options {
   token?: string
   pendingCommands?: string[]
   pastedLink?: string
+  linkUsed?: string
 }
 
 async function controlFixture(o: Options = {}) {
@@ -51,6 +52,7 @@ async function controlFixture(o: Options = {}) {
         controlTokenHash: sha256hex(opts.token ?? '1.abc'),
         pendingCommands: opts.pendingCommands ?? [],
         pastedLink: opts.pastedLink ?? null,
+        linkUsed: opts.linkUsed ?? null,
         containerName: 'tm-worker'
       })
       .returning()
@@ -846,5 +848,42 @@ describe('event bounds', () => {
     expect(await f.form('new')).toBeUndefined()
     expect((await f.form('k7'))!.state).toBe('filling')
     expect((await f.events()).filter((e) => e.type === 'error').map((e) => e.data)).toEqual([{ reason: 'form_cap' }])
+  })
+})
+
+describe('the link the worker joined with', () => {
+  const OLD = 'https://example.zoom.us/j/00000000000?pwd=OLD'
+
+  test('a heartbeat replaces link_used, without the passcode, and puts it in no event', async () => {
+    const f = await controlFixture({ state: 'joining', linkUsed: OLD })
+    const hb = beat(f.id, 'joining', [], { linkUsed: 'https://example.zoom.us/j/00000000001?pwd=NEW&uname=Ann' })
+    expect((await handleHeartbeat(f.deps, 'Bearer 1.abc', hb)).status).toBe(200)
+    const stored = (await f.occurrence()).linkUsed
+    expect(stored).toBe('https://example.zoom.us/j/00000000001?uname=Ann')
+    expect(JSON.stringify(await f.events())).not.toContain('NEW')
+  })
+
+  test('a link that is not a meeting link, or is too long, changes nothing', async () => {
+    const f = await controlFixture({ state: 'joining', linkUsed: OLD })
+    for (const linkUsed of ['https://evil.example.com/j/1?pwd=X', 'http://example.zoom.us/j/1']) {
+      const r = await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'joining', [], { linkUsed }))
+      expect(r.status === 200 || r.status === 400).toBe(true)
+      expect((await f.occurrence()).linkUsed).toBe(OLD)
+    }
+    const long = `https://example.zoom.us/j/1?x=${'a'.repeat(2100)}`
+    expect((await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'joining', [], { linkUsed: long }))).status).toBe(
+      400
+    )
+    expect((await f.occurrence()).linkUsed).toBe(OLD)
+  })
+
+  test('a link reported after the meeting is over is ignored', async () => {
+    const f = await controlFixture({ state: 'completed', linkUsed: OLD })
+    await handleHeartbeat(
+      f.deps,
+      'Bearer 1.abc',
+      beat(f.id, 'completed', [], { linkUsed: 'https://example.zoom.us/j/00000000001' })
+    )
+    expect((await f.occurrence()).linkUsed).toBe(OLD)
   })
 })
