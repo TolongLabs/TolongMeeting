@@ -87,7 +87,7 @@ Names used from earlier plans:
 - Consumes: `loadSelectors<T>(platform: Platform, schema: z.ZodType<T>): Promise<T>` from plan 01a (Task 13).
 - Produces: `TeamsSelectorsSchema` (zod, strict at every level, the shape of `teams.json` below), `type TeamsSelectors = z.infer<typeof TeamsSelectorsSchema>` and `teamsSelectors(): Promise<TeamsSelectors>` (`loadSelectors('teams', TeamsSelectorsSchema)`) in `packages/worker/src/adapters/teams/selectors.ts`. The map follows 01a's `zoom.json` layout: `selectors` holds CSS selectors usable in `document.querySelectorAll`; `texts` holds regular expressions matched case-insensitively against visible text, with apostrophes written as `.` so straight and curly ones both match; `noticeAllowlist` holds exact button texts; `signInHosts` holds host names.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -118,12 +118,12 @@ test('a missing key fails loudly and names the key', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/teams/selectors.test.ts`
 Expected: FAIL, module `./selectors` not found.
 
-- [ ] **Step 3: Create `config/selectors/teams.json` and `teamsSelectors(): Promise<TeamsSelectors>`**
+- [x] **Step 3: Create `config/selectors/teams.json` and `teamsSelectors(): Promise<TeamsSelectors>`**
 
 Starting values, mirrored by the fixtures and confirmed or corrected in Task 12:
 
@@ -180,12 +180,12 @@ Starting values, mirrored by the fixtures and confirmed or corrected in Task 12:
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/teams/selectors.test.ts`
 Expected: PASS (2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/teams.json packages/worker/src/adapters/teams/selectors.ts packages/worker/src/adapters/teams/selectors.test.ts
