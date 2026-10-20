@@ -1,7 +1,7 @@
 // docker/egress/deny-private.sh: private-range egress rules for runs that skip the server firewall (local holder,
 // home-route sidecar). `--print` is checked as text; the real rules are applied with iptables inside `unshare -Urn`
-// (a throwaway user and network namespace, no root needed). Without unshare the real-iptables tests skip, and in CI
-// (CI is set) they fail instead.
+// (a throwaway user and network namespace, no root needed). Without unshare the real-iptables tests skip, and with
+// TM_REQUIRE_NAMESPACES=1 (the CI `firewall` job, which allows user namespaces) they fail instead.
 import { afterAll, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -110,10 +110,10 @@ const checkNamespaces = Bun.spawnSync(['unshare', '-Urn', 'iptables', '-w', '30'
 const namespaces = checkNamespaces.exitCode === 0
 if (!namespaces) {
   const msg = `deny-private: unshare -Urn with iptables is unavailable (exit ${checkNamespaces.exitCode}): ${checkNamespaces.stderr.toString().trim()}`
-  if (!process.env.CI) console.warn(`${msg}; real-rule tests skipped`)
-  else console.error(`${msg}; forced in CI`)
+  if (process.env.TM_REQUIRE_NAMESPACES !== '1') console.warn(`${msg}; real-rule tests skipped`)
+  else console.error(`${msg}; TM_REQUIRE_NAMESPACES is set, so they run and fail`)
 }
-const real = namespaces || process.env.CI ? describe : describe.skip
+const real = namespaces || process.env.TM_REQUIRE_NAMESPACES === '1' ? describe : describe.skip
 
 const scratch = mkdtempSync(join(tmpdir(), 'tm-deny-private-'))
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
