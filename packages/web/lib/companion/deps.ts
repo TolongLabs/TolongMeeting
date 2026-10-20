@@ -2,7 +2,14 @@ import { NtfyConfigSchema, type NtfyConfig } from '@tm/core'
 import { eq } from 'drizzle-orm'
 import { getDb, members, type Db } from '../../db'
 import { loadMasterKey, openColumn } from '../../db/secrets'
-import { ATTEMPT_WINDOW_MS, AttemptLimiter, MAX_FAILURES_GLOBAL, MAX_FAILURES_PER_IP, type PairDeps } from './tokens'
+import {
+  ATTEMPT_WINDOW_MS,
+  AttemptLimiter,
+  MAX_FAILURES_GLOBAL,
+  MAX_FAILURES_PER_IP,
+  MAX_FAILURES_PER_PREFIX,
+  type PairDeps
+} from './tokens'
 
 /** The member's ntfy settings for a PC: the public ntfy URL, their topic and their token. `null` without a topic. */
 export async function ntfyConfigOf(
@@ -20,9 +27,9 @@ export async function ntfyConfigOf(
   return NtfyConfigSchema.parse({ url: ntfyUrl, topic: row.topic, token })
 }
 
-// One pair of limiters per process; Next.js reloads modules in development.
+// One set of limiters per process; Next.js reloads modules in development.
 const globalForLimiters = globalThis as typeof globalThis & {
-  __tmPairLimiters?: Pick<PairDeps, 'ipLimiter' | 'globalLimiter'>
+  __tmPairLimiters?: Pick<PairDeps, 'ipLimiter' | 'prefixLimiter' | 'globalLimiter'>
 }
 
 /** What the device routes run on (`withDevice`): `DATABASE_URL`. */
@@ -38,6 +45,7 @@ export function pairDeps(): PairDeps {
   const master = loadMasterKey()
   globalForLimiters.__tmPairLimiters ??= {
     ipLimiter: new AttemptLimiter(MAX_FAILURES_PER_IP, ATTEMPT_WINDOW_MS),
+    prefixLimiter: new AttemptLimiter(MAX_FAILURES_PER_PREFIX, ATTEMPT_WINDOW_MS),
     globalLimiter: new AttemptLimiter(MAX_FAILURES_GLOBAL, ATTEMPT_WINDOW_MS)
   }
   return {

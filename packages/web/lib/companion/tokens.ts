@@ -22,7 +22,7 @@ export type Db = Parameters<typeof createScope>[0]
 
 /** The characters of a pairing code: Crockford base32, which has no I, L, O or U. */
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-/** 10 characters from 32 are 50 bits, so 600 guesses in 15 minutes stay a negligible chance against one live code. */
+/** 10 characters from 32 are 50 bits, so the global cap below stays a brute-force bound, not an abuse guard. */
 const CODE_LENGTH = 10
 const NORMAL_CODE = /^[0-9A-HJKMNP-TV-Z]{10}$/
 /** `tmd_` and 32 random bytes in base64url. */
@@ -32,12 +32,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** A member may ask for this many codes in one code lifetime. */
 export const MAX_CODES_PER_WINDOW = 5
 /**
- * Pairing attempts allowed from one address (an IPv6 /64), and from everyone, in `ATTEMPT_WINDOW_MS`. An attempt is
- * counted when it starts and given back when it pairs. 12 hosts of 5 junk tries each (60) still leave room for a real
- * code, while 600 guesses a window against a 50-bit code stay far from a hit.
+ * Pairing attempts allowed in `ATTEMPT_WINDOW_MS` from one address (an IPv4 address or an IPv6 /64), from one IPv6
+ * /48 (a residential subscriber holds a /56 or /48 and can use thousands of /64s in it), and from everyone. An attempt
+ * is counted when it starts and given back when it pairs. The /64 and /48 tiers are what limit abuse by one network;
+ * the global cap only bounds brute force: 5000 per window is about 480 000 guesses a day against 2^50, and it is high
+ * enough that junk from many hosts cannot cheaply lock every member out.
  */
 export const MAX_FAILURES_PER_IP = 5
-export const MAX_FAILURES_GLOBAL = 600
+export const MAX_FAILURES_PER_PREFIX = 50
+export const MAX_FAILURES_GLOBAL = 5000
 export const ATTEMPT_WINDOW_MS = 15 * 60_000
 const MAX_PAIR_BODY_BYTES = 2048
 const PRUNE_AFTER_MS = 24 * 3_600_000
@@ -328,22 +331,31 @@ export interface PairDeps {
   /** The member's ntfy settings for the PC, or `null` when the member has none. */
   ntfyOf(memberId: string): Promise<NtfyConfig | null>
   ipLimiter: AttemptLimiter
+  /** Counts the attempts of an IPv6 /48. */
+  prefixLimiter: AttemptLimiter
   globalLimiter: AttemptLimiter
   now(): Date
 }
 
 const NO_STORE = { 'cache-control': 'no-store' }
 
-/** The address Caddy saw (it keeps only its own `X-Forwarded-For` entry), or one shared bucket without a valid one. */
-function clientKey(request: Request): string {
+/**
+ * The address Caddy saw (it keeps only its own `X-Forwarded-For` entry): the key of its address bucket (an IPv4 address
+ * or an IPv6 /64) and, for IPv6, the key of its /48. Without a valid address everything shares one bucket.
+ */
+function clientKeys(request: Request): { ip: string; prefix: string | null } {
   const last = request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim() ?? ''
   const version = isIP(last)
-  if (version === 4) return last
-  return version === 6 ? ipv6Key(last) : 'unknown'
+  if (version === 4) return { ip: last, prefix: null }
+  if (version !== 6) return { ip: 'unknown', prefix: null }
+  const words = ipv6Words(last)
+  const mapped = mappedIpv4(words)
+  if (mapped) return { ip: mapped, prefix: null }
+  return { ip: `v6:${words.slice(0, 4).join(':')}`, prefix: `v6/48:${words.slice(0, 3).join(':')}` }
 }
 
-/** An IPv6 address as its /64 prefix (one subscriber can use any address in it); an IPv4-mapped one as its IPv4. */
-function ipv6Key(address: string): string {
+/** An IPv6 address as its eight 4-digit lower-case hex groups. */
+function ipv6Words(address: string): string[] {
   let groups = address.split('%')[0]!.toLowerCase()
   const tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(groups)
   if (tail) {
@@ -355,13 +367,15 @@ function ipv6Key(address: string): string {
   const back = rest === undefined || rest === '' ? [] : rest.split(':')
   const all =
     rest === undefined ? front : [...front, ...Array<string>(8 - front.length - back.length).fill('0'), ...back]
-  const words = all.map((g) => g.padStart(4, '0'))
-  if (words.slice(0, 5).every((w) => w === '0000') && words[5] === 'ffff') {
-    const hi = parseInt(words[6]!, 16)
-    const lo = parseInt(words[7]!, 16)
-    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
-  }
-  return `v6:${words.slice(0, 4).join(':')}`
+  return all.map((g) => g.padStart(4, '0'))
+}
+
+/** The IPv4 address inside an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`), else `null`. */
+function mappedIpv4(words: string[]): string | null {
+  if (!words.slice(0, 5).every((w) => w === '0000') || words[5] !== 'ffff') return null
+  const hi = parseInt(words[6]!, 16)
+  const lo = parseInt(words[7]!, 16)
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
 }
 
 /** The body as text, or `null` when it is longer than `max` bytes. The stream is cut off at the cap. */
@@ -387,16 +401,21 @@ export async function readCapped(request: Request, max: number): Promise<string 
 /**
  * `POST /api/companion/pair`: the PC trades a code for its token. No session. Every failure is the same 400 with the same
  * body. Each attempt is counted before anything is awaited, and given back when it pairs, so parallel guesses can't
- * outrun the limits: after 5 attempts from one address (an IPv6 /64 counts as one) or 600 from anyone in 15 minutes
- * all attempts are refused the same way, without touching the database.
+ * outrun the limits: after 5 attempts from one address (an IPv6 /64 counts as one), 50 from one IPv6 /48 or 5000 from
+ * anyone in 15 minutes the attempts are refused the same way, without touching the database.
  */
 export async function handlePairRequest(request: Request, deps: PairDeps): Promise<Response> {
   const refuse = () => Response.json({ error: 'invalid_code' }, { status: 400, headers: NO_STORE })
   const now = deps.now()
-  const ip = clientKey(request)
+  const { ip, prefix } = clientKeys(request)
   if (!deps.ipLimiter.take(ip, now)) return refuse()
+  if (prefix !== null && !deps.prefixLimiter.take(prefix, now)) {
+    deps.ipLimiter.refund(ip, now)
+    return refuse()
+  }
   if (!deps.globalLimiter.take('all', now)) {
     deps.ipLimiter.refund(ip, now)
+    if (prefix !== null) deps.prefixLimiter.refund(prefix, now)
     return refuse()
   }
 
@@ -406,6 +425,7 @@ export async function handlePairRequest(request: Request, deps: PairDeps): Promi
   const paired = parsed.success ? await redeemPairingCode(deps.db, parsed.data, deps.ntfyOf, now) : null
   if (!paired) return refuse()
   deps.ipLimiter.refund(ip, now)
+  if (prefix !== null) deps.prefixLimiter.refund(prefix, now)
   deps.globalLimiter.refund('all', now)
   return Response.json(paired, { headers: NO_STORE })
 }

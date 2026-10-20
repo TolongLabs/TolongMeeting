@@ -19,6 +19,7 @@ import {
   MAX_CODES_PER_WINDOW,
   MAX_FAILURES_GLOBAL,
   MAX_FAILURES_PER_IP,
+  MAX_FAILURES_PER_PREFIX,
   newDeviceToken,
   normalisePairingCode,
   NtfyNotSetUpError,
@@ -254,6 +255,7 @@ describe('POST /api/companion/pair', () => {
       db,
       ntfyOf,
       ipLimiter: new AttemptLimiter(MAX_FAILURES_PER_IP, ATTEMPT_WINDOW_MS),
+      prefixLimiter: new AttemptLimiter(MAX_FAILURES_PER_PREFIX, ATTEMPT_WINDOW_MS),
       globalLimiter: new AttemptLimiter(MAX_FAILURES_GLOBAL, ATTEMPT_WINDOW_MS),
       now: () => clock.at,
       ...overrides,
@@ -336,10 +338,31 @@ describe('POST /api/companion/pair', () => {
     const a = await member()
     const { code } = await createPairingCode(a.scope, t0)
     const d = deps()
+    // Junk bodies fail before the database, so 5000 of them stay quick; they come from 2560 hosts, none near its own cap.
     for (let i = 0; i < MAX_FAILURES_GLOBAL; i++) {
-      await handlePairRequest(post({ code: '00000-00000', deviceName: 'PC' }, `198.51.100.${(i % 200) + 1}`), d)
+      await handlePairRequest(post('nope', `198.${18 + (i % 2)}.${Math.floor(i / 10) % 256}.${(i % 10) + 1}`), d)
     }
     expect((await handlePairRequest(post({ code, deviceName: 'PC' }, '192.0.2.1'), d)).status).toBe(400)
+    d.clock.at = min(16)
+    const { code: later } = await createPairingCode(a.scope, min(16))
+    expect((await handlePairRequest(post({ code: later, deviceName: 'PC' }, '192.0.2.1'), d)).status).toBe(200)
+  })
+
+  test('130 /64s inside one /48 hit the /48 tier and do not lock out another /48', async () => {
+    const a = await member()
+    const { code } = await createPairingCode(a.scope, t0)
+    const d = deps()
+    for (let i = 1; i <= 130; i++) await handlePairRequest(post('nope', `2001:db8:1:${i.toString(16)}::1`), d)
+    expect(d.prefixLimiter.locked('v6/48:2001:0db8:0001', t0)).toBe(true)
+    expect(d.globalLimiter.locked('all', t0)).toBe(false)
+    // A /64 of that /48 that has not tried yet is refused, even with the real code.
+    expect((await handlePairRequest(post({ code, deviceName: 'PC' }, '2001:db8:1:ffff::1'), d)).status).toBe(400)
+    // The refusals were not counted against the address buckets that had no attempt.
+    expect(d.ipLimiter.locked('v6:2001:0db8:0001:ffff', t0)).toBe(false)
+    // Another /48, an IPv4 address and the same code: all pair (the code is still unused).
+    expect((await handlePairRequest(post({ code, deviceName: 'PC' }, '2001:db8:2::1'), d)).status).toBe(200)
+    const { code: second } = await createPairingCode(a.scope, t0)
+    expect((await handlePairRequest(post({ code: second, deviceName: 'PC2' }, '203.0.113.50'), d)).status).toBe(200)
   })
 
   test('parallel wrong codes from one address are counted before they reach the database', async () => {
