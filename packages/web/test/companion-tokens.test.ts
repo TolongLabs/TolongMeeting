@@ -70,7 +70,7 @@ describe('pairing codes', () => {
   test('a code works once, within 10 minutes, whatever the typing', async () => {
     const a = await member()
     const { code, expiresAt } = await createPairingCode(a.scope, t0)
-    expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/)
+    expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/)
     expect(expiresAt).toEqual(min(10))
     expect(await redeemPairingCode(db, { code, deviceName: 'PC' }, ntfyOf, min(11))).toBeNull()
 
@@ -287,7 +287,7 @@ describe('POST /api/companion/pair', () => {
     const { code } = await createPairingCode(a.scope, t0)
     const d = deps()
     const bodies = [
-      { code: 'ZZZZ-ZZZZ', deviceName: 'PC' },
+      { code: 'ZZZZZ-ZZZZZ', deviceName: 'PC' },
       { code: used, deviceName: 'PC' },
       { code, deviceName: '' },
       { code, deviceName: 'PC', extra: 1 },
@@ -312,7 +312,7 @@ describe('POST /api/companion/pair', () => {
     const { code } = await createPairingCode(a.scope, t0)
     const d = deps()
     for (let i = 0; i < MAX_FAILURES_PER_IP; i++) {
-      expect((await handlePairRequest(post({ code: '0000-0000', deviceName: 'PC' }), d)).status).toBe(400)
+      expect((await handlePairRequest(post({ code: '00000-00000', deviceName: 'PC' }), d)).status).toBe(400)
     }
     d.clock.at = min(1)
     const locked = await handlePairRequest(post({ code, deviceName: 'PC' }), d)
@@ -337,9 +337,62 @@ describe('POST /api/companion/pair', () => {
     const { code } = await createPairingCode(a.scope, t0)
     const d = deps()
     for (let i = 0; i < MAX_FAILURES_GLOBAL; i++) {
-      await handlePairRequest(post({ code: '0000-0000', deviceName: 'PC' }, `198.51.100.${(i % 200) + 1}`), d)
+      await handlePairRequest(post({ code: '00000-00000', deviceName: 'PC' }, `198.51.100.${(i % 200) + 1}`), d)
     }
     expect((await handlePairRequest(post({ code, deviceName: 'PC' }, '192.0.2.1'), d)).status).toBe(400)
+  })
+
+  test('parallel wrong codes from one address are counted before they reach the database', async () => {
+    let transactions = 0
+    const counting = Object.create(db) as Db
+    counting.transaction = ((...args: Parameters<Db['transaction']>) => {
+      transactions++
+      return db.transaction(...args)
+    }) as Db['transaction']
+    const d = deps({ db: counting })
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => handlePairRequest(post({ code: '23456-789AB', deviceName: 'PC' }), d))
+    )
+    expect(results.map((r) => r.status)).toEqual(Array<number>(20).fill(400))
+    expect(transactions).toBeLessThanOrEqual(MAX_FAILURES_PER_IP)
+  })
+
+  test('a paired attempt is given back, so pairing again from the same address is never locked by it', async () => {
+    const a = await member()
+    const d = deps()
+    for (let i = 0; i < MAX_FAILURES_PER_IP + 2; i++) {
+      const { code } = await createPairingCode(a.scope, t0)
+      expect((await handlePairRequest(post({ code, deviceName: `PC${i}` }), d)).status).toBe(200)
+      await db.delete(deviceTokens).where(eq(deviceTokens.memberId, a.memberId))
+      await db.delete(devicePairings).where(eq(devicePairings.memberId, a.memberId))
+    }
+  })
+
+  test('an IPv6 /64 is one address; another /64 and an IPv4-mapped address are told apart', async () => {
+    const a = await member()
+    const { code } = await createPairingCode(a.scope, t0)
+    const d = deps()
+    for (let i = 0; i < MAX_FAILURES_PER_IP; i++) {
+      await handlePairRequest(post('nope', `2001:db8:1:2:${i}::${i + 1}`), d)
+    }
+    expect(d.ipLimiter.locked('v6:2001:0db8:0001:0002', t0)).toBe(true)
+    for (const ip of ['2001:db8:1:2::1', '2001:DB8:1:2:ffff:ffff:ffff:ffff']) {
+      expect((await handlePairRequest(post({ code, deviceName: 'PC' }, ip), d)).status).toBe(400)
+    }
+    for (let i = 0; i < MAX_FAILURES_PER_IP; i++) await handlePairRequest(post('nope', '::ffff:203.0.113.8'), d)
+    expect(d.ipLimiter.locked('203.0.113.8', t0)).toBe(true)
+    // The code was never used by those refusals; another /64 pairs.
+    expect((await handlePairRequest(post({ code, deviceName: 'PC' }, '2001:db8:1:3::1'), d)).status).toBe(200)
+  })
+
+  test('12 hosts with 5 junk tries each do not lock a real code out', async () => {
+    const a = await member()
+    const { code } = await createPairingCode(a.scope, t0)
+    const d = deps()
+    for (let host = 1; host <= 12; host++) {
+      for (let i = 0; i < 5; i++) await handlePairRequest(post('nope', `198.51.100.${host}`), d)
+    }
+    expect((await handlePairRequest(post({ code, deviceName: 'PC' }, '192.0.2.1'), d)).status).toBe(200)
   })
 
   test('an address comes from the last X-Forwarded-For entry, never from what a client wrote first', async () => {
@@ -357,7 +410,7 @@ describe('POST /api/companion/pair', () => {
     const d = deps()
     let token = ''
     await expectNotLogged(normalisePairingCode(code), async () => {
-      await handlePairRequest(post({ code: '0000-0000', deviceName: 'PC' }), d)
+      await handlePairRequest(post({ code: '00000-00000', deviceName: 'PC' }), d)
       const ok = await handlePairRequest(post({ code, deviceName: 'PC' }), d)
       token = ((await ok.json()) as { token: string }).token
     })
@@ -378,7 +431,7 @@ describe('member routes', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('no-store')
     const body = (await res.json()) as { code: string; expiresAt: string }
-    expect(body.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/)
+    expect(body.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/)
     expect(body.expiresAt).toBe(min(10).toISOString())
   })
 

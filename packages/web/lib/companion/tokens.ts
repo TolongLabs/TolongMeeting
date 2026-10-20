@@ -22,17 +22,22 @@ export type Db = Parameters<typeof createScope>[0]
 
 /** The characters of a pairing code: Crockford base32, which has no I, L, O or U. */
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-const CODE_LENGTH = 8
-const NORMAL_CODE = /^[0-9A-HJKMNP-TV-Z]{8}$/
+/** 10 characters from 32 are 50 bits, so 600 guesses in 15 minutes stay a negligible chance against one live code. */
+const CODE_LENGTH = 10
+const NORMAL_CODE = /^[0-9A-HJKMNP-TV-Z]{10}$/
 /** `tmd_` and 32 random bytes in base64url. */
 const BEARER = /^Bearer (tmd_[A-Za-z0-9_-]{43})$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** A member may ask for this many codes in one code lifetime. */
 export const MAX_CODES_PER_WINDOW = 5
-/** Wrong or malformed pairing attempts allowed from one address, and from everyone, in `ATTEMPT_WINDOW_MS`. */
+/**
+ * Pairing attempts allowed from one address (an IPv6 /64), and from everyone, in `ATTEMPT_WINDOW_MS`. An attempt is
+ * counted when it starts and given back when it pairs. 12 hosts of 5 junk tries each (60) still leave room for a real
+ * code, while 600 guesses a window against a 50-bit code stay far from a hit.
+ */
 export const MAX_FAILURES_PER_IP = 5
-export const MAX_FAILURES_GLOBAL = 60
+export const MAX_FAILURES_GLOBAL = 600
 export const ATTEMPT_WINDOW_MS = 15 * 60_000
 const MAX_PAIR_BODY_BYTES = 2048
 const PRUNE_AFTER_MS = 24 * 3_600_000
@@ -69,7 +74,7 @@ export function normalisePairingCode(input: string): string {
 
 function newCode(): string {
   const chars = Array.from({ length: CODE_LENGTH }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)])
-  return `${chars.slice(0, 4).join('')}-${chars.slice(4).join('')}`
+  return `${chars.slice(0, 5).join('')}-${chars.slice(5).join('')}`
 }
 
 export class NtfyNotSetUpError extends Error {
@@ -255,7 +260,7 @@ export async function revokeDevice(scope: MemberScope, deviceId: string, now: Da
   )
 }
 
-/** Failures per key in a sliding window. A key with `max` failures in the window is locked until the oldest ages out. */
+/** Attempts per key in a sliding window. A key with `max` attempts in the window is locked until the oldest ages out. */
 export class AttemptLimiter {
   private readonly failures = new Map<string, number[]>()
 
@@ -275,6 +280,28 @@ export class AttemptLimiter {
     if (list.length > this.max) list.shift()
     this.failures.set(key, list)
     if (this.failures.size > this.maxKeys) this.evict(now)
+  }
+
+  /**
+   * Counts an attempt now, before any `await`, so parallel attempts can't all pass a `locked` check. `false` (and
+   * nothing counted) when the key is already full. `refund` gives it back.
+   */
+  take(key: string, now: Date): boolean {
+    const list = this.recent(key, now)
+    if (list.length >= this.max) return false
+    list.push(now.getTime())
+    this.failures.set(key, list)
+    if (this.failures.size > this.maxKeys) this.evict(now)
+    return true
+  }
+
+  /** Gives back the attempt `take` counted at `now`. */
+  refund(key: string, now: Date): void {
+    const list = this.recent(key, now)
+    const at = list.lastIndexOf(now.getTime())
+    if (at !== -1) list.splice(at, 1)
+    if (list.length === 0) this.failures.delete(key)
+    else this.failures.set(key, list)
   }
 
   private recent(key: string, now: Date): number[] {
@@ -308,7 +335,31 @@ const NO_STORE = { 'cache-control': 'no-store' }
 /** The address Caddy saw (it keeps only its own `X-Forwarded-For` entry), or one shared bucket without a valid one. */
 function clientKey(request: Request): string {
   const last = request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim() ?? ''
-  return isIP(last) ? last : 'unknown'
+  const version = isIP(last)
+  if (version === 4) return last
+  return version === 6 ? ipv6Key(last) : 'unknown'
+}
+
+/** An IPv6 address as its /64 prefix (one subscriber can use any address in it); an IPv4-mapped one as its IPv4. */
+function ipv6Key(address: string): string {
+  let groups = address.split('%')[0]!.toLowerCase()
+  const tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(groups)
+  if (tail) {
+    const [a, b, c, d] = tail.slice(1).map(Number) as [number, number, number, number]
+    groups = groups.slice(0, tail.index) + `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
+  }
+  const [head = '', rest] = groups.split('::')
+  const front = head === '' ? [] : head.split(':')
+  const back = rest === undefined || rest === '' ? [] : rest.split(':')
+  const all =
+    rest === undefined ? front : [...front, ...Array<string>(8 - front.length - back.length).fill('0'), ...back]
+  const words = all.map((g) => g.padStart(4, '0'))
+  if (words.slice(0, 5).every((w) => w === '0000') && words[5] === 'ffff') {
+    const hi = parseInt(words[6]!, 16)
+    const lo = parseInt(words[7]!, 16)
+    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+  }
+  return `v6:${words.slice(0, 4).join(':')}`
 }
 
 /** The body as text, or `null` when it is longer than `max` bytes. The stream is cut off at the cap. */
@@ -333,23 +384,27 @@ export async function readCapped(request: Request, max: number): Promise<string 
 
 /**
  * `POST /api/companion/pair`: the PC trades a code for its token. No session. Every failure is the same 400 with the same
- * body, and after 5 failures from one address (or 60 from anyone) in 15 minutes all attempts are refused the same way.
+ * body. Each attempt is counted before anything is awaited, and given back when it pairs, so parallel guesses can't
+ * outrun the limits: after 5 attempts from one address (an IPv6 /64 counts as one) or 600 from anyone in 15 minutes
+ * all attempts are refused the same way, without touching the database.
  */
 export async function handlePairRequest(request: Request, deps: PairDeps): Promise<Response> {
   const refuse = () => Response.json({ error: 'invalid_code' }, { status: 400, headers: NO_STORE })
   const now = deps.now()
   const ip = clientKey(request)
-  if (deps.ipLimiter.locked(ip, now) || deps.globalLimiter.locked('all', now)) return refuse()
+  if (!deps.ipLimiter.take(ip, now)) return refuse()
+  if (!deps.globalLimiter.take('all', now)) {
+    deps.ipLimiter.refund(ip, now)
+    return refuse()
+  }
 
   const raw = await readCapped(request, MAX_PAIR_BODY_BYTES)
   const body = raw === null ? null : parseJson(raw)
   const parsed = PairRequestSchema.safeParse(body)
   const paired = parsed.success ? await redeemPairingCode(deps.db, parsed.data, deps.ntfyOf, now) : null
-  if (!paired) {
-    deps.ipLimiter.fail(ip, now)
-    deps.globalLimiter.fail('all', now)
-    return refuse()
-  }
+  if (!paired) return refuse()
+  deps.ipLimiter.refund(ip, now)
+  deps.globalLimiter.refund('all', now)
   return Response.json(paired, { headers: NO_STORE })
 }
 
