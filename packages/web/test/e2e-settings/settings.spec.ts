@@ -8,9 +8,10 @@ test.describe.configure({ mode: 'serial' })
 
 const state = (): SettingsE2eState => JSON.parse(readFileSync(STATE_FILE, 'utf8'))
 
-const GOOD_KEY = 'sk-e2e-good-key-4242'
-const BAD_KEY = 'sk-e2e-bad-key-0000'
-const MODELSCOPE_KEY = 'ms-e2e-good-key-7777'
+// The page shows a key's last four characters only for keys of 24 characters or more (lib/ai-keys.ts).
+const GOOD_KEY = 'sk-e2e-good-key-long-enough-4242'
+const BAD_KEY = 'sk-e2e-bad-key-long-enough-0000'
+const MODELSCOPE_KEY = 'ms-e2e-good-key-long-enough-7777'
 const NTFY_TOKEN = 'tk_e2e_secret_token'
 const SECRETS = [GOOD_KEY, BAD_KEY, MODELSCOPE_KEY, NTFY_TOKEN]
 
