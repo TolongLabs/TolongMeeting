@@ -5,7 +5,9 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
+import { PgBoss } from 'pg-boss'
 import { schema } from '../../db'
+import { QUEUES } from '../../db/queues'
 import { createTestDb, dropAllTestDbs, seedAuthUser, seedMember, testDbUrl, TEST_MASTER } from '../../db/testing'
 import { createAuth } from '../../lib/auth'
 import { STATE_FILE, type E2eState } from './state'
@@ -80,6 +82,14 @@ await db.insert(schema.occurrences).values([
   }
 ])
 
+// Saving an entry needs the queues pg-boss sends to (the scheduler makes them in production) and an ntfy server that
+// accepts a member's setup and pings. The stand-in answers every request with a token and keeps nothing.
+const boss = new PgBoss({ connectionString: testDbUrl(db), supervise: false, schedule: false })
+await boss.start()
+for (const queue of Object.values(QUEUES)) await boss.createQueue(queue)
+await boss.stop({ graceful: false })
+const ntfy = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => Response.json({ token: 'tk_e2e' }) })
+
 const state: E2eState = { cookies: { admin: admin.cookie, member: member.cookie } }
 mkdirSync(tmpdir(), { recursive: true })
 writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 })
@@ -93,7 +103,9 @@ const env = {
   GITHUB_CLIENT_ID: 'e2e-client-id',
   GITHUB_CLIENT_SECRET: 'e2e-client-secret',
   GITHUB_ORG: 'tolonglabs',
-  TM_MASTER_KEY_FILE: keyFile
+  TM_MASTER_KEY_FILE: keyFile,
+  NTFY_URL: `http://127.0.0.1:${ntfy.port}`,
+  NTFY_ADMIN_TOKEN: 'e2e-ntfy-admin'
 }
 
 // The whole site, as production builds it. TM_E2E_BUILD_PATHS (comma-separated globs) narrows it to speed up a run.
@@ -116,6 +128,7 @@ const site = Bun.spawn(['bun', '--bun', 'next', 'start', '-H', '127.0.0.1', '-p'
 })
 
 async function cleanup() {
+  await ntfy.stop(true)
   rmSync(keyFile, { force: true })
   rmSync(STATE_FILE, { force: true })
   await dropAllTestDbs()
