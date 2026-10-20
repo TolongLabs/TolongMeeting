@@ -202,7 +202,7 @@ git commit -m "feat(core): add chat ids and watch gate"
 **Files:**
 
 - Create: `packages/worker/src/watchers/rules.ts`
-- Test: `packages/worker/src/watchers/rules.test.ts`
+- Test: `packages/worker/test/watchers/rules.test.ts`
 
 **Interfaces:**
 
@@ -226,10 +226,10 @@ export function messageSignature(m: ChatMessage): string // `${key}|${sorted lin
 
 `splitLinks` keeps `https:` links only, removes duplicates and keeps message order; `meeting` holds those for which `adapterFor(url)` isn't null, `other` the rest.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
-// packages/worker/src/watchers/rules.test.ts
+// packages/worker/test/watchers/rules.test.ts
 const ZOOM = 'https://example.zoom.us/j/00000000001?pwd=PASSCODE'
 const FORM = 'https://forms.gle/TESTFORM1'
 const msg = (links: string[], key = 'k1'): ChatMessage => ({
@@ -266,23 +266,23 @@ test('an edited message with a new link has a new signature', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/worker/src/watchers/rules.test.ts`
+Run: `bun test packages/worker/test/watchers/rules.test.ts`
 Expected: FAIL with `Cannot find module './rules'`.
 
-- [ ] **Step 3: Implement `packages/worker/src/watchers/rules.ts`**
+- [x] **Step 3: Implement `packages/worker/src/watchers/rules.ts`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/worker/src/watchers/rules.test.ts`
+Run: `bun test packages/worker/test/watchers/rules.test.ts`
 Expected: PASS, `4 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/watchers/rules* docs/TRD.md
-git commit -m "feat(worker): add watcher rules"
+git commit -m "feat(worker): watcher link rules"
 ```
 
 ### Task 3: Watcher loop
