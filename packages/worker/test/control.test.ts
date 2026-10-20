@@ -2,8 +2,11 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test'
 import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ControlCommand, Heartbeat, HeartbeatReply, JobConfig, MeetingEvent } from '@tm/core'
+import type { Heartbeat, HeartbeatReply, JobConfig, MeetingEvent } from '@tm/core'
+import type { Page } from 'playwright'
+import type { MeetingState, PlatformAdapter } from '../src/adapters/types'
 import { dispatchCommands } from '../src/control/commands'
+import { leaveMeeting } from '../src/control/leave'
 import { backoffDelayMs, startHeartbeat, type HeartbeatOptions } from '../src/control/heartbeat'
 import { LinkOverride } from '../src/control/link-override'
 import { siteLinks } from '../src/control/links'
@@ -472,17 +475,142 @@ test('a reply body over 64 KB is refused unread', async () => {
   expect(problems).toEqual(['heartbeat reply is not valid'])
 })
 
-test('commands run in order and leave runs once per batch', async () => {
+test('leave runs once per batch, as take_over when one was sent', async () => {
   const calls: string[] = []
   const h = {
-    leave: async () => void calls.push('leave'),
+    leave: async (c: string) => void calls.push(`leave:${c}`),
     stop: async () => void calls.push('stop'),
     pause: async () => void calls.push('pause'),
     resume: async () => void calls.push('resume')
   }
-  const batch: ControlCommand[] = ['pause_for_signin', 'leave_now', 'take_over', 'resume_after_signin', 'stop']
-  await dispatchCommands(batch, h)
-  expect(calls).toEqual(['pause', 'leave', 'resume', 'stop'])
+  await dispatchCommands(['pause_for_signin', 'leave_now', 'take_over', 'resume_after_signin'], h)
+  expect(calls).toEqual(['pause', 'leave:take_over', 'resume'])
+  calls.length = 0
+  await dispatchCommands(['leave_now', 'leave_now', 'stop'], h)
+  expect(calls).toEqual(['leave:leave_now', 'stop'])
+  calls.length = 0
+  await dispatchCommands(['take_over'], h)
+  expect(calls).toEqual(['leave:take_over'])
+})
+
+// A stage page and an adapter answering `meetingState` from a queue (the last answer repeats). `leaveSetsEnded` makes
+// `leave` switch the answer to 'ended'.
+function fakeStage() {
+  const stage = {
+    closeCalls: 0,
+    closeOpts: undefined as unknown,
+    close: async (o?: unknown) => void (stage.closeCalls++, (stage.closeOpts = o))
+  }
+  return stage
+}
+function fakeAdapter(states: MeetingState[], opts: { leaveSetsEnded?: boolean } = {}) {
+  const queue = [...states]
+  const a = {
+    leaveCalls: 0,
+    stateCalls: 0,
+    meetingState: async (): Promise<MeetingState> => {
+      a.stateCalls++
+      return queue.length > 1 ? queue.shift()! : queue[0]!
+    },
+    leave: async () => {
+      a.leaveCalls++
+      if (opts.leaveSetsEnded) queue.splice(0, queue.length, 'ended')
+    }
+  }
+  return a
+}
+const asPage = (s: ReturnType<typeof fakeStage>) => s as unknown as Page
+const asAdapter = (a: ReturnType<typeof fakeAdapter>) => a as unknown as PlatformAdapter
+const FASTLEAVE = { confirmMs: 200, pollMs: 10 }
+
+test('leave in the meeting confirms without closing the stage', async () => {
+  const stage = fakeStage()
+  const a = fakeAdapter(['in_meeting'], { leaveSetsEnded: true })
+  expect(await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)).toBe('left')
+  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 0])
+})
+
+test('leave in the lobby clicks leave too, and a slow leave is waited for', async () => {
+  const stage = fakeStage()
+  const a = fakeAdapter(['lobby', 'lobby', 'lobby', 'unknown'])
+  expect(await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)).toBe('left')
+  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 0])
+})
+
+test('a leave that does not take closes the stage before reporting', async () => {
+  const stage = fakeStage()
+  const a = fakeAdapter(['in_meeting'])
+  const t = performance.now()
+  expect(await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)).toBe('closed')
+  expect(stage.closeCalls).toBe(1)
+  expect(stage.closeOpts).toEqual({ runBeforeUnload: false })
+  expect(performance.now() - t).toBeLessThan(1_000)
+})
+
+test('a leave that throws closes the stage; no meeting means nothing to click', async () => {
+  const stage = fakeStage()
+  const a = fakeAdapter(['lobby'])
+  a.leave = async () => {
+    throw new Error('button gone')
+  }
+  expect(await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)).toBe('closed')
+  expect(stage.closeCalls).toBe(1)
+  for (const state of ['unknown', 'ended', 'removed', 'breakout_prompt'] as const) {
+    const idle = fakeAdapter([state])
+    const idleStage = fakeStage()
+    expect(await leaveMeeting(asPage(idleStage), asAdapter(idle))).toBe('left')
+    expect([idle.leaveCalls, idleStage.closeCalls]).toEqual([0, 0])
+  }
+})
+
+test('a repeated leave is idempotent: the second finds the meeting over and clicks nothing', async () => {
+  const stage = fakeStage()
+  const a = fakeAdapter(['in_meeting'], { leaveSetsEnded: true })
+  const results = [
+    await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE),
+    await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)
+  ]
+  expect(results).toEqual(['left', 'left'])
+  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 0])
+})
+
+test('a leave during a form submit waits for the Submit to settle and never interrupts it', async () => {
+  // The Submit runs on a desk tab. The leave handler lets the single Submit settle, then leaves on the stage only.
+  const stage = fakeStage()
+  const a = fakeAdapter(['in_meeting'], { leaveSetsEnded: true })
+  const log: string[] = []
+  let finishSubmit!: () => void
+  const submit = new Promise<void>((resolve) => (finishSubmit = resolve)).then(() => void log.push('submit settled'))
+  const h = {
+    leave: async (c: string) => {
+      await submit
+      log.push(`leave:${c}`)
+      log.push(await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE))
+    },
+    stop: async () => undefined,
+    pause: async () => undefined,
+    resume: async () => undefined
+  }
+  const dispatched = dispatchCommands(['leave_now', 'leave_now'], h)
+  await Bun.sleep(30)
+  expect([a.leaveCalls, stage.closeCalls, log]).toEqual([0, 0, []])
+  finishSubmit()
+  await dispatched
+  expect(log).toEqual(['submit settled', 'leave:leave_now', 'left'])
+  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 0])
+})
+
+test('take-over leaves the same way and tells the handler it was a take_over', async () => {
+  const stage = fakeStage()
+  const a = fakeAdapter(['in_meeting'], { leaveSetsEnded: true })
+  const seen: string[] = []
+  await dispatchCommands(['take_over'], {
+    leave: async (c) => void seen.push(c, await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)),
+    stop: async () => undefined,
+    pause: async () => undefined,
+    resume: async () => undefined
+  })
+  expect(seen).toEqual(['take_over', 'left'])
 })
 
 test('the pasted link wins once; the same or a refused link changes nothing', async () => {

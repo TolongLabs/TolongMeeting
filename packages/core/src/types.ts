@@ -109,6 +109,7 @@ export interface Heartbeat {
   recording: boolean
   participants: number | null
   events: MeetingEvent[] // events since the last acknowledged heartbeat
+  linkUsed?: string // the link the worker joined with, before normaliseLink (https only)
 }
 
 export interface HeartbeatReply {

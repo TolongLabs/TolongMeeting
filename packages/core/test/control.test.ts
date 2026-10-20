@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
-import type { HeartbeatReply } from '../src/types'
+import type { Heartbeat, HeartbeatReply } from '../src/types'
 import type { SigninHeartbeat } from '../src/control'
 import {
   ControlCommandSchema,
   HeartbeatReplySchema,
+  HeartbeatSchema,
   HeartbeatReplyShapeSchema,
   MAX_HEARTBEAT_EVENTS,
   SigninEventDataSchema,
@@ -100,4 +101,29 @@ test('a joining state event carries the link source and host, and the URL itself
     false
   )
   expect(StateEventDataSchema.safeParse({ state: 'joining', link: { source: 'fixed', host: '' } }).success).toBe(false)
+})
+
+const hb = (): Heartbeat => ({
+  occurrenceId: '6f1c0a52-3c1e-4c1f-8f0e-2d6f6a1d9b11',
+  attempt: 1,
+  state: 'in_meeting',
+  recording: true,
+  participants: 3,
+  events: []
+})
+
+test('a heartbeat may carry the joined link, https only and bounded', () => {
+  const linkUsed = 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
+  expect(HeartbeatSchema.parse({ ...hb(), linkUsed }).linkUsed).toBe(linkUsed)
+  expect(HeartbeatSchema.safeParse(hb()).success).toBe(true)
+  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'javascript:alert(1)' }).success).toBe(false)
+  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'http://example.zoom.us/j/1' }).success).toBe(false)
+  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: `https://example.zoom.us/${'a'.repeat(2048)}` }).success).toBe(
+    false
+  )
+})
+
+test('a left_by_member state event may name the command that ended the meeting', () => {
+  expect(StateEventDataSchema.parse({ state: 'left_by_member', command: 'take_over' }).command).toBe('take_over')
+  expect(StateEventDataSchema.safeParse({ state: 'left_by_member', command: 'stop' }).success).toBe(false)
 })

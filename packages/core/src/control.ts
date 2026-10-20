@@ -18,6 +18,8 @@ export const JOINED_LINK_SOURCES = ['fixed', 'watched', 'pasted'] as const
 /** What a worker `state` event carries when the state changed. `link` (host only, never the URL) rides on `joining`. */
 export type StateEventData = {
   state: OccurrenceState
+  /** Only on `left_by_member`: the command that ended the meeting. */
+  command?: 'leave_now' | 'take_over'
   link?: { source: (typeof JOINED_LINK_SOURCES)[number]; host: string }
 }
 
@@ -80,9 +82,16 @@ export const OccurrenceStateSchema = z.enum(keysOf(OCCURRENCE_STATE_TABLE))
 export const AccountKindSchema = z.enum(ACCOUNT_KINDS)
 export const StateEventDataSchema = z.object({
   state: OccurrenceStateSchema,
+  command: z.enum(['leave_now', 'take_over']).optional(),
   link: z.object({ source: z.enum(JOINED_LINK_SOURCES), host: z.string().min(1).max(255) }).optional()
 }) satisfies z.ZodType<StateEventData>
 export const AccountCheckDataSchema = z.object({ account: AccountKindSchema, signedIn: z.boolean() })
+
+/** An `https:` URL of at most 2,048 characters. */
+const httpsUrl = z
+  .string()
+  .max(2048)
+  .refine((v) => URL.canParse(v) && new URL(v).protocol === 'https:', 'must be an https URL')
 
 const stamp = z.iso.datetime({ offset: true })
 
@@ -104,7 +113,8 @@ export const HeartbeatSchema = z.object({
   state: OccurrenceStateSchema,
   recording: z.boolean(),
   participants: z.int().min(0).max(1_000_000).nullable(),
-  events: z.array(MeetingEventSchema).max(MAX_HEARTBEAT_EVENTS)
+  events: z.array(MeetingEventSchema).max(MAX_HEARTBEAT_EVENTS),
+  linkUsed: httpsUrl.optional()
 }) satisfies z.ZodType<Heartbeat>
 
 export const ControlCommandSchema = z.enum(keysOf(CONTROL_COMMAND_TABLE))
