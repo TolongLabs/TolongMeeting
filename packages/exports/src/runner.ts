@@ -186,6 +186,7 @@ async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], prog
     connection = found.connection
   }
 
+  const previousUrl = kind === null ? null : await deps.store.previousUrl(row)
   const outDir = join(occurrence.dataDir, 'exports')
   try {
     const result = await withTimeout(deps.timeoutMs ?? EXPORT_TIMEOUT_MS, async (signal) => {
@@ -197,6 +198,7 @@ async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], prog
         memberId: row.memberId,
         outDir,
         connection,
+        previousUrl,
         saveConnection: async (c) => {
           // A rotated token is a secret from now on too.
           secrets.push(...tokensOf(c))

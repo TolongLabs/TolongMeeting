@@ -56,6 +56,18 @@ export function memoryStores(seed?: {
         throw new Error(`Export ${id} is not queued or running`)
       Object.assign(row, { status: 'failed', errorCode: code, error: message, finishedAt: now() })
     },
+    async previousUrl(row) {
+      const earlier = rows.filter(
+        (r) =>
+          r.id !== row.id &&
+          r.memberId === row.memberId &&
+          r.occurrenceId === row.occurrenceId &&
+          r.target === row.target &&
+          r.status === 'succeeded' &&
+          r.url !== null
+      )
+      return earlier.at(-1)?.url ?? null
+    },
     async failInterrupted() {
       const stale = rows.filter((r) => r.status === 'running')
       for (const row of stale) {

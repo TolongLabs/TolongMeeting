@@ -17,3 +17,10 @@ export {
   toExportView
 } from './api'
 export type { ApiDeps, ApiResult, ExportView } from './api'
+export {
+  beginNotionConnect,
+  completeNotionConnect,
+  notionClientFromEnv,
+  notionParentsRequest,
+  selectNotionParentRequest
+} from './connections/notion'

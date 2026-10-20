@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm'
 import { exports as exportsTable, occurrences, type Db } from '@tm/web/db'
 import { safeDbError } from '@tm/web/db/errors'
 import { toExportRow } from '@tm/web/db/exports'
@@ -67,6 +67,29 @@ export function runnerStore(db: Db): RunnerStore {
         throw safeDbError(e)
       }
       if (rows.length === 0) throw new Error(`Export ${id} is not queued or running`)
+    },
+
+    async previousUrl(row) {
+      try {
+        const [found] = await db
+          .select({ url: exportsTable.url })
+          .from(exportsTable)
+          .where(
+            and(
+              eq(exportsTable.memberId, row.memberId),
+              eq(exportsTable.occurrenceId, row.occurrenceId),
+              eq(exportsTable.target, row.target),
+              eq(exportsTable.status, 'succeeded'),
+              isNotNull(exportsTable.url),
+              ne(exportsTable.id, row.id)
+            )
+          )
+          .orderBy(desc(exportsTable.finishedAt), desc(exportsTable.id))
+          .limit(1)
+        return found?.url ?? null
+      } catch (e) {
+        throw safeDbError(e)
+      }
     },
 
     async failInterrupted() {

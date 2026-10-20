@@ -75,6 +75,8 @@ export interface RunnerStore {
   succeed(id: string, title: string, r: ExportResult): Promise<void>
   /** `message` is cleaned with `redact` (also removing `secrets`, the tokens of the opened connection) before it is stored. Throws when the export is neither queued nor running. */
   fail(id: string, code: ExportErrorCode, message: string, secrets?: readonly string[]): Promise<void>
+  /** The `url` of the latest earlier export of the same member, meeting and target that succeeded with one, else null. */
+  previousUrl(row: ExportRow): Promise<string | null>
   /** Running exports become failed with code 'interrupted' (the runner restarted). Returns them. */
   failInterrupted(): Promise<ExportRow[]>
   /** Deletes the rows of occurrences in state 'deleted'. Returns how many. */

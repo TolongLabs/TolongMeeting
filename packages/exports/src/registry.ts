@@ -1,5 +1,6 @@
 import { createGdocsTarget } from './targets/gdocs'
 import { githubTarget } from './targets/github'
+import { createNotionTarget } from './targets/notion'
 import { pdfTarget } from './targets/pdf'
 import { zipTarget } from './targets/zip'
 import type { ExportTarget, ExportTargetId, OAuthClient } from './types'
@@ -36,6 +37,7 @@ export function buildTargets(clients: {
     zip: zipTarget,
     pdf: pdfTarget,
     github: githubTarget,
-    ...(clients.google ? { gdocs: createGdocsTarget(clients.google) } : {})
+    ...(clients.google ? { gdocs: createGdocsTarget(clients.google) } : {}),
+    ...(clients.notion ? { notion: createNotionTarget(clients.notion) } : {})
   }
 }

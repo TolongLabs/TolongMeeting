@@ -39,7 +39,7 @@ beforeEach(async () => {
   await db.delete(exportsTable)
 })
 
-const queue = (occurrenceId: string, target: 'zip' | 'pdf' | 'github') => {
+const queue = (occurrenceId: string, target: 'zip' | 'pdf' | 'github' | 'notion') => {
   const created = memberExports(createScope(db, m1)).create(occurrenceId, target)
   return created.then((r) => {
     if (!r.ok) throw new Error(r.message)
@@ -97,6 +97,24 @@ describe('runner store', () => {
     await runner.fail(a.id, 'failed', 'GitHub echoed my-odd-token-value in the body', ['my-odd-token-value', 'short'])
     const [row] = await db.select().from(exportsTable).where(eq(exportsTable.id, a.id))
     expect(row!.error).toBe('GitHub echoed [redacted] in the body')
+  })
+
+  test('previousUrl is the latest earlier success with an address, for the same meeting and target', async () => {
+    const first = await queue(o1, 'notion')
+    await runner.claimNext()
+    await runner.succeed(first.id, 't', { url: 'https://www.notion.so/A-1', filePath: null, note: null })
+    await Bun.sleep(5)
+    const second = await queue(o1, 'notion')
+    expect(await runner.previousUrl(second)).toBe('https://www.notion.so/A-1')
+    await runner.claimNext()
+    await runner.succeed(second.id, 't', { url: 'https://www.notion.so/A-2', filePath: null, note: null })
+    const third = await queue(o1, 'notion')
+    expect(await runner.previousUrl(third)).toBe('https://www.notion.so/A-2')
+    // Another target, a failed export and the export itself never count.
+    expect(await runner.previousUrl(await queue(o1, 'github'))).toBeNull()
+    await runner.claimNext()
+    await runner.fail(third.id, 'failed', 'no')
+    expect(await runner.previousUrl(second)).toBe('https://www.notion.so/A-1')
   })
 
   test('failInterrupted fails running exports and returns them', async () => {

@@ -45,7 +45,7 @@ Contents:
 - Export tokens are encrypted at rest (AES-256-GCM under a key derived with HKDF from the master key in `TM_MASTER_KEY_FILE`), never logged, never returned by the website's API (the one exception is the one-hour Google access token the Picker needs in the member's own browser), and never put in the query string of the app's own URLs.
 - A member reaches only their own meetings, exports and connections; anything else answers 404. Export and connection routes accept the website session only, never a companion device token.
 - Exports are the member's own copies: retention (30 days) and "delete now" remove the server-side export records and files with the meeting, and never touch exported documents, pages or commits.
-- Re-exporting never edits or deletes an earlier Google Doc or Notion page; GitHub re-exports commit over the same folder, so Git history keeps older versions.
+- Re-exporting never edits or deletes an earlier Google Doc; a Notion re-export updates only the page the member's own earlier export made (found from that export's stored address, and only while it is still under the chosen parent), and never another page; GitHub re-exports commit over the same folder, so Git history keeps older versions.
 - Pings never contain meeting passcodes or tokens.
 
 ## Review Focus
@@ -53,7 +53,7 @@ Contents:
 - **Awkward entry names**: names with `/`, `:`, `?`, quotes, accented Malay or 100-plus characters must give a valid zip folder, download file name, repository path and document title, never a path escape or a broken header (tests in tasks 1 and 8).
 - **Big meetings**: a 2-hour transcript with paragraphs over 2,000 characters and 60 or more slides must export whole within Notion's 2,000-character, 100-block and 3-requests-per-second limits and GitHub's 80 content-creating requests per minute, rather than fail halfway (tests in tasks 8, 11 and 12).
 - **Connections that stopped working**: a revoked Google grant, an expired GitHub token, a Notion integration removed from the page, or a deleted export folder must fail the export with a message that names the fix, flag the connection "Reconnect" and ping, never fail silently (tests in tasks 6, 8, 10 and 12).
-- **Double clicks and re-exports**: a second click while an export is queued or running must not start another; exporting to GitHub again must delete stale slide files or report "already up to date"; exporting to Google Docs or Notion again must never edit or delete the member's earlier copy (tests in tasks 5, 7, 8 and 10).
+- **Double clicks and re-exports**: a second click while an export is queued or running must not start another; exporting to GitHub again must delete stale slide files or report "already up to date"; exporting to Google Docs again must never edit or delete the member's earlier copy, and exporting to Notion again may update only the page that member's own earlier export made (tests in tasks 5, 7, 8, 10 and 12).
 - **Deletion during an export**: a meeting deleted by retention or "delete now" while its export is queued or running must fail with "This meeting has been deleted from TolongMeeting.", write nothing back into the deleted directory, and leave no export rows behind (tests in tasks 3, 5 and 6).
 
 ## File structure
@@ -1883,7 +1883,7 @@ export function createNotionTarget(client: OAuthClient): ExportTarget // id 'not
 
 Routes: `GET /api/connections/notion/start` (redirect plus state cookie), `GET .../callback` (then redirect to `/connections`), `GET .../parents` (`{ parents }`), `PUT .../parent` (`{ type, id }`, resolved and saved).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // connections/notion.test.ts
@@ -2026,12 +2026,12 @@ test('failures: no parent, lost parent, half-written page', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/connections/notion.test.ts packages/exports/src/targets/notion.test.ts`
 Expected: FAIL with `Cannot find module './notion'`.
 
-- [ ] **Step 3: Implement the client, the connection, the target and the routes; add `notion` to `buildTargets`**
+- [x] **Step 3: Implement the client, the connection, the target and the routes; add `notion` to `buildTargets`**
 
 Client: base `https://api.notion.com`, headers `Authorization: Bearer <accessToken>`, `Notion-Version: 2026-03-11`, JSON content type except for the upload `send`; every request except the client's first is preceded by `sleep(340)` (Notion allows about 3 per second on non-Business plans); 429 and 529 sleep `Retry-After` seconds (1 if absent) instead and resend, up to 5 retries, then throw `rate_limited`, "Notion is busy. Try again in a few minutes."; a 401 refreshes once through `POST /v1/oauth/token` (Basic auth, `grant_type: 'refresh_token'`; Notion rotates both tokens), saves the connection and retries, and otherwise throws `reconnect_needed` with the test's message. `upload`: `POST /v1/file_uploads` `{ filename, content_type }`, then `POST /v1/file_uploads/{id}/send` as multipart with field `file`. `completeNotionConnect` checks state like Google (Notion has no PKCE, so the cookie's verifier goes unused), exchanges the code with `POST /v1/oauth/token` (`grant_type: 'authorization_code'`, `code`, `redirect_uri`) and saves `{ accessToken, refreshToken, workspace: workspace_name, parent: null }`; during Notion's consent the member selects the pages to share. `listNotionParents` runs `POST /v1/search` twice, filtered to `page` and to `data_source`, page size 100, named by their titles. `resolveNotionParent`: a page reads `GET /v1/pages/{id}` and uses property `title`; a data source reads `GET /v1/data_sources/{id}` and uses the property of type `title`. `createNotionTarget(client).run` builds its client from `ctx.connection`, `ctx.http`, `ctx.sleep` and `ctx.saveConnection`, then:
 
@@ -2040,19 +2040,25 @@ Client: base `https://api.notion.com`, headers `Authorization: Bearer <accessTok
 1.  Upload every slide as `slide-NN.jpg` from `bundleImages` (JPEG, since Notion's WebP support isn't documented; uploads must be attached within 1 hour).
 1.  `chunkBlocks(toNotionBlocks(bundleDocument(bundle), uploads))`, each chunk sent in order with `PATCH /v1/blocks/{pageId}/children` `{ children }`.
 1.  Any error after step 2 sends `PATCH /v1/pages/{pageId}` `{ in_trash: true }` (its own failure ignored) and rethrows, so no half-written page is left.
-1.  Return the page `url`. A re-export always creates a new page; earlier pages are never changed.
+1.  Return the page `url`. A re-export updates the page this member's earlier export of the meeting made (`ExportContext.previousUrl`, from `RunnerStore.previousUrl`): its id is read from that address, `GET /v1/pages/{id}` must show the same id, not in the trash and still under the chosen parent, else a new page is made. The old blocks are listed, the new ones appended, and only then the old ones deleted (sub-pages the member added stay); a failure removes only the blocks just appended. No other page is ever written to.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/connections/notion.test.ts packages/exports/src/targets/notion.test.ts packages/exports/src/registry.test.ts`
 Expected: PASS (`0 fail`), with a registry case added: both clients set gives all five targets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports packages/web/app/api/connections/notion
 git commit -m "feat(exports): add notion target"
 ```
+
+Reconciled with Notion's docs and the built code (the tests listed above live in `packages/exports/test/notion-connection.test.ts`, `notion-target.test.ts` and `packages/web/test/notion-routes.test.ts`):
+
+- Notion's authorization flow has no PKCE (the PKCE guide is for MCP clients): the sealed state from `sealOAuthState` is the only check, and the verifier is sealed with it but unused. `completeNotionConnect(memberId, url, sealedState, { connections, http, client, master })` takes the sealed cookie value, and every mismatch gives `OAUTH_STATE_ERROR`.
+- The per-connection limit is 180 requests a minute (3 a second) on plans other than Business and Enterprise; `Retry-After` is whole seconds and at most 60. The client waits `Retry-After` (1, 2, 4 ... seconds, at most 30, when it is missing) for up to 5 resends and 120 s in all, then throws `rate_limited`; a 429 or 529 is handled the same. Web routes wait at most 10 s.
+- Routes use `lib/oauth-cookie.ts` for the state cookie, `assertSameOriginRead` on `start` and `parents`, and `assertSameOrigin` on `PUT parent`. The route logic is `notionParentsRequest` and `selectNotionParentRequest` in `connections/notion.ts`; ids are checked as Notion ids (32 hex digits) before any URL is built.
 
 ### Task 13: Connections page
 

@@ -96,6 +96,8 @@ export interface ExportContext {
   saveConnection(c: Connection): Promise<void>
   http: typeof fetch
   sleep(ms: number): Promise<void>
+  /** The page URL of this member's latest finished export of the same meeting and target, or null. Updates use it. */
+  previousUrl?: string | null
 }
 
 export interface ExportResult {
