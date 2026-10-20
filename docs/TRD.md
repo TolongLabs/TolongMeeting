@@ -797,6 +797,7 @@ The milestone plans were written in parallel against this page. Each marks the s
 - **08 run locations**:
   - the tables `home_exit_nodes` and `identities.local_device_id`;
   - the queues `local-claim-check`, `local-start-check` and `home-route-recheck`;
+  - home route (08 T11; `packages/web/db/home-route.ts`, `lib/home-route.ts`, `config/tailscale/policy.json`): `TailscaleApi` (OAuth client-credentials token cached until 60 s before expiry; `createAuthKey` is single-use, pre-authorised, tagged; `devices()` reads `?fields=all`), `homeHostname`, `enrolKey` (1 hour, `tag:tm-home`, not ephemeral), `checkHomeRoute(store, api, memberId, now)` and the `HomeNodeStore` of the scope or the scheduler; `POST /api/home-route/key` and `/check` (member session, same-origin, 5 keys an hour, fixed error bodies); no auth key or OAuth secret is stored or logged. Tailscale cannot restrict which exit node a tag may use, so the policy grants workers `autogroup:internet` only and the sidecar (T13) must name the member's own node;
   - `profileKeyOnce`;
   - environment: `TM_TAILSCALE_CLIENT_ID`, `TM_TAILSCALE_CLIENT_SECRET`, `TM_TAILSCALE_TAILNET`, `TAILSCALE_VERSION`.
 

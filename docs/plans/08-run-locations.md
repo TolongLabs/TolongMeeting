@@ -1512,7 +1512,7 @@ export function checkHomeRoute(
 ): Promise<{ status: HomeRouteStatus; hostname: string; ipv4: string | null }>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the OAuth token is fetched once and keys are single-use, pre-authorised and tagged', async () => {
@@ -1602,12 +1602,12 @@ test('the tailnet policy: workers reach only the internet; home devices reach no
 
 `memberA`'s id starts with `1a2b3c4d`; `tsFake(seen)` answers the token, key and device endpoints and records requests; `apiWithDevices(list)` and `readyApi` return a `TailscaleApi` over such a fake.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/db/home-route.test.ts`
 Expected: FAIL with "Cannot find module './home-route'"
 
-- [ ] **Step 3: Implement the client, status, routes, policy file and setup page**
+- [ ] **Step 3: Implement the client, status, routes, policy file and setup page** (done except the setup page `app/settings/home-route/page.tsx`, deferred to the Figma gate. Built as `db/home-route.ts` (stores), `lib/home-route.ts` (client, `checkHomeRoute(store, api, memberId)`, handlers), tests in `packages/web/test/home-route.test.ts`; the key is not ephemeral: a home exit node is long-lived)
 
 The token is `POST https://api.tailscale.com/api/v2/oauth/token` (`grant_type=client_credentials`, form-encoded), cached until 60 seconds before `expires_in`; keys are `POST /api/v2/tailnet/{tailnet}/keys`; devices are `GET /api/v2/tailnet/{tailnet}/devices?fields=all`. A device matches a member when it has `tag:tm-home` and `hostname === homeHostname(memberId)`; `ready` needs `connectedToControl` and both `0.0.0.0/0` and `::/0` in `enabledRoutes`. An admin applies `config/tailscale/policy.json` to the TolongLabs tailnet once and creates the OAuth client with the `auth_keys` and `devices:core` scopes and both tags. The key route (`POST /api/home-route/key`) shows the key once and never stores it. The setup page (`/settings/home-route`) shows this guide, with the member's hostname filled in:
 
@@ -1627,12 +1627,12 @@ Your bot can join through your home internet connection, so your university and 
 Only your bot's traffic goes through this device, and only during your meetings. TolongMeeting can't reach other devices on your home network, and your other devices aren't affected.
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/db/home-route.test.ts`
 Expected: PASS (8 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web config/tailscale .env.example

@@ -1,0 +1,10 @@
+{
+  "tagOwners": {
+    "tag:tm-home": ["autogroup:admin"],
+    "tag:tm-worker": ["autogroup:admin"]
+  },
+  "acls": [{ "action": "accept", "src": ["tag:tm-worker"], "dst": ["autogroup:internet:*"] }],
+  "autoApprovers": {
+    "exitNode": ["tag:tm-home"]
+  }
+}
