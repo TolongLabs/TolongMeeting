@@ -1,4 +1,7 @@
 {
+  "hosts": {
+    "tm-test-member-device": "100.64.0.99"
+  },
   "tagOwners": {
     "tag:tm-home": ["autogroup:admin"],
     "tag:tm-worker": ["autogroup:admin"]
@@ -10,11 +13,27 @@
   "tests": [
     {
       "src": "tag:tm-worker",
-      "deny": ["tag:tm-worker:*", "tag:tm-home:*"]
+      "accept": ["1.1.1.1:443"],
+      "deny": [
+        "tag:tm-worker:22",
+        "tag:tm-worker:443",
+        "tag:tm-home:22",
+        "tag:tm-home:443",
+        "tm-test-member-device:22",
+        "tm-test-member-device:443"
+      ]
     },
     {
       "src": "tag:tm-home",
-      "deny": ["tag:tm-home:*", "tag:tm-worker:*"]
+      "deny": [
+        "1.1.1.1:443",
+        "tag:tm-home:22",
+        "tag:tm-home:443",
+        "tag:tm-worker:22",
+        "tag:tm-worker:443",
+        "tm-test-member-device:22",
+        "tm-test-member-device:443"
+      ]
     }
   ]
 }

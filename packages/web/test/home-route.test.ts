@@ -61,7 +61,7 @@ function tsFake(seen: Request[], o: FakeOptions = {}): typeof fetch {
 }
 
 const device = (hostname: string, over: Partial<TailscaleDevice> = {}): TailscaleDevice => ({
-  nodeId: 'n1',
+  nodeId: `n-${hostname}`,
   hostname,
   addresses: ['100.101.102.103', 'fd7a:115c:a1e0::1'],
   tags: ['tag:tm-home'],
@@ -138,6 +138,14 @@ describe('the Tailscale client', () => {
     expect(((await down.devices().catch((e: unknown) => e)) as Error).message).toBe(
       'Tailscale OAuth token request failed.'
     )
+  })
+
+  test('an OAuth token response that is not JSON is a fixed TailscaleApiError that quotes nothing', async () => {
+    const html = (() => Promise.resolve(new Response(`<html>${SECRET}</html>`, { status: 200 }))) as never
+    const error = await new TailscaleApi(CFG, html).devices().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TailscaleApiError)
+    expect((error as Error).message).toBe('Tailscale OAuth token parse failed.')
+    expect(JSON.stringify(error)).not.toContain(SECRET)
   })
 
   test('a key needs tags and an allowed description', async () => {
@@ -220,7 +228,7 @@ describe('checkHomeRoute', () => {
     const ready = new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname)] }))
     await checkHomeRoute(store, ready, MASTER, m.memberId, t0)
     expect(await row(m.memberId)).toMatchObject({
-      nodeId: 'n1',
+      nodeId: `n-${m.hostname}`,
       hostname: m.hostname,
       ipv4: '100.101.102.103',
       checkedAt: t0
@@ -274,7 +282,7 @@ describe('checkHomeRoute', () => {
     const both = [device(m.hostname, { nodeId: 'evil', addresses: ['100.66.6.6'] }), device(m.hostname)]
     const ready = await checkHomeRoute(store, new TailscaleApi(CFG, tsFake([], { devices: both })), MASTER, m.memberId)
     expect(ready).toMatchObject({ status: 'ready', ipv4: '100.101.102.103' })
-    expect(await row(m.memberId)).toMatchObject({ nodeId: 'n1', ipv4: '100.101.102.103' })
+    expect(await row(m.memberId)).toMatchObject({ nodeId: `n-${m.hostname}`, ipv4: '100.101.102.103' })
 
     const offline = [
       device(m.hostname, { nodeId: 'evil', addresses: ['100.66.6.6'] }),
@@ -287,7 +295,7 @@ describe('checkHomeRoute', () => {
       m.memberId
     )
     expect(result.status).toBe('offline')
-    expect(await row(m.memberId)).toMatchObject({ nodeId: 'n1' })
+    expect(await row(m.memberId)).toMatchObject({ nodeId: `n-${m.hostname}` })
   })
 
   test('two unpinned devices with the name are not trusted', async () => {
@@ -403,11 +411,18 @@ describe('the tailnet policy', () => {
     expect(p.acls).toEqual([{ action: 'accept', src: ['tag:tm-worker'], dst: ['autogroup:internet:*'] }])
     expect(p.autoApprovers).toEqual({ exitNode: ['tag:tm-home'] })
     expect(Object.keys(p.tagOwners).sort()).toEqual(['tag:tm-home', 'tag:tm-worker'])
-    expect(Object.keys(p).sort()).toEqual(['acls', 'autoApprovers', 'tagOwners', 'tests'])
-    // Home to home, worker to worker and worker to home are denied by the default and checked by Tailscale when applied.
+    expect(Object.keys(p).sort()).toEqual(['acls', 'autoApprovers', 'hosts', 'tagOwners', 'tests'])
+    // Tailscale's `tests` take a single numeric port per destination (no `:*`). An untagged device stands for a member's
+    // own machine: a future broad grant, to a tag or to the tailnet, would make one of these deny cases fail on apply.
+    const device = Object.keys(p.hosts)
+    expect(device).toEqual(['tm-test-member-device'])
+    const ports = [22, 443]
+    const targets = ['tag:tm-worker', 'tag:tm-home', device[0]]
+    const reach = (hosts: string[]) => hosts.flatMap((h) => ports.map((port) => `${h}:${port}`))
     expect(p.tests).toEqual([
-      { src: 'tag:tm-worker', deny: ['tag:tm-worker:*', 'tag:tm-home:*'] },
-      { src: 'tag:tm-home', deny: ['tag:tm-home:*', 'tag:tm-worker:*'] }
+      { src: 'tag:tm-worker', accept: ['1.1.1.1:443'], deny: reach(targets) },
+      { src: 'tag:tm-home', deny: ['1.1.1.1:443', ...reach(['tag:tm-home', 'tag:tm-worker', device[0]])] }
     ])
+    for (const t of p.tests) for (const d of [...(t.accept ?? []), ...t.deny]) expect(d).toMatch(/:\d+$/)
   })
 })

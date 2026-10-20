@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { DEVICE_ONLINE_WINDOW_MS, type LocalRunPayload } from '@tm/core'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { PgBoss } from 'pg-boss'
 import {
   companionEvents,
@@ -274,7 +274,12 @@ describe('setRunLocation', () => {
   })
 
   test('another member’s home device does not count', async () => {
-    await dbHomeNodeStore(db, f.b1.memberId).save({ nodeId: 'n1', hostname: 'h', ipv4: '100.64.0.7', checkedAt: t0 })
+    await dbHomeNodeStore(db, f.b1.memberId).save({
+      nodeId: 'n-other',
+      hostname: 'h',
+      ipv4: '100.64.0.7',
+      checkedAt: t0
+    })
     expect(await setRunLocation(scope, queue, identityA, { location: 'server_via_home' })).toEqual({
       ok: false,
       error: 'home_route_not_set_up'
@@ -391,6 +396,92 @@ describe('revoking the PC', () => {
     expect(await revokeDevice(scope, f.a1.deviceId)).toBe(true)
     expect(await revokeDevice(scope, f.a1.deviceId)).toBe(false)
   })
+})
+
+// Two connections of the pool. `holder` keeps a transaction open and locks rows the way a competing request does; the
+// operation under test starts on another connection, is seen waiting on that lock, and only then does the holder commit.
+describe('a move and a revoke at the same moment', () => {
+  const waitForLockWait = async () => {
+    for (let i = 0; i < 600; i++) {
+      const { rows } = await db.execute(
+        sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`
+      )
+      if (rows.length > 0) return
+      await Bun.sleep(25)
+    }
+    throw new Error('the operation never waited on the holder')
+  }
+  const lockDevice = (tx: Parameters<Parameters<Db['transaction']>[0]>[0]) =>
+    tx.select().from(deviceTokens).where(eq(deviceTokens.id, f.a1.deviceId)).for('update')
+  const deviceRow = async () => (await db.select().from(deviceTokens).where(eq(deviceTokens.id, f.a1.deviceId)))[0]!
+
+  test('a revoke that commits while the move waits makes the move refuse', async () => {
+    let move: ReturnType<typeof setRunLocation> | undefined
+    await db.transaction(async (tx) => {
+      await lockDevice(tx)
+      move = setRunLocation(scope, queue, identityA, local(f.a1.deviceId))
+      await waitForLockWait()
+      await tx.update(deviceTokens).set({ revokedAt: t0 }).where(eq(deviceTokens.id, f.a1.deviceId))
+    })
+    // The move runs on another connection and finishes only after the holder commits.
+    expect(await move).toEqual({ ok: false, error: 'device_not_found' })
+    expect(await deviceRow()).toMatchObject({ revokedAt: t0 })
+    await expectUntouched()
+  }, 60_000)
+
+  test('a move that holds the device makes the revoke wait, then the revoke clears the binding', async () => {
+    let revoked: Promise<boolean> | undefined
+    await db.transaction(async (tx) => {
+      await lockDevice(tx)
+      revoked = revokeDevice(scope, f.a1.deviceId, t0)
+      await waitForLockWait()
+      await tx
+        .update(identities)
+        .set({ runLocation: 'local', localDeviceId: f.a1.deviceId })
+        .where(eq(identities.id, identityA))
+    })
+    expect(await revoked).toBe(true)
+    expect(await identityRow()).toMatchObject({ runLocation: 'local', localDeviceId: null })
+    expect(await deviceRow()).toMatchObject({ revokedAt: t0 })
+  }, 60_000)
+
+  test('real moves and revokes started together never end with an identity on a revoked device', async () => {
+    for (let i = 0; i < 8; i++) {
+      await db
+        .update(identities)
+        .set({ runLocation: 'server', localDeviceId: null })
+        .where(eq(identities.id, identityA))
+      await db.update(deviceTokens).set({ revokedAt: null }).where(eq(deviceTokens.id, f.a1.deviceId))
+      const order = i % 2 === 0 ? ['move', 'revoke'] : ['revoke', 'move']
+      await Promise.all(
+        order.map((op) =>
+          op === 'move'
+            ? setRunLocation(scope, queue, identityA, local(f.a1.deviceId))
+            : revokeDevice(scope, f.a1.deviceId)
+        )
+      )
+      const [identity, device] = [await identityRow(), await deviceRow()]
+      expect(device.revokedAt).not.toBeNull()
+      expect(identity.localDeviceId).toBeNull()
+    }
+  }, 60_000)
+
+  test('a launch that locks the meeting first wins and the move refuses, changing nothing', async () => {
+    await db
+      .update(occurrences)
+      .set({ state: 'scheduled', scheduledStart: plus(30 * MINUTE) })
+      .where(eq(occurrences.id, f.occA))
+    // The launcher selects the occurrence `for update`, moves it to `starting` and commits.
+    let move: Promise<unknown> | undefined
+    await db.transaction(async (tx) => {
+      await tx.select().from(occurrences).where(eq(occurrences.id, f.occA)).for('update')
+      move = setRunLocation(scope, queue, identityA, local(f.a1.deviceId), t0).catch((e: unknown) => e)
+      await waitForLockWait()
+      await tx.update(occurrences).set({ state: 'starting' }).where(eq(occurrences.id, f.occA))
+    })
+    expect(await move).toBeInstanceOf(InUseError)
+    await expectUntouched()
+  }, 60_000)
 })
 
 describe('device queries', () => {

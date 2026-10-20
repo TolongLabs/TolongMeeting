@@ -239,12 +239,14 @@ export async function revokeDevice(scope: MemberScope, deviceId: string, now: Da
   if (!UUID.test(deviceId)) return false
   return guarded(() =>
     scope.transaction(async (s) => {
-      const changed = await s.update(
+      // The same row lock `setRunLocation` takes on the device it binds, so a move and a revoke run one after the other:
+      // either the move commits first and this clears its binding, or this commits first and the move refuses.
+      const [live] = await s.selectForUpdate(
         deviceTokens,
-        { revokedAt: now },
         and(eq(deviceTokens.id, deviceId), isNull(deviceTokens.revokedAt))!
       )
-      if (changed === 0) return false
+      if (!live) return false
+      await s.update(deviceTokens, { revokedAt: now }, eq(deviceTokens.id, deviceId))
       await s.update(identities, { localDeviceId: null }, eq(identities.localDeviceId, deviceId))
       await s.update(
         companionJobs,

@@ -688,7 +688,7 @@ export const homeExitNodes = pgTable('home_exit_nodes', {
   memberId: uuid('member_id')
     .primaryKey()
     .references(() => members.id, { onDelete: 'cascade' }),
-  nodeId: text('node_id').notNull(),
+  nodeId: text('node_id').notNull().unique(),
   hostname: text('hostname').notNull(),
   ipv4: text('ipv4').notNull(),
   checkedAt: timestamptz('checked_at').notNull()

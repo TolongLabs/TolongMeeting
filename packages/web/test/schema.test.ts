@@ -739,6 +739,17 @@ describe('companion jobs, pairings and run locations', () => {
       )
     ).toEqual({ code: UNIQUE, constraint: 'home_exit_nodes_pkey' })
   })
+
+  test('one Tailscale node is stored for one member only', async () => {
+    const a = await seedMember(db, { full: false })
+    const b = await seedMember(db, { full: false })
+    const node = { nodeId: 'n-shared', hostname: 'h', ipv4: '100.64.0.2', checkedAt: new Date() }
+    await db.insert(homeExitNodes).values({ ...node, memberId: a.memberId })
+    expect(await violation(db.insert(homeExitNodes).values({ ...node, memberId: b.memberId }))).toEqual({
+      code: UNIQUE,
+      constraint: 'home_exit_nodes_node_id_unique'
+    })
+  })
 })
 
 describe('deleting a member', () => {

@@ -50,6 +50,13 @@
       "when": 1792479320395,
       "tag": "0006_claimed_job_lease",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792479912769,
+      "tag": "0007_home_exit_node_unique",
+      "breakpoints": true
     }
   ]
 }

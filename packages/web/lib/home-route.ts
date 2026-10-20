@@ -97,7 +97,15 @@ export class TailscaleApi {
         client_secret: this.cfg.clientSecret
       })
     })
-    const token = TokenSchema.parse(await res.json())
+    let body: unknown
+    try {
+      body = await res.json()
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e
+      // The parse error can quote the response text: keep none of it.
+      throw new TailscaleApiError('OAuth token parse')
+    }
+    const token = TokenSchema.parse(body)
     this.token = { value: token.access_token, expiresAt: Date.now() + token.expires_in * 1000 - TOKEN_MARGIN_MS }
     return token.access_token
   }

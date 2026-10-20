@@ -33,7 +33,8 @@ export type SetRunLocationResult =
  *   with the scheduler's launch). `scheduled` meetings further out don't block and launch at the new location. The
  *   hold is re-checked by the same statement that writes `profiles.location`, so a sign-in that starts at this moment
  *   either wins (and this refuses) or finds the new location.
- * - `local` needs one of the member's own unrevoked devices (`device_not_found` otherwise); `server_via_home` needs a
+ * - `local` needs one of the member's own unrevoked devices (`device_not_found` otherwise), locked `for update` so a
+ *   concurrent `revokeDevice` is serialised with the move; `server_via_home` needs a
  *   stored home exit node (`home_route_not_set_up`).
  * - Writes `run_location`, `local_device_id` (null unless `local`) and `profiles.location` (`local` for My PC, else
  *   `server`) in one transaction, and tells the PC that gained the identity, and the one that lost it, with a
@@ -69,9 +70,11 @@ export async function setRunLocation(
 
       await assertIdentityMovable(s, identityId, profile, now)
       if (deviceId !== null) {
-        const [device] = await s.select(
+        // The row lock makes a revoke of this PC wait for this move (or this move wait for the revoke, and then see
+        // the revoked row and refuse), so the identity never ends up bound to a revoked device.
+        const [device] = await s.selectForUpdate(
           deviceTokens,
-          and(eq(deviceTokens.id, deviceId), isNull(deviceTokens.revokedAt))
+          and(eq(deviceTokens.id, deviceId), isNull(deviceTokens.revokedAt))!
         )
         if (!device) return { ok: false, error: 'device_not_found' }
       }

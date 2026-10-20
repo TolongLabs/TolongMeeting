@@ -205,9 +205,13 @@ export async function seedMember(db: Db, opts: SeedOptions = {}): Promise<Seeded
       .values({ memberId, deviceId: device!.id, command: { type: 'job_available', jobId: job!.id } })
       .returning()
     ids.companionEvents = String(companionEvent!.id)
-    await db
-      .insert(s.homeExitNodes)
-      .values({ memberId, nodeId: 'seed-node', hostname: 'tm-home-seed', ipv4: '100.64.0.1', checkedAt: start })
+    await db.insert(s.homeExitNodes).values({
+      memberId,
+      nodeId: `seed-node-${memberId}`,
+      hostname: 'tm-home-seed',
+      ipv4: '100.64.0.1',
+      checkedAt: start
+    })
     ids.homeExitNodes = memberId
   }
 
