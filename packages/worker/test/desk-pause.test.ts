@@ -223,3 +223,40 @@ test('closing at teardown stops the view and frees waiters without a checkpoint'
   expect([f.vncStopped, f.checkpoints, f.events.length]).toEqual([1, 0, 1])
   await expect(f.pause.pause()).rejects.toThrow('closed')
 })
+
+test('a pause waits for the desk step in flight before it exposes the desk', async () => {
+  const f = deskFixture()
+  let finish: () => void = () => undefined
+  const step = f.pause.deskStep(() => new Promise<void>((resolve) => (finish = resolve)))
+  const paused = f.pause.pause()
+  await Bun.sleep(1)
+  expect(f.vncStarted).toBe(0)
+  finish()
+  await step
+  await paused
+  expect([f.vncStarted, f.pause.paused]).toEqual([1, true])
+})
+
+test('a desk step that comes while a pause starts waits for the member to finish', async () => {
+  const f = deskFixture()
+  const paused = f.pause.pause()
+  let ran = false
+  const step = f.pause.deskStep(async () => void (ran = true))
+  await paused
+  await Bun.sleep(1)
+  expect(ran).toBe(false)
+  await f.pause.resume('command')
+  await step
+  expect(ran).toBe(true)
+})
+
+test('a desk step that fails still lets the next pause start', async () => {
+  const f = deskFixture()
+  await expect(
+    f.pause.deskStep(async () => {
+      throw new Error('driver failed')
+    })
+  ).rejects.toThrow('driver failed')
+  await f.pause.pause()
+  expect(f.pause.paused).toBe(true)
+})

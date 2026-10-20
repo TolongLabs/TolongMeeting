@@ -38,6 +38,7 @@ export const realClock: DeskPauseClock = {
  *
  * Desk automation calls `whenOpen()` before it touches the desk and waits there while the member has it. A caller that
  * waits for the member to finish signing in calls `nextResume()`.
+ * A driver call runs through `deskStep()`: a pause waits for the step in flight to finish before it exposes the desk.
  */
 export class DeskPause {
   private pausing: Promise<void> | null = null
@@ -51,6 +52,8 @@ export class DeskPause {
   private timer: Stopper | null = null
   private open: (() => void)[] = []
   private next: ((reason: ResumeReason) => void)[] = []
+  private busy = 0
+  private drained: (() => void)[] = []
 
   constructor(
     private readonly deps: DeskPauseDeps,
@@ -79,6 +82,9 @@ export class DeskPause {
   }
 
   private async doPause(): Promise<void> {
+    // The desk is exposed only once no desk step is in flight.
+    while (this.busy > 0) await new Promise<void>((resolve) => this.drained.push(resolve))
+    if (this.closed) return
     // The member can only reach the desk once the view runs; a failure after that stops it again.
     const vnc = await this.deps.startVnc()
     try {
@@ -170,6 +176,21 @@ export class DeskPause {
   whenOpen(): Promise<void> {
     if (!this.isPaused && this.pausing === null) return Promise.resolve()
     return new Promise((resolve) => this.open.push(resolve))
+  }
+
+  /**
+   * Runs one desk step (a form driver call). A step waits while a pause is starting or running; a pause waits for a step
+   * already in flight.
+   */
+  async deskStep<T>(step: () => Promise<T>): Promise<T> {
+    while (!this.closed && (this.isPaused || this.pausing !== null)) await this.whenOpen()
+    this.busy += 1
+    try {
+      return await step()
+    } finally {
+      this.busy -= 1
+      if (this.busy === 0) for (const resolve of this.drained.splice(0)) resolve()
+    }
   }
 
   /** Resolves with the reason when the next pause ends, whether or not one is running now. */
