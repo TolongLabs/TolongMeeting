@@ -997,7 +997,7 @@ git commit -m "feat(worker): keep meet share large and chat open"
 - Produces: `meetAdapter: PlatformAdapter` (with `platform: 'meet'`) and `MEET_TIMEOUTS` in `packages/worker/src/adapters/meet/index.ts`; `adapterFor(url)` returns `meetAdapter` for any URL `normaliseMeetLink` accepts.
 - Produces (adds to contracts): `AlertKind` gains `meet_signin`; `runOccurrence` calls `adapter.ensureLayout` on its 10-second refresh as well as after joining (plan 04 makes the same change; whichever plan lands second finds it in place and keeps its test), and pings `meet_signin` instead of `zoom_signin` when a Meet `join` returns `signin_required`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -1054,12 +1054,12 @@ test('the layout is kept on every refresh, not only after joining', async () => 
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/adapters/meet/index.test.ts packages/worker/src/run.test.ts packages/notify/src/messages.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/meet/adapter.spec.ts`
 Expected: FAIL: `adapterFor` returns `null` for the Meet link; `meet_signin` is not an `AlertKind`; `../../src/adapters/meet` not found; the layout test fails too unless plan 04 has landed.
 
-- [ ] **Step 3: Implement `meetAdapter`, register it and change the run**
+- [x] **Step 3: Implement `meetAdapter`, register it and change the run**
 
 Each method loads `meetSelectors()` once (on first use) and delegates to the function of the same role: `normaliseMeetLink`, `joinMeet`, `connectMeetOutputAudio`, `ensureMeetLayout`, `waitMeetAdmitted`, `assertMeetDevicesOff`, `readMeetChat`, `sweepMeetChat`, `meetSharedScreenRegion`, `meetParticipantCount`, `meetMeetingState`, `dismissMeetNotices`, `leaveMeet`. Like 01a's Zoom adapter, it enforces its own timeouts: every method except `normaliseLink` and `waitUntilAdmitted` (bounded by its deadline) races its step against these limits and rejects with `Error('meet <method> timed out after <ms> ms')`; `runOccurrence` then saves the screenshot and `ariaSnapshot()` under `errors/` and pings, as it does for Zoom.
 
@@ -1081,17 +1081,17 @@ export const MEET_TIMEOUTS = {
 
 `adapterFor` gains `meetAdapter` after the adapters it already tries; the first whose `normaliseLink` isn't null wins. In `run.ts`, step 5 pings `meet_signin` (with plan 01c's "Sign in again" action, as for `zoom_signin`) when the adapter's platform is `meet`, and step 8 calls `ensureLayout` with each 10-second refresh of `sharedScreenRegion` and `participantCount`, so chat comes back after a roster read and a new presentation is spotlighted. In `messages.ts`, add `meet_signin` with the copy in the test.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: the commands of Step 2
 Expected: PASS, including 01a's existing `run.test.ts` and `messages.test.ts` cases.
 
-- [ ] **Step 5: Run the whole worker suite and the type check**
+- [x] **Step 5: Run the whole worker suite and the type check**
 
 Run: `bun test packages/worker packages/notify` then `bunx playwright test -c packages/worker/playwright.config.ts` then `bun run typecheck`
 Expected: all pass; `tsc` reports no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/meet/adapter.spec.ts docs/TRD.md

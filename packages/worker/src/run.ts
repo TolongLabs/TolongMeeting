@@ -1252,12 +1252,14 @@ class OccurrenceRun {
         case 'in_meeting':
           return this.entered()
         case 'signin_required':
-          // Teams signs in with a Microsoft account.
+          // Each platform has its own account kind and ping: Meet signs in with the member's Google account.
           await this.ev('state', {
-            account: adapter!.platform === 'teams' ? 'teams' : 'zoom',
+            account: ({ zoom: 'zoom', teams: 'teams', meet: 'google' } as const)[adapter!.platform],
             signedIn: false
           } satisfies AccountCheckData)
-          this.alerter.alert(adapter!.platform === 'teams' ? 'teams_signin' : 'zoom_signin')
+          this.alerter.alert(
+            ({ zoom: 'zoom_signin', teams: 'teams_signin', meet: 'meet_signin' } as const)[adapter!.platform]
+          )
           return failed('signin_required')
         case 'account_busy':
           this.alerter.alert('join_failed', 'the account is busy')
