@@ -622,6 +622,7 @@ export interface Ping {
   message: string
   priority: 'high' | 'default'
   actions?: PingAction[]
+  tags?: PingTag[] // ntfy tags, from the fixed list PING_TAGS (['tm_summary']); never member text
   attachPath?: string
 }
 export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void>
@@ -767,6 +768,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - `packages/core/src/companion.ts` (job, event and pairing types, `WhisperJsonSchema`, `shortDate`, `shortTime`, timing constants, `LocalRunPayload`, `PreflightReport`);
   - tables `device_pairings`, `companion_jobs` and `companion_events`;
   - the trigger `pc_claimed`; the queues `native-job-check` and `profile-delete`; `Ping.tags` with the `tm_summary` tag; the `/api/companion/*` routes;
+  - plan 03/08 pings (P0-N, `packages/notify/src/messages.ts`): `pings.pcOffline`, `pcNotPaired`, `dockerNotRunning`, `dockerMemoryLow`, `botSoftwareUnavailable`, `homeConnectionOffline` (with `HomeRouteProblem`) and `nativeTranscriptionFailed`, each titled `<Event>: <entry>` with one "Open meeting page" action; `Ping.tags` is sent as `tags` in the JSON body and as the `Tags` header on an attachment `PUT` (`sendPing` throws on a tag outside `PING_TAGS`), and `summaryReadyPing` carries `tm_summary`; `WorkerFailureReason` is widened with member-facing phrases (`your PC stopped responding`, `Docker Desktop wasn't running`, `Docker Desktop had too little memory`, `Docker couldn't download the bot software`, `your home connection was offline`), while the raw codes (`pc_lost`, `docker_unavailable`, `docker_memory_low`, `image_unavailable`, `home_exit_node_offline`) stay in `state_reason`; `pings.waitingForPc` keeps its 01c copy;
   - `TM_DATA_ROOT` for web; `TM_WORKER_IMAGE_REF`.
   - pipeline: `readNativeTranscript(occDir)` in `packages/pipeline/src/native/read.ts` (contained read of `transcript/native/audio.json`, validated with `WhisperJsonSchema`, hallucination-filtered); `buildTranscript` reads it when `entry.transcription` is `native`.
 - **04 Teams and 05 Meet**:

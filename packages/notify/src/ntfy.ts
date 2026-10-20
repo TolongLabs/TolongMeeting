@@ -8,11 +8,17 @@ export interface PingAction {
   url: string
 }
 
+/** The ntfy tags a ping may carry. A fixed list: a tag is never built from member text. */
+export const PING_TAGS = ['tm_summary'] as const
+
+export type PingTag = (typeof PING_TAGS)[number]
+
 export interface Ping {
   title: string
   message: string
   priority: 'high' | 'default'
   actions?: PingAction[]
+  tags?: PingTag[]
   attachPath?: string
 }
 
@@ -31,6 +37,10 @@ const TIMEOUT_MS = 10_000
 const RETRY_DELAYS_MS = [1_000, 2_000]
 
 export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void> {
+  const unknownTag = ping.tags?.find((tag) => !PING_TAGS.includes(tag))
+  if (unknownTag !== undefined) {
+    throw new Error(`sendPing: "${unknownTag}" is not in PING_TAGS`)
+  }
   const auth = { Authorization: `Bearer ${cfg.token}` }
   if (ping.attachPath === undefined) {
     await send(cfg.url, {
@@ -41,7 +51,8 @@ export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void> {
         title: ping.title,
         message: ping.message,
         priority: PRIORITY[ping.priority],
-        actions: ping.actions?.map((a) => ({ action: 'view', label: a.label, url: a.url, clear: false }))
+        actions: ping.actions?.map((a) => ({ action: 'view', label: a.label, url: a.url, clear: false })),
+        tags: ping.tags
       })
     })
     return
@@ -58,6 +69,9 @@ export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void> {
   }
   if (ping.actions && ping.actions.length > 0) {
     headers.Actions = headerValue(ping.actions.map((a) => `view, ${a.label}, ${a.url}`).join('; '))
+  }
+  if (ping.tags && ping.tags.length > 0) {
+    headers.Tags = ping.tags.join(',')
   }
   await send(`${cfg.url}/${cfg.topic}`, { method: 'PUT', headers, body })
 }

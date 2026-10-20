@@ -476,3 +476,151 @@ test('watching-off copy for the home-only and switched-off gates', () => {
     priority: 'high'
   })
 })
+
+const LOCAL_MEETING = 'https://tm.example/meetings/o1'
+const OPEN_MEETING = [{ label: 'Open meeting page', url: LOCAL_MEETING }]
+
+test('PC pings: offline and not paired', () => {
+  expect(
+    pings.pcOffline({ entry: 'Data Mining', when: '14:00', pcName: 'DESKTOP-ABC', meetingUrl: LOCAL_MEETING })
+  ).toEqual({
+    title: 'PC offline: Data Mining',
+    message: "Data Mining (14:00) runs on DESKTOP-ABC, which is asleep or off, so the bot won't join.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+  expect(
+    pings.pcNotPaired({
+      entry: 'Data Mining',
+      when: '14:00',
+      runsOn: 'My PC',
+      account: 'University',
+      meetingUrl: LOCAL_MEETING
+    })
+  ).toEqual({
+    title: 'No PC paired: Data Mining',
+    message: "Data Mining (14:00) runs on My PC, but no PC is paired for University, so the bot won't join.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+})
+
+test('Docker pings: not running, too little memory, software not downloaded', () => {
+  const base = { entry: 'Data Mining', when: '14:00', pcName: 'DESKTOP-ABC', meetingUrl: LOCAL_MEETING }
+  expect(pings.dockerNotRunning({ ...base, deadline: '13:50' })).toEqual({
+    title: 'Start Docker Desktop: Data Mining',
+    message: "Data Mining (14:00) runs on DESKTOP-ABC, but Docker Desktop isn't running. Start it before 13:50.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+  expect(pings.dockerMemoryLow({ ...base, dockerBytes: 2 * 1024 ** 3 })).toEqual({
+    title: 'Docker needs more memory: Data Mining',
+    message:
+      "Data Mining (14:00) can't run on DESKTOP-ABC: Docker Desktop has 2.0 GB and a meeting needs about 4 GB. Set memory=4GB or more under [wsl2] in %UserProfile%\\.wslconfig, then restart Docker Desktop.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+  expect(pings.botSoftwareUnavailable(base)).toEqual({
+    title: "Can't get the bot software: Data Mining",
+    message:
+      "Data Mining (14:00) can't start on DESKTOP-ABC: Docker couldn't download the TolongMeeting bot software. Run docker login ghcr.io with your GitHub account; the PC tries again every 30 seconds.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+})
+
+test('home connection ping: one phrase and one fix per problem', () => {
+  const base = {
+    entry: 'Data Mining',
+    when: '14:00',
+    device: 'tm-home-1a2b3c4d',
+    deadline: '13:50',
+    meetingUrl: LOCAL_MEETING
+  }
+  expect(pings.homeConnectionOffline({ ...base, problem: 'offline' })).toEqual({
+    title: 'Home connection offline: Data Mining',
+    message:
+      "Data Mining (14:00) runs through your home device tm-home-1a2b3c4d, which isn't online. Turn it on before 13:50, or the bot won't join.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+  expect(pings.homeConnectionOffline({ ...base, problem: 'not_exit_node' }).message).toBe(
+    "Data Mining (14:00) runs through your home device tm-home-1a2b3c4d, which isn't sharing its connection. Share its connection before 13:50, or the bot won't join."
+  )
+  expect(pings.homeConnectionOffline({ ...base, problem: 'not_enrolled' }).message).toBe(
+    "Data Mining (14:00) runs through your home device tm-home-1a2b3c4d, which isn't set up. Set it up before 13:50, or the bot won't join."
+  )
+})
+
+test('native transcription failure shows only a short, scrubbed first line of the error', () => {
+  const ping = pings.nativeTranscriptionFailed({
+    entry: 'Data Mining',
+    date: 'Wed 21 Oct',
+    error: 'RuntimeError: CUDA out of memory.\nTraceback (most recent call last):',
+    meetingUrl: LOCAL_MEETING
+  })
+  expect(ping).toEqual({
+    title: 'Transcription failed: Data Mining',
+    message:
+      'Data Mining (Wed 21 Oct) could not be transcribed on your PC: RuntimeError: CUDA out of memory. The recording is on the meeting page.',
+    priority: 'default',
+    actions: OPEN_MEETING
+  })
+  const noisy = pings.nativeTranscriptionFailed({
+    entry: 'Data Mining',
+    date: 'Wed 21 Oct',
+    error: `failed at https://zoom.us/j/123456789?pwd=secret ${'x'.repeat(400)}`,
+    meetingUrl: LOCAL_MEETING
+  })
+  expect(noisy.message).toContain('[removed]')
+  expect(noisy.message).not.toContain('zoom.us')
+  expect(noisy.message).not.toContain('123456789')
+  expect(noisy.message.length).toBeLessThan(330)
+  expect(
+    pings.nativeTranscriptionFailed({ entry: 'A', date: 'Wed 21 Oct', error: '', meetingUrl: LOCAL_MEETING }).message
+  ).toBe('A (Wed 21 Oct) could not be transcribed on your PC. The recording is on the meeting page.')
+})
+
+test('every widened failure reason reads inside the failed ping', () => {
+  for (const reason of [
+    'your PC stopped responding',
+    "Docker Desktop wasn't running",
+    'Docker Desktop had too little memory',
+    "Docker couldn't download the bot software",
+    'your home connection was offline'
+  ] as const) {
+    expect(pings.workerFailed({ entry: 'Data Mining', reason, meetingUrl: LOCAL_MEETING })).toEqual({
+      title: 'Failed: Data Mining',
+      message: `The bot stopped and won't retry (${reason}). Anything it recorded is on the meeting page.`,
+      priority: 'high',
+      actions: OPEN_MEETING
+    })
+  }
+})
+
+test('the summary-ready ping carries the tm_summary tag, and no other ping carries a tag', () => {
+  expect(summaryReadyPing('Data Mining', 'short').tags).toEqual(['tm_summary'])
+  expect(summaryFailedPing('Data Mining', 401).tags).toBeUndefined()
+  expect(joinedPing('Data Mining', 3).tags).toBeUndefined()
+  expect(alertPing('Data Mining', 'dropped').tags).toBeUndefined()
+})
+
+test('no new ping holds a meeting link, passcode or the PC secrets', () => {
+  const all = [
+    pings.pcOffline({ entry: 'E', when: '14:00', pcName: 'PC', meetingUrl: LOCAL_MEETING }),
+    pings.dockerNotRunning({ entry: 'E', when: '14:00', pcName: 'PC', deadline: '13:50', meetingUrl: LOCAL_MEETING }),
+    pings.botSoftwareUnavailable({ entry: 'E', when: '14:00', pcName: 'PC', meetingUrl: LOCAL_MEETING }),
+    pings.homeConnectionOffline({
+      entry: 'E',
+      when: '14:00',
+      device: 'tm-home-1',
+      problem: 'offline',
+      deadline: '13:50',
+      meetingUrl: LOCAL_MEETING
+    })
+  ]
+  for (const ping of all) {
+    expect(ping.message).not.toMatch(/zoom\.us|teams\.microsoft|meet\.google|passcode|token|identit/i)
+    expect(ping.actions?.every((a) => a.url === LOCAL_MEETING)).toBe(true)
+  }
+})

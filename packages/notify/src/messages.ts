@@ -113,6 +113,7 @@ export function summaryReadyPing(entry: string, md: string, attachPath?: string)
     title: `Summary ready: ${entry}`,
     message: cut === null ? md : `${cut}\n(truncated)`,
     priority: 'default',
+    tags: ['tm_summary'],
     ...(attachPath === undefined ? {} : { attachPath })
   }
 }
@@ -125,8 +126,30 @@ export function summaryFailedPing(entry: string, status: number): Ping {
   }
 }
 
+// Why a run failed, in words the member can read inside "The bot stopped and won't retry (<reason>)". The raw codes
+// (`pc_lost`, `docker_unavailable`, `docker_memory_low`, `image_unavailable`, `home_exit_node_offline`) stay in the
+// occurrence's `state_reason`; callers map a code to its phrase. `worker_unreachable` has its own sentence.
 export type WorkerFailureReason =
-  'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop' | 'worker_unreachable'
+  | 'it crashed 3 times'
+  | "it couldn't start"
+  | 'it ran past the hard stop'
+  | 'worker_unreachable'
+  | 'your PC stopped responding'
+  | "Docker Desktop wasn't running"
+  | 'Docker Desktop had too little memory'
+  | "Docker couldn't download the bot software"
+  | 'your home connection was offline'
+
+/** Why the home device cannot carry a meeting. */
+export type HomeRouteProblem = 'offline' | 'not_exit_node' | 'not_enrolled'
+
+const HOME_ROUTE_PROBLEM: Record<HomeRouteProblem, { is: string; fix: string }> = {
+  offline: { is: "isn't online", fix: 'Turn it on' },
+  not_exit_node: { is: "isn't sharing its connection", fix: 'Share its connection' },
+  not_enrolled: { is: "isn't set up", fix: 'Set it up' }
+}
+
+const NATIVE_ERROR_LIMIT = 200
 
 /** Why the bot is not watching a chat for a meeting link. */
 export type WatcherProblem = 'not_found' | 'ambiguous' | 'not_loaded' | 'lost' | 'signed_out'
@@ -241,6 +264,84 @@ export const pings = {
     return {
       title: `Waiting for your PC: ${p.entry}`,
       message: `Turn on your PC with the companion app to transcribe ${p.entry}.`,
+      priority: 'default',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  // Plans 03 and 08. `when` is a clock time ("14:00"), `deadline` the latest time the member can still fix it ("13:50").
+  pcOffline(p: { entry: string; when: string; pcName: string; meetingUrl: string }): Ping {
+    return {
+      title: `PC offline: ${p.entry}`,
+      message: `${p.entry} (${p.when}) runs on ${p.pcName}, which is asleep or off, so the bot won't join.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  // `runsOn` is where the account is set to run (for example "My PC"); `account` is the account's name.
+  pcNotPaired(p: { entry: string; when: string; runsOn: string; account: string; meetingUrl: string }): Ping {
+    return {
+      title: `No PC paired: ${p.entry}`,
+      message: `${p.entry} (${p.when}) runs on ${p.runsOn}, but no PC is paired for ${p.account}, so the bot won't join.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  dockerNotRunning(p: { entry: string; when: string; pcName: string; deadline: string; meetingUrl: string }): Ping {
+    return {
+      title: `Start Docker Desktop: ${p.entry}`,
+      message: `${p.entry} (${p.when}) runs on ${p.pcName}, but Docker Desktop isn't running. Start it before ${p.deadline}.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  dockerMemoryLow(p: { entry: string; when: string; pcName: string; dockerBytes: number; meetingUrl: string }): Ping {
+    const gb = (p.dockerBytes / 1024 ** 3).toFixed(1)
+    return {
+      title: `Docker needs more memory: ${p.entry}`,
+      message: `${p.entry} (${p.when}) can't run on ${p.pcName}: Docker Desktop has ${gb} GB and a meeting needs about 4 GB. Set memory=4GB or more under [wsl2] in %UserProfile%\\.wslconfig, then restart Docker Desktop.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  botSoftwareUnavailable(p: { entry: string; when: string; pcName: string; meetingUrl: string }): Ping {
+    return {
+      title: `Can't get the bot software: ${p.entry}`,
+      message: `${p.entry} (${p.when}) can't start on ${p.pcName}: Docker couldn't download the TolongMeeting bot software. Run docker login ghcr.io with your GitHub account; the PC tries again every 30 seconds.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  homeConnectionOffline(p: {
+    entry: string
+    when: string
+    device: string
+    problem: HomeRouteProblem
+    deadline: string
+    meetingUrl: string
+  }): Ping {
+    const { is, fix } = HOME_ROUTE_PROBLEM[p.problem]
+    return {
+      title: `Home connection offline: ${p.entry}`,
+      message: `${p.entry} (${p.when}) runs through your home device ${p.device}, which ${is}. ${fix} before ${p.deadline}, or the bot won't join.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  // The PC's own error text: first line only, cut of links and long numbers, at most 200 characters.
+  nativeTranscriptionFailed(p: { entry: string; date: string; error: string; meetingUrl: string }): Ping {
+    const firstLine = withoutMeetingDetails(p.error.split('\n')[0].trim())
+      .slice(0, NATIVE_ERROR_LIMIT)
+      .replace(/[.\s]+$/, '')
+    return {
+      title: `Transcription failed: ${p.entry}`,
+      message: `${p.entry} (${p.date}) could not be transcribed on your PC${firstLine === '' ? '' : `: ${firstLine}`}. The recording is on the meeting page.`,
       priority: 'default',
       actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
     }

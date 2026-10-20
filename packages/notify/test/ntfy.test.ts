@@ -111,3 +111,27 @@ test('5xx retried twice then PingError; 4xx not retried', async () => {
   await expect(sendPing(cfg(), ping)).rejects.toThrow('403')
   expect(requests.length).toBe(1)
 }, 10_000)
+
+test('tags go in the JSON body on a plain ping', async () => {
+  await sendPing(cfg(), { ...ping, tags: ['tm_summary'] })
+  expect(requests[0].json).toMatchObject({ tags: ['tm_summary'] })
+  requests = []
+  await sendPing(cfg(), ping)
+  expect(requests[0].json).not.toHaveProperty('tags')
+})
+
+test('tags go in the Tags header on an attachment ping', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'notify-test-'))
+  const file = join(dir, 'summary.md')
+  writeFileSync(file, '# x')
+  await sendPing(cfg(), { ...ping, tags: ['tm_summary'], attachPath: file })
+  expect(requests[0].headers.tags).toBe('tm_summary')
+  requests = []
+  await sendPing(cfg(), { ...ping, attachPath: file })
+  expect(requests[0].headers.tags).toBeUndefined()
+})
+
+test('a tag outside the fixed list is refused before anything is sent', async () => {
+  await expect(sendPing(cfg(), { ...ping, tags: ['Data Mining' as 'tm_summary'] })).rejects.toThrow('PING_TAGS')
+  expect(requests.length).toBe(0)
+})
