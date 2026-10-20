@@ -453,7 +453,7 @@ git commit -m "feat(exports): add markdown document model"
 - Consumes: `ExportBundle`, `ExportContext`, `ExportTarget`, `ExportError`, `loadBundle`, `fixture` (task 1).
 - Produces: `writeDownload(ctx: ExportContext, ext: 'zip' | 'pdf', bytes: Uint8Array): Promise<string>`; `zipBundle(bundle: ExportBundle): Uint8Array`; `zipTarget: ExportTarget` (id `'zip'`); test helper `testContext(over?: Partial<ExportContext>): ExportContext & { sleeps: number[]; saved: Connection[] }` (fresh temporary occurrence directory with `outDir` inside it, `http` that throws `no network in tests`, `sleep` that records and resolves at once, `saveConnection` that records).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('zip holds the set under one folder', async () => {
@@ -488,21 +488,21 @@ test('a deleted meeting directory is never recreated', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/targets/zip.test.ts`
 Expected: FAIL with `Cannot find module './zip'`.
 
-- [ ] **Step 3: Implement `writeDownload`, `zipBundle` and `zipTarget`**
+- [x] **Step 3: Implement `writeDownload`, `zipBundle` and `zipTarget`**
 
 `writeDownload` throws `ExportError('meeting_deleted', 'This meeting has been deleted from TolongMeeting.')` when `dirname(ctx.outDir)` doesn't exist, creates `outDir` without `recursive`, ignoring `EEXIST`, and writes `<exportId>.<ext>`. `zipBundle` uses fflate `zipSync`, level 0 for `.webp` entries (already compressed) and level 6 for the rest, paths `<dirName>/<file path>` in bundle order.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/targets/zip.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/targets packages/exports/test/context.ts
