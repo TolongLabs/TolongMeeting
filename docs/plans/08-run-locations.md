@@ -567,7 +567,7 @@ export function checkBeforeFirstRun(d: {
 }): Promise<PreflightReport>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('preflight: unavailable, low memory, missing image, ok', async () => {
@@ -620,21 +620,21 @@ test('checkBeforeFirstRun explains low memory in a notification', async () => {
 
 `REF` is `ghcr.io/tl/tolongmeeting-worker:1.0.0`; `fakeDocker` answers from its options; `processPrinting(text)` is a `SpawnLike` result that prints `text` and exits 0.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/local/preflight.test.ts`
 Expected: FAIL with "Cannot find module './preflight'"
 
-- [ ] **Step 3: Implement `docker.ts`, `preflight.ts` and the wiring**
+- [x] **Step 3: Implement `docker.ts`, `preflight.ts` and the wiring**
 
 `preflight` checks in order: `info()` (null means `docker_unavailable`), `memTotal >= MIN_DOCKER_MEM_BYTES`, then `imagePresent(ref)` or `pull(ref)`. `checkBeforeFirstRun` shows a notification only for `docker_memory_low` (above), `docker_unavailable` (title `Start Docker Desktop`, body `TolongMeeting runs meetings on this PC through Docker Desktop. Start it, and turn on "Start Docker Desktop when you sign in".`) or `image_unavailable` (title `Can't get the meeting worker`, body `Run docker login ghcr.io with your GitHub account, then restart TolongMeeting.`); clicking any of them does nothing beyond closing it. At bind time the image reference comes from `api.identities()`, so the first pull happens long before the first run; at run time it comes from the job's payload. Every `docker` call goes through `SpawnLike` with `windowsHide: true` and no shell.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/local/preflight.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src

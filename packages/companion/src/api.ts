@@ -3,12 +3,16 @@ import { dirname } from 'node:path'
 import {
   CompanionJobSchema,
   JobFailureReportSchema,
+  LocalIdentitiesResponseSchema,
   MAX_LIST_ITEMS,
   NATIVE_UPLOAD_FIELDS,
   NATIVE_UPLOAD_MAX_FILE_BYTES,
   OccurrenceIdSchema,
+  PreflightReportSchema,
   SummaryListItemSchema,
   type CompanionJob,
+  type LocalIdentitiesResponse,
+  type PreflightReport,
   type SummaryListItem
 } from '@tm/core'
 import { z } from 'zod'
@@ -184,6 +188,24 @@ export class CompanionApi {
     const body = JSON.stringify(JobFailureReportSchema.parse({ error: reason }))
     await discard(
       await this.call('POST', `/api/companion/jobs/${id(jobId)}/fail`, {
+        expect: [204],
+        body,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+  }
+
+  /** The identities that run on this PC and the worker image to pull. */
+  async identities(): Promise<LocalIdentitiesResponse> {
+    const res = await this.call('GET', '/api/companion/identities', { expect: [200] })
+    return readJson(res, LocalIdentitiesResponseSchema)
+  }
+
+  /** Tells the website whether this PC can start the job's meeting (Docker running, enough memory, image pulled). */
+  async preflight(jobId: string, report: PreflightReport): Promise<void> {
+    const body = JSON.stringify(PreflightReportSchema.parse(report))
+    await discard(
+      await this.call('POST', `/api/companion/jobs/${id(jobId)}/preflight`, {
         expect: [204],
         body,
         headers: { 'content-type': 'application/json' }
