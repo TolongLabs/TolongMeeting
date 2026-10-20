@@ -26,13 +26,21 @@ export class WatcherChatError extends Error {
   }
 }
 
-export type WatcherStatus = { kind: 'signed_out'; host: string } | { kind: 'signed_in' } | { kind: 'chat_lost' }
+/** `handler_failed`: `onLink` threw. `error` is the error's name only, because its message may hold a meeting link. */
+export type WatcherStatus =
+  | { kind: 'signed_out'; host: string }
+  | { kind: 'signed_in' }
+  | { kind: 'chat_lost' }
+  | { kind: 'handler_failed'; error: string }
 
-/** The seam for time, phase and the desk. `deskStep` is the DeskPause busy gate: every desk action runs through it. */
+/**
+ * The seam for time, phase and the desk. `deskStep` is the DeskPause busy gate: every desk action runs through it.
+ * `sleep` must settle early and drop its timer when `signal` aborts.
+ */
 export interface WatcherEnv {
   now(): Date
   random(): number
-  sleep(ms: number): Promise<void>
+  sleep(ms: number, signal: AbortSignal): Promise<void>
   phase(): WatchPhase
   formsSince(): Date
   pastedLink(): string | null
@@ -49,7 +57,17 @@ const NEVER = new Date(8.64e15)
 const defaultEnv = (): WatcherEnv => ({
   now: () => new Date(),
   random: Math.random,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: (ms, signal) =>
+    new Promise((resolve) => {
+      if (signal.aborted) return resolve()
+      const done = () => {
+        clearTimeout(timer)
+        signal.removeEventListener('abort', done)
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      signal.addEventListener('abort', done)
+    }),
   phase: () => 'before',
   formsSince: () => NEVER,
   pastedLink: () => null,
@@ -100,6 +118,25 @@ export async function runChatWatcher(
   let wakeUp = () => {}
   const woken = new Promise<void>((resolve) => (wakeUp = resolve))
 
+  // A throw from `onLink` must not stop the loop, and nothing is offered once a stop is requested.
+  function offer(link: FormCandidate | { meetingUrl: string }): void {
+    if (stopped) return
+    try {
+      onLink(link)
+    } catch (error) {
+      report({ kind: 'handler_failed', error: error instanceof Error ? error.name : 'non-error thrown' })
+    }
+  }
+
+  // A throw from `onStatus` has nowhere to go but the log, and only its name is logged.
+  function report(status: WatcherStatus): void {
+    try {
+      env.onStatus(status)
+    } catch (error) {
+      console.error('watcher onStatus threw', error instanceof Error ? error.name : 'non-error thrown')
+    }
+  }
+
   function process(messages: ChatMessage[]): void {
     for (const m of messages) {
       const signature = messageSignature(m)
@@ -117,18 +154,18 @@ export async function runChatWatcher(
           senderRole: 'unknown',
           seenAt: seenAt.toISOString()
         }
-        if (!before) onLink(candidate)
+        if (!before) offer(candidate)
         else if (seenAt >= env.formsSince()) held.push(candidate)
       }
     }
     if (env.phase() === 'during') {
-      for (const candidate of held.splice(0)) onLink(candidate)
+      for (const candidate of held.splice(0)) offer(candidate)
       return
     }
     const chosen = chooseMeetingLink(newest, env.pastedLink())
     if (chosen !== null && chosen !== lastReported) {
       lastReported = chosen
-      onLink({ meetingUrl: chosen })
+      offer({ meetingUrl: chosen })
     }
   }
 
@@ -142,25 +179,27 @@ export async function runChatWatcher(
     failures = 0
     if (!signedOut) return
     signedOut = false
-    env.onStatus({ kind: 'signed_in' })
+    report({ kind: 'signed_in' })
   }
 
   function signedOutRead(error: WatcherSigninError): void {
     failures = 0
     if (signedOut) return
     signedOut = true
-    env.onStatus({ kind: 'signed_out', host: error.host })
+    report({ kind: 'signed_out', host: error.host })
   }
 
   async function reopen(): Promise<void> {
+    if (stopped) return
     failures = 0
     reopens += 1
     if (reopens > MAX_REOPENS) {
       lost = true
-      env.onStatus({ kind: 'chat_lost' })
+      report({ kind: 'chat_lost' })
       return
     }
     const result = await read(openAndScan)
+    if (stopped) return
     if (result.ok) {
       goodRead()
       process(result.value)
@@ -170,6 +209,7 @@ export async function runChatWatcher(
 
   async function poll(): Promise<void> {
     const result = await read(() => env.deskStep(() => reader.latest(desk)))
+    if (stopped) return
     if (result.ok) {
       reopens = 0
       goodRead()
@@ -187,10 +227,13 @@ export async function runChatWatcher(
     const timer = setInterval(() => {
       if (env.phase() !== startPhase) phaseChanged()
     }, PHASE_CHECK_MS)
+    // Whichever of the three ends the wait, the sleep's own timer is dropped with it.
+    const sleeping = new AbortController()
     try {
-      await Promise.race([env.sleep(nextPollDelayMs(startPhase, env.random)), woken, changed])
+      await Promise.race([env.sleep(nextPollDelayMs(startPhase, env.random), sleeping.signal), woken, changed])
     } finally {
       clearInterval(timer)
+      sleeping.abort()
     }
   }
 

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, spyOn, test } from 'bun:test'
 import type { ChatMessage, FormCandidate } from '@tm/core'
 import type { Page } from 'playwright'
 import {
@@ -306,4 +306,137 @@ test('stop ends a sleeping loop at once; an open error rejects the start', async
     throw new WatcherSigninError('discord.com')
   }
   await expect(runChatWatcher(desk, bad, h.onLink)).rejects.toBeInstanceOf(WatcherSigninError)
+})
+
+// Counts the timers created and not yet fired or cleared while `during` runs.
+async function liveTimers(during: (live: () => number) => Promise<void>): Promise<void> {
+  const { setTimeout: realSet, clearTimeout: realClear, setInterval: realSetInterval, clearInterval } = globalThis
+  const live = new Set<unknown>()
+  globalThis.setTimeout = ((fn: () => void, ms?: number, ...args: unknown[]) => {
+    const id = realSet(
+      () => {
+        live.delete(id)
+        fn()
+      },
+      ms,
+      ...args
+    )
+    live.add(id)
+    return id
+  }) as typeof setTimeout
+  globalThis.clearTimeout = ((id: Parameters<typeof clearTimeout>[0]) => {
+    live.delete(id)
+    realClear(id)
+  }) as typeof clearTimeout
+  globalThis.setInterval = ((fn: () => void, ms?: number, ...args: unknown[]) => {
+    const id = realSetInterval(fn, ms, ...args)
+    live.add(id)
+    return id
+  }) as typeof setInterval
+  globalThis.clearInterval = ((id: Parameters<typeof clearInterval>[0]) => {
+    live.delete(id)
+    clearInterval(id)
+  }) as typeof clearInterval
+  try {
+    await during(() => live.size)
+  } finally {
+    Object.assign(globalThis, {
+      setTimeout: realSet,
+      clearTimeout: realClear,
+      setInterval: realSetInterval,
+      clearInterval
+    })
+  }
+}
+
+test('stop() leaves no live timer behind, with the real sleep', async () => {
+  resetWatcherEnv()
+  configureWatchers({ now: () => NOW, random: () => 0.5 })
+  await liveTimers(async (live) => {
+    const stopper = await runChatWatcher(desk, fakeReader({ history: [] }), () => {})
+    expect(live()).toBeGreaterThan(0) // the loop is asleep for the 35 s poll delay
+    await stopper.stop()
+    expect(live()).toBe(0)
+  })
+})
+
+test('a phase change wakes the real sleep within about a second', async () => {
+  resetWatcherEnv()
+  let phase: 'before' | 'during' = 'before'
+  const r = fakeReader({ history: [] })
+  configureWatchers({ now: () => NOW, random: () => 0.5, phase: () => phase })
+  await liveTimers(async (live) => {
+    const stopper = await runChatWatcher(desk, r, () => {})
+    phase = 'during'
+    const started = Date.now()
+    while (r.calls.latest === 0 && Date.now() - started < 3000) await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(r.calls.latest).toBeGreaterThan(0)
+    expect(Date.now() - started).toBeLessThan(2000)
+    await stopper.stop()
+    expect(live()).toBe(0)
+  })
+})
+
+test('no link is offered once a stop is requested, even from a poll in flight', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  const stopper = await h.run(r)
+  r.feed = [m('a', 'Rep', [Z1]), m('f', 'Lecturer', [F])]
+  const gate = Promise.withResolvers<void>()
+  const entered = Promise.withResolvers<void>()
+  h.set({
+    deskStep: async (step) => {
+      entered.resolve()
+      await gate.promise
+      return step()
+    }
+  })
+  await h.release()
+  await entered.promise
+  const stopping = stopper.stop()
+  gate.resolve()
+  await stopping
+  expect(r.calls.latest).toBe(1)
+  expect(h.meeting).toEqual([])
+  expect(h.forms).toEqual([])
+})
+
+test('a throw from onLink is reported as a status and the loop keeps going', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  const offered: Link[] = []
+  stoppers.push(
+    await runChatWatcher(desk, r, (c) => {
+      offered.push(c)
+      if (offered.length === 1) throw new Error(`could not use ${Z1}`)
+    })
+  )
+  r.feed = [m('a', 'Rep', [Z1])]
+  await h.tick()
+  expect(h.statuses).toEqual([{ kind: 'handler_failed', error: 'Error' }])
+  r.feed = [m('a', 'Rep', [Z1]), m('b', 'Rep', [Z2])]
+  await h.tick()
+  expect(offered).toEqual([{ meetingUrl: Z1 }, { meetingUrl: Z2 }])
+})
+
+test('a throw from onStatus does not stop the loop', async () => {
+  const r = fakeReader({ history: [] })
+  const h = harness()
+  const logged = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    h.set({
+      onStatus: () => {
+        throw new Error('boom')
+      }
+    })
+    await h.run(r)
+    r.throwNext = [new WatcherSigninError('web.whatsapp.com')]
+    await h.tick()
+    r.feed = [m('a', 'Rep', [Z1])]
+    await h.tick()
+    expect(h.meeting).toEqual([{ meetingUrl: Z1 }])
+    expect(logged).toHaveBeenCalledWith('watcher onStatus threw', 'Error')
+  } finally {
+    logged.mockRestore()
+  }
 })
