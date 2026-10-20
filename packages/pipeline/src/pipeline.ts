@@ -121,6 +121,17 @@ function meetingUrl(cfg: JobConfig, publicUrl: string | undefined = process.env.
   return `${new URL(publicUrl).origin}/meetings/${encodeURIComponent(cfg.occurrenceId)}`
 }
 
+// The meeting page for the summary's last line. A bad `TM_PUBLIC_URL` is reported on stderr and the summary is written
+// without the link: a setting must not cost the member the summary the AI already paid for.
+function meetingUrlOrReport(cfg: JobConfig): string | null {
+  try {
+    return meetingUrl(cfg)
+  } catch (error) {
+    console.error(`tm-pipeline: ${describeError(error)}; the summary has no meeting link`)
+    return null
+  }
+}
+
 async function build(cfg: JobConfig, signal?: AbortSignal): Promise<{ result: PipelineResult; md: string }> {
   const outDir = join(cfg.dataDir, 'out')
   await mkdir(outDir, { recursive: true })
@@ -140,7 +151,7 @@ async function build(cfg: JobConfig, signal?: AbortSignal): Promise<{ result: Pi
     cfg.entry.type === 'work'
       ? renderWorkSummary(await buildWorkInventory(cfg, input), {
           cfg,
-          meetingUrl: meetingUrl(cfg),
+          meetingUrl: meetingUrlOrReport(cfg),
           outDir,
           unreadSlides
         })

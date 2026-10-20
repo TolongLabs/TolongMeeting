@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { mkdir, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { utimes } from 'node:fs/promises'
@@ -170,10 +170,23 @@ describe('a work summary links to the meeting page when TM_PUBLIC_URL is set', (
     expect(md.split('\n').at(-2)).toBe('Details: https://tm.example/meetings/occ-1')
   })
 
-  test('a URL that is not https is an error, not a silent fallback', async () => {
-    process.env.TM_PUBLIC_URL = 'http://tm.example'
-    ai.reply(workInventory)
-    await expect(runPipeline(workConfig())).rejects.toThrow('TM_PUBLIC_URL must be an https URL')
+  test('a URL that is not https is reported, and the summary is still written without the link', async () => {
+    const errors = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      for (const bad of ['http://tm.example', 'not a url']) {
+        process.env.TM_PUBLIC_URL = bad
+        ai.reply(workInventory)
+        const md = await Bun.file((await runPipeline(workConfig())).summaryPath).text()
+        expect(md).toContain('\nDo next: Draft the release notes (due Wed 28 Oct 2026)\n')
+        expect(md.split('\n').at(-2)).toStartWith('Details: the transcript, slides and chat files in ')
+      }
+      expect(errors.mock.calls.map((c) => c.join(' '))).toEqual([
+        expect.stringContaining('TM_PUBLIC_URL must be an https URL; the summary has no meeting link'),
+        expect.stringContaining('TM_PUBLIC_URL must be an https URL; the summary has no meeting link')
+      ])
+    } finally {
+      errors.mockRestore()
+    }
   })
 })
 
