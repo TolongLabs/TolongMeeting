@@ -30,7 +30,7 @@ function fakeSafe(available: boolean): SafeStorageLike {
   }
 }
 
-const DOCS = '/home/m/Documents'
+const DOCS = process.platform === 'win32' ? 'C:\\Users\\m\\Documents' : '/home/m/Documents'
 const SERVER = 'https://tm.example'
 
 describe('settings', () => {
@@ -42,6 +42,11 @@ describe('settings', () => {
       cwd: null,
       model: 'medium'
     })
+  })
+
+  test('defaultSettings preserves Windows path separators on any host', () => {
+    const s = defaultSettings('C:\\Users\\m\\Documents', SERVER)
+    expect(s.summariesDir).toBe('C:\\Users\\m\\Documents\\Meeting summaries')
   })
 
   test('loadSettings rejects a malformed file and keeps defaults for missing keys', async () => {
@@ -159,6 +164,10 @@ describe('SecretStore', () => {
   test('the secrets file is private to the member', async () => {
     const file = await tmpFile()
     await new SecretStore(file, fakeSafe(true)).set('deviceToken', 'tmd_secret')
+    if (process.platform === 'win32') {
+      // Windows NTFS does not support POSIX permission bits (mode & 0o077); access is governed by ACLs.
+      return
+    }
     expect((await Bun.file(file).stat()).mode & 0o077).toBe(0)
   })
 

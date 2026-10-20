@@ -8,9 +8,10 @@ test.describe.configure({ mode: 'serial' })
 
 const state = (): SettingsE2eState => JSON.parse(readFileSync(STATE_FILE, 'utf8'))
 
-const GOOD_KEY = 'sk-e2e-good-key-4242'
-const BAD_KEY = 'sk-e2e-bad-key-0000'
-const MODELSCOPE_KEY = 'ms-e2e-good-key-7777'
+// The page shows a key's last four characters only for keys of 24 characters or more (lib/ai-keys.ts).
+const GOOD_KEY = 'sk-e2e-good-key-long-enough-4242'
+const BAD_KEY = 'sk-e2e-bad-key-long-enough-0000'
+const MODELSCOPE_KEY = 'ms-e2e-good-key-long-enough-7777'
 const NTFY_TOKEN = 'tk_e2e_secret_token'
 const SECRETS = [GOOD_KEY, BAD_KEY, MODELSCOPE_KEY, NTFY_TOKEN]
 
@@ -19,6 +20,8 @@ interface Sent {
   url: string
   action: string | null
   body: string
+  status?: number
+  cacheControl?: string
 }
 
 /** Everything the server sent while the test ran: pages, redirects and action replies. */
@@ -29,13 +32,34 @@ let showTokenAction: string | null = null
 test.beforeEach(async ({ page }) => {
   const { name, value } = state().cookie
   await page.context().addCookies([{ name, value, url: 'http://127.0.0.1' }])
+  // Server action replies are read in a route handler: once the page has used one, the browser may drop its body (seen
+  // on CI), and a dropped body would let a secret slip past the sweep below.
+  await page.route(
+    () => true,
+    async (route) => {
+      const request = route.request()
+      const action = request.headers()['next-action']
+      if (request.method() !== 'POST' || action === undefined) return route.continue()
+      const response = await route.fetch()
+      const headers = response.headers()
+      sent.push({
+        url: request.url(),
+        action,
+        body: await response.text(),
+        status: response.status(),
+        cacheControl: headers['cache-control']
+      })
+      await route.fulfill({ response })
+    }
+  )
   page.on('response', async (response) => {
     const request = response.request()
+    if (request.headers()['next-action'] !== undefined) return // recorded by the route above
     // A redirect has no body to read.
     const body = ['document', 'fetch', 'xhr'].includes(request.resourceType())
       ? await response.text().catch(() => '')
       : ''
-    sent.push({ url: response.url(), action: request.headers()['next-action'] ?? null, body })
+    sent.push({ url: response.url(), action: null, body })
   })
 })
 
@@ -112,16 +136,13 @@ test('Notifications: set up, show the token on request, test ping', async ({ pag
   await expectNoAxeViolations(page)
 
   // Show token: the token appears, from this click's reply only, which is not cached.
-  const showReply = page.waitForResponse(
-    (r) => r.request().method() === 'POST' && r.request().headers()['next-action'] !== undefined
-  )
+  const before = sent.length
   await page.getByRole('button', { name: 'Show token' }).click()
-  const reply = await showReply
-  showTokenAction = reply.request().headers()['next-action']!
-  expect(reply.status()).toBe(200)
-  expect(reply.headers()['cache-control']).toContain('no-store')
-  expect(await reply.text()).toContain(NTFY_TOKEN)
   await expect(page.getByText(NTFY_TOKEN, { exact: true })).toBeVisible()
+  const reply = sent.slice(before).find((s) => s.action !== null && s.body.includes(NTFY_TOKEN))
+  expect(reply?.status).toBe(200)
+  expect(reply?.cacheControl).toContain('no-store')
+  showTokenAction = reply!.action
   await expectNoAxeViolations(page)
   await page.getByRole('button', { name: 'Hide token' }).click()
   await expect(page.getByText(NTFY_TOKEN, { exact: true })).toHaveCount(0)

@@ -79,6 +79,42 @@ jobs:
         env:
           TM_REQUIRE_NAMESPACES: '1'
 
+  # The website's browser specs (pages, meeting, accounts; settings; devices, connections and admin) build the site and
+  # run it against a scratch database, with fakes for the outside services. Each config starts its own server.
+  web-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TEST_DATABASE_URL: postgres://postgres:tmtest@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: tmtest
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: Pages, meeting and accounts
+        working-directory: packages/web
+        run: bunx playwright test -c playwright.config.ts
+      - name: Settings
+        working-directory: packages/web
+        run: bunx playwright test -c playwright.settings.config.ts
+      - name: Devices, connections and admin
+        working-directory: packages/web
+        run: bunx playwright test -c playwright.ops.config.ts
+
   # Playwright specs are not part of `bun run test` (bunfig.toml ignores *.spec.ts). The image and host projects need the
   # worker image or a Chrome host setup and are not run here.
   playwright:

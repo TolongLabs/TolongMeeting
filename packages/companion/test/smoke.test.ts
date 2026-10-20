@@ -24,10 +24,19 @@ const children: ChildProcess[] = []
 function launch(
   args: string[] = [],
   env: Record<string, string> = {},
-  entry = app
+  entry: string | null = app,
+  exe = electron
 ): { child: ChildProcess; lines: string[]; exited: Promise<number | null> } {
-  const child = spawn(electron, ['--no-sandbox', entry, ...args], {
-    env: { ...process.env, XDG_CONFIG_HOME: join(work, 'config'), ...env },
+  // A packaged app (entry null) is its own executable and keeps Chrome's sandbox, as it does for members.
+  const argv = entry === null ? args : ['--no-sandbox', entry, ...args]
+  const child = spawn(exe, argv, {
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: join(work, 'config'),
+      TM_APP_DATA_DIR: join(work, 'config'),
+      LOCALAPPDATA: join(work, 'local'),
+      ...env
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   children.push(child)
@@ -50,6 +59,12 @@ async function until(what: string, ok: () => boolean, ms = 30_000): Promise<void
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
     await Bun.sleep(100)
   }
+}
+
+/** The app quits cleanly on SIGTERM. Windows has no SIGTERM: `kill()` ends the process at once, so only the exit is checked. */
+async function expectQuit(exited: Promise<number | null>): Promise<void> {
+  const code = await exited
+  if (process.platform !== 'win32') expect(code).toBe(0)
 }
 
 const LOAD_FAILURES =
@@ -94,7 +109,7 @@ describe.skipIf(!enabled)('Electron smoke test', () => {
     expect(second.lines.some((l) => l.startsWith(READY))).toBe(false)
 
     first.child.kill('SIGTERM')
-    expect(await first.exited).toBe(0)
+    await expectQuit(first.exited)
     // The first run (not paired, not `--hidden`) opened the pairing window and the tray: every file they need loaded.
     expect(first.lines.filter((l) => LOAD_FAILURES.test(l))).toEqual([])
   }, 90_000)
@@ -103,7 +118,7 @@ describe.skipIf(!enabled)('Electron smoke test', () => {
     const hidden = launch(['--hidden'])
     await until('the ready line', () => hidden.lines.some((l) => l.startsWith(READY)))
     hidden.child.kill('SIGTERM')
-    expect(await hidden.exited).toBe(0)
+    await expectQuit(hidden.exited)
     expect(hidden.lines.filter((l) => LOAD_FAILURES.test(l))).toEqual([])
   }, 90_000)
 
@@ -198,6 +213,21 @@ describe.skipIf(!enabled)('Electron smoke test', () => {
     expect(r.signinErrorCheck.errors[0]).toMatch(/^Failed to load sign-in page: /)
     expect(run.lines.some((l) => l.includes('PW_SECRET_CHECK'))).toBe(false)
   }, 120_000)
+
+  // The packaged app: pages load from inside app.asar with the Electron fuses electron-builder applied. Run with
+  // TM_ELECTRON_PACKAGED set to the executable (`bun run --cwd packages/companion pack` builds it), as the Windows CI does.
+  test.skipIf(!process.env.TM_ELECTRON_PACKAGED)(
+    'the packaged app boots, opens its windows and quits',
+    async () => {
+      const run = launch([], {}, null, process.env.TM_ELECTRON_PACKAGED!)
+      await until('the ready line', () => run.lines.some((l) => l.startsWith(READY)))
+      expect(run.lines.find((l) => l.startsWith(READY))).toBe(`${READY}: summaries in ${join(work, 'notes')}`)
+      run.child.kill('SIGTERM')
+      await expectQuit(run.exited)
+      expect(run.lines.filter((l) => LOAD_FAILURES.test(l))).toEqual([])
+    },
+    90_000
+  )
 
   test('a malformed settings file stops the app with an error', async () => {
     await writeFile(join(work, 'config', 'TolongMeeting', 'settings.json'), '{"whisper":{"model":5}}')

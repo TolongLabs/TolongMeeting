@@ -497,6 +497,8 @@ describe('edge scenarios', () => {
     await releaseWorker(id)
     await until('the key error', async () => (await rowOf(stack, id)).stateReason === 'ai_key_error')
     expect(await rowOf(stack, id)).toMatchObject({ state: 'post_processing', stateReason: 'ai_key_error' })
+    // The ping goes out after the state is saved, so on a slow runner it can trail the state by a moment.
+    await until('the key ping', async () => titlesOf(alice).length > 0)
     expect(titlesOf(alice)).toEqual(['Summary needs your key: Data Mining'])
     expect(pingsOf(alice)[0]!.message).toContain('(401)')
     expect(pingsOf(alice)[0]!.actions.map((a) => a.url)).toEqual([

@@ -125,9 +125,10 @@ const SettingsFileSchema = z.strictObject({
 })
 
 export function defaultSettings(documentsDir: string, serverUrl: string): Settings {
+  const p = documentsDir.startsWith('/') ? posix : win32
   return SettingsSchema.parse({
     serverUrl,
-    summariesDir: join(documentsDir, 'Meeting summaries'),
+    summariesDir: p.join(documentsDir, 'Meeting summaries'),
     whisper: {
       command: 'uv run transcriber {audio} -m {model} -f txt,srt,json -o {outDir}',
       cwd: null,

@@ -1,0 +1,47 @@
+name: Companion on Windows
+
+# The desktop companion ships for Windows only. This runs its tests on Windows, packages it with electron-builder (the
+# shipped Electron fuses are applied there) and boots the app in the Electron smoke test.
+on:
+  pull_request:
+    paths:
+      - 'packages/companion/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - 'test/preload.ts'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      # The local-run tests stand in a host ffmpeg for the ffmpeg the app runs in Docker.
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
+      - name: Companion tests
+        run: bun test packages/companion --timeout 120000
+      - name: Package the app
+        run: bun run --cwd packages/companion pack
+        env:
+          # The build bakes in a default server address; a placeholder is enough to package and boot the app.
+          TM_PUBLIC_URL: https://tm.example
+      # Bun does not run electron's postinstall, which downloads the Electron binary.
+      - name: Install the Electron binary
+        run: bun run --cwd packages/companion electron:install
+      - name: Electron smoke test
+        run: bun test packages/companion/test/smoke.test.ts --timeout 120000
+        env:
+          TM_ELECTRON_SMOKE: '1'
+          TM_ELECTRON_PACKAGED: ${{ github.workspace }}\packages\companion\release\win-unpacked\TolongMeeting.exe

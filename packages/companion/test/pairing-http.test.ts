@@ -37,57 +37,61 @@ let db: Db
 let memberId: string
 let topic: string
 let dir: string
-let server: ReturnType<typeof Bun.serve>
-let landing: ReturnType<typeof Bun.serve>
+let server: ReturnType<typeof Bun.serve> | undefined
+let landing: ReturnType<typeof Bun.serve> | undefined
 const landed: Request[] = []
 let base: string
 
-beforeAll(async () => {
-  ;({ db, memberId, topic } = await withNtfy(NTFY_TOKEN, TEST_MASTER))
-  dir = await mkdtemp(join(tmpdir(), 'tm-pair-http-'))
-  const deps: PairDeps = {
-    db,
-    ntfyOf: (memberId) => ntfyConfigOf(db, TEST_MASTER, NTFY_URL, memberId),
-    ipLimiter: new AttemptLimiter(MAX_FAILURES_PER_IP, ATTEMPT_WINDOW_MS),
-    prefixLimiter: new AttemptLimiter(MAX_FAILURES_PER_PREFIX, ATTEMPT_WINDOW_MS),
-    globalLimiter: new AttemptLimiter(MAX_FAILURES_GLOBAL, ATTEMPT_WINDOW_MS),
-    now: () => new Date()
-  }
-  landing = Bun.serve({
-    port: 0,
-    hostname: '127.0.0.1',
-    fetch(req) {
-      landed.push(req)
-      return Response.json({ jobs: [] })
+const hasDb = Boolean(process.env.TEST_DATABASE_URL)
+if (!hasDb) {
+  console.warn('pairing-http.test.ts skipped: TEST_DATABASE_URL is not set')
+}
+
+describe.skipIf(!hasDb)('pairing over real HTTP', () => {
+  beforeAll(async () => {
+    ;({ db, memberId, topic } = await withNtfy(NTFY_TOKEN, TEST_MASTER))
+    dir = await mkdtemp(join(tmpdir(), 'tm-pair-http-'))
+    const deps: PairDeps = {
+      db,
+      ntfyOf: (memberId) => ntfyConfigOf(db, TEST_MASTER, NTFY_URL, memberId),
+      ipLimiter: new AttemptLimiter(MAX_FAILURES_PER_IP, ATTEMPT_WINDOW_MS),
+      prefixLimiter: new AttemptLimiter(MAX_FAILURES_PER_PREFIX, ATTEMPT_WINDOW_MS),
+      globalLimiter: new AttemptLimiter(MAX_FAILURES_GLOBAL, ATTEMPT_WINDOW_MS),
+      now: () => new Date()
     }
-  })
-  server = Bun.serve({
-    port: 0,
-    hostname: '127.0.0.1',
-    async fetch(req) {
-      const path = new URL(req.url).pathname
-      if (path === '/api/companion/pair') return handlePairRequest(req, deps)
-      if (path === '/api/companion/jobs') {
-        const device = await authenticateDevice(db, req.headers.get('authorization'))
-        return device
-          ? Response.json({ jobs: [] })
-          : Response.json({ error: 'device_revoked_or_unknown' }, { status: 401 })
+    landing = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch(req) {
+        landed.push(req)
+        return Response.json({ jobs: [] })
       }
-      if (path === '/api/companion/events') return Response.redirect(`http://127.0.0.1:${landing.port}/stolen`, 302)
-      return new Response('', { status: 404 })
-    }
+    })
+    server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      async fetch(req) {
+        const path = new URL(req.url).pathname
+        if (path === '/api/companion/pair') return handlePairRequest(req, deps)
+        if (path === '/api/companion/jobs') {
+          const device = await authenticateDevice(db, req.headers.get('authorization'))
+          return device
+            ? Response.json({ jobs: [] })
+            : Response.json({ error: 'device_revoked_or_unknown' }, { status: 401 })
+        }
+        if (path === '/api/companion/events') return Response.redirect(`http://127.0.0.1:${landing!.port}/stolen`, 302)
+        return new Response('', { status: 404 })
+      }
+    })
+    base = `http://127.0.0.1:${server.port}`
   })
-  base = `http://127.0.0.1:${server.port}`
-})
 
-afterAll(async () => {
-  await server.stop(true)
-  await landing.stop(true)
-  await rm(dir, { recursive: true, force: true })
-  await dropAllTestDbs()
-})
-
-describe('pairing over real HTTP', () => {
+  afterAll(async () => {
+    if (server) await server.stop(true)
+    if (landing) await landing.stop(true)
+    if (dir) await rm(dir, { recursive: true, force: true })
+    if (hasDb) await dropAllTestDbs()
+  })
   test('pairs with a real code, calls the API with the token, and is unpaired when revoked', async () => {
     const { code } = await createPairingCode(createScope(db, memberId), new Date())
 

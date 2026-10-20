@@ -172,8 +172,13 @@ describe('body handling', () => {
   test('a body over 1 MB is a 413 and is not forwarded', async () => {
     const api = replying([])
     const r = await start(api)
-    const res = await raw(r.port, { token: r.token, body: Buffer.alloc(MAX_RELAY_BODY_BYTES + 1, 0x61) })
-    expect(res).toEqual({ status: 413, body: '{"error":"payload too large"}' })
+    const res = await raw(r.port, { token: r.token, body: Buffer.alloc(MAX_RELAY_BODY_BYTES + 1, 0x61) }).catch(
+      (e: NodeJS.ErrnoException) => e
+    )
+    // Windows answers a socket closed with unread bytes with a TCP reset, which can beat the 413 to the client. Either
+    // way the body is refused; what matters is that nothing reaches the server.
+    if (process.platform === 'win32' && res instanceof Error) expect(res.code).toBe('ECONNRESET')
+    else expect(res).toEqual({ status: 413, body: '{"error":"payload too large"}' })
     expect(api.sent).toEqual([])
   })
   test('an oversize body without a Content-Length is a 413 too', async () => {
