@@ -187,6 +187,22 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/**
+ * Removes `path` like `rm -rf`. On Windows a file a process had open (the FLAC cut, a stopped container's bind mount)
+ * can stay locked for a moment after that process ends, so EBUSY and EPERM are retried for up to two seconds.
+ */
+async function removePath(path: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rm(path, { recursive: true, force: true })
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if ((code !== 'EBUSY' && code !== 'EPERM') || attempt >= 10) throw e
+      await sleep(200)
+    }
+  }
+}
+
 /** Runs `step` until it works. A failure that may pass waits `retryMs` and goes again; any other failure is thrown. */
 async function persist<T>(d: AfterDeps, step: () => Promise<T>): Promise<T> {
   for (;;) {
@@ -241,7 +257,7 @@ async function deleteRun(dataDir: string, occDir: string): Promise<void> {
   if (st.isSymbolicLink()) return void (await rm(occDir, { force: true }))
   const home = await realpath(dataDir)
   if (!(await realpath(occDir)).startsWith(home + sep)) throw new Error('The run folder is outside the data folder')
-  await rm(occDir, { recursive: true, force: true })
+  await removePath(occDir)
 }
 
 async function transcriptOnDisk(occDir: string): Promise<boolean> {
@@ -308,9 +324,9 @@ async function transcribeOnce(d: AfterDeps, job: LocalJob, dataDir: string, occD
   const flac = join(occDir, 'audio.flac')
   let scratch: string | null = null
   try {
-    await rm(flac, { recursive: true, force: true })
+    await removePath(flac)
     for (const stale of (await readdir(occDir)).filter((n) => n.startsWith('.whisper-'))) {
-      await rm(join(occDir, stale), { recursive: true, force: true })
+      await removePath(join(occDir, stale))
     }
     if (!(await cutFlac(d, job, dataDir)) || !(await isRegular(flac))) return false
 
@@ -336,8 +352,8 @@ async function transcribeOnce(d: AfterDeps, job: LocalJob, dataDir: string, occD
     await writeFileAtomic(join(dir, 'audio.txt'), out.files.txt, 0o600)
     return true
   } finally {
-    await rm(flac, { recursive: true, force: true })
-    if (scratch !== null) await rm(scratch, { recursive: true, force: true })
+    await removePath(flac)
+    if (scratch !== null) await removePath(scratch)
   }
 }
 

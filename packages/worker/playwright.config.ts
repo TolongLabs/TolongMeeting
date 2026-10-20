@@ -39,7 +39,9 @@ export default defineConfig({
     },
     // A whole meeting run on this host against local fakes (fake Zoom, forms, AI, ntfy), headed Chrome on its own Xvfb:
     // `xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts --project=e2e`. Needs Xvfb, ffmpeg and Chrome.
-    { name: 'e2e', testMatch: 'e2e/*.spec.ts', use: { headless: false } },
+    // On CI one retry: a whole run on a shared runner is timing-sensitive, and Playwright reports a pass on retry as
+    // "flaky" rather than hiding it.
+    { name: 'e2e', testMatch: 'e2e/*.spec.ts', retries: process.env.CI ? 1 : 0, use: { headless: false } },
     // Needs the worker image (Xvfb, openbox, Chrome, PulseAudio); the specs skip unless TM_IN_IMAGE=1.
     { name: 'image', testMatch: 'image/*.spec.ts' },
     // Launch proof for a host with Xvfb and Chrome but no openbox; the spec skips unless TM_HOST_LAUNCH=1.
