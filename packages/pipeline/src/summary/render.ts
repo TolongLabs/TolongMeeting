@@ -4,7 +4,14 @@ import type { Inventory, InventoryItem } from './inventory'
 
 type Source = InventoryItem['source']
 
-const SECTION_CAP = 5
+// What `chooseDue` reads: a lecture item and a work action item both have it.
+export interface Dated {
+  source: Source
+  due: string | null
+  conflicts: { source: Source; due: string | null }[]
+}
+
+export const SECTION_CAP = 5
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const RANK: Record<Source, number> = { slide: 0, lecturer_chat: 1, speech: 2 }
@@ -13,7 +20,7 @@ const NOTHING_TO_DO = 'nothing to do from this session'
 
 // "Sun 1 Nov 2026" or "Sun 1 Nov 2026, 23:59" from "YYYY-MM-DD[Thh:mm]". The string has no zone, so it is read as
 // UTC and the process zone cannot move the weekday.
-function dateText(due: string): string {
+export function dateText(due: string): string {
   const [datePart, time] = due.split('T') as [string, string | undefined]
   const [year, month, day] = datePart.split('-').map(Number) as [number, number, number]
   const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]
@@ -25,7 +32,7 @@ function dateText(due: string): string {
  * The due value from the highest-ranked source with a date (slide, lecturer chat, speech), and a note for every other
  * differing date, such as `heard as Sat 31 Oct 2026`.
  */
-export function chooseDue(item: InventoryItem): { due: string | null; note: string | null } {
+export function chooseDue(item: Dated): { due: string | null; note: string | null } {
   const versions = [{ source: item.source, due: item.due }, ...item.conflicts]
   const dated = versions.filter((v): v is { source: Source; due: string } => v.due !== null)
   const best = dated.reduce<(typeof dated)[number] | null>(
@@ -38,17 +45,22 @@ export function chooseDue(item: InventoryItem): { due: string | null; note: stri
 }
 
 // Join links and passcodes never reach the summary, whatever the model copied into an item.
-function clean(text: string): string {
+export function clean(text: string): string {
   return scrub(text).replace(/\s+/g, ' ').trim()
 }
 
-function itemLine(item: InventoryItem): string {
+/** `<text> (due Wed 28 Oct 2026, 09:00; heard as ...)`: the text alone when the item has no date. */
+export function withDue(text: string, item: Dated): string {
   const { due, note } = chooseDue(item)
   const parts = [due === null ? null : `due ${dateText(due)}`, note].filter((p) => p !== null)
-  return parts.length === 0 ? clean(item.text) : `${clean(item.text)} (${parts.join('; ')})`
+  return parts.length === 0 ? text : `${text} (${parts.join('; ')})`
 }
 
-function byDue(a: InventoryItem, b: InventoryItem): number {
+function itemLine(item: InventoryItem): string {
+  return withDue(clean(item.text), item)
+}
+
+export function byDue(a: Dated, b: Dated): number {
   const x = chooseDue(a).due
   const y = chooseDue(b).due
   if (x === y) return 0
@@ -57,17 +69,34 @@ function byDue(a: InventoryItem, b: InventoryItem): number {
   return x < y ? -1 : 1
 }
 
-function numbered(lines: string[]): string {
+export function numbered(lines: string[]): string {
   return lines.map((line, index) => `${index + 1}. ${line}`).join('\n')
 }
 
-function titleLine(cfg: JobConfig, inv: Inventory): string {
+/** `<name><label> (<weekday> <date>, <start> to <end>)` in the entry's time zone; `label` is the text after the name. */
+export function titleWithLabel(cfg: JobConfig, label: string): string {
   const { name, start, end, timeZone } = cfg.entry
   const from = localParts(start, timeZone)
   const to = localParts(end, timeZone)
   const clock = (hhmm: string): string => `${hhmm.slice(0, 2)}:${hhmm.slice(2)}`
-  const label = inv.sessionLabel === null || inv.sessionLabel.trim() === '' ? '' : `, ${clean(inv.sessionLabel)}`
   return `${name}${label} (${from.weekday} ${from.dayMonthYear}, ${clock(from.hhmm)} to ${clock(to.hhmm)})`
+}
+
+function titleLine(cfg: JobConfig, inv: Inventory): string {
+  const label = inv.sessionLabel === null || inv.sessionLabel.trim() === '' ? '' : `, ${clean(inv.sessionLabel)}`
+  return titleWithLabel(cfg, label)
+}
+
+/** The notice under the sections when some slides could not be read; null when all were. */
+export function unreadSlidesNotice(unread: number[]): string | null {
+  if (unread.length === 0) return null
+  const numbers = unread.map((n) => String(n).padStart(2, '0')).join(', ')
+  return `Slide text could not be read for slide ${numbers}. Items on those slides may be missing.`
+}
+
+/** The last line of every summary: the meeting page when there is one, else the folder of the files. */
+export function detailsLine(meetingUrl: string | null, outDir: string): string {
+  return meetingUrl === null ? `Details: the transcript, slides and chat files in ${outDir}` : `Details: ${meetingUrl}`
 }
 
 /**
@@ -99,11 +128,8 @@ export function renderLectureSummary(
   if (covered.length > 0) blocks.push(`What was covered\n${numbered(covered)}`)
   if (announcements.length > 0) blocks.push(`Announcements\n${numbered(announcements.map(itemLine))}`)
   if (more.length > 0) blocks.push(`More deadlines\n${numbered(more.map(itemLine))}`)
-  const unread = ctx.unreadSlides ?? []
-  if (unread.length > 0) {
-    const numbers = unread.map((n) => String(n).padStart(2, '0')).join(', ')
-    blocks.push(`Slide text could not be read for slide ${numbers}. Items on those slides may be missing.`)
-  }
-  blocks.push(`Details: the transcript, slides and chat files in ${ctx.outDir}`)
+  const unread = unreadSlidesNotice(ctx.unreadSlides ?? [])
+  if (unread !== null) blocks.push(unread)
+  blocks.push(detailsLine(null, ctx.outDir))
   return `${blocks.join('\n\n')}\n`
 }

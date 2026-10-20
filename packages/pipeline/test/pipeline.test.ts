@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { utimes } from 'node:fs/promises'
@@ -7,6 +7,7 @@ import { sampleRecord } from '@tm/core/testing'
 import sharp from 'sharp'
 import { runPipeline } from '../src/index'
 import type { Inventory } from '../src/summary/inventory'
+import type { WorkInventory } from '../src/summary/work'
 import { startFakeAi, startFakeNtfy, type FakeAi, type FakeNtfy } from './fakes'
 import { liveLine, makeOccurrence, removeOccurrence, writeAttempts, writeLines, type Occurrence } from './helpers'
 
@@ -121,9 +122,59 @@ test('a Microsoft form link is written as its canonical page, which the final sc
   expect(md).not.toContain('secret')
 })
 
-test('a work entry has no attendance line', async () => {
-  const r = await runPipeline({ ...cfg, entry: { ...cfg.entry, type: 'work' } })
-  expect(await Bun.file(r.summaryPath).text()).not.toContain('Attendance')
+const workInventory: WorkInventory = {
+  decisions: ['Ship the beta on 3 Nov'],
+  actionItems: [
+    { owner: 'Ben', task: 'Book the demo room', due: null, source: 'speech', ref: null, conflicts: [] },
+    { owner: 'Aisyah', task: 'Draft the release notes', due: '2026-10-28', source: 'slide', ref: null, conflicts: [] }
+  ],
+  discussed: ['Beta scope'],
+  openQuestions: []
+}
+
+function workConfig(): JobConfig {
+  return {
+    ...cfg,
+    entry: { ...cfg.entry, name: 'Weekly sync', type: 'work' },
+    ai: { ...cfg.ai, models: { ...cfg.ai.models, summary: 'qwen3.7-plus' } },
+    member: { ...cfg.member, displayName: 'A Member', mentionNames: ['Aisyah'] }
+  }
+}
+
+test('a work entry gets the work inventory and summary, with no attendance line', async () => {
+  ai.reply(workInventory)
+  const r = await runPipeline(workConfig())
+  const md = await Bun.file(r.summaryPath).text()
+  expect(md.split('\n')[0]).toStartWith('Weekly sync (')
+  expect(md).not.toContain('Attendance')
+  expect(md).toContain('\nDo next: Draft the release notes (due Wed 28 Oct 2026)\n')
+  expect(md.split('\n').at(-2)).toStartWith('Details: the transcript, slides and chat files in ')
+  expect(ai.requests).toHaveLength(1)
+  const body = ai.requests[0]!.json
+  expect(body).toMatchObject({ model: 'qwen3.7-plus', enable_thinking: false })
+  expect(body.messages[0].content).toStartWith('You extract an inventory from one work meeting.')
+  expect(body.messages[1].content).toContain('## Host chat')
+})
+
+describe('a work summary links to the meeting page when TM_PUBLIC_URL is set', () => {
+  const saved = process.env.TM_PUBLIC_URL
+  afterEach(() => {
+    if (saved === undefined) delete process.env.TM_PUBLIC_URL
+    else process.env.TM_PUBLIC_URL = saved
+  })
+
+  test('https URL', async () => {
+    process.env.TM_PUBLIC_URL = 'https://tm.example/'
+    ai.reply(workInventory)
+    const md = await Bun.file((await runPipeline(workConfig())).summaryPath).text()
+    expect(md.split('\n').at(-2)).toBe('Details: https://tm.example/meetings/occ-1')
+  })
+
+  test('a URL that is not https is an error, not a silent fallback', async () => {
+    process.env.TM_PUBLIC_URL = 'http://tm.example'
+    ai.reply(workInventory)
+    await expect(runPipeline(workConfig())).rejects.toThrow('TM_PUBLIC_URL must be an https URL')
+  })
 })
 
 test('a re-run rewrites the same files and does not ping the summary twice', async () => {

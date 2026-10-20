@@ -13,6 +13,7 @@ import { attendanceLine } from './summary/attendance'
 import { buildInventory } from './summary/inventory'
 import { summaryFileName } from './summary/name'
 import { renderLectureSummary } from './summary/render'
+import { buildWorkInventory, renderWorkSummary } from './summary/work'
 
 export interface PipelineResult {
   summaryPath: string
@@ -110,6 +111,16 @@ async function claimLock(lock: string): Promise<boolean> {
   return false
 }
 
+// The member's meeting page, `${TM_PUBLIC_URL}/meetings/<occurrenceId>`; null when the variable is unset. A value that is
+// not an https URL is an error: a summary must not carry a link the member cannot open.
+function meetingUrl(cfg: JobConfig, publicUrl: string | undefined = process.env.TM_PUBLIC_URL): string | null {
+  if (publicUrl === undefined || publicUrl === '') return null
+  if (!URL.canParse(publicUrl) || new URL(publicUrl).protocol !== 'https:') {
+    throw new Error('TM_PUBLIC_URL must be an https URL')
+  }
+  return `${new URL(publicUrl).origin}/meetings/${encodeURIComponent(cfg.occurrenceId)}`
+}
+
 async function build(cfg: JobConfig, signal?: AbortSignal): Promise<{ result: PipelineResult; md: string }> {
   const outDir = join(cfg.dataDir, 'out')
   await mkdir(outDir, { recursive: true })
@@ -119,18 +130,26 @@ async function build(cfg: JobConfig, signal?: AbortSignal): Promise<{ result: Pi
   signal?.throwIfAborted()
   const chatPath = await buildChat(cfg)
   signal?.throwIfAborted()
-  const inventory = await buildInventory(cfg, {
+  const input = {
     transcriptMd: await Bun.file(transcriptPath).text(),
     slides,
     chat: await loadChat(cfg)
-  })
-  const attendance = cfg.entry.type === 'lecture' ? await attendanceLine(cfg.dataDir, cfg.entry.timeZone) : null
-  const md = renderLectureSummary(inventory, {
-    cfg,
-    attendance,
-    outDir,
-    unreadSlides: slides.filter((s) => s.failed === true).map((s) => s.n)
-  })
+  }
+  const unreadSlides = slides.filter((s) => s.failed === true).map((s) => s.n)
+  const md =
+    cfg.entry.type === 'work'
+      ? renderWorkSummary(await buildWorkInventory(cfg, input), {
+          cfg,
+          meetingUrl: meetingUrl(cfg),
+          outDir,
+          unreadSlides
+        })
+      : renderLectureSummary(await buildInventory(cfg, input), {
+          cfg,
+          attendance: await attendanceLine(cfg.dataDir, cfg.entry.timeZone),
+          outDir,
+          unreadSlides
+        })
   // The last gate: whatever the model or a record put in the text, no join link or passcode is written or pinged.
   const safe = scrub(md)
   const summaryPath = join(outDir, summaryFileName(cfg))

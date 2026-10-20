@@ -132,7 +132,7 @@ You extract an inventory from one work meeting. Reply with JSON for the given sc
 - `renderWorkSummary` writes the design's work template: the title line as 1A's lecture title without a session label; `Do next: <task> (<due text>)` for `pickDoNext(inv, [...cfg.member.mentionNames, cfg.member.displayName])`, else `Do next: nothing assigned to you in this meeting`; `Decisions`, `What was discussed` and `Open questions` with their first 5 items; `Action items` sorted by due date (undated last), first 5, each `<owner>: <task> (<due text>)`, without `<owner>: ` when the owner is null and without the brackets when undated; `More deadlines` with every remaining action item in the same form; `Details: <meetingUrl>`, or 1A's `Details: the transcript, slides and chat files in <outDir>` when it is null. Due text is 1A's (`due Wed 28 Oct 2026`, `, HH:mm` when timed, `; <note>` from `chooseDue`).
 - `runPipeline` uses `buildWorkInventory` and `renderWorkSummary` when `cfg.entry.type` is `'work'`, with `meetingUrl` `${TM_PUBLIC_URL}/meetings/<occurrenceId>` when that variable is set, else null; lectures are unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/names.test.ts
@@ -236,21 +236,21 @@ test('a work entry gets the work inventory and summary, with no attendance line'
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `TZ=UTC bun test packages/core/src/names.test.ts packages/pipeline/src/summary/work.test.ts packages/pipeline/src/pipeline.test.ts`
 Expected: FAIL with `Cannot find module './names'`.
 
-- [ ] **Step 3: Implement `names.ts`, `work.ts`, the `chooseDue` widening and the dispatch in `pipeline.ts`**
+- [x] **Step 3: Implement `names.ts`, `work.ts`, the `chooseDue` widening and the dispatch in `pipeline.ts`**
 
 Share 1A's due-text and title helpers from `render.ts`, and its `Source` and due-pattern schemas (`Due` above) from `inventory.ts`, rather than copying them; export them if 1A kept them private.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `TZ=UTC bun test packages/core packages/pipeline && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/names* packages/core/src/index.ts packages/pipeline/src docs/TRD.md
