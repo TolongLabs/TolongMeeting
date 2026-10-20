@@ -1,6 +1,6 @@
 import { cache } from 'react'
 import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getAuth } from './auth'
 import { scopeForAuthUser, type MemberScope } from './scope'
 
@@ -22,9 +22,9 @@ export async function requireMember(): Promise<MemberScope> {
   return scope
 }
 
-/** Like `requireMember`, and redirects to `/` unless the member is an admin. */
+/** Like `requireMember`, and answers not-found unless the member is an admin. */
 export async function requireAdmin(): Promise<MemberScope> {
   const scope = await requireMember()
-  if ((await scope.me()).role !== 'admin') redirect('/')
+  if ((await scope.me()).role !== 'admin') notFound()
   return scope
 }

@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from 'bun:test'
+import { afterAll, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import {
@@ -21,7 +21,7 @@ import {
   timetableEntries,
   type Db
 } from '../db'
-import { createTestDb, dropAllTestDbs, seedLinkedMember, seedMember } from '../db/testing'
+import { createTestDb, dropAllTestDbs, seedAuthUser, seedLinkedMember, seedMember, testDbUrl } from '../db/testing'
 import { NtfyAdminError, ntfyUsername, type NtfyAdmin } from '../lib/ntfy-admin'
 import { addMemberFor, removeMemberFor, setRoleFor } from '../lib/admin'
 import { adminScope, LastAdminError, MemberBusyError } from '../lib/scope'
@@ -255,4 +255,30 @@ test('setRole on an unknown member id throws, as removeMember does', async () =>
   await seedMember(db, { role: 'admin' })
   await expect(adminScope(db).setRole(randomUUID(), 'member')).rejects.toThrow('No member')
   await expect(adminScope(db).removeMember(randomUUID(), fakeNtfyAdmin())).rejects.toThrow('No member')
+})
+
+test('requireAdmin sends a non-admin to not-found and returns scope for an admin', async () => {
+  const db = await createTestDb()
+  process.env.DATABASE_URL = testDbUrl(db)
+  const regular = await seedMember(db, { role: 'member', full: false })
+  const admin = await seedMember(db, { role: 'admin', full: false })
+  const regularAuthId = await seedAuthUser(db)
+  const adminAuthId = await seedAuthUser(db)
+  await db.update(members).set({ authUserId: regularAuthId }).where(eq(members.id, regular.memberId))
+  await db.update(members).set({ authUserId: adminAuthId }).where(eq(members.id, admin.memberId))
+
+  let currentAuthId = regularAuthId
+  mock.module('next/headers', () => ({ headers: async () => new Headers() }))
+  mock.module('../lib/auth', () => ({
+    getAuth: () => ({ api: { getSession: async () => ({ user: { id: currentAuthId } }) } })
+  }))
+
+  const { requireAdmin } = await import('../lib/session')
+  const nonAdminError = await requireAdmin().catch((e: unknown) => e)
+  expect((nonAdminError as { digest?: string })?.digest).toBe('NEXT_HTTP_ERROR_FALLBACK;404')
+
+  currentAuthId = adminAuthId
+  const scope = await requireAdmin()
+  expect(scope.memberId).toBe(admin.memberId)
+  expect((await scope.me()).role).toBe('admin')
 })
