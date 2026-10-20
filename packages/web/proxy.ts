@@ -2,11 +2,26 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { guardDeviceToken } from './lib/companion/guard'
 
 /**
- * Runs before every route, `/api/vnc/authorize` (Caddy's `forward_auth`) included. It answers 403 to a request that
- * offers a device token anywhere but `/api/companion/`. It does no sign-in check of either kind: a device route
- * authenticates in `withDevice` (bearer token only) and a member route in `requireMember` (session cookie only), so
- * neither credential is ever tried on the other's routes.
+ * Runs before every route except the device upload routes below, `/api/vnc/authorize` (Caddy's `forward_auth`)
+ * included. It answers 403 to a request that offers a device token anywhere but `/api/companion/`. It does no sign-in
+ * check of either kind: a device route authenticates in `withDevice` (bearer token only) and a member route in
+ * `requireMember` (session cookie only), so neither credential is ever tried on the other's routes.
+ *
+ * Why the exclusion: when a proxy runs, Next buffers a copy of the request body in memory, up to
+ * `experimental.proxyClientMaxBodySize` (10 MB), and past that limit it cuts the body short, logs a warning and lets
+ * the request go on. A route that reads a larger body would silently get a truncated one. The upload routes take
+ * bodies of up to 50 MB per part (160 MB in all), so the proxy must not run on them. Raising the limit instead would
+ * buffer up to 160 MB per request in memory. Every excluded route is under `/api/companion/` and authenticates with
+ * `withDevice` itself, so the device-token guard (which only refuses tokens outside `/api/companion/`) loses nothing.
+ *
+ * To exclude another upload route (plan 08 Task 3: `/api/companion/jobs/<id>/files/<path>`), add one alternative to
+ * the lookahead in `config.matcher`, for example `|files/.+` after `transcript`. Keep the job id pattern, so only a
+ * real job id is excluded. Next reads `config` statically, so the matcher must stay one literal string.
  */
 export function proxy(request: NextRequest): Response {
   return guardDeviceToken(request) ?? NextResponse.next()
+}
+
+export const config = {
+  matcher: ['/((?!api/companion/jobs/[0-9A-Fa-f-]{36}/(?:transcript)$).*)']
 }
