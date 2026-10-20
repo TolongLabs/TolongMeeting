@@ -28,9 +28,9 @@ test('chrome flags from the design', () => {
     '--disable-background-timer-throttling',
     '--deny-permission-prompts',
     '--no-first-run',
-    '--no-default-browser-check',
-    '--test-type'
+    '--no-default-browser-check'
   ])
     expect(a).toContain(f)
   expect(a).not.toContain('--enable-automation')
+  expect(a).not.toContain('--test-type')
 })

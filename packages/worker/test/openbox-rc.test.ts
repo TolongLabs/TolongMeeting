@@ -19,11 +19,12 @@ async function tags(): Promise<Tag[]> {
   }))
 }
 
-test('the window manager binds no key', async () => {
+test('the window manager binds no key except swallowing A-F4', async () => {
   const all = await tags()
-  expect(all.filter((t) => t.name === 'keybind')).toEqual([])
+  const keybinds = all.filter((t) => t.name === 'keybind' && !t.closing)
+  expect(keybinds.map((k) => k.attrs.key)).toEqual(['A-F4'])
   expect(all.filter((t) => t.name === 'chainQuitKey')).toEqual([])
-  expect(all.some((t) => t.name === 'keyboard')).toBe(true) // present and empty: openbox then adds no default
+  expect(all.some((t) => t.name === 'keyboard')).toBe(true)
 })
 
 test('undecorated windows keep no border, which would cover the last stage column', async () => {

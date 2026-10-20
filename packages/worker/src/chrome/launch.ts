@@ -30,11 +30,7 @@ export function chromeArgs(screen: Screen): string[] {
     '--disable-background-timer-throttling',
     '--deny-permission-prompts',
     '--no-first-run',
-    '--no-default-browser-check',
-    // Without it, Chrome shows a 56 px infobar ("unsupported command-line flag: --no-sandbox") above the stage content
-    // in the image, where the sandbox is off. docker/worker/chrome-policy.json sets
-    // CommandLineFlagSecurityWarningsEnabled too; keep this flag until the image run shows the policy alone hides it.
-    '--test-type'
+    '--no-default-browser-check'
   ]
 }
 

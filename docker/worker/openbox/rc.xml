@@ -194,8 +194,10 @@
   <!-- 'Left', 'Middle', 'Right' -->
 </dock>
 
-<!-- no key bindings: see the header -->
-<keyboard/>
+<!-- Swallow Alt+F4 from the remote view: Chrome would close the desk window. Openbox binds it to no action. -->
+<keyboard>
+  <keybind key="A-F4"/>
+</keyboard>
 
 <mouse>
   <dragThreshold>1</dragThreshold>
@@ -238,7 +240,7 @@
     <maximized>no</maximized>
     <focus>no</focus>
   </application>
-  <!-- The desk: a normal Chrome window (WM_WINDOW_ROLE "browser"; the stage is an --app window, role "app"). Openbox
+  <!-- The desk: a normal Chrome window (WM_WINDOW_ROLE "browser"; the stage is an --app window, role "pop-up"). Openbox
        merges every matching rule in order, so this one adds to the rule above. Without decorations and with no move or
        resize bind it cannot be dragged over the stage. The position is the desk rectangle of Screen (src/display/
        screen.ts: x 1920, y 0) on the 3840x1080 display. -->
