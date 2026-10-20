@@ -218,7 +218,10 @@ function blocks(tokens: Token[]): DocBlock[] {
 
 /** Longest Markdown text one file may hand the parser (characters). The 8 MB file cap alone would let marked run for minutes. */
 export const MAX_MARKDOWN_CHARS = 1_000_000
-/** Longest run of leading spaces, tabs and `>` marks on a line. marked is quadratic in nesting depth, so deeper input is refused. */
+/**
+ * Longest run of leading spaces, tabs, `>` marks and list markers (`-`, `+`, `*`, `1.`, `1)`) on a line. marked is quadratic in
+ * nesting depth, so deeper input is refused.
+ */
 export const MAX_NESTING_MARKS = 64
 /**
  * `*`, `_` and `~` marks in one paragraph, and in one file. marked is quadratic in the marks of a paragraph (8,000 unmatched `*`
@@ -233,15 +236,42 @@ function markdownError(why: string): ExportError {
   return new ExportError('failed', `A meeting file cannot be exported: ${why}.`)
 }
 
+/** Counts the container prefix of the line that starts at `start` (whitespace, `>` and list markers); throws past `MAX_NESTING_MARKS`. */
+function checkPrefix(md: string, start: number): void {
+  let run = 0
+  let i = start
+  while (i < md.length) {
+    const c = md.charCodeAt(i)
+    let width = 1
+    if (c === 32 || c === 9 || c === 62) {
+      // whitespace or a block quote mark
+    } else if (c === 45 || c === 43 || c === 42) {
+      if (!isBlank(md.charCodeAt(i + 1))) return
+    } else if (c >= 48 && c <= 57) {
+      let j = i + 1
+      while (j < md.length && j - i < 9 && md.charCodeAt(j) >= 48 && md.charCodeAt(j) <= 57) j++
+      const end = md.charCodeAt(j)
+      if ((end !== 46 && end !== 41) || !isBlank(md.charCodeAt(j + 1))) return
+      width = j + 1 - i
+    } else return
+    run += width
+    if (run > MAX_NESTING_MARKS) throw markdownError('it is nested too deeply')
+    i += width
+  }
+}
+
+function isBlank(c: number): boolean {
+  return c === 32 || c === 9
+}
+
 /** Refuses text that is too long, nests too deeply or holds too many emphasis marks for marked to lex in reasonable time. Linear. */
 function checkMarkdown(md: string): void {
   if (md.length > MAX_MARKDOWN_CHARS) throw markdownError('it is too long')
-  let run = 0
-  let inPrefix = true
   let blank = true
   let block = 0
   let file = 0
   let lines = 0
+  checkPrefix(md, 0)
   for (let i = 0; i < md.length; i++) {
     const c = md.charCodeAt(i)
     if (c === 10) {
@@ -249,16 +279,11 @@ function checkMarkdown(md: string): void {
         block = 0
         lines = 0
       } else if (++lines > MAX_BLOCK_LINES) throw markdownError('it has a paragraph that is too long')
-      run = 0
-      inPrefix = true
       blank = true
+      checkPrefix(md, i + 1)
       continue
     }
     if (c !== 32 && c !== 9 && c !== 13) blank = false
-    if (inPrefix) {
-      if (c !== 32 && c !== 9 && c !== 62) inPrefix = false
-      else if (++run > MAX_NESTING_MARKS) throw markdownError('it is nested too deeply')
-    }
     if ((c === 42 || c === 95 || c === 126) && (++block > MAX_BLOCK_EMPHASIS || ++file > MAX_FILE_EMPHASIS))
       throw markdownError('it has too much emphasis markup')
   }
@@ -268,7 +293,7 @@ function checkMarkdown(md: string): void {
  * Turns pipeline Markdown into blocks. The Markdown comes from untrusted meeting content, so it is only ever text here:
  * raw HTML is dropped, links keep `href` only when they are https (others, and `#anchor` links, become plain text) and
  * images are kept only for the bundle's `slides/NN.webp` files. Text over `MAX_MARKDOWN_CHARS`, with a line that opens
- * with more than `MAX_NESTING_MARKS` spaces, tabs and `>` marks, with too many `*`, `_` and `~` marks, or with a paragraph of more than `MAX_BLOCK_LINES` lines, is refused; any other throw (marked's `RangeError` on
+ * with more than `MAX_NESTING_MARKS` spaces, tabs, `>` marks and list markers, with too many `*`, `_` and `~` marks, or with a paragraph of more than `MAX_BLOCK_LINES` lines, is refused; any other throw (marked's `RangeError` on
  * deep input, for one) becomes `ExportError('failed')`.
  */
 export function parseMarkdown(md: string): DocBlock[] {

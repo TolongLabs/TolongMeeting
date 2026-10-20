@@ -117,6 +117,26 @@ describe('hostile Markdown', () => {
     expect(parseMarkdown('> > > quoted')).toEqual([{ kind: 'paragraph', runs: [{ text: 'quoted' }] }])
   })
 
+  test('nested list markers are refused fast, a six-level list is read', () => {
+    const fast = (md: string) => {
+      const started = performance.now()
+      expect(() => parseMarkdown(md)).toThrow(ExportError)
+      expect(performance.now() - started).toBeLessThan(200)
+    }
+    fast('- '.repeat(50_000) + 'x')
+    fast('1. '.repeat(50_000) + 'x')
+    fast('- > '.repeat(30_000) + 'x')
+    fast('* + - '.repeat(20_000) + 'x')
+    const six = Array.from({ length: 6 }, (_, i) => '    '.repeat(i) + `- level ${i + 1}`).join('\n')
+    expect(parseMarkdown(six)).toEqual([
+      {
+        kind: 'list',
+        ordered: false,
+        items: [1, 2, 3, 4, 5, 6].map((n) => [{ text: `level ${n}` }])
+      }
+    ])
+  })
+
   test('paragraphs that stall marked are refused', () => {
     refused('*a '.repeat(8000))
     refused('~~a '.repeat(8000))
