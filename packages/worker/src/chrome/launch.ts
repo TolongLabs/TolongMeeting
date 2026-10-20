@@ -40,13 +40,13 @@ export function chromeArgs(screen: Screen): string[] {
 // Playwright adds --no-sandbox unless chromiumSandbox is true. Chrome's sandbox needs user namespaces, which Docker
 // usually denies, so inside the worker image (TM_IN_IMAGE=1) the sandbox is off and the container is the isolation
 // boundary. Everywhere else (a developer host) the sandbox stays on.
-const launchOptions = (screen: Screen) => ({
+const launchOptions = (screen: Screen, extraArgs: string[]) => ({
   channel: 'chrome',
   headless: false,
   chromiumSandbox: process.env.TM_IN_IMAGE !== '1',
   viewport: null,
   ignoreDefaultArgs: ['--enable-automation'],
-  args: chromeArgs(screen)
+  args: [...chromeArgs(screen), ...extraArgs]
 })
 
 const PreferencesSchema = z.record(z.string(), z.unknown())
@@ -140,9 +140,9 @@ async function requireStageViewport(page: Page, stage: Rect): Promise<void> {
   throw new Error(`the stage viewport is ${got.join(',')} (width,height,x,y), expected ${want.join(',')}`)
 }
 
-async function launchStage(profileDir: string, screen: Screen): Promise<Stage> {
+async function launchStage(profileDir: string, screen: Screen, extraArgs: string[]): Promise<Stage> {
   await useSystemTitleBar(profileDir)
-  const context = await chromium.launchPersistentContext(profileDir, launchOptions(screen))
+  const context = await chromium.launchPersistentContext(profileDir, launchOptions(screen, extraArgs))
   try {
     const browser = context.browser()
     if (!browser) throw new Error('Playwright returned no browser for the persistent context')
@@ -229,11 +229,14 @@ function watchPages(guard: Guard): void {
   })
 }
 
+// `extraArgs` are more Chrome flags, for tests only (the end-to-end run points Zoom's hosts at a local server with them).
+// The worker never passes any: production flags are the list in chromeArgs.
 export async function launchBrowser(
   profileDir: string,
-  screen: Screen
+  screen: Screen,
+  extraArgs: string[] = []
 ): Promise<{ context: BrowserContext; stage: Page; desk: Page }> {
-  const stage = await launchStage(profileDir, screen)
+  const stage = await launchStage(profileDir, screen, extraArgs)
   const { context, cdp } = stage
   try {
     const guard: Guard = { stage, desk: { rect: screen.desk, windowId: null }, handled: new WeakMap() }
@@ -345,7 +348,7 @@ async function removeProfile(dir: string): Promise<void> {
 export async function launchGuestStage(screen: Screen): Promise<{ browser: Browser; stage: Page }> {
   const dir = await mkdtemp(join(tmpdir(), 'tm-guest-'))
   try {
-    const stage = await launchStage(dir, screen)
+    const stage = await launchStage(dir, screen, [])
     const browser = stage.context.browser()
     if (!browser) throw new Error('Playwright returned no browser for the guest context')
     browser.once('disconnected', () => {
