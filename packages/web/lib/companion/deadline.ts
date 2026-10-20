@@ -46,3 +46,40 @@ export function deadlineReader(body: ReadableStream<Uint8Array>, limits: Deadlin
     cancel: () => reader.cancel().catch(() => undefined)
   }
 }
+
+/** What `readBodyText` returns when the body did not arrive in time. */
+export const BODY_TOO_SLOW = Symbol('body_too_slow')
+
+/**
+ * A small request body as text, under the same idle and total deadlines as an upload: `null` when it is longer than
+ * `max` bytes (the stream is cut off at the cap), `BODY_TOO_SLOW` when it stalled or trickled (a 408). No body is `''`.
+ */
+export async function readBodyText(
+  request: Request,
+  max: number,
+  limits: Deadlines = {}
+): Promise<string | null | typeof BODY_TOO_SLOW> {
+  const declared = Number(request.headers.get('content-length') ?? 0)
+  if (!request.body) return ''
+  if (declared > max) return null
+  const reader = deadlineReader(request.body, limits)
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > max) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } catch (e) {
+    if (!(e instanceof StreamDeadline)) throw e
+    await reader.cancel()
+    return BODY_TOO_SLOW
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}

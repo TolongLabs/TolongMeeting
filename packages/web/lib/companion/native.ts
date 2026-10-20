@@ -22,9 +22,8 @@ import { applyTrigger } from '../../db/transitions'
 import { notFound, openOccurrenceFile, serveFile } from '../files'
 import { getQueue } from '../queue'
 import { companionDeps } from './deps'
-import { StreamDeadline, deadlineReader, type Deadlines } from './deadline'
+import { BODY_TOO_SLOW, StreamDeadline, deadlineReader, readBodyText, type Deadlines } from './deadline'
 import type { DeviceDeps, DeviceScope } from './scope'
-import { readCapped } from './tokens'
 
 // The two routes a PC uses to transcribe on its own GPU: it downloads the cut audio of a recording and uploads the
 // Whisper output. Everything the PC sends is untrusted, and so is the occurrence directory (a worker once wrote it).
@@ -432,6 +431,8 @@ export interface FailDeps {
   db: Db
   notifier: Notifier
   publicUrl: string
+  /** Test seam: shorter limits than `IDLE_MS` and `TOTAL_MS` for the report body. */
+  deadlines?: Deadlines
 }
 
 /** The database, the notifier and `TM_PUBLIC_URL`, read per request. */
@@ -462,7 +463,8 @@ export async function handleFailRequest(
   jobId: string
 ): Promise<Response> {
   if ((await scope.getClaimedJob(jobId)) === null) return fixed('not_found', 404)
-  const raw = await readCapped(request, FAIL_BODY_MAX_BYTES)
+  const raw = await readBodyText(request, FAIL_BODY_MAX_BYTES, deps.deadlines)
+  if (raw === BODY_TOO_SLOW) return fixed('body_too_slow', 408)
   if (raw === null) return fixed('invalid_failure', 400)
   let body: unknown
   try {
