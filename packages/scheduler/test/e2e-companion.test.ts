@@ -345,12 +345,14 @@ describe('native transcription on a paired PC (plan 03)', () => {
     await expectTranscribedBy(alice, id, said, 'late from the laptop')
   })
 
-  test('a device revoked mid-job: its requests stop at once, the job returns when the lease lapses, a new PC finishes it', async () => {
+  test('a device revoked mid-job: its requests stop at once, the job goes back to pending and a check sends it to a new PC', async () => {
     const alice = await newMember(stack, 'Rhea')
     const bob = await newMember(stack, 'Sam')
     const { id, worker, job } = await nativeMeeting(alice)
     const pc = await FakePc.pair(alice, 'Old PC')
+    const newPc = await FakePc.pair(alice, 'New PC')
     expect((await pc.claim(job.id)).status).toBe(200)
+    expect((await newPc.claim(job.id)).status).toBe(409)
     const started = await pc.audio(job.id)
     expect(started.status).toBe(200)
     await started.body!.cancel() // the PC stops reading when it is revoked
@@ -372,14 +374,20 @@ describe('native transcription on a paired PC (plan 03)', () => {
     ])
       expect(res.status).toBe(401)
     expect(await noNativeFiles(worker.dataDir)).toBe(true)
-    // It still holds the claim until the lease runs out (the revoke does not release native jobs): nobody else can take it.
-    expect(await jobRow(job.id)).toMatchObject({ state: 'claimed', deviceId: pc.deviceId })
-    const newPc = await FakePc.pair(alice, 'New PC')
-    expect((await newPc.claim(job.id)).status).toBe(409)
 
-    await lapseLease(job.id)
+    // The revoke released the job in the same transaction and sent a check, so the other PC claims it with no wait.
+    expect(await jobRow(job.id)).toMatchObject({ state: 'pending', deviceId: null, leaseUntil: null })
+    const checks = (
+      await stack.db.execute(
+        sql`select start_after from pgboss.job where name = ${QUEUES.nativeJobCheck} and data->>'jobId' = ${job.id} order by created_on`
+      )
+    ).rows as { start_after: string }[]
+    expect(checks).toHaveLength(2) // the one from the upload and the revoke's, which is due now
+    expect(Math.max(...checks.map((c) => new Date(c.start_after).getTime())) - Date.now()).toBeGreaterThan(0)
+    expect(Math.min(...checks.map((c) => new Date(c.start_after).getTime()))).toBeLessThanOrEqual(Date.now())
     expect(await checkNativeJob(stack.deps, job.id, new Date())).toBe('waiting_for_pc')
     expect((await newPc.claim(job.id)).status).toBe(200)
+    expect((await rowOf(stack, id)).state).toBe('transcribing')
     const said = 'The new PC finished the job.'
     expect((await newPc.upload(job.id, transcriptForm(said))).status).toBe(204)
     await expectTranscribedBy(alice, id, said, 'revoked device')
@@ -509,9 +517,18 @@ describe('native transcription on a paired PC (plan 03)', () => {
     const { id, job } = await nativeMeeting(alice)
     await checkNativeJob(stack.deps, job.id, new Date(Date.now() + PC_CLAIM_GRACE_MS + 1000))
     expect((await rowOf(stack, id)).state).toBe('waiting_for_pc')
-    expect(await requestDeleteNow(alice.scope, id, stack.queue)).toBe('after_processing')
-    await retentionTick(stack.deps, new Date(Date.now() + 3 * HOUR + MINUTE)) // past the pipeline's grace
-    expect((await rowOf(stack, id)).state).toBe('deleted')
+    // No pipeline job runs for the meeting, so the request fails it, cancels the job and queues the delete at once.
+    expect(await requestDeleteNow(alice.scope, id, stack.queue)).toBe('queued')
+    expect(await rowOf(stack, id)).toMatchObject({ state: 'failed', stateReason: 'deleting' })
+    expect((await jobRow(job.id)).state).toBe('cancelled')
+    expect(await queuedJobs(stack, QUEUES.deleteOccurrence, id)).toHaveLength(1) // due now, not at retention's next pass
+    await deleteOccurrenceData(stack.deps, id, new Date())
+    expect(await rowOf(stack, id)).toMatchObject({ state: 'deleted' })
+    const [gone] = await stack.db
+      .select({ data: events.data })
+      .from(events)
+      .where(and(eq(events.occurrenceId, id), eq(events.type, 'state')))
+    expect(gone!.data).toMatchObject({ to: 'deleted', reason: 'member' })
 
     expect(['cancelled', 'failed']).toContain((await jobRow(job.id)).state)
     const pc = await FakePc.pair(alice)

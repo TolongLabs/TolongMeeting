@@ -11,6 +11,7 @@ import {
 } from '@tm/core'
 import { and, count, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { safeDbError } from '../../db/errors'
+import { QUEUES, type Queue } from '../../db/queues'
 import { companionJobs, deviceTokens, devicePairings, identities } from '../../db/schema'
 import type { createScope, MemberScope } from '../scope'
 
@@ -236,9 +237,16 @@ export async function listDevices(scope: MemberScope): Promise<DeviceSummary[]> 
  * Revokes one of the member's devices. `false` when it is not theirs, does not exist or is revoked already. In the same
  * transaction the identities bound to it lose the binding (`local_device_id` is null; they stay on My PC, so they never
  * quietly run on the server: at T-60 they are skipped with a "no PC is paired" ping) and its unfinished `local_run`
- * jobs are cancelled, so no job aimed at it can be claimed afterwards.
+ * jobs are cancelled, so no job aimed at it can be claimed afterwards. The `native_transcription` jobs it holds go
+ * back to `pending` (no device, no lease) and a `native-job-check` is sent for each, so another PC can claim at once.
+ * `queue` is needed for that send: a revoke of a device that holds such a job throws without it.
  */
-export async function revokeDevice(scope: MemberScope, deviceId: string, now: Date = new Date()): Promise<boolean> {
+export async function revokeDevice(
+  scope: MemberScope,
+  deviceId: string,
+  now: Date = new Date(),
+  queue?: Queue
+): Promise<boolean> {
   if (!UUID.test(deviceId)) return false
   return guarded(() =>
     scope.transaction(async (s) => {
@@ -260,6 +268,26 @@ export async function revokeDevice(scope: MemberScope, deviceId: string, now: Da
           inArray(companionJobs.state, ['pending', 'claimed'])
         )!
       )
+      const held = await s.selectForUpdate(
+        companionJobs,
+        and(
+          eq(companionJobs.deviceId, deviceId),
+          eq(companionJobs.kind, 'native_transcription'),
+          eq(companionJobs.state, 'claimed')
+        )!
+      )
+      if (held.length > 0) {
+        if (!queue) throw new Error('revokeDevice needs a queue: the device holds a native transcription job.')
+        await s.update(
+          companionJobs,
+          { state: 'pending', deviceId: null, leaseUntil: null, updatedAt: now },
+          inArray(
+            companionJobs.id,
+            held.map((j) => j.id)
+          )
+        )
+        for (const job of held) await s.sendInTransaction(queue, QUEUES.nativeJobCheck, { jobId: job.id })
+      }
       return true
     })
   )
@@ -472,10 +500,11 @@ export async function handleRevokeRequest(
   request: Request,
   scope: MemberScope,
   deviceId: string,
+  queue: Queue,
   now: Date = new Date()
 ): Promise<Response> {
   if (crossSite(request)) return forbidden()
-  if (!(await revokeDevice(scope, deviceId, now)))
+  if (!(await revokeDevice(scope, deviceId, now, queue)))
     return Response.json({ error: 'not_found' }, { status: 404, headers: NO_STORE })
   return Response.json({ ok: true }, { headers: NO_STORE })
 }

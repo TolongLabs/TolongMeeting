@@ -19,7 +19,10 @@ import {
 } from '../db/companion'
 import { seedCompanionFixture } from '../db/companion.fixtures'
 import { DbError } from '../db/errors'
-import { createTestDb, dropAllTestDbs } from '../db/testing'
+import { QUEUES } from '../db/queues'
+import { createTestDb, dropAllTestDbs, FakeQueue } from '../db/testing'
+import { revokeDevice } from '../lib/companion/tokens'
+import { createScope } from '../lib/scope'
 
 afterAll(dropAllTestDbs, 60_000)
 
@@ -209,6 +212,37 @@ describe('a native job and its meeting', () => {
     expect((await getJob(db, done))?.state).toBe('done')
     expect((await getJob(db, local))?.state).toBe('pending')
     expect(await cancelNativeJobs(db, { occurrenceId: f.occA })).toEqual([])
+  })
+
+  test('revoking a device returns the native jobs it holds to pending and sends a check for each', async () => {
+    const mine = await nativeJob()
+    const theirs = await nativeJob()
+    const queued = await nativeJob()
+    await claimJob(db, f.a1, mine, t0)
+    await claimJob(db, f.a2, theirs, t0)
+    const queue = new FakeQueue()
+    expect(await revokeDevice(createScope(db, f.a1.memberId), f.a1.deviceId, plus(1000), queue)).toBe(true)
+    const rowOf = async (id: string) => (await db.select().from(companionJobs).where(eq(companionJobs.id, id)))[0]
+    expect(await rowOf(mine)).toMatchObject({ state: 'pending', deviceId: null, leaseUntil: null })
+    expect(await rowOf(theirs)).toMatchObject({ state: 'claimed', deviceId: f.a2.deviceId })
+    expect((await getJob(db, queued))?.state).toBe('pending')
+    expect(queue.sent.map((j) => [j.name, j.data])).toEqual([[QUEUES.nativeJobCheck, { jobId: mine }]])
+    // The other PC claims it at once.
+    expect(await claimJob(db, f.a2, mine, plus(2000))).toMatchObject({ state: 'claimed' })
+    expect(await rowOf(mine)).toMatchObject({ deviceId: f.a2.deviceId })
+  })
+
+  test('a revoke that cannot send its check changes nothing', async () => {
+    const mine = await nativeJob()
+    await claimJob(db, f.a1, mine, t0)
+    const scope = createScope(db, f.a1.memberId)
+    await expect(revokeDevice(scope, f.a1.deviceId, plus(1000))).rejects.toThrow('needs a queue')
+    expect((await db.select().from(companionJobs).where(eq(companionJobs.id, mine)))[0]).toMatchObject({
+      state: 'claimed',
+      deviceId: f.a1.deviceId
+    })
+    expect(await claimJob(db, f.a1, mine, plus(2000))).toBe('conflict')
+    expect(await revokeDevice(scope, f.a1.deviceId, plus(3000), new FakeQueue())).toBe(true)
   })
 })
 

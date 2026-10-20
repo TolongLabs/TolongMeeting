@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { DEVICE_TOKEN_PREFIX, MAX_DEVICES_PER_MEMBER, PairResponseSchema } from '@tm/core'
 import { deviceTokens, devicePairings, members, type Db } from '../db'
 import { sealColumn } from '../db/secrets'
-import { createTestDb, dropAllTestDbs, seedMember, TEST_MASTER } from '../db/testing'
+import { createTestDb, dropAllTestDbs, FakeQueue, seedMember, TEST_MASTER } from '../db/testing'
 import { ntfyConfigOf } from '../lib/companion/deps'
 import {
   ATTEMPT_WINDOW_MS,
@@ -37,6 +37,7 @@ const NTFY_URL = 'https://ntfy.example'
 const NTFY_TOKEN = 'tk_ntfy_secret_for_tests'
 
 let db: Db
+const queue = new FakeQueue()
 
 beforeAll(async () => {
   db = await createTestDb()
@@ -473,14 +474,14 @@ describe('member routes', () => {
     const a = await member()
     const b = await member()
     const res = await pair(a.scope, t0)
-    const theirs = await handleRevokeRequest(req(), b.scope, res.deviceId, min(1))
-    const missing = await handleRevokeRequest(req(), b.scope, '00000000-0000-4000-8000-000000000000', min(1))
-    const malformed = await handleRevokeRequest(req(), b.scope, '../../x', min(1))
+    const theirs = await handleRevokeRequest(req(), b.scope, res.deviceId, queue, min(1))
+    const missing = await handleRevokeRequest(req(), b.scope, '00000000-0000-4000-8000-000000000000', queue, min(1))
+    const malformed = await handleRevokeRequest(req(), b.scope, '../../x', queue, min(1))
     for (const r of [theirs, missing, malformed])
       expect([r.status, await r.json()]).toEqual([404, { error: 'not_found' }])
     expect(await authenticateDevice(db, `Bearer ${res.token}`, min(2))).not.toBeNull()
 
-    const done = await handleRevokeRequest(req(), a.scope, res.deviceId, min(3))
+    const done = await handleRevokeRequest(req(), a.scope, res.deviceId, queue, min(3))
     expect([done.status, await done.json()]).toEqual([200, { ok: true }])
     expect(await authenticateDevice(db, `Bearer ${res.token}`, min(4))).toBeNull()
   })
@@ -489,7 +490,7 @@ describe('member routes', () => {
     const a = await member()
     const res = await pair(a.scope, t0)
     const cross = req({ headers: { 'sec-fetch-site': 'cross-site' } })
-    expect((await handleRevokeRequest(cross, a.scope, res.deviceId, min(1))).status).toBe(403)
+    expect((await handleRevokeRequest(cross, a.scope, res.deviceId, queue, min(1))).status).toBe(403)
     expect((await handlePairingCodeRequest(cross, a.scope, min(1))).status).toBe(403)
     expect(await authenticateDevice(db, `Bearer ${res.token}`, min(2))).not.toBeNull()
     const same = req({ headers: { 'sec-fetch-site': 'same-origin' } })
