@@ -359,11 +359,11 @@ describe('a local meeting from its end to the website', () => {
     expect(existsSync(w.occ)).toBe(false)
     expect(next.log).toEqual(expect.arrayContaining(['native.pause', 'native.resume']))
 
-    // A third start finds nothing left to do and sends nothing.
+    // A third start finds nothing left to do and sends nothing (the website now lists the job as done).
     const before = w.server.requests.length
     const third = await app(w)
     await third.loops.start()
-    await third.list([job])
+    await third.list([{ ...job, state: 'done' }])
     expect(w.server.requests).toHaveLength(before)
     expect(completes(w)).toBe(1)
     await next.loops.stop()
@@ -465,14 +465,38 @@ describe('what the start leaves alone', () => {
     await a.loops.stop()
   })
 
-  test('only claimed local jobs with files on disk are resumed', async () => {
+  test('only claimed local jobs with files on disk are finished; one with none is given back', async () => {
     const w = await world()
     const a = await app(w)
     await a.loops.start()
-    await a.list([{ ...job, state: 'pending' }, job]) // no folder on disk for the claimed one
-    expect(w.server.requests).toEqual([])
+    // A pending job is the runner's to offer; the claimed one has no folder and no worker, so a restart cut it off.
+    await a.list([{ ...job, state: 'pending' }, job])
+    expect(w.server.log).toEqual(['release'])
     expect(a.errors).toEqual([])
+    expect(completes(w)).toBe(0)
     await a.loops.stop()
+  })
+
+  test('a job the website will not take back is left alone, and a failed release is tried again', async () => {
+    const w = await world()
+    w.server.releaseRefusals = 1
+    const a = await app(w)
+    await a.loops.start()
+    await a.list([job])
+    expect(w.server.log).toEqual([])
+    expect(a.errors).toEqual([])
+
+    const w2 = await world()
+    w2.server.releaseFailures = 1
+    const b = await app(w2)
+    await b.loops.start()
+    await b.list([job])
+    expect(w2.server.log).toEqual([])
+    expect(b.errors).toHaveLength(1)
+    await b.list([job])
+    expect(w2.server.log).toEqual(['release'])
+    await a.loops.stop()
+    await b.loops.stop()
   })
 
   test('Docker not ready: nothing is sent; the next list tries again', async () => {

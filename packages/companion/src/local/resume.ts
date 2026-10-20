@@ -17,6 +17,11 @@ export interface ResumeDeps {
   keepAwake: Pick<KeepAwake, 'acquire'>
   /** A native transcription must not run next to the transcriber of a resumed local run (ASR-02). */
   native: Pick<NativeRunner, 'pause' | 'resume'>
+  /**
+   * Gives a claimed job that has no local folder and no running worker back to the website (`CompanionApi.release`), so
+   * it is offered again: a restart cut it off before anything started. The website refuses once the meeting has begun.
+   */
+  release(job: CompanionJob): Promise<void>
   /** Told about a job that could not be finished. Its local files stay. */
   onError(job: CompanionJob, error: unknown): void
   /** Stops the work between steps and chunks. */
@@ -29,13 +34,14 @@ const isClaimedLocal = (j: CompanionJob): j is LocalJob => j.kind === 'local_run
 const inFlight = new Set<string>()
 
 /**
- * Finishes the local meetings a restart cut off. A run needs this when the website says this PC holds it (`claimed`),
+ * Finishes the local meetings a restart cut off, and gives back those that never started. A run needs this when the website says this PC holds it (`claimed`),
  * its worker container (`tm-run-<occurrence>-*`) is gone, and its folder is still on disk. The outcome is `ended` when
  * the worker joined its recording (`resumeOutcome`), else `crashed`. The upload carries on from the offsets the website
  * reports and the folder goes only after `complete` or `fail` was accepted, so a run is sent whole once. Jobs go one at
- * a time, and the same job is never started twice at once.
+ * a time, and the same job is never started twice at once. A claimed job with no worker and no folder was cut off
+ * before it began: it is released, which the website allows only while the meeting has not started.
  *
- * Returns false when Docker cannot be asked yet (nothing was done; try again later), else true. A job that fails is
+ * Returns false when Docker cannot be asked yet or a release failed (try again later), else true. A job that fails is
  * passed to `onError` and the others go on; a stop through `signal` ends the loop quietly.
  */
 export async function resumeLocalRuns(d: ResumeDeps): Promise<boolean> {
@@ -47,13 +53,22 @@ export async function resumeLocalRuns(d: ResumeDeps): Promise<boolean> {
     if ((await d.docker.info()) === null) return false
     const names = (await d.docker.running()).map((c) => c.name)
     const todo: { job: LocalJob; outcome: NonNullable<Awaited<ReturnType<typeof resumeOutcome>>> }[] = []
+    let retry = false
     for (const job of candidates) {
       const prefix = workerName(job.payload.occurrenceId, 0).slice(0, -1) // `tm-run-<occurrence>-`
       if (names.some((n) => n.startsWith(prefix))) continue
       const outcome = await resumeOutcome(job, d.dataDir)
       if (outcome !== null) todo.push({ job, outcome })
+      else {
+        try {
+          await d.release(job)
+        } catch (e) {
+          d.onError(job, e)
+          retry = true
+        }
+      }
     }
-    if (todo.length === 0) return true
+    if (todo.length === 0) return !retry
 
     await d.native.pause()
     try {
@@ -71,7 +86,7 @@ export async function resumeLocalRuns(d: ResumeDeps): Promise<boolean> {
     } finally {
       d.native.resume()
     }
-    return true
+    return !retry
   } finally {
     for (const j of candidates) inFlight.delete(j.payload.occurrenceId)
   }

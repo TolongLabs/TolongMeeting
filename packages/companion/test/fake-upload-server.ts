@@ -1,7 +1,7 @@
 import { CompanionApi } from '../src/api'
 
 // A stand-in for the website's local-run upload routes (08 Task 3): `HEAD` and `PUT` on `files/<path>`, `POST` on
-// `complete`, `fail` and `heartbeat`. It keeps every byte it accepts, so a test can compare what arrived.
+// `complete`, `fail`, `heartbeat` and `release`. It keeps every byte it accepts, so a test can compare what arrived.
 
 export const TOKEN = 'tmd_secret_device_token'
 
@@ -9,13 +9,17 @@ export interface FakeServer {
   url: string
   /** Bytes held per path. */
   files: Map<string, Buffer>
-  /** Events in order: `upload <path>` (first HEAD of a path), `report <state>`, `complete`, `fail <reason>`. */
+  /** Events in order: `upload <path>` (first HEAD of a path), `report <state>`, `complete`, `fail <reason>`, `release`. */
   log: string[]
   /** `Content-Range` of every accepted chunk. */
   ranges: string[]
   requests: { method: string; url: string; headers: Headers; body: Buffer }[]
   /** Answer the next N `complete` calls with 503. */
   completeFailures: number
+  /** Answer the next N `release` calls with 404 (the website will not take the job back). */
+  releaseRefusals: number
+  /** Answer the next N `release` calls with 503. */
+  releaseFailures: number
   /** Answer the next N `PUT` calls with 503, before looking at them. */
   putFailures: number
   stop(): void
@@ -32,6 +36,8 @@ export function fakeServer(): FakeServer {
     requests: [],
     completeFailures: 0,
     putFailures: 0,
+    releaseRefusals: 0,
+    releaseFailures: 0,
     stop: () => {},
     api: (extra) =>
       new CompanionApi({ serverUrl: server.url, token: async () => TOKEN, onRevoked: () => {}, fetch: extra?.fetch })
@@ -47,7 +53,7 @@ export function fakeServer(): FakeServer {
         return Response.json({ error: 'device_revoked_or_unknown' }, { status: 401 })
       }
       const url = new URL(req.url)
-      const m = /^\/api\/companion\/jobs\/j1\/(files\/(.+)|complete|fail|heartbeat)$/.exec(url.pathname)
+      const m = /^\/api\/companion\/jobs\/j1\/(files\/(.+)|complete|fail|heartbeat|release)$/.exec(url.pathname)
       if (!m) return new Response(null, { status: 404 })
       if (m[2] !== undefined) {
         const path = decodeURIComponent(m[2])
@@ -76,6 +82,18 @@ export function fakeServer(): FakeServer {
           return new Response(null, { status: 503 })
         }
         server.log.push('complete')
+        return new Response(null, { status: 204 })
+      }
+      if (m[1] === 'release') {
+        if (server.releaseFailures > 0) {
+          server.releaseFailures--
+          return new Response(null, { status: 503 })
+        }
+        if (server.releaseRefusals > 0) {
+          server.releaseRefusals--
+          return Response.json({ error: 'not_found' }, { status: 404 })
+        }
+        server.log.push('release')
         return new Response(null, { status: 204 })
       }
       if (m[1] === 'fail') {

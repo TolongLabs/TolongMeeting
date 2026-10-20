@@ -350,6 +350,7 @@ export class Loops {
       docker: local.docker,
       dataDir: local.dataDir,
       after,
+      release: (job) => api.release(job.id),
       keepAwake: this.d.keepAwake,
       native: runner,
       signal,

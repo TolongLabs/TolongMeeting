@@ -30,6 +30,15 @@ describe('local run endpoints', () => {
       apiWith(() => Response.json({ identities: [], image: '--privileged' })).identities()
     ).rejects.toBeInstanceOf(InvalidResponseError)
   })
+  test('release posts to the job; a refusal (404) is no error', async () => {
+    const seen: Request[] = []
+    await apiWith(() => new Response(null, { status: 204 }), seen).release('j1')
+    expect([seen[0]!.method, seen[0]!.url]).toEqual(['POST', 'https://tm.example/api/companion/jobs/j1/release'])
+    await apiWith(() => Response.json({ error: 'not_found' }, { status: 404 })).release('j1')
+    await expect(apiWith(() => new Response(null, { status: 503 })).release('j1')).rejects.toBeInstanceOf(
+      CompanionApiError
+    )
+  })
   test('preflight posts the report as JSON and expects 204', async () => {
     const seen: Request[] = []
     const api = apiWith(() => new Response(null, { status: 204 }), seen)

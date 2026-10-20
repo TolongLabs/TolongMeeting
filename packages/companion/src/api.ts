@@ -195,6 +195,14 @@ export class CompanionApi {
     return job
   }
 
+  /**
+   * Gives a claimed job back so it is offered again. A 404 is no error: the job is not this PC's to give back (or its
+   * meeting has started), and then there is nothing to do.
+   */
+  async release(jobId: string): Promise<void> {
+    await discard(await this.call('POST', `/api/companion/jobs/${id(jobId)}/release`, { expect: [204, 404] }))
+  }
+
   async progress(jobId: string): Promise<void> {
     await discard(await this.call('POST', `/api/companion/jobs/${id(jobId)}/progress`, { expect: [204] }))
   }
