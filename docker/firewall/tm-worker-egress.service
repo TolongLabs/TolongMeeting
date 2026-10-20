@@ -1,9 +1,10 @@
 [Unit]
 Description=TolongMeeting worker network egress rules
-After=docker.service
-Requires=docker.service
-# Restarting Docker re-runs the rules.
-PartOf=docker.service
+# Before Docker, so no worker can start while the rules are missing; docker.service.d/10-tm-egress.conf makes Docker
+# require this unit, so a failed script keeps Docker (and every worker) down.
+Before=docker.service
+After=network-pre.target
+Wants=network-pre.target
 
 [Service]
 Type=oneshot
