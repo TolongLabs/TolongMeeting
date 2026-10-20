@@ -20,7 +20,7 @@ const FULL_ID = 'a'.repeat(64)
 // A stand-in Docker daemon on a Unix socket and the gate served by Bun on a real port, so the gate's URL handling,
 // body limit, forwarding and inspection all run for real.
 type Seen = { method: string; path: string; body: string }
-type Container = { role?: string; image: string; privileged: boolean; name: string }
+type Container = { role?: string; image: string; privileged: boolean; name: string; running?: boolean }
 let seen: Seen[] = []
 let target: Container
 let dir: string
@@ -55,7 +55,8 @@ beforeAll(() => {
           Id: FULL_ID,
           Name: target.name,
           Config: { Image: target.image, Labels: target.role ? { 'tm.role': target.role } : {} },
-          HostConfig: { Privileged: target.privileged }
+          HostConfig: { Privileged: target.privileged },
+          State: target.running === undefined ? {} : { Running: target.running }
         })
       }
       return new Response(null, { status: 204 })
@@ -132,7 +133,7 @@ test('endpoints outside the list get 403 endpoint not allowed', async () => {
   for (const [method, path] of [
     ['GET', '/info'],
     ['POST', `/containers/${FULL_ID}/exec`],
-    ['DELETE', `/containers/${FULL_ID}`],
+    ['DELETE', `/containers/${FULL_ID}/json`],
     ['GET', '/v1.40/_ping'],
     ['GET', '/v1.52/_ping']
   ] as const) {
@@ -194,6 +195,44 @@ test.each(['start', 'stop?t=60'])('a client body sent with %s is dropped', async
   expect(forwarded.body).toBe('')
 })
 
+test('remove of a stopped worker is forwarded by full id, as a bare DELETE', async () => {
+  target.running = false
+  const res = await fetch(`${base}/v1.47/containers/${containerName(spec)}`, { method: 'DELETE' })
+  expect(res.status).toBe(204)
+  expect(calls()).toEqual([`GET /containers/${containerName(spec)}/json`, `DELETE /v1.47/containers/${FULL_ID}`])
+})
+
+test('a stopped sign-in container may be removed', async () => {
+  target = { ...workerContainer(), role: 'signin', name: `/${signinName}`, running: false }
+  expect((await get(`/containers/${FULL_ID}`, 'DELETE')).status).toBe(204)
+  expect(seen.at(-1)).toMatchObject({ method: 'DELETE', path: `/containers/${FULL_ID}` })
+})
+
+test.each([
+  ['running', true],
+  ['no state in the answer', undefined]
+])('remove of a container that is %s is refused and never deleted', async (_n, running) => {
+  target.running = running
+  const res = await get(`/containers/${FULL_ID}`, 'DELETE')
+  expect(res.status).toBe(403)
+  expect((await res.json()) as unknown).toEqual({ message: 'container is not stopped' })
+  expect(seen.filter((s) => s.method === 'DELETE')).toEqual([])
+  expect(lines.join('\n')).toContain('refused: container is not stopped')
+})
+
+test.each(['force=1', 'force=true', 'v=1', 'link=1', 'x=y'])('remove with the query %s is refused', async (query) => {
+  target.running = false
+  const res = await get(`/containers/${FULL_ID}?${query}`, 'DELETE')
+  expect(res.status).toBe(403)
+  expect(seen).toEqual([])
+})
+
+test('remove of a missing container gives 404 and no DELETE', async () => {
+  const res = await get('/containers/missing', 'DELETE')
+  expect(res.status).toBe(404)
+  expect(seen.filter((s) => s.method === 'DELETE')).toEqual([])
+})
+
 test('a sign-in container may be started', async () => {
   target = { ...workerContainer(), role: 'signin', name: `/${signinName}` }
   expect((await post(`/containers/${signinName}/start`)).status).toBe(204)
@@ -219,6 +258,14 @@ test.each(refusals)('start, stop and inspect of a container with %s are refused'
   ]) {
     expect(res.status).toBe(403)
   }
+  expect(seen.every((s) => s.method === 'GET')).toBe(true)
+})
+
+test.each(refusals)('remove of a stopped container with %s is refused', async (_n, mutate) => {
+  target.running = false
+  mutate(target)
+  const res = await get(`/containers/${FULL_ID}`, 'DELETE')
+  expect(res.status).toBe(403)
   expect(seen.every((s) => s.method === 'GET')).toBe(true)
 })
 

@@ -5,7 +5,8 @@ import { UUID_RE, buildCreateBody, nameFor, parseName, resolveEnv, type BodyInpu
 export type GateConfig = SpecEnv
 export type GateRequest = { method: string; path: string; body: unknown }
 export type GateVerdict =
-  { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect'; id?: string } | { ok: false; reason: string }
+  | { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect' | 'remove'; id?: string }
+  | { ok: false; reason: string }
 
 const NOT_ALLOWED: GateVerdict = { ok: false, reason: 'endpoint not allowed' }
 const refuse = (reason: string): GateVerdict => ({ ok: false, reason })
@@ -30,6 +31,12 @@ export function validateRequest(r: GateRequest, cfg: GateConfig): GateVerdict {
   }
   if (path === '/containers/create')
     return r.method === 'POST' ? validateCreate(query, r.body, cfg, { publicUrl, hosts }) : NOT_ALLOWED
+
+  // DELETE /containers/<id>: no `force`, no `v`, no other query. The gate also requires the container to be stopped.
+  const rm = /^\/containers\/([^/]+)$/.exec(path)
+  if (rm && r.method === 'DELETE' && ID_RE.test(rm[1]!)) {
+    return query === '' ? { ok: true, kind: 'remove', id: rm[1]! } : refuse('query not allowed')
+  }
 
   const c = /^\/containers\/([^/]+)\/(start|stop|json)$/.exec(path)
   if (!c || !ID_RE.test(c[1]!)) return NOT_ALLOWED

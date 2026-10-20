@@ -444,18 +444,59 @@ test('a start that may have gone through keeps the profile held until the contai
   await monitorTick(f.deps, f.tMinus60)
   await settleRemuxes()
   expect(await f.heldBy()).toBe(`occ:${f.id}`)
-  f.docker.inspectResults.set(name, null)
+  expect(f.docker.removed).toEqual([])
+  // It never started after all: stopped, so the monitor removes it and then gives the profile back.
+  f.docker.inspectResults.set(name, { running: false })
   await monitorTick(f.deps, f.tMinus60)
   await settleRemuxes()
   await monitorTick(f.deps, f.tMinus60)
+  expect(f.docker.removed).toEqual([name])
   expect(await f.heldBy()).toBeNull()
 })
 
-test('a start that Docker refused gives the profile back at once', async () => {
+test('a start that timed out and then exited on its own (AutoRemove) is released without a remove', async () => {
+  const f = await launchFixture()
+  f.docker.startError = Object.assign(new Error('no answer'), { name: 'TimeoutError' })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(f.docker.removed).toEqual([])
+  f.docker.inspectResults.set(`tm-worker-${f.id}-a1`, null)
+  await monitorTick(f.deps, f.tMinus60)
+  await settleRemuxes()
+  await monitorTick(f.deps, f.tMinus60)
+  expect(f.docker.removed).toEqual([])
+  expect(await f.heldBy()).toBeNull()
+})
+
+test('a start that Docker refused removes the created container and gives the profile back at once', async () => {
   const f = await launchFixture()
   f.docker.startError = new DockerError('start', 500, 'no such image')
   expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(f.docker.removed).toEqual(['fake-1'])
   expect(await f.heldBy()).toBeNull()
+})
+
+test('a start that Docker refused keeps the profile held when the container cannot be removed; the monitor removes it', async () => {
+  const f = await launchFixture()
+  f.docker.startError = new DockerError('start', 500, 'no such image')
+  f.docker.removeError = new DockerError('remove', 0, 'proxy unreachable')
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(f.docker.removed).toEqual([])
+  expect(await f.heldBy()).toBe(`occ:${f.id}`)
+  const name = `tm-worker-${f.id}-a1`
+  // Docker is back and the container never ran.
+  f.docker.removeError = null
+  f.docker.inspectResults.set(name, { running: false })
+  await monitorTick(f.deps, f.tMinus60)
+  await settleRemuxes()
+  await monitorTick(f.deps, f.tMinus60)
+  expect(f.docker.removed).toEqual([name])
+  expect(await f.heldBy()).toBeNull()
+})
+
+test('a create that failed removes nothing', async () => {
+  const f = await launchFixture({ dockerFails: true })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(f.docker.removed).toEqual([])
 })
 
 test('an error that is not a Docker or filesystem failure is not hidden as launch_failed, and the key is deleted', async () => {

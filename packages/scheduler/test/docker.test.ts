@@ -61,6 +61,30 @@ test('start and stop accept 204 and 304 and refuse the rest', async () => {
   await expect(docker.start('id')).rejects.toBeInstanceOf(DockerError)
 })
 
+test('remove sends a bare DELETE and treats 404 as gone', async () => {
+  const { fn, calls } = fakeFetch(empty(204), json(404, { message: 'No such container' }))
+  const docker = dockerClient('http://proxy:2375', fn)
+  await docker.remove('id/1')
+  await docker.remove('id/1')
+  expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+    ['DELETE', 'http://proxy:2375/containers/id%2F1', undefined],
+    ['DELETE', 'http://proxy:2375/containers/id%2F1', undefined]
+  ])
+  expect(calls[0]!.signal).toBeInstanceOf(AbortSignal)
+})
+
+test('remove refuses a conflict, a gate refusal and a server error', async () => {
+  const { fn } = fakeFetch(
+    json(409, { message: 'container is running' }),
+    json(403, { message: 'container is not stopped' }),
+    json(500, { message: 'boom' })
+  )
+  const docker = dockerClient('http://proxy:2375', fn)
+  await expect(docker.remove('c')).rejects.toThrow('docker remove failed (409): container is running')
+  await expect(docker.remove('c')).rejects.toThrow('docker remove failed (403): container is not stopped')
+  await expect(docker.remove('c')).rejects.toBeInstanceOf(DockerError)
+})
+
 test('inspect answers running, stopped or null for a 404', async () => {
   const { fn, calls } = fakeFetch(
     json(200, { State: { Running: true } }),
@@ -88,6 +112,7 @@ test('a call that never answers becomes a DockerError once its time is up', asyn
   for (const call of [
     () => docker.inspect('c'),
     () => docker.stop('c', 10),
+    () => docker.remove('c'),
     () => docker.start('c'),
     () => docker.create('n', BODY)
   ]) {
@@ -97,7 +122,7 @@ test('a call that never answers becomes a DockerError once its time is up', asyn
   }
 })
 
-test('the default limits are 10 s for inspect and stop and 60 s for create and start', async () => {
+test('the default limits are 10 s for inspect, stop and remove and 60 s for create and start', async () => {
   const seen: { path: string; signal: AbortSignal }[] = []
   const fn = (async (url: string, init?: RequestInit) => {
     seen.push({ path: url, signal: init!.signal! })
@@ -114,12 +139,13 @@ test('the default limits are 10 s for inspect and stop and 60 s for create and s
     const docker = dockerClient('http://proxy:2375', fn)
     await docker.inspect('c')
     await docker.stop('c', 1)
+    await docker.remove('c')
     await docker.create('n', BODY)
     await docker.start('c')
   } finally {
     AbortSignal.timeout = original
   }
-  expect(timeouts).toEqual([10_000, 10_000, 60_000, 60_000])
+  expect(timeouts).toEqual([10_000, 10_000, 10_000, 60_000, 60_000])
 })
 
 test('an unreachable proxy is a DockerError that does not carry the URL', async () => {

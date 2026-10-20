@@ -155,6 +155,22 @@ export function isLaunchFailure(e: unknown): boolean {
  */
 export const startMayHaveSucceeded = (e: unknown): boolean => !(e instanceof DockerError) || e.status === 0
 
+/**
+ * Removes a container that Docker created but refused to start, so it does not linger. True when it is gone. A removal
+ * that fails (Docker unreachable, or the gate says the container is not stopped) returns false: the caller keeps the
+ * profile held, and the monitor removes the container once Docker says it is not running.
+ */
+export async function removeRefused(docker: DockerClient, id: string): Promise<boolean> {
+  try {
+    await docker.remove(id)
+    return true
+  } catch (e) {
+    if (!(e instanceof DockerError)) throw e
+    console.error(`remove after a refused start failed: ${e.message}`)
+    return false
+  }
+}
+
 /** Starts attempt `attempt` of an occurrence. Resolves `false` after failing the occurrence when it can't start. */
 async function startAttemptIn(
   deps: LaunchDeps,
@@ -206,17 +222,19 @@ async function startAttemptIn(
   }
   const key = profileKey(deps.master, row.identityId)
 
-  let startIssued = false
+  let created: string | null = null
   try {
     const jobDir = await prepareHostDirs(env, row.identityId, occurrenceId)
     // The profile is ours alone, so files of earlier containers (a crashed scheduler's leftovers) can go.
     await removeStaleJobFiles(jobDir, base)
     await writeJobFiles(base, job, key)
-    const id = await deps.docker.create(name, containerSpec(spec))
-    startIssued = true
-    await deps.docker.start(id)
+    created = await deps.docker.create(name, containerSpec(spec))
+    await deps.docker.start(created)
   } catch (e) {
-    if (isLaunchFailure(e)) return failLaunch(e, startIssued && startMayHaveSucceeded(e))
+    if (isLaunchFailure(e)) {
+      const mayRun = created !== null && (startMayHaveSucceeded(e) || !(await removeRefused(deps.docker, created)))
+      return failLaunch(e, mayRun)
+    }
     await removeJobFiles(base) // the key never outlives a failed launch, whatever the failure
     throw e
   }

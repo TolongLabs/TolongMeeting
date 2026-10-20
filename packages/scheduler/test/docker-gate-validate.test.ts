@@ -199,6 +199,46 @@ test.each([
   expect(validateRequest({ method, path, body: null }, cfg).ok).toBe(false)
 })
 
+test('DELETE /containers/<id> is a remove, with or without an API version', () => {
+  const id = containerName(spec)
+  expect(validateRequest({ method: 'DELETE', path: `/containers/${id}`, body: null }, cfg)).toEqual({
+    ok: true,
+    kind: 'remove',
+    id
+  })
+  expect(validateRequest({ method: 'DELETE', path: `/v1.47/containers/${'a'.repeat(64)}`, body: null }, cfg)).toEqual({
+    ok: true,
+    kind: 'remove',
+    id: 'a'.repeat(64)
+  })
+})
+
+test.each(['force=1', 'force=true', 'v=1', 'link=1', 'v=0', 'force=', '?', 'x=y'])(
+  'DELETE of a container with the query %s is refused',
+  (query) => {
+    expect(validateRequest({ method: 'DELETE', path: `/containers/${occ}?${query}`, body: null }, cfg)).toEqual({
+      ok: false,
+      reason: 'query not allowed'
+    })
+  }
+)
+
+test.each([
+  ['GET', `/containers/${occ}`],
+  ['POST', `/containers/${occ}`],
+  ['PUT', `/containers/${occ}`],
+  ['DELETE', `/containers/${occ}/start`],
+  ['DELETE', `/containers/${occ}/json`],
+  ['DELETE', '/containers/create'],
+  ['DELETE', '/containers/'],
+  ['DELETE', '/containers/%2e%2e'],
+  ['DELETE', `/containers/${occ}/`],
+  ['DELETE', '/images/alpine'],
+  ['DELETE', '/volumes/x']
+])('%s %s is not a remove', (method, path) => {
+  expect(validateRequest({ method, path, body: null }, cfg)).toEqual({ ok: false, reason: 'endpoint not allowed' })
+})
+
 test.each([
   ['POST', `/containers/${occ}/exec`],
   ['POST', `/containers/${occ}/kill`],
@@ -208,7 +248,6 @@ test.each([
   ['GET', `/containers/${occ}/archive`],
   ['PUT', `/containers/${occ}/archive`],
   ['GET', `/containers/${occ}/logs`],
-  ['DELETE', `/containers/${occ}`],
   ['POST', '/images/create'],
   ['POST', '/build'],
   ['GET', '/containers/json'],

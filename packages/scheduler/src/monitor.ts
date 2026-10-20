@@ -62,16 +62,24 @@ function logDocker(occurrenceId: string, now: Date, message: string): void {
   console.error(`monitor: ${message}`)
 }
 
-/** What Docker says about a container. `unknown` (Docker unreachable or refusing) is never treated as `gone`. */
+/**
+ * What Docker says about a container; with `removeStopped` a stopped one is removed first. `unknown` (Docker
+ * unreachable or refusing) is never treated as `gone`.
+ */
 async function containerView(
   docker: DockerClient,
   name: string | null,
-  log: { id: string; now: Date }
+  log: { id: string; now: Date },
+  removeStopped = false
 ): Promise<'running' | 'gone' | 'unknown'> {
   if (name === null) return 'gone'
   try {
     const state = await docker.inspect(name)
-    return state === null || !state.running ? 'gone' : 'running'
+    if (state?.running) return 'running'
+    // Exists but is not running (created and never started: AutoRemove only covers one that ran and exited). It is
+    // `gone` once removed; a removal that fails leaves it `unknown`, so the profile stays held and the next pass retries.
+    if (state !== null && removeStopped) await docker.remove(name)
+    return 'gone'
   } catch (e) {
     if (!(e instanceof DockerError)) throw e
     logDocker(log.id, log.now, e.message)
@@ -482,7 +490,8 @@ async function registerFinished(deps: LaunchDeps, row: OccurrenceRow): Promise<v
 }
 
 /**
- * An occurrence that is no longer active but still names a container: once Docker says the container is gone, forget
+ * An occurrence that is no longer active but still names a container: once Docker says the container is gone (a
+ * container that exists but is not running, created and never started, is removed first; a running one never is), forget
  * it, give the profile back and record the newest checkpoint. The recording of an occurrence that ends without the
  * pipeline is remuxed and its files are registered as artefacts (so they show on the meeting page) by a detached task:
  * the tick does not wait for it, a later tick skips the row while the task runs, and the container name is cleared and
@@ -517,7 +526,7 @@ export async function settleRemuxes(): Promise<void> {
 async function releaseOne(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<boolean> {
   const { db } = deps
   if (remuxing.has(row.id)) return false
-  if ((await containerView(deps.docker, row.containerName, { id: row.id, now })) !== 'gone') return false
+  if ((await containerView(deps.docker, row.containerName, { id: row.id, now }, true)) !== 'gone') return false
   // The checkpoint is recorded first: if this pass dies half way, the container name is still set and the next pass
   // does it again.
   const newest = (await checkpointFiles(deps.env.profileRoot, row.identityId)).at(-1)

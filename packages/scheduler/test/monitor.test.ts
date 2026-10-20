@@ -573,6 +573,36 @@ describe('finished containers', () => {
     expect(await f.heldBy()).toBe(`occ:${f.id}`)
   })
 
+  test('a container that exists but is not running is removed, then the identity is released', async () => {
+    const f = await monitorFixture({ state: 'transcribing' })
+    f.docker.inspectResults.set(f.name, { running: false })
+    expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+    expect(f.docker.removed).toEqual([f.name])
+    expect(await f.heldBy()).toBeNull()
+    expect((await f.occurrence()).containerName).toBeNull()
+  })
+
+  test('a running container is never removed, and a container already gone needs no remove', async () => {
+    const running = await monitorFixture({ state: 'transcribing' })
+    expect((await monitorTick(running.deps, now)).released).toEqual([])
+    expect(running.docker.removed).toEqual([])
+    const gone = await monitorFixture({ state: 'transcribing', containerGone: true })
+    expect((await monitorTick(gone.deps, now)).released).toEqual([gone.id])
+    expect(gone.docker.removed).toEqual([])
+  })
+
+  test('a stopped container that cannot be removed keeps the identity and is tried again', async () => {
+    const f = await monitorFixture({ state: 'transcribing' })
+    f.docker.inspectResults.set(f.name, { running: false })
+    f.docker.removeError = new DockerError('remove', 409, 'removal already in progress')
+    expect((await monitorTick(f.deps, now)).released).toEqual([])
+    expect(await f.heldBy()).toBe(`occ:${f.id}`)
+    expect((await f.occurrence()).containerName).toBe(f.name)
+    f.docker.removeError = null
+    expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+    expect(f.docker.removed).toEqual([f.name])
+  })
+
   test.each(['no_link', 'denied', 'left_by_member', 'failed'] as const)(
     'a %s occurrence gets its recording remuxed and its files registered when the container is gone',
     async (state) => {

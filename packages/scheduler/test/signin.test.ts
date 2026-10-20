@@ -273,16 +273,43 @@ describe('startSigninContainer', () => {
     f.docker.inspectResults.set(f.name, { running: true })
     await monitorTick(f.deps, f.now)
     expect(await f.heldBy()).toBe(`signin:${f.sessionId}`)
-    f.docker.inspectResults.set(f.name, null)
+    expect(f.docker.removed).toEqual([])
+    // It never started after all: the monitor removes the stopped container, then frees the profile.
+    f.docker.inspectResults.set(f.name, { running: false })
     await monitorTick(f.deps, f.now)
+    expect(f.docker.removed).toEqual([f.name])
     expect(await f.heldBy()).toBeNull()
   })
 
-  test('a start that Docker refused gives the profile back at once', async () => {
+  test('a start that Docker refused removes the created container and gives the profile back at once', async () => {
     const f = await signinLaunchFixture()
     f.docker.startError = new DockerError('start', 500, 'no such image')
     expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('ended')
+    expect(f.docker.removed).toEqual(['fake-1'])
     expect(await f.heldBy()).toBeNull()
+  })
+
+  test('a refused start keeps the profile held while the container cannot be removed', async () => {
+    const f = await signinLaunchFixture()
+    f.docker.startError = new DockerError('start', 500, 'no such image')
+    f.docker.removeError = new DockerError('remove', 403, 'container is not stopped')
+    expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('ended')
+    expect(await f.heldBy()).toBe(`signin:${f.sessionId}`)
+    f.docker.removeError = null
+    f.docker.inspectResults.set(f.name, { running: false })
+    await monitorTick(f.deps, f.now)
+    expect(f.docker.removed).toEqual([f.name])
+    expect(await f.heldBy()).toBeNull()
+  })
+
+  test('an ended session whose container is still running is never removed', async () => {
+    const f = await signinLaunchFixture()
+    f.docker.startError = Object.assign(new Error('no answer'), { name: 'TimeoutError' })
+    expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('ended')
+    f.docker.inspectResults.set(f.name, { running: true })
+    await monitorTick(f.deps, f.now)
+    expect(f.docker.removed).toEqual([])
+    expect(await f.heldBy()).toBe(`signin:${f.sessionId}`)
   })
 
   test('a session that does not exist is an error, not a silent no-op', async () => {

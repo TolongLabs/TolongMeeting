@@ -12,6 +12,7 @@ import {
   describeFailure,
   isLaunchFailure,
   removeFilesWhenExited,
+  removeRefused,
   startMayHaveSucceeded,
   type LaunchDeps
 } from './launch'
@@ -156,7 +157,7 @@ export async function startSigninContainer(
     .update(signinSessions)
     .set({ controlTokenHash: controlTokenHash(token), upstream: `${name}:6080` })
     .where(eq(signinSessions.id, sessionId))
-  let startIssued = false
+  let created: string | null = null
   try {
     const job = SigninJobSchema.parse({
       sessionId,
@@ -169,11 +170,13 @@ export async function startSigninContainer(
     // The profile is ours alone, so files of earlier containers (a crashed scheduler's leftovers) can go.
     await removeStaleJobFiles(jobDir, base)
     await writeJobFiles(base, job, profileKey(deps.master, identityId))
-    const id = await deps.docker.create(name, containerSpec(spec))
-    startIssued = true
-    await deps.docker.start(id)
+    created = await deps.docker.create(name, containerSpec(spec))
+    await deps.docker.start(created)
   } catch (error) {
-    if (isLaunchFailure(error)) return failStart(error, startIssued && startMayHaveSucceeded(error))
+    if (isLaunchFailure(error)) {
+      const mayRun = created !== null && (startMayHaveSucceeded(error) || !(await removeRefused(deps.docker, created)))
+      return failStart(error, mayRun)
+    }
     await removeJobFiles(base) // the key never outlives a failed start, whatever the failure
     throw error
   }
@@ -296,7 +299,8 @@ async function removeSigninFiles(deps: LaunchDeps, row: SessionRow, now: Date): 
  *   reading "unknown" as "gone"; a worker session also queues `resume_after_signin`, so a worker that returns does not
  *   stay paused;
  * - the job and key files of a running container go once it has reported, or after 120 seconds;
- * - the profile of a sign-in that has ended is released once its container is gone (its files go with it); a container
+ * - the profile of a sign-in that has ended is released once its container is gone (its files go with it; a container that
+ *   exists but is not running is removed first); a container
  *   still running a minute after its session ended is stopped.
  * A session or a held profile that throws does not stop the others: every one is handled, then the errors are thrown
  * together as an `AggregateError`. Returns the ids of the sessions it ended.
@@ -344,9 +348,12 @@ async function releaseSignin(deps: LaunchDeps, identityId: string, heldBy: strin
   const name = `tm-signin-${sessionId}`
   let running: boolean
   try {
-    running = (await deps.docker.inspect(name))?.running === true
+    const state = await deps.docker.inspect(name)
+    running = state?.running === true
     if (running && session?.endedAt && now.getTime() - session.endedAt.getTime() >= ENDED_STOP_AFTER_MS)
       await stopContainer(deps.docker, name)
+    // Exists but is not running: created and never started (AutoRemove only covers a container that ran and exited).
+    else if (state !== null && !running) await deps.docker.remove(name)
   } catch (e) {
     if (!(e instanceof DockerError)) throw e
     logDocker(sessionId, now, e.message)

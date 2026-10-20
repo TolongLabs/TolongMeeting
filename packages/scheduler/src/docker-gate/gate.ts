@@ -14,6 +14,7 @@ type Inspect = {
   Name?: unknown
   Config?: { Image?: unknown; Labels?: Record<string, unknown> | null } | null
   HostConfig?: { Privileged?: unknown } | null
+  State?: { Running?: unknown } | null
 }
 
 /** True when the container is one this system made: a worker or sign-in role, the worker image, not privileged, a matching name. */
@@ -79,7 +80,7 @@ export function createGate(o: GateOptions): (req: Request) => Promise<Response> 
     if (verdict.kind === 'ping') return docker(target, { method: req.method })
     if (verdict.kind === 'create') return docker(target, { method: 'POST', body: JSON.stringify(body) })
 
-    // start, stop and inspect: look at the target's own labels first, then act on its full id so a name can't move.
+    // start, stop, inspect and remove: look at the target's own labels first, then act on its full id so a name can't move.
     const inspected = await docker(`/containers/${verdict.id}/json`)
     if (inspected.status === 404) return inspected
     if (!inspected.ok) {
@@ -93,6 +94,14 @@ export function createGate(o: GateOptions): (req: Request) => Promise<Response> 
     }
     if (verdict.kind === 'inspect') return Response.json(info)
     const prefix = API_PREFIX_RE.exec(url.pathname)?.[0] ?? ''
+    if (verdict.kind === 'remove') {
+      // Only a container that has stopped: a running one (or an answer that doesn't say) is never removed. No query is sent.
+      if (info.State?.Running !== false) {
+        o.log(`${line} refused: container is not stopped`)
+        return deny(403, 'container is not stopped')
+      }
+      return docker(`${prefix}/containers/${info.Id as string}`, { method: 'DELETE' })
+    }
     return docker(`${prefix}/containers/${info.Id as string}/${verdict.kind}${url.search}`, { method: 'POST' })
   }
 }

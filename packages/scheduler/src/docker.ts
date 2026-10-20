@@ -1,11 +1,16 @@
 import type { CreateBody } from './container-spec'
 
-/** The four Docker calls the launcher makes. Each one passes through the gate in `docker-gate/`. */
+/** The five Docker calls the scheduler makes. Each one passes through the gate in `docker-gate/`. */
 export interface DockerClient {
   /** Creates a container with this name and body; resolves to its id. */
   create(name: string, body: CreateBody): Promise<string>
   start(id: string): Promise<void>
   stop(id: string, timeoutS: number): Promise<void>
+  /**
+   * Removes a container that is not running (no `force`, no volumes). Resolves when it is gone, a 404 included. A 409
+   * (still running, or a removal under way) and a 403 from the gate (managed container still running) are thrown.
+   */
+  remove(id: string): Promise<void>
   /** `null` when Docker has no such container (it exited and `AutoRemove` removed it). */
   inspect(id: string): Promise<{ running: boolean } | null>
 }
@@ -109,6 +114,12 @@ export function dockerClient(
           if (res.status !== 204 && res.status !== 304) throw await failure('stop', res)
         }
       ),
+    remove: (id) =>
+      call('remove', timeouts.quickMs, `/containers/${target(id)}`, { method: 'DELETE' }, async (res) => {
+        // 404: already gone.
+        if (res.status === 404) return void (await res.body?.cancel())
+        if (res.status !== 204) throw await failure('remove', res)
+      }),
     inspect: (id) =>
       call('inspect', timeouts.quickMs, `/containers/${target(id)}/json`, {}, async (res) => {
         if (res.status === 404) {
@@ -127,12 +138,15 @@ export class FakeDocker implements DockerClient {
   readonly created: { id: string; name: string; body: CreateBody }[] = []
   readonly started: string[] = []
   readonly stopped: { id: string; timeoutS: number }[] = []
+  readonly removed: string[] = []
   /** What `inspect` answers per id or name. An id not in the map is running once started and unknown before. */
   readonly inspectResults = new Map<string, { running: boolean } | null>()
   /** When set, `create` rejects with it. */
   createError: Error | null = null
   /** When set, `start` rejects with it. */
   startError: Error | null = null
+  /** When set, `remove` rejects with it. */
+  removeError: Error | null = null
 
   async create(name: string, body: CreateBody): Promise<string> {
     if (this.createError) throw this.createError
@@ -148,6 +162,14 @@ export class FakeDocker implements DockerClient {
 
   async stop(id: string, timeoutS: number): Promise<void> {
     this.stopped.push({ id, timeoutS })
+  }
+
+  /** Records the call; the container is gone afterwards, under its id and its name. */
+  async remove(id: string): Promise<void> {
+    if (this.removeError) throw this.removeError
+    this.removed.push(id)
+    const c = this.created.find((x) => x.id === id || x.name === id)
+    for (const key of [id, c?.id, c?.name]) if (key !== undefined) this.inspectResults.set(key, null)
   }
 
   async inspect(id: string): Promise<{ running: boolean } | null> {
