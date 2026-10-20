@@ -7,7 +7,7 @@ import {
   selectNotionParentRequest,
   type ApiResult
 } from '@tm/exports/api'
-import { loadMasterKey } from '../db/secrets'
+import { cachedMasterKey } from '../db/secrets'
 import { exportStores } from './exports'
 import { callbackCrashed, clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
 import { providerFetch } from './provider-fetch'
@@ -19,8 +19,6 @@ import type { MemberScope } from './scope'
 const NO_STORE = { 'Cache-Control': 'no-store' }
 /** A request waits at most this long for a rate limit; a longer wait fails with `rate_limited` instead. */
 const MAX_ROUTE_WAIT_MS = 10_000
-
-let master: Buffer | undefined
 
 function send(result: ApiResult): Response {
   return Response.json(result.body, { status: result.status, headers: NO_STORE })
@@ -49,7 +47,7 @@ async function routeSleep(ms: number): Promise<void> {
 export function notionStartResponse(scope: MemberScope): Response {
   const client = notionClientFromEnv()
   if (client === null) return notConfigured()
-  master ??= loadMasterKey()
+  const master = cachedMasterKey()
   const { location, sealed } = beginNotionConnect(scope.memberId, { master, client })
   return new Response(null, {
     status: 302,
@@ -71,7 +69,7 @@ export async function notionCallbackResponse(
   const client = notionClientFromEnv()
   if (client === null) return notConfigured()
   try {
-    master ??= loadMasterKey()
+    const master = cachedMasterKey()
     const result = await completeNotionConnect(
       scope.memberId,
       new URL(request.url),

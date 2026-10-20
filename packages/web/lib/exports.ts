@@ -9,20 +9,18 @@ import {
   type ConnectionKind
 } from '@tm/exports/api'
 import { memberExportStores, type MemberExportStores } from '../db/exports'
-import { loadMasterKey } from '../db/secrets'
+import { cachedMasterKey } from '../db/secrets'
 import { providerFetch } from './provider-fetch'
 import type { MemberScope } from './scope'
 
 // The export API as the site serves it. Every function takes the member's own stores (made from their `MemberScope`),
 // so a handler can only reach that member's rows. Nothing here logs: a log line could carry a token or meeting text.
 
-let master: Buffer | undefined
-
-/** The export stores of one member. The master key is read once per process (`TM_MASTER_KEY_FILE`). */
+/** The export stores of one member. The master key is read once per key file (`TM_MASTER_KEY_FILE`). */
 export function exportStores(scope: MemberScope): MemberExportStores {
   const root = process.env.TM_DATA_ROOT
   if (!root) throw new Error('TM_DATA_ROOT is not set')
-  master ??= loadMasterKey()
+  const master = cachedMasterKey()
   return memberExportStores(scope, master, root)
 }
 

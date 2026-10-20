@@ -6,7 +6,7 @@ import {
   startGoogleConnect,
   type ApiResult
 } from '@tm/exports/api'
-import { loadMasterKey } from '../db/secrets'
+import { cachedMasterKey } from '../db/secrets'
 import { exportStores } from './exports'
 import { callbackCrashed, clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
 import { providerFetch } from './provider-fetch'
@@ -14,8 +14,6 @@ import type { MemberScope } from './scope'
 
 // The Google Docs connection as the site serves it. Each function takes the member's own scope, so it can only reach
 // that member's connection. Nothing here logs: a log line could carry a token.
-
-let master: Buffer | undefined
 
 const NO_STORE = { 'Cache-Control': 'no-store' }
 
@@ -40,7 +38,7 @@ function publicOrigin(): string {
 export function googleStartResponse(scope: MemberScope): Response {
   const client = oauthClientFromEnv('google')
   if (client === null) return notConfigured()
-  master ??= loadMasterKey()
+  const master = cachedMasterKey()
   const { url, sealed } = startGoogleConnect(master, scope.memberId, client)
   return new Response(null, {
     status: 302,
@@ -62,7 +60,7 @@ export async function googleCallbackResponse(
   const client = oauthClientFromEnv('google')
   if (client === null) return notConfigured()
   try {
-    master ??= loadMasterKey()
+    const master = cachedMasterKey()
     const result = await completeGoogleConnect(
       scope.memberId,
       new URL(request.url),

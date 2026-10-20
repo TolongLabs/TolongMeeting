@@ -25,6 +25,17 @@ export function loadMasterKey(file: string | undefined = process.env.TM_MASTER_K
   return key
 }
 
+let cachedKey: { file: string; key: Buffer } | undefined
+
+/**
+ * `loadMasterKey`, read once per key file. A process pointed at another `TM_MASTER_KEY_FILE` (a test run that sets its
+ * own) reads that file instead of keeping the first key it saw.
+ */
+export function cachedMasterKey(file: string | undefined = process.env.TM_MASTER_KEY_FILE): Buffer {
+  if (cachedKey === undefined || cachedKey.file !== file) cachedKey = { file: file ?? '', key: loadMasterKey(file) }
+  return cachedKey.key
+}
+
 function aadFor(column: SecretColumn, memberId: string): string {
   return `${column}:${memberId}`
 }
