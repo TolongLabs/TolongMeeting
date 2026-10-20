@@ -53,10 +53,42 @@ test('accents are ignored in both directions', () => {
   expect(findMention('José, you are up', compileNames(['Jose']))).toBe('Jose')
 })
 
-test('Chinese names written without spaces match as a whole run only', () => {
-  const chinese = compileNames(['陈伟明'])
-  expect(findMention('陈伟明, 请回答', chinese)).toBe('陈伟明')
-  expect(findMention('陈伟明同学请回答', chinese)).toBeNull()
+test.each([
+  ['王伟', '王伟你怎么看', '王伟'],
+  ['王伟', '请王伟发言', '王伟'],
+  ['王伟', '王伟 你怎么看', '王伟'],
+  ['陈伟明', '陈伟明同学请回答', '陈伟明'],
+  ['田中', '田中さん', '田中'],
+  ['タナカ', 'タナカさん、どうぞ', 'タナカ'],
+  ['สมชาย', 'คุณสมชายครับ', 'สมชาย'],
+  ['សុខា', 'សួស្តីសុខាអ្នកណា', 'សុខា'],
+  ['王伟', '李伟你怎么看', null],
+  ['王伟', '王你怎么看伟', null]
+])('a name in a script written without spaces matches inside the text: %p in %p', (name, text, want) =>
+  expect(findMention(text, compileNames([name]))).toBe(want)
+)
+
+test('a one-character name in an unspaced script, and a name under 3 letters in a spaced one, are not watched', () => {
+  expect(compileNames(['李', 'Li', 'Al', 'Jo', 'J.R.', 'Ali']).map((n) => n.name)).toEqual(['Ali'])
+  expect(findMention('李老师', compileNames(['李']))).toBeNull()
+  expect(compileNames(['李伟', 'Ng']).map((n) => n.name)).toEqual(['李伟'])
+})
+
+test('a spaced-script name still needs a whole word, also beside an unspaced one', () => {
+  const both = compileNames(['Aisyah', '王伟'])
+  expect(findMention('Aisyahrani said hi', both)).toBeNull()
+  expect(findMention('Aisyah, 王伟你好', both)).toBe('Aisyah')
+})
+
+test('Indic names keep their vowel signs: किरण is not करण', () => {
+  expect(findMention('किरण, आप बोलिए', compileNames(['किरण']))).toBe('किरण')
+  expect(findMention('करण, आप बोलिए', compileNames(['किरण']))).toBeNull()
+  expect(findMention('किरण, आप बोलिए', compileNames(['करण']))).toBeNull()
+})
+
+test('"ß" and "ss" are the same name', () => {
+  expect(findMention('Weiss, bitte', compileNames(['Weiß']))).toBe('Weiß')
+  expect(findMention('Weiß, bitte', compileNames(['Weiss']))).toBe('Weiss')
 })
 
 test('a romanised Chinese name matches across a hyphen', () => {

@@ -27,7 +27,7 @@ Contents:
 
 - **Work template**: exactly the design's work-meeting template; empty sections are left out; at most 5 items per section, most urgent first; action items that don't fit go under `More deadlines` (uncapped, after `Open questions`), as 1A's lecture renderer does with tasks; owners only as spoken, with no speaker identification.
 - **Work defaults already built**: work entries default to native transcription and show `EMPLOYER_NOTICE` next to the transcription choice, delivered by plan 01c Task 10 (`EntryInputSchema` and the entry form). This plan doesn't rebuild them; Task 6 only checks them.
-- **Mentions**: live transcription mode only, and only when the member has names on My details (`mention_names`); names and transcript text are compared after `normaliseName` (compatibility decomposition, accents removed, lower case, anything but letters and digits becomes a space, spaces collapsed), as whole-word sequences; names shorter than 2 characters after normalisation are ignored.
+- **Mentions**: live transcription mode only, and only when the member has names on My details (`mention_names`); names and transcript text are compared after `normaliseName` (compatibility decomposition, accents removed, lower case, anything but letters and digits becomes a space, spaces collapsed), as whole-word sequences, except names in a script written without spaces (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar), which match as text anywhere inside the spoken text with spaces ignored; a name needs at least 3 letters (2 in those scripts), and shorter names are not watched (My details says so). Accents are removed only from Latin, Greek and Cyrillic letters; the combining marks of other scripts (Devanagari, Bengali, Tamil, Thai, kana voicing marks) are part of the letter and stay; `ß` is `ss`.
 - **Mention ping**: high priority, at most one per 2 minutes per worker attempt (`MENTION_DEBOUNCE_MS = 120_000`), with the last 30 seconds of transcript cut to its final 1,500 characters, and the buttons "Open meeting page" and "Take over". Every match is still logged as a `mention` event with its offset only. The bot never responds in the meeting.
 - **Commands**: ping buttons are ntfy `view` actions that open website pages; opening a page never acts; the page's button (a server action) queues `leave_now` or `take_over` only for the member's own occurrence while it is in `ACTIVE_STATES`.
 - **Take over**: the worker leaves first, confirms within 10 seconds that it is no longer in the meeting (otherwise closes the stage page), and only then reports `left_by_member`; the page opens the meeting link only after it sees that state, or after 60 seconds if the member chooses to open it anyway.
@@ -77,7 +77,9 @@ Assumed from earlier plans (use their real names if they differ, and fix this pl
 
 ```ts
 // packages/core/src/names.ts
-export function normaliseName(s: string): string // NFKD, strip \p{M}, lower case, [^\p{L}\p{N}]+ -> ' ', trim
+export function normaliseName(s: string): string // NFKD, strip \p{M} after Latin, Greek or Cyrillic letters only, lower case, ß -> ss, [^\p{L}\p{N}\p{M}]+ -> ' ', trim, NFC
+export function isUnspacedName(normalised: string): boolean // Han, Hiragana, Katakana, Thai, Lao, Khmer or Myanmar
+export function isWatchableName(name: string): boolean // >= 3 letters, or >= 2 in an unspaced script
 
 // packages/pipeline/src/summary/work.ts
 export const WorkInventorySchema = z.object({
@@ -128,7 +130,7 @@ You extract an inventory from one work meeting. Reply with JSON for the given sc
 - Do not add a preamble, a recap or advice.
 ```
 
-- `pickDoNext` takes the action items whose `normaliseName(owner)` equals `normaliseName` of one of `memberNames`, and returns the one with the earliest due date from `chooseDue` (undated last), or null Items whose source is `participant_chat` are skipped: anyone can write there. `WorkInventorySchema` sources are the lecture ones plus `participant_chat`; the system prompt says to take owners and due dates only from the slides, the host's chat and speech, and to give an item that only the other chat holds `"source": "participant_chat"`, `"owner": null` and `"due": null`; the vetting step nulls the owner and every date of such an item and conflict whatever the model wrote. Dates in `conflicts` use the same strict `Due` schema as `due` (a real `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`), and the renderer's `dateText` gives no date for anything else, so model text never reaches the summary through a date.
+- `pickDoNext` takes the action items whose `normaliseName(owner)` equals `normaliseName` of one of `memberNames`, and returns the one with the earliest due date from `chooseDue` (undated last), or null. Items whose source is `participant_chat` are skipped: anyone can write there. `WorkInventorySchema` sources are the lecture ones plus `participant_chat`; the system prompt says to take owners and due dates only from the slides, the host's chat and speech, and to give an item that only the other chat holds `"source": "participant_chat"`, `"owner": null` and `"due": null`; the vetting step nulls the owner and every date of such an item and conflict whatever the model wrote. Dates in `conflicts` use the same strict `Due` schema as `due` (a real `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`), and the renderer's `dateText` gives no date for anything else, so model text never reaches the summary through a date.
 - `renderWorkSummary` writes the design's work template: the title line as 1A's lecture title without a session label; `Do next: <task> (<due text>)` for `pickDoNext(inv, [...cfg.member.mentionNames, cfg.member.displayName])`, else `Do next: nothing assigned to you in this meeting`; `Decisions`, `What was discussed` and `Open questions` with their first 5 items; `Action items` sorted by due date (undated last), first 5, each `<owner>: <task> (<due text>)`, without `<owner>: ` when the owner is null and without the brackets when undated; `More deadlines` with every remaining action item in the same form; `Details: <meetingUrl>`, or 1A's `Details: the transcript, slides and chat files in <outDir>` when it is null. Due text is 1A's (`due Wed 28 Oct 2026`, `, HH:mm` when timed, `; <note>` from `chooseDue`).
 - `runPipeline` uses `buildWorkInventory` and `renderWorkSummary` when `cfg.entry.type` is `'work'`, with `meetingUrl` `${TM_PUBLIC_URL}/meetings/<occurrenceId>` when that variable is set, else null; lectures are unchanged.
 
@@ -271,8 +273,8 @@ git commit -m "feat(pipeline): add work-meeting summary"
 
 ```ts
 export type CompiledName = { name: string; tokens: string[] }
-export function compileNames(names: string[]): CompiledName[] // normalised, < 2 characters dropped, duplicates removed
-export function findMention(text: string, names: CompiledName[]): string | null // the longest name whose tokens occur as a contiguous run of whole tokens in normaliseName(text)
+export function compileNames(names: string[]): CompiledName[] // normalised, names that are not `isWatchableName` dropped, duplicates removed
+export function findMention(text: string, names: CompiledName[]): string | null // the longest name whose tokens occur as a contiguous run of whole tokens in normaliseName(text); a name in an unspaced script matches as a substring of the text with spaces removed
 export function transcriptWindow(results: AsrResult[], endMs: number, spanMs = 30_000, maxChars = 1_500): string
 ```
 
@@ -282,9 +284,9 @@ export function transcriptWindow(results: AsrResult[], endMs: number, spanMs = 3
 
 ```ts
 // packages/worker/src/mentions/match.test.ts
-const names = compileNames(['Nur Aisyah', 'Aisyah', 'Zoë', 'A', '  '])
+const names = compileNames(['Nur Aisyah', 'Aisyah', 'Zoë', 'Al', '  '])
 
-test('names compile once each; one-letter and blank names are dropped', () => {
+test('names compile once each; names under 3 letters and blank names are dropped', () => {
   expect(names.map((n) => n.tokens)).toEqual([['nur', 'aisyah'], ['aisyah'], ['zoe']])
 })
 

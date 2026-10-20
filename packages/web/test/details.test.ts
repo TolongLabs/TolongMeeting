@@ -4,7 +4,7 @@ import { inspect } from 'node:util'
 import { details, type Db } from '../db'
 import { DbError } from '../db/errors'
 import { createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
-import { BUILTIN_DETAILS, DetailsInputSchema, loadDetails, saveDetails } from '../lib/details'
+import { BUILTIN_DETAILS, DetailsInputSchema, loadDetails, MENTION_NAMES_COPY, saveDetails } from '../lib/details'
 import { InputError } from '../lib/identities'
 import { createScope, type MemberScope } from '../lib/scope'
 import { expectNotLogged } from './no-log'
@@ -250,4 +250,9 @@ test('one member never sees another member’s details', async () => {
   const b = await bare()
   await saveDetails(a, { details: [{ key: 'programme', value: 'Law', labels: [] }], mentionNames: ['Ann'] })
   expect(await loadDetails(b)).toEqual(EMPTY)
+})
+
+test('the names copy says short names are not watched', () => {
+  expect(MENTION_NAMES_COPY.hint).toContain('at least 3 letters (2 for Chinese, Japanese, Thai, Lao, Khmer and Myanmar')
+  expect(MENTION_NAMES_COPY.hint).toContain('Shorter names are not watched')
 })

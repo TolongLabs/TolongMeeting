@@ -1,3 +1,4 @@
+import { MIN_SPACED_NAME_LETTERS, MIN_UNSPACED_NAME_LETTERS } from '@tm/core'
 import { isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { safeDbError } from '../db/errors'
@@ -11,6 +12,11 @@ export const BUILTIN_DETAILS = [
   { key: 'university_email', label: 'University email' },
   { key: 'programme', label: 'Programme' }
 ] as const
+
+/** The words under "names you answer to" on My details. */
+export const MENTION_NAMES_COPY = {
+  hint: `The bot pings you when it hears one of these names. A name needs at least ${MIN_SPACED_NAME_LETTERS} letters (${MIN_UNSPACED_NAME_LETTERS} for Chinese, Japanese, Thai, Lao, Khmer and Myanmar names). Shorter names are not watched, because they match too many words.`
+}
 
 export interface SavedDetail {
   key: string

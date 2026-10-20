@@ -1,22 +1,31 @@
 import type { AsrResult } from '@tm/ai'
-import { normaliseName } from '@tm/core'
+import { isUnspacedName, isWatchableName, normaliseName } from '@tm/core'
 
-// A member's name, as they entered it, with its normalised words. Matching compares the words only.
-export type CompiledName = { name: string; tokens: string[] }
+// A member's name, as they entered it, with its normalised words. A spaced-script name matches by its words; a name in
+// a script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Myanmar) matches as text inside the spoken
+// text, where `compact` is the name without spaces.
+export type CompiledName = { name: string; tokens: string[]; compact: string | null }
 
 function words(normalised: string): string[] {
   return normalised === '' ? [] : normalised.split(' ')
 }
 
-// Drops names shorter than 2 characters after normalisation, and repeats of a name that normalises the same way.
+const withoutSpaces = (normalised: string): string => normalised.replaceAll(' ', '')
+
+// Drops names with too few letters to watch (see `isWatchableName`: 3 in spaced scripts, 2 in the others), and repeats
+// of a name that normalises the same way.
 export function compileNames(names: string[]): CompiledName[] {
   const seen = new Set<string>()
   const compiled: CompiledName[] = []
   for (const name of names) {
     const normalised = normaliseName(name)
-    if ([...normalised].length < 2 || seen.has(normalised)) continue
+    if (!isWatchableName(name) || seen.has(normalised)) continue
     seen.add(normalised)
-    compiled.push({ name: name.trim().replace(/\s+/g, ' '), tokens: words(normalised) })
+    compiled.push({
+      name: name.trim().replace(/\s+/g, ' '),
+      tokens: words(normalised),
+      compact: isUnspacedName(normalised) ? withoutSpaces(normalised) : null
+    })
   }
   return compiled
 }
@@ -28,13 +37,18 @@ function containsRun(spoken: string[], run: string[]): boolean {
   return false
 }
 
-// Whole words only: "Ali" does not match "Alice" or "Aliyah". Returns the longest matching name, or null.
+// Spaced scripts: whole words only ("Ali" does not match "Alice" or "Aliyah"). Scripts written without spaces: the name
+// anywhere in the text ("王伟" in "王伟你怎么看"). Returns the longest matching name, or null.
 export function findMention(text: string, names: CompiledName[]): string | null {
-  const spoken = words(normaliseName(text))
+  const normalised = normaliseName(text)
+  const spoken = words(normalised)
+  const compactText = withoutSpaces(normalised)
   let best: CompiledName | null = null
   for (const candidate of names) {
     if (best !== null && candidate.tokens.join(' ').length <= best.tokens.join(' ').length) continue
-    if (containsRun(spoken, candidate.tokens)) best = candidate
+    const found =
+      candidate.compact !== null ? compactText.includes(candidate.compact) : containsRun(spoken, candidate.tokens)
+    if (found) best = candidate
   }
   return best?.name ?? null
 }
