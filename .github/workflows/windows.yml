@@ -9,6 +9,8 @@ on:
       - 'packages/core/**'
       - 'package.json'
       - 'bun.lock'
+      - 'bunfig.toml'
+      - 'test/preload.ts'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
