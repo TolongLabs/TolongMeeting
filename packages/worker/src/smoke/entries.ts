@@ -1,4 +1,5 @@
 import type { Platform } from '@tm/core'
+import { meetSmoke } from './meet'
 import { teamsSmoke } from './teams'
 import { zoomSmoke } from './zoom'
 
@@ -10,4 +11,4 @@ export interface SmokeEntry {
   checkpoints: { inMeeting: string[]; afterLayout: string[]; afterSweep: string[]; afterLeave: string[] }
 }
 
-export const SMOKE_ENTRIES: SmokeEntry[] = [zoomSmoke, teamsSmoke]
+export const SMOKE_ENTRIES: SmokeEntry[] = [zoomSmoke, teamsSmoke, meetSmoke]

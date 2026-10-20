@@ -1114,7 +1114,7 @@ No earlier plan builds the design's monthly smoke test. Plan 04's Task 11 specif
 - Consumes: `MeetSelectorsSchema`, `meetSelectors()` (Task 1); `meetAdapter` (Task 8); `serveMeet` (Task 3); `SmokeEntry`, `SMOKE_ENTRIES`, `runSmokeEntry` (plan 04, Task 11).
 - Produces: `meetSmoke: SmokeEntry` in `packages/worker/src/smoke/meet.ts`, registered in `SMOKE_ENTRIES`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -1160,12 +1160,12 @@ test('fails loudly, naming the key, when the chat button is gone', async ({ page
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/smoke/meet.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/meet/smoke.spec.ts`
 Expected: FAIL, module `./meet` not found.
 
-- [ ] **Step 3: Create `meetSmoke` and register it**
+- [x] **Step 3: Create `meetSmoke` and register it**
 
 Add `MeetFixtureConfig.omit: string[]` (selectors whose elements the fixture leaves out). Meet keeps no chat before someone writes, so the chat item keys aren't checked:
 
@@ -1193,12 +1193,12 @@ export const meetSmoke: SmokeEntry = {
 
 The Meet test meeting is a standing meeting owned by a Google Workspace test account with access set to "Open", so the smoke identity joins without knocking. Add its line to `docker/worker/smoke.crontab`.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: `bun test packages/worker/src/smoke/meet.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/meet/smoke.spec.ts`
 Expected: PASS (1 and 2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/smoke packages/worker/src/cli.ts docker/worker packages/worker/test/meet docs/TRD.md
