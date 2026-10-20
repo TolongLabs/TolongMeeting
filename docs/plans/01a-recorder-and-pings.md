@@ -857,7 +857,7 @@ test('stage and desk split, no automation flag, devices denied, desk muted', asy
 
 `windowBounds` uses a CDP session's `Browser.getWindowForTarget`; `browserCmdline` reads `/proc/<pid>/cmdline` of the Chrome process without `--type=`; `playTone` starts a 440 Hz `OscillatorNode`; `sinkLevelDb` records `tm_sink.monitor` with `parec` for the given time and returns RMS dBFS.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/test/chrome-launch.test.ts`, then `docker run --rm --shm-size=2g tm-worker:dev test launch.spec.ts`
 Expected: FAIL with "Cannot find module './launch'" in both.
@@ -866,7 +866,7 @@ Expected: FAIL with "Cannot find module './launch'" in both.
 
 `startScreen()` spawns `Xvfb :99 -screen 0 3840x1080x24 -nolisten tcp` and `openbox`, waits up to 10 s for `xdpyinfo -display :99` to report `3840x1080`, sets `DISPLAY=:99` and returns the stage and desk rectangles from Global Constraints; `stop()` kills both. `launchBrowser` calls `chromium.launchPersistentContext(profileDir, { channel: 'chrome', headless: false, viewport: null, ignoreDefaultArgs: ['--enable-automation'], args: chromeArgs(screen) })`, with any flags spike 2's report adds; the stage is `context.pages()[0]`; the desk is a new window from the browser CDP session's `Target.createTarget({ url: 'about:blank', newWindow: true })`, placed with `Browser.setWindowBounds` at `{ left: 1920, top: 0, width: 1920, height: 1080, windowState: 'normal' }`; the stage bounds are set the same way at `0,0`; then `muteDesk(desk)`. `muteDesk` applies the desk-muting method from spike 2's report; if the report names none, it adds an init script that sets `muted = true` on every media element and routes every `AudioContext` destination through a zero gain node. Fix round 1 (issue #2): Chrome 152 ignores `--app=about:blank` (a normal window, 937 px viewport), so the stage starts on a `data:` URL, `--test-type` hides the `--no-sandbox` infobar, and `launchBrowser` throws unless the stage reports 1920x1080 at screen origin 0,0 in display mode `standalone`. `startScreen` takes no display: Xvfb picks a free one (`-displayfd`). Every desk page (also popups and `context.newPage()` tabs) is muted from its first script by a context init script that installs only when `matchMedia('(display-mode: browser)').matches` (a desk window or tab; never a standalone or fullscreen document, so the stage's audio is never muted, not even in window or HTML fullscreen or in a cross-origin iframe), with an unconditional page-level mute as the backstop; `openDeskTab(context)` opens a muted tab in the desk window; a popup from the stage is muted on creation and then closed. `launchGuestStage` launches Chrome with the same flags on a temporary profile directory (a persistent context, because Playwright's non-persistent launch cannot see the `--app` window), placed at the stage rectangle; the directory is removed when the browser disconnects. Chrome's sandbox stays on except in the image (`TM_IN_IMAGE=1`), where Docker denies user namespaces and the container is the isolation boundary.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/test/chrome-launch.test.ts && bun run image:worker && docker run --rm --shm-size=2g tm-worker:dev test launch.spec.ts`
 Expected: 1 pass, then `1 passed`.
@@ -1803,7 +1803,7 @@ test('a restart does not duplicate lines; sweeps recover a virtualised list', as
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts chat-capture.spec.ts`
 Expected: FAIL with "Cannot find module".
@@ -2277,7 +2277,7 @@ git commit -m "feat(worker): add occurrence run and tm-worker cli"
 - Consumes: `JobConfig`, `ChatMessage`, `formatOffset`, `localParts` (Task 2); `transcript/live.jsonl`, `recording/attempts.json` and `chat.jsonl` as written by Tasks 9, 15 and 17.
 - Produces (adds to contracts): `interface LiveLine { startMs: number; endMs: number; text: string }`; `interface Gap { atMs: number; ms: number | null }` (`ms` is null when the gap follows a crashed attempt with no `stoppedAt`); `type TranscriptBlock = { kind: 'para'; atMs: number; text: string } | { kind: 'silence'; atMs: number; ms: number } | { kind: 'gap'; atMs: number; ms: number | null }`; `isHallucination(text: string): boolean`; `paragraphs(lines: LiveLine[], gaps: Gap[]): TranscriptBlock[]`; `correctNames(text: string, vocab: string[]): string`; `buildTranscript(cfg: JobConfig, vocab: string[]): Promise<string>`; `orderChat(msgs: ChatMessage[]): ChatMessage[]`; `stripInviteLinks(text: string): string`; `buildChat(cfg: JobConfig): Promise<string>` (each builder returns the path it wrote).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/pipeline/test/transcript.test.ts
@@ -2352,21 +2352,21 @@ test('chat.md format', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/pipeline/test/transcript.test.ts packages/pipeline/test/names.test.ts packages/pipeline/test/chat.test.ts`
 Expected: FAIL with "Cannot find module".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `isHallucination`: lowercase, strip punctuation and whitespace at the ends; true for an empty or one-character result, or one of `you`, `thank you`, `thank you for watching`, `thanks for watching`. Gaps come from `attempts.json`: for consecutive attempts, `atMs` is the later start minus the first start, `ms` the later start minus the earlier stop. `paragraphs` drops hallucinations, starts a new paragraph after a pause of at least 2,000 ms or at 600 characters, inserts a `silence` block for pauses of at least 120,000 ms, and merges `gap` blocks by time. `correctNames` slides a window of as many words as each term has (1 to 3) over the text; a window whose lowercase form differs from a term of at least 6 letters by a Damerau-Levenshtein distance of at most 1 (2 for terms of 10 or more letters) becomes `<term> _(as heard: "<window>")_`. `buildTranscript` runs `correctNames` on each paragraph and writes `out/transcript.md` (silence and gap notes as `_[HH:MM:SS] No speech for N minutes._` and `_[HH:MM:SS] Recording gap of N minutes._`, rounded minutes). `orderChat` de-duplicates on `(sender, time, text.slice(0, 200))`, keeps posting order by first `seenAt`, and moves each reply directly after its parent and that parent's earlier replies. `stripInviteLinks` replaces Zoom (`/j/`, `/wc/`, `/my/`, `/s/`), Teams (`/l/meetup-join/`, `teams.live.com/meet/`) and Meet (`meet.google.com/xxx-xxxx-xxx`) links with `[meeting link removed]`. `buildChat` writes `out/chat.md`; host and co-host senders get ` (host)` or ` (co-host)`; replies are quoted lines after the parent.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/pipeline/test/transcript.test.ts packages/pipeline/test/names.test.ts packages/pipeline/test/chat.test.ts`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline docs/TRD.md

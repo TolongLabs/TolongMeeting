@@ -192,7 +192,7 @@ git commit -m "feat(worker): meet selector map"
 - Consumes: `unwrapLink(url: string): string` from plan 01a (Task 12).
 - Produces: `normaliseMeetLink(url: string): string | null` in `packages/worker/src/adapters/meet/link.ts`; Task 8 exposes it as `meetAdapter.normaliseLink`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -225,12 +225,12 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/meet/link.test.ts`
 Expected: FAIL, module `./link` not found.
 
-- [ ] **Step 3: Implement `normaliseMeetLink(url: string): string | null` in `packages/worker/src/adapters/meet/link.ts`**
+- [x] **Step 3: Implement `normaliseMeetLink(url: string): string | null` in `packages/worker/src/adapters/meet/link.ts`**
 
 Rules, in order:
 
@@ -240,12 +240,12 @@ Rules, in order:
 1.  A path code matching `/^[a-z]{3}-?[a-z]{4}-?[a-z]{3}$/i` returns `https://meet.google.com/<xxx>-<xxxx>-<xxx>` in lower case; `/lookup/<name>` returns `https://meet.google.com/lookup/<name>`; every query parameter is dropped.
 1.  Anything else returns `null`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/meet/link.test.ts`
 Expected: PASS (14 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/adapters/meet/link.ts packages/worker/src/adapters/meet/link.test.ts

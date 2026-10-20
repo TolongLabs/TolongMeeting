@@ -1226,7 +1226,7 @@ git commit -m "feat(worker): register the teams adapter"
   - `teamsChatReader(chatUrl: string, sel: TeamsSelectors): ChatSourceReader` and `startWatcher(desk: Page, src: LinkSource, onLink: (c: FormCandidate | { meetingUrl: string }) => void): Promise<Stopper>` in `packages/worker/src/watchers/teams.ts`; `watcherFor('teams')` returns this `startWatcher`.
   - `TeamsChatFixture { chatUrl: string; launcher?: boolean; loginRequired?: boolean; scroll?: 'top' | 'bottom'; messages: FixtureMessage[] }`, accepted as `serveWatcherFixtures(context, { teams })`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 ```ts
 // packages/core/src/teams-chat.test.ts
@@ -1281,16 +1281,16 @@ test('a Teams chat must be given by its link, and is stored normalised', () => {
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: FAIL, module `./teams-chat` not found, and the Teams entry is still refused with "Watching a Teams chat arrives with Teams support."
 
-- [ ] **Step 3: Implement `normaliseTeamsChatUrl` and accept Teams chats**
+- [x] **Step 3: Implement `normaliseTeamsChatUrl` and accept Teams chats**
 
 Unwrap one Safe Links level by its `url` parameter (core can't import the worker's `unwrapLink`), then parse and canonicalise as `normaliseTeamsLink` does (Task 2), accepting only `/l/chat/<thread>/conversations`. In `ChatLinkSchema`, the `app: 'teams'` case transforms `chat` through `normaliseTeamsChatUrl` and fails with the message in the test when that returns `null`; remove plan 02's Teams refusal. WhatsApp and Discord are untouched, and `chatWatchAllowed` already allows Teams everywhere.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: PASS (9 new core cases; the timetable tests, with the replaced Teams case).
@@ -1530,7 +1530,7 @@ test('renders the presence note as a note', () => {
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
   Not done: the lib code was written before this run, so no failing run was captured.
 
@@ -1550,7 +1550,7 @@ Expected: FAIL, `showsTeamsPresenceNote` is not exported and `./teams-presence-n
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/teams-presence-note.test.tsx` then `bun run typecheck`
 Expected: PASS (the 8 new tests and plan 02's existing ones); `tsc` reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/link-notices.ts packages/web/lib/link-notices.test.ts packages/web/app/timetable packages/web/app/accounts docs/TRD.md

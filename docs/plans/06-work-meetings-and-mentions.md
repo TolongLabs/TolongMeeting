@@ -280,7 +280,7 @@ export function transcriptWindow(results: AsrResult[], endMs: number, spanMs = 3
 
 `transcriptWindow` joins, in order and with single spaces, the texts of results with `endMs > endMs - spanMs` and `startMs <= endMs`; text longer than `maxChars` keeps its last `maxChars - 1` characters after a leading `…`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/mentions/match.test.ts
@@ -312,19 +312,19 @@ test('the window holds the last 30 seconds, cut from the front', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/mentions/match.test.ts`
 Expected: FAIL with `Cannot find module './match'`.
 
-- [ ] **Step 3: Implement `packages/worker/src/mentions/match.ts`**
+- [x] **Step 3: Implement `packages/worker/src/mentions/match.ts`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/mentions/match.test.ts`
 Expected: PASS, `8 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/mentions docs/TRD.md
@@ -700,7 +700,7 @@ leaveTimeout     The bot hasn't confirmed that it left yet. Check the meeting pa
 notRunning       The bot is not in this meeting.
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/meeting.test.ts (added)
@@ -778,7 +778,7 @@ test('the take-over copy warns before it acts', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/meeting-control.test.ts packages/web/lib/meeting.test.ts packages/web/lib/control.test.ts`
 Expected: FAIL with `Cannot find module './meeting-control'`.
@@ -787,7 +787,7 @@ Expected: FAIL with `Cannot find module './meeting-control'`.
 
 Server actions get the scope from `scopeForAuthUser` for the signed-in user, as 01c's meeting actions do; Next.js checks their origin, and nothing acts on a `GET`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.

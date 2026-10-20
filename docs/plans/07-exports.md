@@ -370,7 +370,7 @@ export function parseMarkdown(md: string): DocBlock[]
 export function bundleDocument(bundle: ExportBundle): DocBlock[]
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('drops the contents list and anchor links', () => {
@@ -420,21 +420,21 @@ test('bundle order is summary, transcript, slides, chat', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/render/doc.test.ts`
 Expected: FAIL with `Cannot find module './doc'`.
 
-- [ ] **Step 3: Implement `parseMarkdown` and `bundleDocument` in `src/render/doc.ts`**
+- [x] **Step 3: Implement `parseMarkdown` and `bundleDocument` in `src/render/doc.ts`**
 
 Walk `marked.lexer(md)` tokens. Rules: heading depth above 3 becomes 3; a paragraph whose text is `Contents:` and the list right after it are dropped; a paragraph holding only an image becomes an `image` block; links to `#...` become plain runs, `http` and `https` links keep `href`, other schemes become plain runs; nested list items are flattened into their parent list in order; `html` tokens are dropped; a blockquote's paragraphs are emitted as paragraphs; adjacent plain runs are merged. `bundleDocument` concatenates the summary, `transcript.md`, `slides.md` and `chat.md` (those present) with a `break` between files.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/render/doc.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/render
@@ -666,7 +666,7 @@ exports      id uuid pk default gen_random_uuid()
              unique index exports_one_active on (occurrence_id, target) where status in ('queued','running')
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // vault.test.ts
@@ -761,21 +761,21 @@ test('failInterrupted and purgeDeleted', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/vault.test.ts packages/exports/src/store.test.ts` (with `DATABASE_URL` pointing at the test database 01c's database tests use)
 Expected: FAIL with `Cannot find module './vault'` and `Cannot find module './store'`.
 
-- [ ] **Step 3: Implement the vault, the schema and migration, and the stores**
+- [x] **Step 3: Implement the vault, the schema and migration, and the stores**
 
 Vault: key = `hkdfSync('sha256', masterKey, Buffer.alloc(0), 'tm:connection:' + memberId + ':' + kind, 32)`; AES-256-GCM with a random 12-byte IV; output `v1.<base64url iv>.<base64url ciphertext and 16-byte tag>`. `redact` replaces each listed secret of 8 or more characters, then every match of `/github_pat_\w+|gh[opsu]_\w+|ya29\.[\w.-]+|1\/\/[\w-]+|ntn_\w+|secret_\w+/g`, with `[redacted]`. Generate the migration with 01c's drizzle-kit command (`bunx drizzle-kit generate`); the partial index uses Drizzle's `uniqueIndex(...).on(...).where(sql\`status in ('queued','running')\`)`. In `store.ts`, `create`maps the unique-index violation to`ExportError('already_running', 'This export is already running.')`; `claimNext`uses`for update skip locked`; the token fields (`token`; `refreshToken`; `accessToken`and`refreshToken`) are sealed as one JSON string and everything else goes in `settings`. Summaries: GitHub label `<owner>/<repo>`, detail `branch <branch>, folder <folder or />`; Google label `account`, detail `folderName`; Notion label `workspace`, detail `parent.name`or`No page chosen yet`, `ready`false while`parent`is null.`occurrences.get`joins 01c's occurrence to its owning member and sets`dataDir`to`<dataRoot>/occurrences/<id>`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/vault.test.ts packages/exports/src/store.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/vault.ts packages/exports/src/vault.test.ts packages/exports/src/store.ts packages/exports/src/store.test.ts packages/web/db
@@ -1427,7 +1427,7 @@ git commit -m "feat(exports): add github target"
 - Consumes: `loadBundle`, `fixture` (task 1); `DocBlock`, `bundleDocument` (task 2); `Jpeg`, `bundleImages` (task 4).
 - Produces: `toDocx(doc: DocBlock[], images: Map<string, Jpeg>, title: string): Promise<Uint8Array>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the Word file holds text, headings, page breaks and images', async () => {
@@ -1442,21 +1442,21 @@ test('the Word file holds text, headings, page breaks and images', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/render/docx.test.ts`
 Expected: FAIL with `Cannot find module './docx'`.
 
-- [ ] **Step 3: Implement `toDocx` in `src/render/docx.ts`**
+- [x] **Step 3: Implement `toDocx` in `src/render/docx.ts`**
 
 The `docx` library: headings to `HeadingLevel.HEADING_1` to `HEADING_3`; runs keep bold, italic, monospace for `code`, and `ExternalHyperlink` for `href`; lists through one numbered and one bulleted numbering config; tables with a bold header row; images as `ImageRun` type `jpg`, scaled to at most 600 px wide; the block after a `break` gets `pageBreakBefore: true`; the document `title` property is `title`.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/render/docx.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/render/docx.ts packages/exports/src/render/docx.test.ts
@@ -1740,7 +1740,7 @@ git commit -m "feat(exports): add google docs target"
 - Consumes: `DocBlock`, `Run` (task 2).
 - Produces: `type NotionBlock = Record<string, unknown>` (a Notion block object); `toNotionBlocks(doc: DocBlock[], uploads: Map<string, string>): NotionBlock[]` (bundle image path to Notion file upload id); `chunkBlocks(blocks: NotionBlock[], maxCount?: number, maxBytes?: number): NotionBlock[][]` (defaults 100 and 400,000 bytes of JSON).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('long text is split at 2,000 characters', () => {
@@ -1808,21 +1808,21 @@ test('chunks by count and size', () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/render/notion.test.ts`
 Expected: FAIL with `Cannot find module './notion'`.
 
-- [ ] **Step 3: Implement `toNotionBlocks` and `chunkBlocks` in `src/render/notion.ts`**
+- [x] **Step 3: Implement `toNotionBlocks` and `chunkBlocks` in `src/render/notion.ts`**
 
 Headings 1 to 3 map to `heading_1` to `heading_3`; paragraphs to `paragraph`; list items to `numbered_list_item` or `bulleted_list_item`; tables to `table` with `table_row` children, split into tables of at most 99 rows that each repeat the header; images to `image` with `file_upload`; code to `code` with language `plain text`; `rule` and `break` to `divider`. Each run becomes text objects of at most 2,000 characters with `annotations` `{ bold, italic, code }` (false when unset) and `link` `{ url }` for `http` and `https` links, `null` otherwise; a block with more than 100 text objects is split into several blocks of the same type.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/render/notion.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/render/notion.ts packages/exports/src/render/notion.test.ts

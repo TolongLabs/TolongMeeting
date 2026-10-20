@@ -1034,13 +1034,13 @@ test("a failing ntfy doesn't throw and doesn't log the token", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/notify/src/messages.test.ts packages/web/db/notifier.test.ts packages/web/lib/ntfy-admin.test.ts`
 
 Expected: FAIL with `Cannot find module './messages'`.
 
-- [ ] **Step 3: Implement the copy, the notifier, the ntfy admin client and the page**
+- [x] **Step 3: Implement the copy, the notifier, the ntfy admin client and the page**
 
   Done except the page: `app/notifications/page.tsx` is deferred behind the Figma gate (no UI in this task).
 
@@ -1176,7 +1176,7 @@ Run: `bun test packages/web/db/job-config.test.ts packages/web/lib/ai-keys.test.
 
 Expected: FAIL with `Cannot find module './job-config'`.
 
-- [ ] **Step 3: Implement `aiConfigFor`, the key functions and the page**
+- [x] **Step 3: Implement `aiConfigFor`, the key functions and the page**
 
 - [x] **Step 4: Run tests to verify they pass**
 
@@ -1317,7 +1317,7 @@ Run: `bun test packages/web/lib/identities.test.ts packages/web/lib/details.test
 
 Expected: FAIL with `Cannot find module './identities'`.
 
-- [ ] **Step 3: Implement the two modules and the two pages**
+- [x] **Step 3: Implement the two modules and the two pages**
 
 - [x] **Step 4: Run tests to verify they pass**
 
@@ -1542,7 +1542,7 @@ Run: `bun test packages/web/lib/home.test.ts packages/web/lib/admin.test.ts`
 
 Expected: FAIL with `Cannot find module './home'`.
 
-- [ ] **Step 3: Implement `homeData`, `adminScope`, the layout and the two pages**
+- [x] **Step 3: Implement `homeData`, `adminScope`, the layout and the two pages**
 
 - [x] **Step 4: Run tests to verify they pass**
 
@@ -1550,7 +1550,7 @@ Run: `bun test packages/web/lib/home.test.ts packages/web/lib/admin.test.ts && b
 
 Expected: PASS, `5 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/home* packages/web/lib/admin* packages/web/lib/scope.ts packages/web/app/layout.tsx packages/web/app/page.tsx packages/web/app/admin
@@ -2603,7 +2603,7 @@ Expected: FAIL with `Cannot find module './vnc'`.
 
 - [x] **Step 3: Implement the modules, wire `run.ts`, and change the image and entrypoint**
 
-- [ ] **Step 4: Run tests to verify they pass, and build the image**
+- [x] **Step 4: Run tests to verify they pass, and build the image**
 
 Run: `bun test packages/worker/src/control packages/worker/src/signin && docker build -f docker/worker/Dockerfile -t tolongmeeting/worker:current . && docker run --rm --entrypoint sh tolongmeeting/worker:current -c 'command -v x11vnc websockify xprintidle'`
 
@@ -2779,7 +2779,7 @@ Run: `bun test packages/web/lib/signin.test.ts packages/scheduler/src/signin.tes
 
 Expected: FAIL with `Cannot find module './signin'`.
 
-- [ ] **Step 3: Implement the sign-in functions, the two routes, the page and viewer, and the scheduler handler** (functions, routes, server actions and scheduler handler done; `page.tsx` and `viewer.tsx` are deferred: Figma gate)
+- [x] **Step 3: Implement the sign-in functions, the two routes, the page and viewer, and the scheduler handler** (functions, routes, server actions and scheduler handler done; `page.tsx` and `viewer.tsx` are deferred: Figma gate)
 
 - [x] **Step 4: Run tests to verify they pass**
 
@@ -2787,7 +2787,7 @@ Run: `bun test packages/web/test/signin.test.ts packages/scheduler/test/signin.t
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit** (deferred: Figma gate; the non-UI parts are committed as `feat(web): remote sign-in sessions`)
+- [x] **Step 5: Commit** (deferred: Figma gate; the non-UI parts are committed as `feat(web): remote sign-in sessions`)
 
 ```bash
 git add packages/web packages/scheduler/src
@@ -3331,7 +3331,7 @@ Expected: FAIL with `Cannot find module './jobs'`.
 
 - [x] **Step 3: Write the processes and the deployment files**
 
-- [ ] **Step 4: Run tests and validate the deployment files**
+- [x] **Step 4: Run tests and validate the deployment files**
 
 Run: `bun test packages/scheduler/test/jobs.test.ts packages/web/test/env-example.test.ts && docker compose -f docker/compose.yaml --env-file .env config --quiet && docker run --rm -e TM_PUBLIC_URL=https://tm.example -e NTFY_URL=https://ntfy.tm.example -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sh -n docker/firewall/worker-egress.sh && sh -n docker/firewall/check-egress.sh && docker compose -f docker/compose.yaml --env-file .env build`
 
