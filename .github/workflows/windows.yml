@@ -45,3 +45,19 @@ jobs:
         env:
           TM_ELECTRON_SMOKE: '1'
           TM_ELECTRON_PACKAGED: ${{ github.workspace }}\packages\companion\release\win-unpacked\TolongMeeting.exe
+      - name: Build the installer
+        run: bun run --cwd packages/companion dist
+        env:
+          TM_PUBLIC_URL: https://tm.example
+      # The NSIS installer installs for the current user without asking (/S), as a member's double-click would.
+      - name: Install the app
+        run: |
+          $installer = Get-ChildItem packages/companion/release -Filter '*Setup*.exe' | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\TolongMeeting"
+      - name: Boot the installed app
+        run: |
+          $env:TM_ELECTRON_PACKAGED = "$env:LOCALAPPDATA\Programs\TolongMeeting\TolongMeeting.exe"
+          bun test packages/companion/test/smoke.test.ts --timeout 120000 -t "packaged app"
+        env:
+          TM_ELECTRON_SMOKE: '1'
