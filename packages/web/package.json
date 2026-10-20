@@ -16,6 +16,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@novnc/novnc": "1.7.0",
     "@tm/ai": "workspace:*",
     "@tm/core": "workspace:*",
     "@tm/exports": "workspace:*",
