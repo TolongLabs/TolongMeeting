@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from 'node:crypto'
 import { meetingUrl, shortTime, type JobConfig } from '@tm/core'
 import { pings, type WorkerFailureReason } from '@tm/notify'
 import { and, eq, sql } from 'drizzle-orm'
@@ -115,6 +114,7 @@ async function failOccurrence(
   }
   await applyTrigger(home.db, occurrenceId, 'fail', { reason: code })
   await releaseProfile(home.db, occ.identityId, `occ:${occurrenceId}`)
+  // Not retried, as in launch.ts: the occurrence has left the live states, so nothing reaches here again; the notifier logs a failed ping by its title and the error's name only.
   const { publicUrl } = resolveEnv(home.env)
   await home.notifier.notify(
     occ.memberId,
@@ -124,8 +124,9 @@ async function failOccurrence(
 
 /**
  * Pings the member about their home device once per occurrence. The ping is an `alert` event with
- * `{ kind: 'home_route_offline' }`, written after the ping went out: a ping that fails is tried again by the next
- * check, and one that was sent is never repeated by a later check.
+ * `{ kind: 'home_route_offline' }`. The event is recorded first, under a per-occurrence advisory lock, and the ping goes
+ * out after the commit (the outbox order of `launch.ts`): two checks at once, or a crash between the two steps, can lose
+ * the ping but never send it twice. A ping that reports failure removes its event again, so the next check tries once more.
  */
 async function pingOnce(
   home: HomeDeps,
@@ -135,18 +136,36 @@ async function pingOnce(
   deadline: Date,
   now: Date
 ): Promise<void> {
-  const sent = await home.db
-    .select({ id: events.id })
-    .from(events)
-    .where(
-      and(
-        eq(events.occurrenceId, cfg.occurrenceId),
-        eq(events.type, 'alert'),
-        sql`${events.data}->>'kind' = 'home_route_offline'`
+  const data = { kind: 'home_route_offline', problem }
+  const recorded = await home.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`home-route-ping:${cfg.occurrenceId}`}, 0))`)
+    const sent = await tx
+      .select({ id: events.id })
+      .from(events)
+      .where(
+        and(
+          eq(events.occurrenceId, cfg.occurrenceId),
+          eq(events.type, 'alert'),
+          sql`${events.data}->>'kind' = 'home_route_offline'`
+        )
       )
-    )
-    .limit(1)
-  if (sent.length > 0) return
+      .limit(1)
+    if (sent.length > 0) return null
+    const [row] = await tx
+      .insert(events)
+      .values({
+        occurrenceId: cfg.occurrenceId,
+        memberId: cfg.member.id,
+        attempt: cfg.attempt,
+        at: now,
+        type: 'alert',
+        data,
+        dataHash: hashEventData(data)
+      })
+      .returning({ id: events.id })
+    return row!.id
+  })
+  if (recorded === null) return
   const tz = cfg.entry.timeZone
   const ping = pings.homeConnectionOffline({
     entry: cfg.entry.name,
@@ -156,17 +175,12 @@ async function pingOnce(
     deadline: shortTime(deadline.toISOString(), tz),
     meetingUrl: meetingUrl(resolveEnv(home.env).publicUrl, cfg.occurrenceId)
   })
-  if (!(await home.notifier.notify(cfg.member.id, ping))) return
-  const data = { kind: 'home_route_offline', problem }
-  await home.db.insert(events).values({
-    occurrenceId: cfg.occurrenceId,
-    memberId: cfg.member.id,
-    attempt: cfg.attempt,
-    at: now,
-    type: 'alert',
-    data,
-    dataHash: hashEventData(data)
-  })
+  let delivered = false
+  try {
+    delivered = await home.notifier.notify(cfg.member.id, ping)
+  } finally {
+    if (!delivered) await home.db.delete(events).where(eq(events.id, recorded))
+  }
 }
 
 /**
@@ -244,7 +258,7 @@ export function startViaHome(deps: LaunchDeps, cfg: JobConfig, now: Date): Promi
 /**
  * The `home-route-recheck` handler: rebuilds the job config of the occurrence and looks at the home route again. A
  * job for an occurrence that is gone or no longer waiting to start (deleted, skipped, failed) is `stale` and ends the
- * chain. The control token is made here and only its hash is stored, as the launcher does.
+ * chain. It writes nothing to the occurrence: the attempt number and the control token are made by `startAttempt`.
  */
 export async function handleHomeRouteRecheck(deps: LaunchDeps, data: unknown, now: Date): Promise<string> {
   const { occurrenceId } = RecheckData.parse(data)
@@ -253,15 +267,10 @@ export async function handleHomeRouteRecheck(deps: LaunchDeps, data: unknown, no
     console.warn(`home-route-recheck: ${occurrenceId}: dropped; the occurrence is ${occ ? occ.state : 'gone'}`)
     return 'stale'
   }
-  const attempt = Math.max(occ.attempt, 1)
-  const token = `${attempt}.${randomBytes(32).toString('base64url')}`
-  await deps.db
-    .update(occurrences)
-    .set({ controlTokenHash: createHash('sha256').update(token).digest('hex'), attempt })
-    .where(eq(occurrences.id, occurrenceId))
+  // The config is only read by the check and the sidecar launch; `startAttempt` makes the real token and attempt.
   const cfg = await loadJobConfig(deps.db, deps.master, occurrenceId, {
-    attempt,
-    control: { url: `${resolveEnv(deps.env).publicUrl}/api/control`, token },
+    attempt: Math.max(occ.attempt, 1),
+    control: null,
     env: deps.env
   })
   return startViaHome(deps, cfg, now)

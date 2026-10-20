@@ -216,7 +216,8 @@ const statusOf = (d: TailscaleDevice): HomeRouteStatus =>
  * member's keyed hostname (`homeHostname`) and, once a node is stored for the member, is that very node: a later device
  * with the same name never replaces a stored one while it exists. Tailscale does not say which auth key created a node,
  * so these three checks are what binds a node to its member. Another member's device, an untagged one or a lookalike
- * never counts. A ready device is stored with its IPv4 address; a missing one clears the stored row. Two unpinned
+ * never counts. A ready device is stored with its IPv4 address. A stored node that is missing or has lost its tag is
+ * `offline` and stays stored (no other device is adopted in its place; the member's setup flow re-pins). Two unpinned
  * devices with the name are not trusted. Throws `TailscaleApiError` when Tailscale can't be reached.
  */
 export async function checkHomeRoute(
@@ -229,14 +230,9 @@ export async function checkHomeRoute(
   const hostname = homeHostname(master, memberId)
   const named = (await api.devices()).filter((d) => d.tags.includes(HOME_TAG) && d.hostname === hostname)
   const pinned = await store.get()
-  let mine: TailscaleDevice | undefined
-  if (pinned) {
-    mine = named.find((d) => d.nodeId === pinned.nodeId)
-    // The stored node is gone: forget it. A single device with the member's name may be enrolled in its place.
-    if (!mine) await store.clear()
-  }
-  if (!mine && named.length === 1) mine = named[0]
-  if (!mine) return { status: 'not_enrolled', hostname, ipv4: null }
+  // A pinned node that is missing or has lost its tag is offline. The pin stays: only the member's setup flow re-pins.
+  const mine = pinned ? named.find((d) => d.nodeId === pinned.nodeId) : named.length === 1 ? named[0] : undefined
+  if (!mine) return { status: pinned ? 'offline' : 'not_enrolled', hostname, ipv4: null }
   const status = statusOf(mine)
   if (status !== 'ready') return { status, hostname, ipv4: null }
   const ipv4 = mine.addresses.find((a) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(a))

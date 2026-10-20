@@ -298,6 +298,38 @@ describe('startViaHomeWith', () => {
   }, 60_000)
 })
 
+describe('concurrent checks', () => {
+  test('two checks at once send one offline ping and record one event', async () => {
+    const f = await fixture()
+    tailscale.devices = [device(f.hostname, { connectedToControl: false })]
+    const slow = f.notifier
+    f.home.notifier = {
+      notify: async (memberId, ping) => {
+        await Bun.sleep(100)
+        return slow.notify(memberId, ping)
+      }
+    }
+    const results = await Promise.all([startViaHomeWith(f.home, f.cfg, T60), startViaHomeWith(f.home, f.cfg, T60)])
+    expect(results).toEqual(['waiting', 'waiting'])
+    expect(f.notifier.sent).toHaveLength(1)
+    expect(await f.alerts()).toHaveLength(1)
+  }, 60_000)
+
+  test('the event is recorded before the ping goes out', async () => {
+    const f = await fixture()
+    tailscale.devices = [device(f.hostname, { connectedToControl: false })]
+    let recordedAtSend = -1
+    f.home.notifier = {
+      notify: async () => {
+        recordedAtSend = (await f.alerts()).length
+        return true
+      }
+    }
+    await startViaHomeWith(f.home, f.cfg, T60)
+    expect(recordedAtSend).toBe(1)
+  }, 60_000)
+})
+
 describe('the home-route jobs', () => {
   const savedEnv = { ...process.env }
   beforeAll(() => {
@@ -317,8 +349,8 @@ describe('the home-route jobs', () => {
     expect(await handleHomeRouteRecheck(f.deps, { occurrenceId: f.id }, T60)).toBe('waiting')
     expect(f.rechecks()).toHaveLength(1)
     expect(f.notifier.sent).toHaveLength(1)
-    // Only the hash of the control token is stored.
-    expect((await f.state()).controlTokenHash).toMatch(/^[0-9a-f]{64}$/)
+    // The recheck leaves the attempt and the control token to `startAttempt`.
+    expect(await f.state()).toMatchObject({ attempt: 0, controlTokenHash: null })
     expect(await handleHomeRouteRecheck(f.deps, { occurrenceId: f.id }, at(10))).toBe('failed')
     expect((await f.state()).state).toBe('failed')
   }, 60_000)

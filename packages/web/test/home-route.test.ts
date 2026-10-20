@@ -222,7 +222,7 @@ describe('checkHomeRoute', () => {
     expect(await row(m.memberId)).toBeUndefined()
   })
 
-  test('a ready node is stored with its IPv4 address; offline keeps it; a vanished device clears it', async () => {
+  test('a ready node is stored with its IPv4 address and refreshed; offline or vanished keeps it', async () => {
     const m = await member()
     const store = dbHomeNodeStore(db, m.memberId)
     const ready = new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname)] }))
@@ -237,23 +237,43 @@ describe('checkHomeRoute', () => {
     const later = new Date(t0.getTime() + 60_000)
     await checkHomeRoute(
       store,
-      new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname, { nodeId: 'n9', addresses: ['100.1.1.1'] })] })),
+      new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname, { addresses: ['100.1.1.1'] })] })),
       MASTER,
       m.memberId,
       later
     )
-    expect(await row(m.memberId)).toMatchObject({ nodeId: 'n9', ipv4: '100.1.1.1', checkedAt: later })
+    expect(await row(m.memberId)).toMatchObject({ nodeId: `n-${m.hostname}`, ipv4: '100.1.1.1', checkedAt: later })
 
-    const offline = new TailscaleApi(
-      CFG,
-      tsFake([], { devices: [device(m.hostname, { nodeId: 'n9', connectedToControl: false })] })
-    )
+    const offline = new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname, { connectedToControl: false })] }))
     expect((await checkHomeRoute(store, offline, MASTER, m.memberId)).status).toBe('offline')
-    expect(await row(m.memberId)).toMatchObject({ nodeId: 'n9' })
+    expect(await row(m.memberId)).toMatchObject({ nodeId: `n-${m.hostname}` })
 
     const gone = new TailscaleApi(CFG, tsFake([], { devices: [] }))
-    expect((await checkHomeRoute(store, gone, MASTER, m.memberId)).status).toBe('not_enrolled')
-    expect(await row(m.memberId)).toBeUndefined()
+    expect((await checkHomeRoute(store, gone, MASTER, m.memberId)).status).toBe('offline')
+    expect(await row(m.memberId)).toMatchObject({ nodeId: `n-${m.hostname}`, ipv4: '100.1.1.1' })
+  })
+
+  test('a pinned node that loses its tag is offline, keeps its pin and is not replaced by a lookalike', async () => {
+    const m = await member()
+    const store = dbHomeNodeStore(db, m.memberId)
+    await checkHomeRoute(
+      store,
+      new TailscaleApi(CFG, tsFake([], { devices: [device(m.hostname)] })),
+      MASTER,
+      m.memberId
+    )
+    const untagged = [
+      device(m.hostname, { tags: [] }),
+      device(m.hostname, { nodeId: 'evil', addresses: ['100.66.6.6'] })
+    ]
+    const result = await checkHomeRoute(
+      store,
+      new TailscaleApi(CFG, tsFake([], { devices: untagged })),
+      MASTER,
+      m.memberId
+    )
+    expect(result).toEqual({ status: 'offline', hostname: m.hostname, ipv4: null })
+    expect(await row(m.memberId)).toMatchObject({ nodeId: `n-${m.hostname}`, ipv4: '100.101.102.103' })
   })
 
   test("a device named with another member's member-id prefix, made with a different key, is refused", async () => {
