@@ -16,8 +16,9 @@ import {
 } from '@tm/web/lib/home-route'
 import { z } from 'zod'
 import { resolveEnv } from '../container-spec'
-import type { LaunchDeps } from '../launch'
+import { startAttempt, type LaunchDeps } from '../launch'
 import { releaseProfile } from '../locks'
+import { launchViaHome } from './sidecar'
 import { HomeRouteUnavailable, type HomeDeps } from './types'
 
 /** How long after a check that did not launch the next one runs. */
@@ -45,25 +46,47 @@ function tailscaleApi(env: Record<string, string | undefined>): TailscaleApi {
   return shared.api
 }
 
-/** Until plan 08 T13 wires the sidecar, a launch through the home route fails loudly, never as a silent no-op. */
-const notWired: HomeDeps['launchViaHome'] = async () => {
-  throw new Error('launchViaHome: not wired yet (plan 08 T13)')
+/**
+ * The launch of plan 08 T13: the sidecar pins the node that `checkHomeRoute` has just stored for the member (its stable
+ * node id and keyed hostname, never a name or address the worker could supply) and the worker joins its namespace.
+ * `TAILSCALE_VERSION` (the pin in `docker/worker/versions.env`) is read at launch and its absence is an error.
+ */
+function sidecarLauncher(
+  deps: LaunchDeps,
+  api: TailscaleApi,
+  env: Record<string, string | undefined>
+): HomeDeps['launchViaHome'] {
+  return async (cfg, exitNodeIp) => {
+    const tailscaleVersion = env.TAILSCALE_VERSION
+    if (!tailscaleVersion) throw new Error('TAILSCALE_VERSION is not set; the home route has no sidecar image')
+    const node = await dbHomeNodeStore(deps.db, cfg.member.id).get()
+    // The check stores the node it found ready a moment ago; a different or missing one means the tunnel can't be trusted.
+    if (!node || node.ipv4 !== exitNodeIp) throw new HomeRouteUnavailable('The stored home node changed.')
+    await launchViaHome(cfg, node, {
+      api,
+      docker: deps.docker,
+      env: deps.env,
+      tailscaleVersion,
+      launchWorker: (c, via) => startAttempt(deps, c.occurrenceId, c.attempt, new Date(), via)
+    })
+  }
 }
 
-/** `HomeDeps` from the launcher's dependencies and the environment. T13 passes its `launchViaHome` here. */
+/** `HomeDeps` from the launcher's dependencies and the environment. `launchViaHome` defaults to the sidecar launch. */
 export function homeDepsOf(
   deps: LaunchDeps,
   env: Record<string, string | undefined> = process.env,
-  launchViaHome: HomeDeps['launchViaHome'] = notWired
+  launchViaHome?: HomeDeps['launchViaHome']
 ): HomeDeps {
+  const api = tailscaleApi(env)
   return {
     db: deps.db,
     queue: deps.queue,
     notifier: deps.notifier,
     master: deps.master,
     env: deps.env,
-    api: tailscaleApi(env),
-    launchViaHome
+    api,
+    launchViaHome: launchViaHome ?? sidecarLauncher(deps, api, env)
   }
 }
 

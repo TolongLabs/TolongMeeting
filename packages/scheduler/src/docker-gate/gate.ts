@@ -1,4 +1,4 @@
-import { WORKER_IMAGE, parseName, resolveEnv } from '../container-spec'
+import { HOME_ROUTE_IMAGE, WORKER_IMAGE, parseName, resolveEnv } from '../container-spec'
 import { API_PREFIX_RE, validateRequest, type GateConfig } from './validate'
 
 export type GateOptions = GateConfig & {
@@ -17,15 +17,20 @@ type Inspect = {
   State?: { Running?: unknown } | null
 }
 
-/** True when the container is one this system made: a worker or sign-in role, the worker image, not privileged, a matching name. */
-function isManaged(info: Inspect): boolean {
+/**
+ * True when the container is one this system made: a worker or sign-in role on the worker image, or the home-route
+ * sidecar on the pinned `tm-home-route` image; not privileged, a matching name.
+ */
+function isManaged(info: Inspect, tailscaleVersion: string | undefined): boolean {
   const role = info.Config?.Labels?.['tm.role']
   const name = typeof info.Name === 'string' ? parseName(info.Name.replace(/^\//, '')) : null
+  const image =
+    role === 'sidecar' && tailscaleVersion !== undefined ? `${HOME_ROUTE_IMAGE}:${tailscaleVersion}` : WORKER_IMAGE
   return (
     typeof info.Id === 'string' &&
     /^[0-9a-f]{64}$/.test(info.Id) &&
-    (role === 'worker' || role === 'signin') &&
-    info.Config?.Image === WORKER_IMAGE &&
+    (role === 'worker' || role === 'signin' || role === 'sidecar') &&
+    info.Config?.Image === image &&
     typeof info.HostConfig === 'object' &&
     info.HostConfig !== null &&
     info.HostConfig.Privileged !== true &&
@@ -88,9 +93,9 @@ export function createGate(o: GateOptions): (req: Request) => Promise<Response> 
       return deny(502, 'docker inspect failed')
     }
     const info = (await inspected.json()) as Inspect
-    if (!isManaged(info)) {
-      o.log(`${line} refused: container is not a worker or sign-in container`)
-      return deny(403, 'container is not a worker or sign-in container')
+    if (!isManaged(info, o.tailscaleVersion)) {
+      o.log(`${line} refused: container is not a worker, sign-in or home-route container`)
+      return deny(403, 'container is not a worker, sign-in or home-route container')
     }
     if (verdict.kind === 'inspect') return Response.json(info)
     const prefix = API_PREFIX_RE.exec(url.pathname)?.[0] ?? ''

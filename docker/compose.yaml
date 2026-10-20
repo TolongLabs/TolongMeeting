@@ -1,6 +1,7 @@
 # TolongMeeting on one server. Run from the repository root:
-#   docker compose -f docker/compose.yaml --env-file .env --profile build build worker   # the worker image first
-#   docker compose -f docker/compose.yaml --env-file .env up -d --build
+#   docker compose -f docker/compose.yaml --env-file docker/worker/versions.env --env-file .env --profile build build worker home-route
+#   docker compose -f docker/compose.yaml --env-file docker/worker/versions.env --env-file .env up -d --build
+# docker/worker/versions.env supplies TAILSCALE_VERSION, the pin of the home-route sidecar image (plan 08 Task 13).
 # Host paths (TM_DATA_ROOT, TM_PROFILE_ROOT) are the same inside every container, because the Docker gate hands them
 # to Docker as bind sources. The directories belong to uid 1000 (the worker uid); so do the two secret files below
 # (mode 0400), which Docker bind-mounts with the host's owner. The firewall rules for the worker network are in
@@ -128,6 +129,8 @@ services:
       TM_TAILSCALE_CLIENT_ID:
       TM_TAILSCALE_CLIENT_SECRET:
       TM_TAILSCALE_TAILNET:
+      # The sidecar image tag (tm-home-route:<version>) the scheduler asks the gate to create.
+      TAILSCALE_VERSION: ${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
       TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
       DOCKER_PROXY_URL: http://docker-proxy:2375
       RCLONE_CONFIG: /run/secrets/rclone_conf
@@ -256,6 +259,8 @@ services:
       TM_PROFILE_ROOT: ${TM_PROFILE_ROOT:?set TM_PROFILE_ROOT in .env}
       TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
       NTFY_URL: ${NTFY_URL:?set NTFY_URL in .env}
+      # The one sidecar image the gate lets the scheduler create (and nothing else with NET_ADMIN).
+      TAILSCALE_VERSION: ${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
     volumes: ['/var/run/docker.sock:/var/run/docker.sock']
     read_only: true
     tmpfs: [/tmp]
@@ -279,6 +284,17 @@ services:
     profiles: [build]
     image: tolongmeeting/worker:current
     build: { context: .., dockerfile: docker/worker/Dockerfile }
+
+  # Build only: the sidecar that sends a server-run worker's traffic out through the member's home device. The gate starts
+  # it for an occurrence on "Server through home"; the worker then joins its network namespace. The tag is the pin.
+  home-route:
+    profiles: [build]
+    image: tm-home-route:${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
+    build:
+      context: ..
+      dockerfile: docker/home-route/Dockerfile
+      args:
+        TAILSCALE_VERSION: ${TAILSCALE_VERSION:?pass --env-file docker/worker/versions.env}
 
 networks:
   app: {}

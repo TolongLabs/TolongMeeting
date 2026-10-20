@@ -11,6 +11,8 @@
 #  4. the last rule is checked to be the DROP, and the script exits non-zero if it is not (Docker then does not start).
 # IPv6: the tm-workers network has no IPv6 and every worker runs with net.ipv6.conf.all.disable_ipv6=1 (container-spec.ts),
 # so there is no ip6tables ruleset; the sysctl is what keeps a worker off IPv6.
+# Home-route sidecars (docker/home-route) sit on this network too. Their Tailscale node reaches the control plane and DERP
+# over TCP 443 (allowed below); direct WireGuard UDP to other ports is dropped on purpose, so Tailscale falls back to DERP.
 set -eu
 BR=tm-workers0
 CADDY=172.30.0.2

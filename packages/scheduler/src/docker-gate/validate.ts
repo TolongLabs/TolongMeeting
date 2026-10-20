@@ -1,8 +1,21 @@
 import type { SpecEnv } from '@tm/core'
-import { UUID_RE, buildCreateBody, nameFor, parseName, resolveEnv, type BodyInput } from '../container-spec'
+import {
+  UUID_RE,
+  buildCreateBody,
+  buildSidecarBody,
+  nameFor,
+  parseName,
+  sidecarName,
+  resolveEnv,
+  type BodyInput
+} from '../container-spec'
 
-/** The gate's fixed configuration: the roots and the two URLs. A create body may not choose any of them. */
-export type GateConfig = SpecEnv
+/**
+ * The gate's fixed configuration: the roots and the two URLs. A create body may not choose any of them. With
+ * `tailscaleVersion` (`TAILSCALE_VERSION`) set, the gate also accepts the home-route sidecar of that version; without it,
+ * no sidecar can be created.
+ */
+export type GateConfig = SpecEnv & { tailscaleVersion?: string }
 export type GateRequest = { method: string; path: string; body: unknown }
 export type GateVerdict =
   | { ok: true; kind: 'ping' | 'create' | 'start' | 'stop' | 'inspect' | 'remove'; id?: string }
@@ -65,6 +78,7 @@ function validateCreate(
 
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return refuse('create body must be an object')
   const b = body as Record<string, unknown>
+  if (parsed.kind === 'sidecar') return validateSidecar(name, parsed.subjectId, b, cfg, resolved.hosts)
 
   // The identity comes from the job file path; everything else must then equal the fixed body for this name.
   const cmd = b.Cmd
@@ -72,15 +86,64 @@ function validateCreate(
   const identity = Array.isArray(cmd) && typeof cmd[1] === 'string' ? jobRe.exec(cmd[1]) : null
   if (!identity || !UUID_RE.test(identity[1]!)) return refuse('Cmd: job file not allowed')
 
+  // A worker is either on `tm-workers` or in the namespace of the sidecar of its own occurrence, and nowhere else.
+  const network = (b.HostConfig as { NetworkMode?: unknown } | null | undefined)?.NetworkMode
+  const sidecar = sidecarName(parsed.subjectId)
+  const via = parsed.kind === 'worker' && network === `container:${sidecar}` ? sidecar : undefined
   const input: BodyInput = {
-    ...parsed,
+    kind: parsed.kind,
+    subjectId: parsed.subjectId,
+    attempt: parsed.attempt,
     identityId: identity[1]!,
     dataRoot: cfg.dataRoot,
     profileRoot: cfg.profileRoot,
-    ...resolved
+    ...resolved,
+    ...(via ? { via } : {})
   }
   if (nameFor(input.kind, input.subjectId, input.attempt) !== name) return refuse('container name not allowed')
   const diff = firstDiff(b, buildCreateBody(input), '')
+  return diff === null ? { ok: true, kind: 'create' } : refuse(`create body differs from the fixed spec at ${diff}`)
+}
+
+const EXIT_NODE_ENV = /^TM_EXIT_NODE_(ID|HOSTNAME)=(.*)$/
+
+/**
+ * The home-route sidecar of one occurrence. Its identity (hostname) and exit node come from the request, because the gate
+ * can't know them; their shapes are checked, and everything else must then equal `buildSidecarBody` exactly: the image,
+ * one capability, the tun device, one read-only key file mount, no extra field.
+ */
+function validateSidecar(
+  name: string,
+  occurrenceId: string,
+  b: Record<string, unknown>,
+  cfg: GateConfig,
+  hosts: string[]
+): GateVerdict {
+  if (cfg.tailscaleVersion === undefined) return refuse('the home route is not enabled (TAILSCALE_VERSION)')
+  const labels = b.Labels as Record<string, unknown> | null | undefined
+  const identityId = labels?.['tm.identity']
+  if (typeof identityId !== 'string' || !UUID_RE.test(identityId)) return refuse('Labels: identity not allowed')
+  const env = Array.isArray(b.Env) ? b.Env.filter((e): e is string => typeof e === 'string') : []
+  const pick = (key: string) => env.map((e) => EXIT_NODE_ENV.exec(e)).find((m) => m?.[1] === key)?.[2]
+  const exitNodeId = pick('ID')
+  const exitNodeHostname = pick('HOSTNAME')
+  if (exitNodeId === undefined || exitNodeHostname === undefined) return refuse('Env: the exit node is missing')
+  let want: ReturnType<typeof buildSidecarBody>
+  try {
+    want = buildSidecarBody({
+      occurrenceId,
+      identityId,
+      exitNodeId,
+      exitNodeHostname,
+      tailscaleVersion: cfg.tailscaleVersion,
+      profileRoot: cfg.profileRoot,
+      hosts
+    })
+  } catch (e) {
+    return refuse(`Env: ${e instanceof Error ? e.message : 'the sidecar body is not allowed'}`)
+  }
+  if (sidecarName(occurrenceId) !== name) return refuse('container name not allowed')
+  const diff = firstDiff(b, want, '')
   return diff === null ? { ok: true, kind: 'create' } : refuse(`create body differs from the fixed spec at ${diff}`)
 }
 

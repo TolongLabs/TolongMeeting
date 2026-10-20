@@ -1,9 +1,12 @@
-import type { CreateBody } from './container-spec'
+import type { CreateBody, SidecarBody } from './container-spec'
+
+/** What `inspect` reports: whether the container runs and, when its image defines a health check, how it fares. */
+export type ContainerState = { running: boolean; health?: 'starting' | 'healthy' | 'unhealthy' }
 
 /** The five Docker calls the scheduler makes. Each one passes through the gate in `docker-gate/`. */
 export interface DockerClient {
-  /** Creates a container with this name and body; resolves to its id. */
-  create(name: string, body: CreateBody): Promise<string>
+  /** Creates a container with this name and body (a worker, sign-in or home-route sidecar one); resolves to its id. */
+  create(name: string, body: CreateBody | SidecarBody): Promise<string>
   start(id: string): Promise<void>
   stop(id: string, timeoutS: number): Promise<void>
   /**
@@ -12,7 +15,7 @@ export interface DockerClient {
    */
   remove(id: string): Promise<void>
   /** `null` when Docker has no such container (it exited and `AutoRemove` removed it). */
-  inspect(id: string): Promise<{ running: boolean } | null>
+  inspect(id: string): Promise<ContainerState | null>
 }
 
 /** A refused or failed Docker call. The message carries the call, the status and Docker's own short message only. */
@@ -127,8 +130,12 @@ export function dockerClient(
           return null
         }
         if (res.status !== 200) throw await failure('inspect', res)
-        const json = (await res.json()) as { State?: { Running?: unknown } }
-        return { running: json.State?.Running === true }
+        const json = (await res.json()) as { State?: { Running?: unknown; Health?: { Status?: unknown } | null } }
+        const health = json.State?.Health?.Status
+        return {
+          running: json.State?.Running === true,
+          ...(health === 'starting' || health === 'healthy' || health === 'unhealthy' ? { health } : {})
+        }
       })
   }
 }
@@ -136,11 +143,13 @@ export function dockerClient(
 /** A Docker that records its calls instead of making them. Nothing here creates a real container. */
 export class FakeDocker implements DockerClient {
   readonly created: { id: string; name: string; body: CreateBody }[] = []
+  /** The home-route sidecars created (`create` of a body that has no `Cmd`). */
+  readonly sidecars: { id: string; name: string; body: SidecarBody }[] = []
   readonly started: string[] = []
   readonly stopped: { id: string; timeoutS: number }[] = []
   readonly removed: string[] = []
   /** What `inspect` answers per id or name. An id not in the map is running once started and unknown before. */
-  readonly inspectResults = new Map<string, { running: boolean } | null>()
+  readonly inspectResults = new Map<string, ContainerState | null>()
   /** When set, `create` rejects with it. */
   createError: Error | null = null
   /** When set, `start` rejects with it. */
@@ -148,10 +157,12 @@ export class FakeDocker implements DockerClient {
   /** When set, `remove` rejects with it. */
   removeError: Error | null = null
 
-  async create(name: string, body: CreateBody): Promise<string> {
+  async create(name: string, body: CreateBody | SidecarBody): Promise<string> {
     if (this.createError) throw this.createError
-    const id = `fake-${this.created.length + 1}`
-    this.created.push({ id, name, body })
+    const id = `fake-${this.created.length + this.sidecars.length + 1}`
+    this.inspectResults.delete(name) // a name that was removed can be created again
+    if ('Cmd' in body) this.created.push({ id, name, body })
+    else this.sidecars.push({ id, name, body })
     return id
   }
 
@@ -168,13 +179,13 @@ export class FakeDocker implements DockerClient {
   async remove(id: string): Promise<void> {
     if (this.removeError) throw this.removeError
     this.removed.push(id)
-    const c = this.created.find((x) => x.id === id || x.name === id)
+    const c = [...this.created, ...this.sidecars].find((x) => x.id === id || x.name === id)
     for (const key of [id, c?.id, c?.name]) if (key !== undefined) this.inspectResults.set(key, null)
   }
 
-  async inspect(id: string): Promise<{ running: boolean } | null> {
+  async inspect(id: string): Promise<ContainerState | null> {
     if (this.inspectResults.has(id)) return this.inspectResults.get(id)!
-    const known = this.created.some((c) => c.id === id || c.name === id)
+    const known = [...this.created, ...this.sidecars].some((c) => c.id === id || c.name === id)
     return known ? { running: true } : null
   }
 }

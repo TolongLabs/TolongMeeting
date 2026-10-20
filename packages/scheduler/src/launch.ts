@@ -192,12 +192,20 @@ async function startAttemptIn(
   occurrenceId: string,
   attempt: number,
   now: Date,
-  outbox: Outbox
+  outbox: Outbox,
+  via?: { sidecar: string }
 ): Promise<boolean> {
   const { db, env } = deps
   const [row] = await db.select().from(occurrences).where(eq(occurrences.id, occurrenceId))
   if (!row) throw new Error(`No occurrence ${occurrenceId}`)
-  const spec: SpecParams = { kind: 'worker', occurrenceId, attempt, identityId: row.identityId, env }
+  const spec: SpecParams = {
+    kind: 'worker',
+    occurrenceId,
+    attempt,
+    identityId: row.identityId,
+    env,
+    ...(via ? { via } : {})
+  }
   const name = containerName(spec)
   const base = jobFileBase(spec)
   const { publicUrl } = resolveEnv(env)
@@ -260,11 +268,20 @@ async function startAttemptIn(
 /**
  * Makes the control token, writes the job and key files, creates and starts the container and records the attempt.
  * When that fails the occurrence fails with reason `launch_failed`, the profile is released and the member is pinged.
+ * With `via`, the worker joins the network namespace of that home-route sidecar (`sidecarName`), which must be running.
+ * Resolves `true` when the container started, `false` when the launch failed (the occurrence is then failed).
  */
-export async function startAttempt(deps: LaunchDeps, occurrenceId: string, attempt: number, now: Date): Promise<void> {
+export async function startAttempt(
+  deps: LaunchDeps,
+  occurrenceId: string,
+  attempt: number,
+  now: Date,
+  via?: { sidecar: string }
+): Promise<boolean> {
   const outbox: Outbox = []
-  await startAttemptIn(deps, occurrenceId, attempt, now, outbox)
+  const started = await startAttemptIn(deps, occurrenceId, attempt, now, outbox, via)
   for (const send of outbox) await send()
+  return started
 }
 
 // --- Pings ---------------------------------------------------------------------------------------------------------

@@ -1,12 +1,16 @@
+import { createHash, randomBytes } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { ACTIVE_STATES, IllegalTransition, WORKER_STATES, type OccurrenceState } from '@tm/core'
 import { pings, type WorkerFailureReason } from '@tm/notify'
 import { and, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm'
-import { events, occurrences, profiles } from '@tm/web/db'
+import { events, identities, occurrences, profiles } from '@tm/web/db'
 import { registerArtefacts } from '@tm/web/db/artefacts'
+import { loadJobConfig } from '@tm/web/db/job-config'
 import { applyTrigger, hashEventData } from '@tm/web/db/transitions'
-import { jobFileBase, resolveEnv } from './container-spec'
+import { jobFileBase, resolveEnv, sidecarName } from './container-spec'
 import { DockerError, type DockerClient } from './docker'
+import { startViaHome } from './home-route/check'
+import { removeSidecar } from './home-route/sidecar'
 import { removeJobFiles } from './job-files'
 import { startAttempt, type LaunchDeps } from './launch'
 import { releaseProfile } from './locks'
@@ -135,6 +139,52 @@ async function failWorker(
   return true
 }
 
+/** Whether the occurrence's identity runs through the member's home device (a sidecar carries its network). */
+async function runsViaHome(deps: LaunchDeps, row: OccurrenceRow): Promise<boolean> {
+  const [identity] = await deps.db
+    .select({ runLocation: identities.runLocation })
+    .from(identities)
+    .where(eq(identities.id, row.identityId))
+  return identity?.runLocation === 'server_via_home'
+}
+
+/** A home-route worker whose sidecar has died has lost its network (and its exit node): that is a crash. */
+async function sidecarLost(deps: LaunchDeps, row: OccurrenceRow): Promise<boolean> {
+  if (row.containerName === null || !(await runsViaHome(deps, row))) return false
+  const sidecar = await deps.docker.inspect(sidecarName(row.id))
+  return sidecar === null || !sidecar.running
+}
+
+/**
+ * Starts the next attempt of a home-route occurrence through the member's home device: a fresh look at the exit node, a
+ * healthy sidecar reused or a new one made, then the worker behind it. A worker never starts without the tunnel, so any
+ * result but `launched` (the home device is offline, or the tunnel did not come up) fails the occurrence.
+ */
+async function restartViaHome(deps: LaunchDeps, row: OccurrenceRow, attempt: number, now: Date): Promise<void> {
+  const { db } = deps
+  const token = `${attempt}.${randomBytes(32).toString('base64url')}`
+  await db
+    .update(occurrences)
+    .set({ controlTokenHash: createHash('sha256').update(token).digest('hex'), attempt })
+    .where(eq(occurrences.id, row.id))
+  const cfg = await loadJobConfig(db, deps.master, row.id, {
+    attempt,
+    control: { url: `${resolveEnv(deps.env).publicUrl}/api/control`, token },
+    env: deps.env
+  })
+  if ((await startViaHome(deps, cfg, now)) === 'launched') return
+  await applyTrigger(db, row.id, 'fail', { reason: 'home_exit_node_offline' })
+  await releaseProfile(db, row.identityId, `occ:${row.id}`)
+  await deps.notifier.notify(
+    row.memberId,
+    pings.workerFailed({
+      entry: row.entryName,
+      reason: 'your home connection was offline',
+      meetingUrl: meetingUrl(deps, row)
+    })
+  )
+}
+
 /**
  * Crashes the worker, stops its container and starts the next attempt; `failed` when that attempt could not start,
  * `skipped` when the occurrence changed while the old container was being stopped.
@@ -157,7 +207,8 @@ async function restart(deps: LaunchDeps, occurrenceId: string, now: Date): Promi
     )
     return 'failed'
   }
-  await startAttempt(deps, occurrenceId, row.attempt + 1, now)
+  if (await runsViaHome(deps, row)) await restartViaHome(deps, row, row.attempt + 1, now)
+  else await startAttempt(deps, occurrenceId, row.attempt + 1, now)
   const [after] = await db
     .select({ state: occurrences.state })
     .from(occurrences)
@@ -360,7 +411,10 @@ async function watch(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<'
 
   const quietMs = quietFor(row, now)
   if (quietMs >= GONE_GRACE_MS) {
-    const view = await containerView(deps.docker, row.containerName, { id: row.id, now })
+    // A dead home-route sidecar takes the worker's network with it: the worker is as good as gone.
+    const view = (await sidecarLost(deps, row))
+      ? 'gone'
+      : await containerView(deps.docker, row.containerName, { id: row.id, now })
     const stale = quietMs > HEARTBEAT_TIMEOUT_MS
     if (view === 'unknown' && stale) return noteUnreachable(deps, row, now)
     if (view !== 'unknown' && (stale || view === 'gone')) {
@@ -527,6 +581,8 @@ async function releaseOne(deps: LaunchDeps, row: OccurrenceRow, now: Date): Prom
   const { db } = deps
   if (remuxing.has(row.id)) return false
   if ((await containerView(deps.docker, row.containerName, { id: row.id, now }, true)) !== 'gone') return false
+  // A home-route sidecar goes with its worker; a failure here keeps the container name, so the next pass tries again.
+  await removeSidecar(deps.docker, row.id)
   // The checkpoint is recorded first: if this pass dies half way, the container name is still set and the next pass
   // does it again.
   const newest = (await checkpointFiles(deps.env.profileRoot, row.identityId)).at(-1)

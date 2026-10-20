@@ -12,12 +12,16 @@ const profileRoot = required('TM_PROFILE_ROOT')
 assertRoot('TM_DATA_ROOT', dataRoot)
 assertRoot('TM_PROFILE_ROOT', profileRoot)
 
+// Set only on a server that uses the home route; without it the gate refuses to create a sidecar.
+const tailscaleVersion = process.env.TAILSCALE_VERSION || undefined
+
 const server = serveGate({
   port: 2375,
   dataRoot,
   profileRoot,
   publicUrl: required('TM_PUBLIC_URL'),
   ntfyUrl: required('NTFY_URL'),
+  tailscaleVersion,
   socketPath: process.env.DOCKER_SOCKET ?? '/var/run/docker.sock',
   log: (line) => console.log(line)
 })

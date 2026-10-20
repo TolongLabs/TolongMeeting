@@ -1738,7 +1738,7 @@ git commit -m "feat(scheduler): check the home route at T-60"
 
 - Create: `docker/home-route/Dockerfile`, `docker/home-route/start.sh`, `packages/scheduler/src/home-route/sidecar.ts`
 - Modify: `docker/worker/versions.env` (`TAILSCALE_VERSION`, set to the current stable release and changed only with a passing acceptance run); `docker/compose.yaml` (build `tm-home-route:${TAILSCALE_VERSION}`); plan 01c's docker-proxy create policy (`allowCreate`); plan 01c's `launchWorker` (`opts.networkMode`), its restart path (reuse a healthy sidecar, else start a new one) and its worker-exit handler (stop `tm-home-<occurrenceId>`)
-- Test: `packages/scheduler/src/home-route/sidecar.test.ts`
+- Test: `packages/scheduler/test/home-route-sidecar.test.ts` (bodies, `launchViaHome`, restart and teardown), `home-route-gate.test.ts` (the real validator), `home-route-scripts.test.ts` (`exit-node.sh`, `start.sh`)
 
 **Interfaces:**
 
@@ -1775,7 +1775,9 @@ export function launchViaHome(
 ): Promise<void> // healthTimeoutMs default 60000
 ```
 
-- [ ] **Step 1: Write the failing test**
+**As built (preflight R16, R17, the T11 fix):** `launchViaHome(cfg, node, d)` takes the member's stored `HomeNode` (the scheduler's `homeDepsOf` reads it right after the check and refuses an address that differs). The sidecar body is `buildSidecarBody` in `container-spec.ts`: `CapAdd NET_ADMIN` with `CapDrop ALL`, the tun device, one read-only mount for the auth key file (`TS_AUTHKEY=file:/run/tm/authkey`, never an environment value), and the hostname, hosts, DNS and IPv6 sysctl of the worker that joins it; the worker body (`SpecParams.via`) drops those four. The sidecar, not the worker, pins the exit node: `start.sh` picks the peer whose node id and keyed hostname match `TM_EXIT_NODE_ID` / `TM_EXIT_NODE_HOSTNAME` with `tailscale set`. The Docker gate takes `TAILSCALE_VERSION` (`GateConfig.tailscaleVersion`) and accepts exactly the sidecar and the worker via it. The exit watcher is not used for the sidecar (it would stop the sidecar that a restart reuses); the monitor removes it in `releaseFinished`, restarts a home-route attempt through `startViaHome`, and treats a dead sidecar as a crash.
+
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the sidecar body: kernel networking, in-memory state, the exit node and nothing else', () => {
@@ -1860,12 +1862,12 @@ test('the proxy allows the sidecar exactly as built, and nothing more', () => {
 
 `sidecarDeps` records `keys`, `workerLaunches` and `stopped`, and reports the sidecar healthy after `healthyAfter` polls; `workerCreateBody` is plan 01c's worker create body fixture.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/scheduler/src/home-route/sidecar.test.ts`
+Run: `bun test packages/scheduler/test/home-route-sidecar.test.ts packages/scheduler/test/home-route-gate.test.ts packages/scheduler/test/home-route-scripts.test.ts`
 Expected: FAIL with "Cannot find module './sidecar'"
 
-- [ ] **Step 3: Implement the image, the start script, `sidecar.ts` and the plan 01c changes**
+- [x] **Step 3: Implement the image, the start script, `sidecar.ts` and the plan 01c changes**
 
 `docker/home-route/Dockerfile`:
 
@@ -1880,12 +1882,12 @@ ENTRYPOINT ["/usr/local/bin/start.sh"]
 
 `start.sh`: run `deny-private.sh --out-iface tailscale0` first, so no tunnelled packet reaches a private range; start `containerboot` in the background; poll `tailscale status --json` every second and write `/tmp/tm-ready` once `.BackendState == "Running"` and `.ExitNodeStatus.Online == true`; then wait on `containerboot`. Tailscale drops traffic rather than falling back when the exit node goes away, so a mid-meeting outage shows up as plan 01c's dropped-meeting handling, never as traffic from the server's address. `launchViaHome`: mint a key with `createAuthKey({ tags: ['tag:tm-worker'], ephemeral: true, expirySeconds: 600, description: 'tm-worker <occurrenceId>' })` (reusable false and pre-authorised are fixed in the client for worker keys), create and start `sidecarName(occurrenceId)`, poll `healthy` every second until `healthTimeoutMs`, then `launchWorker(cfg, { networkMode: 'container:tm-home-<occurrenceId>' })`. The key sits in the sidecar's environment; it is single-use, ephemeral and expires in 10 minutes, and only the scheduler can reach the Docker API to read it. `allowCreate` accepts `tm-home-route:<TAILSCALE_VERSION>` only with exactly this `HostConfig`, and still refuses `CapAdd` on the worker image.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/scheduler/src/home-route/sidecar.test.ts`
-Expected: PASS (4 tests)
+Run: `bun test packages/scheduler/test/home-route-sidecar.test.ts packages/scheduler/test/home-route-gate.test.ts packages/scheduler/test/home-route-scripts.test.ts`
+Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docker/home-route docker/worker/versions.env docker/compose.yaml packages/scheduler/src
