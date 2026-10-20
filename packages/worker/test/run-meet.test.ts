@@ -60,3 +60,31 @@ test('the layout is kept on every 10-second refresh of a Meet run', async () => 
   await runOccurrence(cfg, d)
   expect(d.layoutCalls).toBeGreaterThan(1)
 })
+
+test('a Meet meeting that the host ends completes the run, with the end recorded', async () => {
+  const d = fakeDeps({ platform: 'meet', states: ['in_meeting', 'ended'] })
+  expect(await runOccurrence(cfg, d)).toMatchObject({ result: 'completed', endedBy: 'page' })
+  expect(d.calls).toContain('startRecorder')
+  expect((await events()).some((e) => e.type === 'state' && e.data.state === 'leaving')).toBe(true)
+})
+
+test('removal from a Meet meeting pings once', async () => {
+  const d = fakeDeps({ platform: 'meet', states: ['in_meeting', 'removed'] })
+  expect(await runOccurrence(cfg, d)).toMatchObject({ endedBy: 'removed' })
+  expect(d.pings.filter((p) => p.message.includes('removed the bot'))).toHaveLength(1)
+})
+
+test('a Meet drop gets one automatic rejoin, then the run stops', async () => {
+  const d = fakeDeps({
+    platform: 'meet',
+    states: ['in_meeting', 'unknown', 'in_meeting', 'unknown'],
+    unknownMs: 30_000
+  })
+  expect(await runOccurrence(cfg, d)).toMatchObject({ endedBy: 'dropped' })
+  expect(d.joinCount).toBe(2)
+  expect(d.gotos.filter((url) => url === MEET_LINK)).toHaveLength(2)
+  expect(d.pings.filter((p) => p.title.startsWith('Alert')).map((p) => p.message)).toEqual([
+    'The bot dropped out of the meeting and is rejoining.',
+    'The bot dropped out of the meeting again and stopped.'
+  ])
+})
