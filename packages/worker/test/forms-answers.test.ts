@@ -456,7 +456,9 @@ test('verifyFill refuses a date or time left in a question that was not answered
 
 test('a text date picker is filled only when day and month swap leaves the date unchanged', () => {
   const at = (start: string) => buildDetailPool({ ...testJob(DIR), entry: { ...testJob(DIR).entry, start } })
-  const text = [{ ...q('p1q0', 'Date', 'date', ['M/d/yyyy'], true) }]
+  const text = [
+    { ...q('p1q0', 'Date', 'date', [], true), dateFormat: { source: 'placeholder' as const, pattern: 'M/d/yyyy' } }
+  ]
   const answers = (start: string, questions: FormQuestion[]) => {
     const pl = at(start)
     return planPage(pageOf(questions), pl, exactLabelMatches(pageOf(questions), pl), new Map())

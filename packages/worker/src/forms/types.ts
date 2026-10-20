@@ -15,6 +15,8 @@ export interface FormQuestion {
   // Current answer; null when empty. A date reads as `YYYY-MM-DD` and a time as `HH:MM` when the widget shows one;
   // anything the driver cannot normalise is kept as shown, so it never equals a planned value.
   value: string | string[] | null
+  // Set only on a text date picker whose format came from its placeholder; pattern is that format as written ("M/d/yyyy").
+  dateFormat?: { source: 'placeholder'; pattern: string }
 }
 
 export interface Restriction {

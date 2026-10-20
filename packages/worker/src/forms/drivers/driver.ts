@@ -364,6 +364,7 @@ export function createDriver(
     for (const [n, raw] of raws.entries()) {
       let options = raw.options.map((o) => o.text)
       let value: FormQuestion['value'] = null
+      let dateFormat: FormQuestion['dateFormat']
       if (raw.kind === 'text' || raw.kind === 'paragraph') value = raw.inputValue === '' ? null : raw.inputValue
       else if (raw.kind === 'radio') value = raw.options.find((o) => o.checked)?.text ?? null
       else if (raw.kind === 'checkbox') {
@@ -371,10 +372,10 @@ export function createDriver(
         value = chosen.length > 0 ? chosen : null
       } else if (raw.kind === 'date' || raw.kind === 'time') {
         value = widgetValue(raw)
-        // A text date picker whose format came only from its placeholder lists that format as its one option, so the
-        // planner can tell it from an input[type=date] (ISO, no options). types.ts documents no options for a date.
+        // A text date picker whose format came only from its placeholder carries that format, so the planner can tell
+        // it from an input[type=date] (ISO, no dateFormat).
         if (raw.kind === 'date' && raw.widget!.type === 'text')
-          options = [parseDateFormat(raw.widget!.placeholder)!.text]
+          dateFormat = { source: 'placeholder', pattern: parseDateFormat(raw.widget!.placeholder)!.text }
       } else if (raw.kind === 'dropdown') {
         value = raw.triggerText === '' || placeholders.has(normaliseText(raw.triggerText)) ? null : raw.triggerText
         options = await dropdownOptions(page, questions(page).nth(n), stripLabel(raw))
@@ -385,7 +386,8 @@ export function createDriver(
         type: raw.kind,
         options,
         required: raw.requiredText !== null,
-        value
+        value,
+        dateFormat
       })
     }
     const [title = ''] = await texts(page, map.title)

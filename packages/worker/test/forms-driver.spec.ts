@@ -577,7 +577,7 @@ test('a Google time group with an AM/PM control is typed other', async ({ page, 
   expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({ label: 'Time', type: 'time' })
 })
 
-test('a Microsoft text date lists its placeholder format; a native date input lists none', async ({
+test('a Microsoft text date carries its placeholder format; a native date input carries none', async ({
   page,
   context
 }) => {
@@ -585,11 +585,10 @@ test('a Microsoft text date lists its placeholder format; a native date input li
   await page.goto(microsoftUrl('attendance-date'))
   expect((await (await driverFor('microsoft')).readPage(page, 1)).questions[1]).toMatchObject({
     type: 'date',
-    options: ['M/d/yyyy']
+    options: [],
+    dateFormat: { source: 'placeholder', pattern: 'M/d/yyyy' }
   })
   await page.goto(googleUrl('attendance-date'))
-  expect((await (await driverFor('google')).readPage(page, 1)).questions[1]).toMatchObject({
-    type: 'date',
-    options: []
-  })
+  const native = (await (await driverFor('google')).readPage(page, 1)).questions[1]!
+  expect([native.type, native.options, native.dateFormat]).toEqual(['date', [], undefined])
 })

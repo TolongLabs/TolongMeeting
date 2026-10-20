@@ -58,11 +58,11 @@ export function dateTimeAnswer(q: FormQuestion, pool: SavedDetail[]): Answer | n
   if (detail === undefined) return null
   if (q.type === 'date' && key === 'session_date') {
     const value = parseDate(detail.value, POOL_DATE_FORMAT)
-    // A text picker lists the format its placeholder names as its one option (the driver's marker). That format is
-    // unverified against a live form, and a locale that reads day and month the other way would write a different day
-    // that the read-back shows in the same format and cannot catch. So fill only a date that survives the swap, until a
-    // live capture confirms the widget's format. An input[type=date] has no option: it is ISO and always safe.
-    if (value !== null && q.options.length > 0 && !swapSafe(value)) return null
+    // A text picker whose format came from its placeholder (dateFormat, set by the driver) is unverified against a live
+    // form, and a locale that reads day and month the other way would write a different day that the read-back shows in
+    // the same format and cannot catch. So fill only a date that survives the swap, until a live capture confirms the
+    // widget's format. An input[type=date] has no dateFormat: it is ISO and always safe.
+    if (value !== null && q.dateFormat !== undefined && !swapSafe(value)) return null
     return value === null ? null : { questionId: q.id, kind: 'date', value, detailKey: 'session_date', via: 'label' }
   }
   if (q.type === 'time' && key === 'session_start') {
