@@ -170,6 +170,11 @@ export async function seedMember(db: Db, opts: SeedOptions = {}): Promise<Seeded
       .values({ occurrenceId, memberId, kind: 'summary', path: 'out/summary.md', bytes: 1024 })
       .returning()
     ids.artefacts = artefact!.id
+    const [exported] = await db
+      .insert(s.exports)
+      .values({ occurrenceId, memberId, target: 'zip', status: 'succeeded', title: 'Seed lecture', finishedAt: start })
+      .returning()
+    ids.exports = exported!.id
     const [connection] = await db
       .insert(s.connections)
       .values({ memberId, kind: 'google', tokenEnc: 'sealed' })

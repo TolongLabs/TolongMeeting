@@ -41,6 +41,7 @@ const CHANGED: Record<keyof typeof MEMBER_OWNED, Record<string, unknown>> = {
   events: { dataHash: 'changed' },
   forms: { result: 'changed' },
   artefacts: { bytes: 7 },
+  exports: { note: 'changed' },
   aiKeys: { testError: 'changed' },
   connections: { tokenEnc: 'changed' },
   deviceTokens: { name: 'Changed' },

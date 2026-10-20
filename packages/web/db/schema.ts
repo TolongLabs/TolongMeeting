@@ -120,6 +120,25 @@ export const ARTEFACT_KINDS = [
 export type ArtefactKind = (typeof ARTEFACT_KINDS)[number]
 export const CONNECTION_KINDS = ['google', 'github', 'notion'] as const
 export type ConnectionKind = (typeof CONNECTION_KINDS)[number]
+export const CONNECTION_STATUSES = ['ok', 'reconnect_needed'] as const
+export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number]
+export const EXPORT_TARGETS = ['zip', 'pdf', 'github', 'gdocs', 'notion'] as const
+export type ExportTarget = (typeof EXPORT_TARGETS)[number]
+export const EXPORT_STATUSES = ['queued', 'running', 'succeeded', 'failed'] as const
+export type ExportStatus = (typeof EXPORT_STATUSES)[number]
+export const EXPORT_ERROR_CODES = [
+  'not_connected',
+  'reconnect_needed',
+  'invalid_settings',
+  'not_found',
+  'already_running',
+  'not_ready',
+  'meeting_deleted',
+  'rate_limited',
+  'interrupted',
+  'failed'
+] as const
+export type ExportErrorCode = (typeof EXPORT_ERROR_CODES)[number]
 export const SIGNIN_MODES = ['worker', 'container'] as const
 export const SIGNIN_STATES = ['starting', 'ready', 'ended'] as const
 
@@ -474,11 +493,53 @@ export const connections = pgTable(
     kind: text('kind').$type<ConnectionKind>().notNull(),
     tokenEnc: text('token_enc').notNull(),
     settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
-    createdAt: createdAt()
+    status: text('status').$type<ConnectionStatus>().notNull().default('ok'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt()
   },
   (t) => [
     unique('connections_member_id_kind_unique').on(t.memberId, t.kind),
-    check('connections_kind_check', oneOf(t.kind, CONNECTION_KINDS))
+    check('connections_kind_check', oneOf(t.kind, CONNECTION_KINDS)),
+    check('connections_status_check', oneOf(t.status, CONNECTION_STATUSES))
+  ]
+)
+
+export const exports = pgTable(
+  'exports',
+  {
+    id: id(),
+    occurrenceId: uuid('occurrence_id').notNull(),
+    memberId: memberId(),
+    target: text('target').$type<ExportTarget>().notNull(),
+    status: text('status').$type<ExportStatus>().notNull().default('queued'),
+    title: text('title'),
+    url: text('url'),
+    filePath: text('file_path'), // relative to the occurrence directory
+    note: text('note'),
+    errorCode: text('error_code').$type<ExportErrorCode>(),
+    error: text('error'),
+    createdAt: createdAt(),
+    startedAt: timestamptz('started_at'),
+    finishedAt: timestamptz('finished_at')
+  },
+  (t) => [
+    ownedFk(
+      'exports_occurrence_id_occurrences_id_fk',
+      [t.occurrenceId, t.memberId],
+      [occurrences.id, occurrences.memberId]
+    ),
+    index('exports_member_id_idx').on(t.memberId),
+    // The occurrence's export list, newest first (also serves the cascade from the occurrence).
+    index('exports_occurrence_id_created_at_idx').on(t.occurrenceId, t.createdAt),
+    // The runner claims the oldest queued row.
+    index('exports_status_created_at_idx').on(t.status, t.createdAt),
+    // At most one queued or running export per occurrence and target.
+    uniqueIndex('exports_one_active_idx')
+      .on(t.occurrenceId, t.target)
+      .where(sql`${t.status} in ('queued', 'running')`),
+    check('exports_target_check', oneOf(t.target, EXPORT_TARGETS)),
+    check('exports_status_check', oneOf(t.status, EXPORT_STATUSES)),
+    check('exports_error_code_check', oneOf(t.errorCode, EXPORT_ERROR_CODES))
   ]
 )
 
@@ -545,6 +606,7 @@ export const MEMBER_OWNED = {
   events,
   forms,
   artefacts,
+  exports,
   aiKeys,
   connections,
   deviceTokens,

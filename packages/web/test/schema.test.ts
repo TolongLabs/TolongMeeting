@@ -5,7 +5,7 @@ import { closeDb, getDb, MEMBER_OWNED, pkOf, schema, type Db } from '../db'
 import { migrationsFolder, runMigrations } from '../db/migrate'
 import { createTestDb, dropAllTestDbs, dropTestDb, seedAuthUser, seedMember, testDbUrl } from '../db/testing'
 
-const { aiKeys, artefacts, connections, details, deviceTokens, events, forms, identities, members } = schema
+const { aiKeys, artefacts, connections, details, deviceTokens, events, exports, forms, identities, members } = schema
 const { mentionNames, occurrences, profiles, signinSessions, timetableEntries } = schema
 
 const AUTH_TABLES = ['auth_account', 'auth_session', 'auth_user', 'auth_verification']
@@ -16,6 +16,7 @@ const APP_TABLES = [
   'details',
   'device_tokens',
   'events',
+  'exports',
   'forms',
   'identities',
   'members',
@@ -448,6 +449,75 @@ describe('events, forms, artefacts', () => {
   })
 })
 
+describe('exports', () => {
+  const queued = (a: { memberId: string; ids: { occurrences: string } }, target: 'zip' | 'pdf' = 'zip') => ({
+    occurrenceId: a.ids.occurrences,
+    memberId: a.memberId,
+    target
+  })
+
+  test('an export starts queued, with no result yet', async () => {
+    const a = await seedMember(db)
+    const [row] = await db.insert(exports).values(queued(a, 'pdf')).returning()
+    expect(row).toMatchObject({
+      status: 'queued',
+      title: null,
+      url: null,
+      filePath: null,
+      note: null,
+      errorCode: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null
+    })
+    expect(row!.createdAt).toBeInstanceOf(Date)
+  })
+
+  test('only one export per occurrence and target is queued or running', async () => {
+    const a = await seedMember(db)
+    await db.insert(exports).values(queued(a))
+    const active = { code: UNIQUE, constraint: 'exports_one_active_idx' }
+    expect(await violation(db.insert(exports).values(queued(a)))).toEqual(active)
+    await db.insert(exports).values(queued(a, 'pdf'))
+    // The seeded 'succeeded' zip export does not count; a running one does, and a failed one frees the slot.
+    await db.update(exports).set({ status: 'running' }).where(eq(exports.status, 'queued'))
+    expect(await violation(db.insert(exports).values(queued(a)))).toEqual(active)
+    await db.update(exports).set({ status: 'failed', errorCode: 'failed' }).where(eq(exports.status, 'running'))
+    await db.insert(exports).values(queued(a))
+  })
+
+  test('its target, status and error code are checked', async () => {
+    const a = await seedMember(db)
+    expect(await violation(db.insert(exports).values({ ...queued(a), target: 'dropbox' as never }))).toEqual({
+      code: CHECK,
+      constraint: 'exports_target_check'
+    })
+    expect(await violation(db.insert(exports).values({ ...queued(a), status: 'paused' as never }))).toEqual({
+      code: CHECK,
+      constraint: 'exports_status_check'
+    })
+    expect(
+      await violation(db.insert(exports).values({ ...queued(a), status: 'failed', errorCode: 'boom' as never }))
+    ).toEqual({ code: CHECK, constraint: 'exports_error_code_check' })
+  })
+
+  test('it can only point at an occurrence of the same member', async () => {
+    const a = await seedMember(db)
+    const b = await seedMember(db)
+    expect(await violation(db.insert(exports).values({ ...queued(a), memberId: b.memberId }))).toEqual({
+      code: FOREIGN_KEY,
+      constraint: 'exports_occurrence_id_occurrences_id_fk'
+    })
+  })
+
+  test('deleting an occurrence deletes its exports', async () => {
+    const a = await seedMember(db)
+    await db.insert(exports).values(queued(a))
+    await db.delete(occurrences).where(eq(occurrences.id, a.ids.occurrences))
+    expect(await db.$count(exports, eq(exports.occurrenceId, a.ids.occurrences))).toBe(0)
+  })
+})
+
 describe('keys, connections, devices, sign-in sessions', () => {
   test('a member has one AI key row, and the DashScope key is required', async () => {
     const a = await seedMember(db)
@@ -480,7 +550,25 @@ describe('keys, connections, devices, sign-in sessions', () => {
     expect(
       (await violation(db.insert(connections).values({ memberId: a.memberId, kind: 'notion' } as never))).code
     ).toBe(NOT_NULL)
-    await db.insert(connections).values({ memberId: a.memberId, kind: 'notion', tokenEnc: 'x' })
+    const [notion] = await db
+      .insert(connections)
+      .values({ memberId: a.memberId, kind: 'notion', tokenEnc: 'x' })
+      .returning()
+    expect(notion).toMatchObject({ status: 'ok', settings: {} })
+    expect(notion!.updatedAt).toBeInstanceOf(Date)
+  })
+
+  test('a connection status is ok or reconnect_needed', async () => {
+    const a = await seedMember(db)
+    await db.update(connections).set({ status: 'reconnect_needed' }).where(eq(connections.id, a.ids.connections))
+    expect(
+      await violation(
+        db
+          .update(connections)
+          .set({ status: 'gone' as never })
+          .where(eq(connections.id, a.ids.connections))
+      )
+    ).toEqual({ code: CHECK, constraint: 'connections_status_check' })
   })
 
   test('a device token hash is unique', async () => {
