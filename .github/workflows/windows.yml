@@ -37,6 +37,9 @@ jobs:
         env:
           # The build bakes in a default server address; a placeholder is enough to package and boot the app.
           TM_PUBLIC_URL: https://tm.example
+      # Bun does not run electron's postinstall, which downloads the Electron binary.
+      - name: Install the Electron binary
+        run: bun run --cwd packages/companion electron:install
       - name: Electron smoke test
         run: bun test packages/companion/test/smoke.test.ts --timeout 120000
         env:
