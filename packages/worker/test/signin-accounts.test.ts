@@ -109,12 +109,20 @@ test('an unreadable page or a page that is gone is unknown, never signed in', as
   const pages = [
     desk,
     fakePage({ url: 'https://zoom.us/profile', broken: true }),
-    fakePage({ url: 'https://web.whatsapp.com/' }),
-    fakePage({ url: 'https://discord.com/channels/@me' })
+    fakePage({ url: 'https://web.whatsapp.com/', chatList: true, broken: true }),
+    fakePage({ url: 'https://discord.com/channels/@me', broken: true })
   ]
   // No Teams tab at all: unknown, like a page that could not be read.
   expect(accounts(await checkSigninAccounts(desk, pages))).toEqual([
-    ['discord', true],
+    ['google', true],
+    ['microsoft', true]
+  ])
+})
+
+test('a WhatsApp page that is still loading is unknown', async () => {
+  const desk = fakePage({ url: 'https://docs.google.com/forms/u/0/' })
+  const loading = fakePage({ url: 'https://web.whatsapp.com/' })
+  expect(accounts(await checkSigninAccounts(desk, [desk, loading]))).toEqual([
     ['google', true],
     ['microsoft', true]
   ])
