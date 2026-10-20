@@ -66,13 +66,14 @@ async function main(): Promise<void> {
   const localPaths = localRunPaths(paths)
   await sweepPlaintext({ runs: localPaths.runs, jobs: jobsDir(paths) })
 
+  const settings = await loadSettings(settingsFile(paths), paths.documents, TM_PUBLIC_URL)
   const ports: Ports = {
     safe: secureSafeStorage(safeStorage, process.platform),
     notifier: electronNotifier(Notification),
     keepAwake: electronKeepAwake(powerSaveBlocker),
-    shell: electronShell(shell)
+    // A click opens only a regular `.md` file inside the summaries folder, or the folder itself.
+    shell: electronShell(shell, () => settings.summariesDir)
   }
-  const settings = await loadSettings(settingsFile(paths), paths.documents, TM_PUBLIC_URL)
   const state = new StateStore(stateFile(paths))
   const secrets = new SecretStore(secretsFile(paths), ports.safe)
 

@@ -1,5 +1,4 @@
 import { lstat } from 'node:fs/promises'
-import { isMissing } from '../atomic'
 import { isOpenableSummary } from '../summaries'
 import type { DesktopNotification, DesktopNotifier, NotificationHandlers } from '../notifier'
 import type { SafeStorageLike } from '../secrets'
@@ -108,17 +107,6 @@ async function isOpenable(path: string, dir: string): Promise<boolean> {
   return isOpenableSummary(path, dir)
 }
 
-/** Without a known summaries folder: any folder, or a regular `.md` file. */
-async function isFolderOrMarkdown(path: string): Promise<boolean> {
-  try {
-    const st = await lstat(path)
-    return st.isDirectory() || (st.isFile() && /\.md$/i.test(path))
-  } catch (e) {
-    if (isMissing(e)) return false
-    throw e
-  }
-}
-
 export interface ShellPort {
   openPath(path: string): Promise<void>
   openExternal(url: string): Promise<void>
@@ -127,15 +115,12 @@ export interface ShellPort {
 /**
  * Opens a summary or a web page on the member's click. Only http and https leave the app; `file:` and app links
  * don't. `openPath` hands the system nothing but a regular `.md` file inside the summaries folder (`summariesDir`) or
- * that folder itself, so a name or a link a server chose can never start a program. Without `summariesDir` only the
- * regular `.md` file rule applies, so pass it.
+ * that folder itself, so a name or a link a server chose can never start a program.
  */
-export function electronShell(shell: ShellLike, summariesDir?: () => string): ShellPort {
+export function electronShell(shell: ShellLike, summariesDir: () => string): ShellPort {
   return {
     async openPath(path) {
-      const dir = summariesDir?.()
-      const allowed = dir !== undefined ? await isOpenable(path, dir) : await isFolderOrMarkdown(path)
-      if (!allowed) throw new Error('refusing to open that path')
+      if (!(await isOpenable(path, summariesDir()))) throw new Error('refusing to open that path')
       const error = await shell.openPath(path)
       if (error !== '') throw new Error(`could not open the file: ${error}`)
     },

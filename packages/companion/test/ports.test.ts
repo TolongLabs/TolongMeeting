@@ -173,7 +173,9 @@ describe('electronShell', () => {
 
   test('openExternal opens only http and https links', async () => {
     const opened: string[] = []
-    const shell = electronShell({ openPath: async () => '', openExternal: async (u) => void opened.push(u) })
+    const shell = electronShell({ openPath: async () => '', openExternal: async (u) => void opened.push(u) }, () =>
+      tmpdir()
+    )
     await shell.openExternal('https://tm.example/meetings/1')
     for (const bad of ['file:///etc/passwd', 'ms-settings:privacy', 'javascript:alert(1)'])
       await expect(shell.openExternal(bad)).rejects.toThrow()
