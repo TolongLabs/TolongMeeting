@@ -34,6 +34,9 @@ jobs:
         run: bun test packages/companion --timeout 120000
       - name: Package the app
         run: bun run --cwd packages/companion pack
+        env:
+          # The build bakes in a default server address; a placeholder is enough to package and boot the app.
+          TM_PUBLIC_URL: https://tm.example
       - name: Electron smoke test
         run: bun test packages/companion/test/smoke.test.ts --timeout 120000
         env:
