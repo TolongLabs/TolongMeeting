@@ -204,12 +204,20 @@ export async function saveEntry(
 ): Promise<{ entryId: string; clashes: Clash[] }> {
   const value = parseEntry(input)
   if (!(await hasWorkingKey(scope))) throw new NoWorkingKeyError()
-  await deps.ensureNtfy()
   const [identity] = await scope.select(identities, eq(identities.id, value.identityId))
   if (!identity) throw new InputError('No such identity.')
-  if (value.link?.kind === 'chat' && !chatWatchAllowed(value.link.app, identity.runLocation, deps.gate)) {
-    throw new WatchingNotAllowedError(value.link.app, deps.gate)
+  // The link that will be stored: the one sent, or (on an edit that keeps or omits it) the one already stored.
+  // The gate decides on that link and the identity's location, so a kept chat link cannot move to a refused identity.
+  const kept = value.link === undefined || value.link.kind === 'keep'
+  const stored =
+    kept && value.id ? (await scope.select(timetableEntries, eq(timetableEntries.id, value.id)))[0]?.link : undefined
+  const effective = kept ? stored : value.link
+  if (effective?.kind === 'chat') {
+    const gate = deps.gate
+    if (!chatWatchAllowed(effective.app, identity.runLocation, gate))
+      throw new WatchingNotAllowedError(effective.app, gate)
   }
+  await deps.ensureNtfy()
 
   const values = {
     name: value.name,
@@ -323,6 +331,9 @@ export async function appEntryDeps(scope: MemberScope): Promise<EntryDeps> {
     },
     now: new Date(),
     publicUrl,
-    gate: watchGateFromEnv(process.env)
+    // Read on first use, so only a save needs a valid gate: pausing and deleting work without it.
+    get gate() {
+      return watchGateFromEnv(process.env)
+    }
   }
 }

@@ -153,6 +153,44 @@ test('a local identity may save a WhatsApp chat under the default gate', async (
   await expect(saveEntry(scope, entry, deps)).resolves.toMatchObject({ clashes: [] })
 })
 
+test('an edit that keeps a chat link is gated against the identity it moves to', async () => {
+  const { scope, memberId, identityId, deps } = await member()
+  await db.update(identities).set({ runLocation: 'local' }).where(eq(identities.id, identityId))
+  const [onServer] = await db
+    .insert(identities)
+    .values({ memberId, name: 'Hosted', zoomGuestName: 'Seed Member' })
+    .returning()
+  const chat = { kind: 'chat', app: 'whatsapp', chat: 'Class group' } as const
+  const { entryId } = await saveEntry(scope, { ...base, identityId, link: chat }, deps)
+  let ntfyCalls = 0
+  const counting: EntryDeps = {
+    ...deps,
+    ensureNtfy: async () => {
+      ntfyCalls += 1
+    }
+  }
+  const { link: _stored, ...edit } = base
+  for (const link of [{ kind: 'keep' }, undefined]) {
+    for (const whatsapp of ['home_only', 'none'] as const) {
+      const gated = { ...counting, gate: { whatsapp, discord: 'allowed' } as const }
+      await expect(
+        saveEntry(scope, { ...edit, id: entryId, identityId: onServer!.id, ...(link && { link }) }, gated)
+      ).rejects.toThrow(WatchingNotAllowedError)
+    }
+  }
+  expect(ntfyCalls).toBe(0)
+  const [kept] = await scope.select(timetableEntries, eq(timetableEntries.id, entryId))
+  expect(kept?.identityId).toBe(identityId)
+
+  const open = { ...counting, gate: { whatsapp: 'allowed', discord: 'allowed' } as const }
+  await expect(
+    saveEntry(scope, { ...edit, id: entryId, identityId: onServer!.id, link: { kind: 'keep' } }, open)
+  ).resolves.toMatchObject({ entryId })
+  const [moved] = await scope.select(timetableEntries, eq(timetableEntries.id, entryId))
+  expect(moved?.identityId).toBe(onServer!.id)
+  expect(moved?.link).toEqual(chat)
+})
+
 test('a fixed link is accepted only if the worker would accept it, and the trimmed original is kept', () => {
   const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
   const parse = (url: string) => EntryInputSchema.safeParse({ ...base, identityId, link: { kind: 'fixed', url } })
