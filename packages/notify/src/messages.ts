@@ -12,6 +12,7 @@ export type AlertKind =
   | 'not_admitted'
   | 'join_failed'
   | 'zoom_signin'
+  | 'teams_signin'
   | 'meet_signin'
   | 'devices_on'
   | 'no_audio'
@@ -90,7 +91,7 @@ export function formNotFilledPing(entry: string, c: FormCandidate, hhmm: string,
 // One action each (ntfy allows at most 3 per message).
 function alertActions(kind: AlertKind, links: SiteLinks | null | undefined): PingAction[] | null {
   if (!links) return null
-  if (kind === 'zoom_signin' || kind === 'meet_signin' || kind === 'signin_forms') {
+  if (kind === 'zoom_signin' || kind === 'teams_signin' || kind === 'meet_signin' || kind === 'signin_forms') {
     return [{ label: 'Sign in again', url: links.signIn }]
   }
   if (kind === 'no_link') return [{ label: 'Open meeting page', url: links.meetingPage }]
@@ -455,7 +456,7 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
     case 'removed':
       return 'The host removed the bot from the meeting.'
     case 'breakout':
-      return 'The meeting offered a breakout room. The bot stays in the main room.'
+      return "The meeting opened breakout rooms. The bot never joins one itself, but the organiser's settings may have moved it into one."
     case 'lobby_denied':
       return "The host didn't let the bot in."
     case 'not_admitted':
@@ -464,6 +465,8 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
       return `The bot couldn't join: ${requireDetail(kind, detail)}.`
     case 'zoom_signin':
       return 'Zoom asked to sign in. Re-seed the profile, then run the job again.'
+    case 'teams_signin':
+      return "Teams asked to sign in, so the bot couldn't join. Sign in to Teams again for this account."
     case 'meet_signin':
       return "Google asked to sign in, so the bot couldn't join the Meet call. Sign in to Google again for this identity."
     case 'devices_on':

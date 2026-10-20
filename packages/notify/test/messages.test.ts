@@ -344,6 +344,18 @@ test('a Meet sign-in pings with the copy and the Sign in again action', () => {
   })
 })
 
+test('Teams sign-in and breakout copy', () => {
+  expect(alertPing('Data Mining', 'teams_signin').message).toBe(
+    "Teams asked to sign in, so the bot couldn't join. Sign in to Teams again for this account."
+  )
+  expect(alertPing('Data Mining', 'breakout').message).toBe(
+    "The meeting opened breakout rooms. The bot never joins one itself, but the organiser's settings may have moved it into one."
+  )
+  for (const kind of ['teams_signin', 'breakout'] as const) {
+    expect(alertPing('Data Mining', kind).message).not.toMatch(/identit|zoom\.us|teams\.microsoft|passcode|pwd/i)
+  }
+})
+
 test('a mention pings with its transcript, and never shows a meeting link, meeting ID or passcode', () => {
   const meetingUrl = 'https://tm.example/meetings/o1'
   const takeOverUrl = 'https://tm.example/meetings/o1/take-over'
@@ -382,7 +394,7 @@ test('pings that send the member to the website carry one action each', () => {
     leave: 'https://t.example/meetings/1/leave',
     takeOver: 'https://t.example/meetings/1/take-over'
   }
-  for (const kind of ['zoom_signin', 'meet_signin', 'signin_forms'] as const) {
+  for (const kind of ['zoom_signin', 'teams_signin', 'meet_signin', 'signin_forms'] as const) {
     expect(alertPing('Data Mining', kind, 'Google', links).actions).toEqual([
       { label: 'Sign in again', url: links.signIn }
     ])
