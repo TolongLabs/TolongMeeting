@@ -1069,7 +1069,7 @@ export function exportDeps(): ApiDeps // createStores(db, readMasterKey(TM_MASTE
 
 Routes: `GET` and `POST /api/meetings/[occurrenceId]/exports` (body `{ target }`), `GET /api/exports/[exportId]/file`, `GET /api/connections`. Each handler calls `requireMember(req)`, then the matching function, and returns `Response.json(body, { status })` (the file route returns the `Response` as it is).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('creating exports', async () => {
@@ -1174,12 +1174,14 @@ test('buttonState', () => {
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/api.test.ts`
 Expected: FAIL with `Cannot find module './api'`.
 
 - [ ] **Step 3: Implement `api.ts`, the route handlers, `exportDeps` and `ExportPanel`**
+
+  _Status:_ the non-UI part is done (`api.ts`, `lib/exports.ts`, `lib/export-files.ts`, `lib/same-origin.ts`, the three routes; tests in `packages/exports/test/api.test.ts` and `packages/web/test/export-routes.test.ts`). The stores are member-bound (P7-2), so the functions take no member id. Routes use `[id]` (P7-1), `POST` checks `assertSameOrigin` (P7-12), and failures answer 422 and a deleted meeting 404 (not 400/410). `openExportFile` is in `lib/export-files.ts`. `ExportPanel` and its mount stay open behind the Figma gate.
 
 Check order in `createExportRequest`: zod body (`invalid_target`, 400), ownership (404), `deleted` (410, "This meeting has been deleted from TolongMeeting."), not `completed` (409, "This meeting is still being processed."), connection (400 `not_connected`, `reconnect_needed` or `invalid_settings`, with the runner's messages), then `exports.create` (409 on `already_running`), 202 `{ exportId }`. `buttonState`: any target is disabled with hint `Exporting` while an export to it is `queued` or `running`; otherwise downloads are enabled, and remote targets are disabled with the hints in the test while not connected or needing reconnection, and with `Pick a Notion page on the Connections page` while a Notion connection isn't `ready`. `exportFileRequest` answers 404 unless the row is the member's, `succeeded`, `zip` or `pdf`, and its file exists; it streams the file with the headers in the test, named `<title>.zip` or `<title>.pdf`. `ExportPanel` is a client component: it loads `/api/connections` and the export list, polls the list every 2,000 ms while any export is `queued` or `running`, and calls `window.location.assign(downloadUrl)` when a download this page view started succeeds. Copy:
 
@@ -1192,12 +1194,12 @@ Exports are your own copies. Deleting this meeting, by hand or after 30 days, do
 
 Below the buttons, each export shows its label, status, time, and "Open" (`url`), "Download" (`downloadUrl`), the note or the error.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
 Run: `bun test packages/exports/src/api.test.ts && bun run typecheck`
 Expected: PASS (`0 fail`); typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/api.ts packages/exports/src/api.test.ts packages/web
