@@ -5,7 +5,8 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFil
 import { type OccurrenceState } from '@tm/core'
 import type { Ping } from '@tm/notify'
 import { count, eq } from 'drizzle-orm'
-import { artefacts, events, exports as exportsTable, forms, occurrences, profiles } from '@tm/web/db'
+import { artefacts, companionJobs, events, exports as exportsTable, forms, occurrences, profiles } from '@tm/web/db'
+import { createCompanionJob } from '@tm/web/db/companion'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
@@ -36,6 +37,8 @@ interface Options {
   files?: string[]
   withRows?: boolean
   withExport?: boolean
+  /** A native transcription job for the meeting, in this state. */
+  job?: 'pending' | 'claimed'
   orphanOccurrenceDir?: boolean
   orphanProfileDir?: boolean
   checkpoints?: string[]
@@ -132,6 +135,26 @@ async function retentionFixture(o: Options = {}) {
     await mkdir(`${dir}/exports`, { recursive: true })
     await writeFile(`${dir}/exports/${exported!.id}.zip`, 'zip')
   }
+  if (o.job) {
+    const jobId = await createCompanionJob(db, {
+      memberId,
+      occurrenceId: id,
+      kind: 'native_transcription',
+      payload: {
+        occurrenceId: id,
+        entryName: 'Data Mining',
+        start: '2026-10-21T14:00:00+08:00',
+        timeZone: 'Asia/Kuala_Lumpur',
+        durationSec: 5400,
+        flacBytes: 1000
+      }
+    })
+    if (o.job === 'claimed')
+      await db
+        .update(companionJobs)
+        .set({ state: 'claimed', leaseUntil: new Date(now.getTime() + 60_000) })
+        .where(eq(companionJobs.id, jobId))
+  }
   if (o.orphanOccurrenceDir) await mkdir(`${env.dataRoot}/occurrences/${randomUUID()}/recording`, { recursive: true })
   if (o.orphanProfileDir) await mkdir(`${env.profileRoot}/${randomUUID()}/work`, { recursive: true })
   const cpDir = `${env.profileRoot}/${identityId}/checkpoints`
@@ -154,6 +177,7 @@ async function retentionFixture(o: Options = {}) {
     events: () => db.select().from(events).where(eq(events.occurrenceId, id)),
     count: async (t: typeof forms | typeof artefacts | typeof exportsTable) =>
       (await db.select({ n: count() }).from(t).where(eq(t.occurrenceId, id)))[0]!.n,
+    jobs: () => db.select().from(companionJobs).where(eq(companionJobs.occurrenceId, id)),
     checkpointNames: async () => (await readdir(cpDir)).sort()
   }
 }
@@ -315,6 +339,24 @@ test('a meeting stuck in the pipeline 40 days past its time is failed and delete
     expect(await f.count(artefacts)).toBe(0)
     expect((await f.events()).map((e) => e.data.to)).toEqual(['deleted'])
   }
+})
+
+test('retention cancels the native job of a stuck meeting it fails and deletes', async () => {
+  for (const job of ['pending', 'claimed'] as const) {
+    const f = await retentionFixture({
+      state: 'waiting_for_pc',
+      deleteAfter: new Date(now.getTime() - 40 * 24 * HOUR),
+      job
+    })
+    expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 1, skipped: 0 })
+    expect((await f.jobs()).map((j) => j.state)).toEqual(['cancelled'])
+  }
+})
+
+test('deleting the data of a finished meeting cancels a native job left behind', async () => {
+  const f = await retentionFixture({ state: 'failed', job: 'claimed' })
+  await deleteOccurrenceData(f.deps, f.id, now)
+  expect((await f.jobs()).map((j) => [j.state, j.deviceId, j.leaseUntil])).toEqual([['cancelled', null, null]])
 })
 
 test('a stuck meeting is only taken over after 3 hours past its time', async () => {

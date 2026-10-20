@@ -1,8 +1,8 @@
-import { JOB_LEASE_MS, meetingUrl, type SpecEnv } from '@tm/core'
+import { DEVICE_ONLINE_WINDOW_MS, JOB_LEASE_MS, meetingUrl, type SpecEnv } from '@tm/core'
 import { pings } from '@tm/notify'
-import { eq } from 'drizzle-orm'
-import { companionJobs, occurrences } from '@tm/web/db'
-import { getJob, markPcPingSent, releaseExpiredLeases } from '@tm/web/db/companion'
+import { and, eq, gte, isNull } from 'drizzle-orm'
+import { companionJobs, deviceTokens, occurrences } from '@tm/web/db'
+import { cancelNativeJobs, getJob, markPcPingSent, releaseExpiredLeases } from '@tm/web/db/companion'
 import { QUEUES } from '@tm/web/db/queues'
 import { applyTrigger } from '@tm/web/db/transitions'
 import { z } from 'zod'
@@ -14,7 +14,23 @@ const CheckData = z.strictObject({ jobId: z.uuid() })
 export type NativeCheckDeps = Pick<LaunchDeps, 'db' | 'queue' | 'notifier'> & { env: Pick<SpecEnv, 'publicUrl'> }
 
 /** `stale` is a job or occurrence that is gone or no longer waiting for a PC; the others are the job's own state. */
-export type NativeCheckResult = 'done' | 'failed' | 'claimed' | 'waiting_for_pc' | 'stale'
+export type NativeCheckResult = 'done' | 'failed' | 'claimed' | 'pending' | 'waiting_for_pc' | 'stale'
+
+/** A device of the member that is not revoked and was seen within `DEVICE_ONLINE_WINDOW_MS` of `now`. */
+async function memberDeviceOnline(db: NativeCheckDeps['db'], memberId: string, now: Date): Promise<boolean> {
+  const rows = await db
+    .select({ id: deviceTokens.id })
+    .from(deviceTokens)
+    .where(
+      and(
+        eq(deviceTokens.memberId, memberId),
+        isNull(deviceTokens.revokedAt),
+        gte(deviceTokens.lastUsedAt, new Date(now.getTime() - DEVICE_ONLINE_WINDOW_MS))
+      )
+    )
+    .limit(1)
+  return rows.length > 0
+}
 
 /**
  * One look at a native transcription job, from `native-job-check` (sent when the job is created and by this function
@@ -23,7 +39,8 @@ export type NativeCheckResult = 'done' | 'failed' | 'claimed' | 'waiting_for_pc'
  * - A `done` or `failed` job ends the chain.
  * - Leases that lapsed are released first (`releaseExpiredLeases`): a PC that went quiet has its job back.
  * - A `pending` job (no PC has it) moves a `transcribing` occurrence to `waiting_for_pc` and, the first time only,
- *   pings the member (`pings.waitingForPc`; the job's `pc_ping_sent_at` is set only after the ping went out, so a ping
+ *   pings the member, but only when the job was never tried (`attempts = 0`) or no PC of the member was seen within
+ *   `DEVICE_ONLINE_WINDOW_MS`; a job that a failed attempt sent back while a PC is online is just checked again (`pings.waitingForPc`; the job's `pc_ping_sent_at` is set only after the ping went out, so a ping
  *   that fails is tried again by the next check and one that succeeded is never repeated, also when a lapsed lease brings
  *   the job back later).
  * - A `claimed` job whose occurrence still says `waiting_for_pc` (the PC claimed it between this check's read and its
@@ -31,7 +48,7 @@ export type NativeCheckResult = 'done' | 'failed' | 'claimed' | 'waiting_for_pc'
  * - While the job is `pending` or `claimed` the next check is queued `JOB_LEASE_MS` later.
  *
  * Throws for a bad job body, so the queue retries it and then dead-letters it. A job, or an occurrence in any other
- * state (deleted, or already past the transcript), is `stale`: the chain ends.
+ * state (deleted, or already past the transcript), is `stale`: the chain ends and a pending or claimed job is cancelled.
  */
 export async function checkNativeJob(deps: NativeCheckDeps, jobId: string, now: Date): Promise<NativeCheckResult> {
   const { db } = deps
@@ -46,11 +63,14 @@ export async function checkNativeJob(deps: NativeCheckDeps, jobId: string, now: 
   const [occ] = await db.select().from(occurrences).where(eq(occurrences.id, job.occurrenceId))
   if (!occ || (occ.state !== 'transcribing' && occ.state !== 'waiting_for_pc')) {
     console.error(`native-job-check: ${jobId}: the occurrence is ${occ ? occ.state : 'gone'}; the check is dropped`)
+    await cancelNativeJobs(db, { jobId }, now)
     return 'stale'
   }
 
   let result: NativeCheckResult
-  if (job.state === 'pending') {
+  if (job.state === 'pending' && job.attempts > 0 && (await memberDeviceOnline(db, job.memberId, now))) {
+    result = 'pending'
+  } else if (job.state === 'pending') {
     if (occ.state === 'transcribing') await applyTrigger(db, occ.id, 'wait_for_pc')
     const [row] = await db
       .select({ sent: companionJobs.pcPingSentAt })

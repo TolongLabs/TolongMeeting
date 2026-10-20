@@ -1,8 +1,16 @@
 import { afterAll, beforeEach, expect, test } from 'bun:test'
 import { JOB_LEASE_MS } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { companionJobs, events, occurrences, type Db } from '@tm/web/db'
-import { claimJob, completeJob, createCompanionJob, failJobAttempt } from '@tm/web/db/companion'
+import { companionJobs, deviceTokens, events, occurrences, type Db } from '@tm/web/db'
+import {
+  NATIVE_JOB_CANCEL_REASON,
+  claimJob,
+  completeJob,
+  createCompanionJob,
+  failJobAttempt,
+  getClaimedJob,
+  listJobsForDevice
+} from '@tm/web/db/companion'
 import { seedCompanionFixture } from '@tm/web/db/companion.fixtures'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { QUEUES } from '@tm/web/db/queues'
@@ -107,15 +115,17 @@ test('a PC that claimed between the check read and its move takes the occurrence
 
 test('a done job stops the checks', async () => {
   await claimJob(db, f.a1, jobId, plus(100_000))
-  await completeJob(db, jobId)
+  await completeJob(db, f.a1, jobId, plus(110_000))
   expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('done')
   expect(nextCheck()).toEqual([])
   expect(await state()).toBe('transcribing')
 })
 
 test('a failed job stops the checks', async () => {
-  await failJobAttempt(db, jobId, 'boom')
-  await failJobAttempt(db, jobId, 'boom')
+  await claimJob(db, f.a1, jobId, plus(100_000))
+  await failJobAttempt(db, f.a1, jobId, 'boom', plus(101_000))
+  await claimJob(db, f.a1, jobId, plus(102_000))
+  await failJobAttempt(db, f.a1, jobId, 'boom', plus(103_000))
   expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('failed')
   expect(nextCheck()).toEqual([])
 })
@@ -126,6 +136,76 @@ test('a job whose occurrence has left the wait, or whose row is gone, is stale a
   expect(await checkNativeJob(deps(), '00000000-0000-4000-8000-000000000000', plus(120_000))).toBe('stale')
   expect(nextCheck()).toEqual([])
   expect(notifier.sent).toEqual([])
+})
+
+const jobOf = async () => (await db.select().from(companionJobs).where(eq(companionJobs.id, jobId)))[0]!
+
+test('a stale check cancels the pending job of a meeting that has left the wait', async () => {
+  await db.update(occurrences).set({ state: 'failed' }).where(eq(occurrences.id, f.occA))
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('stale')
+  expect(await jobOf()).toMatchObject({ state: 'cancelled', deviceId: null, leaseUntil: null })
+  expect((await jobOf()).error).toBe(NATIVE_JOB_CANCEL_REASON)
+  expect(await listJobsForDevice(db, f.a1)).toEqual([])
+})
+
+test('a stale check cancels a job a PC still holds after the meeting failed', async () => {
+  await claimJob(db, f.a1, jobId, plus(100_000))
+  await db.update(occurrences).set({ state: 'failed' }).where(eq(occurrences.id, f.occA))
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('stale')
+  expect(await jobOf()).toMatchObject({ state: 'cancelled', deviceId: null, leaseUntil: null })
+  expect(await getClaimedJob(db, f.a1, jobId, plus(120_000))).toBeNull()
+})
+
+test('a stale check leaves a finished job as it is', async () => {
+  await claimJob(db, f.a1, jobId, plus(100_000))
+  await completeJob(db, f.a1, jobId, plus(110_000))
+  await db.update(occurrences).set({ state: 'failed' }).where(eq(occurrences.id, f.occA))
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('done')
+  expect((await jobOf()).state).toBe('done')
+})
+
+const seenAt = (deviceId: string, at: Date) =>
+  db.update(deviceTokens).set({ lastUsedAt: at }).where(eq(deviceTokens.id, deviceId))
+/** One failed attempt: the job is pending again with `attempts = 1`. */
+async function failedOnce() {
+  await claimJob(db, f.a1, jobId, plus(100_000))
+  await failJobAttempt(db, f.a1, jobId, 'boom', plus(101_000))
+  expect(await jobOf()).toMatchObject({ state: 'pending', attempts: 1 })
+}
+
+test('a retried job whose PC is online keeps the occurrence and sends no ping', async () => {
+  await failedOnce()
+  await seenAt(f.a2.deviceId, plus(120_000 - 89_000))
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('pending')
+  expect(await state()).toBe('transcribing')
+  expect(notifier.sent).toEqual([])
+  expect(nextCheck()).toHaveLength(1)
+})
+
+test('a retried job moves to waiting_for_pc and pings once no PC was seen for 90 s', async () => {
+  await failedOnce()
+  await seenAt(f.a2.deviceId, plus(120_000 - 91_000))
+  await seenAt(f.b1.deviceId, plus(120_000)) // another member's PC does not count
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('waiting_for_pc')
+  expect(await state()).toBe('waiting_for_pc')
+  expect(notifier.sent).toHaveLength(1)
+})
+
+test('a revoked PC does not count as online', async () => {
+  await failedOnce()
+  await seenAt(f.a1.deviceId, plus(120_000))
+  await db
+    .update(deviceTokens)
+    .set({ revokedAt: plus(119_000) })
+    .where(eq(deviceTokens.id, f.a1.deviceId))
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('waiting_for_pc')
+})
+
+test('a job nobody has tried waits for a PC even when one is online', async () => {
+  await seenAt(f.a1.deviceId, plus(119_000))
+  expect(await checkNativeJob(deps(), jobId, plus(120_000))).toBe('waiting_for_pc')
+  expect(await state()).toBe('waiting_for_pc')
+  expect(notifier.sent).toHaveLength(1)
 })
 
 test('the handlers read the job id from the queue body and refuse anything else', async () => {

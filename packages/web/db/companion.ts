@@ -51,6 +51,15 @@ const jobColumns = {
 }
 type JobRow = { [K in keyof typeof jobColumns]: (typeof jobColumns)[K]['_']['data'] }
 
+/** A native job is live only while its meeting waits for the transcript; a job of any other kind is always live. */
+const occurrenceWantsJob = or(
+  ne(companionJobs.kind, 'native_transcription'),
+  sql`exists (
+    select 1 from ${occurrences}
+    where ${occurrences.id} = ${companionJobs.occurrenceId} and ${occurrences.state} in ('transcribing', 'waiting_for_pc')
+  )`
+)
+
 /** A row's payload is jsonb: parse it with the schema of its kind, never cast it. */
 function toJob(row: JobRow): CompanionJob {
   const { memberId: _memberId, ...job } = row
@@ -154,7 +163,7 @@ export async function listCompanionEvents(db: Db, device: DeviceAuth, afterId: n
 
 /**
  * The member's `pending` jobs this device may claim (untargeted, or aimed at it) and the jobs it holds. A revoked device
- * is handed nothing.
+ * is handed nothing, and neither is it a native job whose meeting has left `transcribing` and `waiting_for_pc`.
  */
 export async function listJobsForDevice(db: Db, device: DeviceAuth): Promise<CompanionJob[]> {
   const liveDevice = sql`exists (
@@ -169,6 +178,7 @@ export async function listJobsForDevice(db: Db, device: DeviceAuth): Promise<Com
         and(
           eq(companionJobs.memberId, device.memberId),
           liveDevice,
+          occurrenceWantsJob,
           or(
             and(
               eq(companionJobs.state, 'pending'),
@@ -190,7 +200,7 @@ export async function listJobsForDevice(db: Db, device: DeviceAuth): Promise<Com
  * `JOB_LEASE_MS` from `now`. A `local_run` is claimable only by its target device while that device is online (seen
  * within `DEVICE_ONLINE_WINDOW_MS`). Returns `'conflict'` when the job is visible to the device but cannot be claimed
  * now, and `null` when it does not exist for the device (another member's job, another device's target, a revoked
- * device).
+ * device, a native job whose meeting has left `transcribing` and `waiting_for_pc`).
  */
 export async function claimJob(
   db: Db,
@@ -223,6 +233,7 @@ export async function claimJob(
           eq(companionJobs.state, 'pending'),
           or(isNull(companionJobs.targetDeviceId), eq(companionJobs.targetDeviceId, device.deviceId)),
           or(ne(companionJobs.kind, 'local_run'), and(eq(companionJobs.targetDeviceId, device.deviceId), onlineDevice)),
+          occurrenceWantsJob,
           liveDevice
         )
       )
@@ -237,6 +248,7 @@ export async function claimJob(
           eq(companionJobs.id, jobId),
           eq(companionJobs.memberId, device.memberId),
           or(isNull(companionJobs.targetDeviceId), eq(companionJobs.targetDeviceId, device.deviceId)),
+          occurrenceWantsJob,
           liveDevice
         )
       )
@@ -453,4 +465,33 @@ export async function markPcPingSent(db: Db, jobId: string, now: Date = new Date
       .returning({ id: companionJobs.id })
   )
   return rows.length === 1
+}
+
+/** The reason a native job gets when its meeting no longer waits for a transcript. */
+export const NATIVE_JOB_CANCEL_REASON = 'The meeting is no longer waiting for a transcript.'
+
+/**
+ * Cancels the `pending` or `claimed` native jobs of an occurrence (all of them, or only `jobId`) with a fixed reason, so
+ * no PC claims or keeps working on a meeting that was failed or deleted. A `done`, `failed` or `cancelled` job is left
+ * alone. Returns the ids it cancelled. `db` may be a transaction.
+ */
+export async function cancelNativeJobs(
+  db: Db,
+  where: { occurrenceId: string } | { jobId: string },
+  now: Date = new Date()
+): Promise<string[]> {
+  const rows = await guarded(() =>
+    db
+      .update(companionJobs)
+      .set({ state: 'cancelled', deviceId: null, leaseUntil: null, error: NATIVE_JOB_CANCEL_REASON, updatedAt: now })
+      .where(
+        and(
+          'jobId' in where ? eq(companionJobs.id, where.jobId) : eq(companionJobs.occurrenceId, where.occurrenceId),
+          eq(companionJobs.kind, 'native_transcription'),
+          inArray(companionJobs.state, ['pending', 'claimed'])
+        )
+      )
+      .returning({ id: companionJobs.id })
+  )
+  return rows.map((r) => r.id)
 }

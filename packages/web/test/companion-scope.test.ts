@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import type { LocalRunPayload } from '@tm/core'
 import { eq } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
-import { deviceTokens, type Db } from '../db'
+import { deviceTokens, occurrences, type Db } from '../db'
 import { createCompanionJob, emitCompanionEvent } from '../db/companion'
 import { seedCompanionFixture } from '../db/companion.fixtures'
 import { createTestDb, dropAllTestDbs, seedAuthUser, seedMember, TEST_MASTER } from '../db/testing'
@@ -180,6 +180,8 @@ describe('device routes', () => {
   beforeAll(async () => {
     db = await createTestDb()
     fx = await seedCompanionFixture(db)
+    // A native job is live only while its meeting is in the transcript wait.
+    await db.update(occurrences).set({ state: 'transcribing' })
     // Give each fixture device a real token: the fixture stores a random hash.
     for (const key of ['a1', 'a2', 'b1'] as const) {
       const { token, hash } = newDeviceToken()

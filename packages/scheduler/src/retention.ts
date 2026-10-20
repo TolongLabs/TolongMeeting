@@ -13,6 +13,7 @@ import {
   occurrences,
   profiles
 } from '@tm/web/db'
+import { cancelNativeJobs } from '@tm/web/db/companion'
 import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import { applyTrigger } from '@tm/web/db/transitions'
 import { resolveEnv } from './container-spec'
@@ -104,12 +105,13 @@ async function removeUnder(root: string, name: string): Promise<boolean> {
  * after "delete now" (`requestDeleteNow` sets `state_reason` to `deleting`) and `expired` otherwise. Throws
  * `OccurrenceActiveError` for an occurrence that is running or still in the pipeline.
  */
-export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: string, _now: Date): Promise<void> {
+export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: string, now: Date): Promise<void> {
   const { db, env } = deps
   await db.transaction(async (tx) => {
     const [row] = await tx.select().from(occurrences).where(eq(occurrences.id, occurrenceId)).for('update')
     if (!row) throw new Error(`No occurrence ${occurrenceId}`)
     if (row.state === 'deleted') {
+      await cancelNativeJobs(tx, { occurrenceId }, now)
       await tx.delete(artefacts).where(eq(artefacts.occurrenceId, occurrenceId))
       await tx.delete(exportsTable).where(eq(exportsTable.occurrenceId, occurrenceId))
       return
@@ -121,6 +123,7 @@ export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: strin
       .where(eq(profiles.heldBy, `occ:${occurrenceId}`))
     if (held.length > 0) throw new OccurrenceActiveError(occurrenceId)
 
+    await cancelNativeJobs(tx, { occurrenceId }, now)
     await tx.delete(forms).where(eq(forms.occurrenceId, occurrenceId))
     await tx.delete(artefacts).where(eq(artefacts.occurrenceId, occurrenceId))
     // The tombstone keeps the occurrence row, so the cascade never fires: the exports (titles, file paths) go here. Their
@@ -303,7 +306,7 @@ async function pruneCheckpoints(deps: LaunchDeps, now: Date): Promise<number> {
  * follows is allowed. The pipeline's per-occurrence lock is tried without waiting: a held lock means a run is going
  * (`OccurrenceActiveError`, the tick skips the meeting and tries again next hour). A held profile blocks it as well.
  */
-async function failStuck(deps: LaunchDeps, occurrenceId: string): Promise<void> {
+async function failStuck(deps: LaunchDeps, occurrenceId: string, now: Date): Promise<void> {
   await deps.db.transaction(async (tx) => {
     if (!(await tryPipelineLock(tx, occurrenceId))) throw new OccurrenceActiveError(occurrenceId)
     const held = await tx
@@ -317,8 +320,11 @@ async function failStuck(deps: LaunchDeps, occurrenceId: string): Promise<void> 
       .where(eq(occurrences.id, occurrenceId))
       .for('update')
     // A run that ended since the list was read left the state somewhere else; the delete below decides about it.
-    if (row && PIPELINE_STATES.includes(row.state))
+    if (row && PIPELINE_STATES.includes(row.state)) {
       await applyTrigger(tx, occurrenceId, 'fail', { reason: 'retention_expired' })
+      // The native job a PC may still hold has nothing left to wait for.
+      await cancelNativeJobs(tx, { occurrenceId }, now)
+    }
   })
 }
 
@@ -349,7 +355,7 @@ export async function retentionTick(deps: LaunchDeps, now: Date): Promise<Retent
       await step(async () => {
         try {
           if (PIPELINE_STATES.includes(state) && now.getTime() - deleteAfter.getTime() > PIPELINE_GRACE_MS)
-            await failStuck(deps, id)
+            await failStuck(deps, id, now)
           await deleteOccurrenceData(deps, id, now)
           result.deleted++
         } catch (e) {

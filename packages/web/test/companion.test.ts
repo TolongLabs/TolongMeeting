@@ -1,9 +1,10 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 import { JOB_LEASE_MS, type CompanionJob, type LocalRunPayload } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { companionJobs, deviceTokens, type Db } from '../db'
+import { companionJobs, deviceTokens, occurrences, type Db } from '../db'
 import {
   claimJob,
+  cancelNativeJobs,
   completeJob,
   createCompanionJob,
   emitCompanionEvent,
@@ -73,6 +74,8 @@ beforeEach(async () => {
   f = await seedCompanionFixture(db)
   // The fixture devices were paired a day before `t0`, so the events the tests emit at `t0` are theirs to see.
   await db.update(deviceTokens).set({ createdAt: plus(-86_400_000) })
+  // A native job is live only while its meeting waits for the transcript.
+  await db.update(occurrences).set({ state: 'transcribing' }).where(eq(occurrences.id, f.occA))
 }, 60_000)
 
 const nativeJob = (targetDeviceId?: string) =>
@@ -150,6 +153,62 @@ describe('claiming', () => {
     await claimJob(db, f.a1, mine, t0)
     expect((await listJobsForDevice(db, f.a1)).map((j) => j.id).sort()).toEqual([mine, other].sort())
     expect((await listJobsForDevice(db, f.a2)).map((j) => j.id)).toEqual([other])
+  })
+})
+
+describe('a native job and its meeting', () => {
+  const setState = (state: 'transcribing' | 'waiting_for_pc' | 'failed' | 'deleted' | 'post_processing') =>
+    db.update(occurrences).set({ state }).where(eq(occurrences.id, f.occA))
+
+  test('a job of a meeting waiting for the PC is listed and claimable', async () => {
+    const id = await nativeJob()
+    await setState('waiting_for_pc')
+    expect((await listJobsForDevice(db, f.a1)).map((j) => j.id)).toEqual([id])
+    expect(await claimJob(db, f.a1, id, t0)).toMatchObject({ state: 'claimed' })
+  })
+
+  test('the job of a deleted meeting leaves the list and cannot be claimed', async () => {
+    const id = await nativeJob()
+    await setState('deleted')
+    expect(await listJobsForDevice(db, f.a1)).toEqual([])
+    expect(await claimJob(db, f.a1, id, t0)).toBeNull()
+    expect((await getJob(db, id))?.state).toBe('pending')
+  })
+
+  test('a job whose meeting failed or moved on is neither listed nor claimable, and a held one drops off the list', async () => {
+    const held = await nativeJob()
+    const open = await nativeJob()
+    await claimJob(db, f.a1, held, t0)
+    for (const state of ['failed', 'post_processing'] as const) {
+      await setState(state)
+      expect(await listJobsForDevice(db, f.a1)).toEqual([])
+      expect(await listJobsForDevice(db, f.a2)).toEqual([])
+      expect(await claimJob(db, f.a2, open, t0)).toBeNull()
+    }
+  })
+
+  test('a local_run is not tied to the state of its occurrence', async () => {
+    const id = await localJob(f.a1.deviceId)
+    await seen(f.a1.deviceId, t0)
+    await setState('failed')
+    expect((await listJobsForDevice(db, f.a1)).map((j) => j.id)).toEqual([id])
+    expect(await claimJob(db, f.a1, id, t0)).toMatchObject({ state: 'claimed' })
+  })
+
+  test('cancelNativeJobs cancels the open native jobs of an occurrence and nothing else', async () => {
+    const pending = await nativeJob()
+    const held = await nativeJob()
+    const done = await nativeJob()
+    const local = await localJob(f.a1.deviceId)
+    await claimJob(db, f.a1, held, t0)
+    await claimJob(db, f.a2, done, t0)
+    await completeJob(db, f.a2, done, plus(1000))
+    expect((await cancelNativeJobs(db, { occurrenceId: f.occA }, plus(2000))).sort()).toEqual([pending, held].sort())
+    expect(await getJob(db, held)).toMatchObject({ state: 'cancelled' })
+    expect(await getClaimedJob(db, f.a1, held, plus(2000))).toBeNull()
+    expect((await getJob(db, done))?.state).toBe('done')
+    expect((await getJob(db, local))?.state).toBe('pending')
+    expect(await cancelNativeJobs(db, { occurrenceId: f.occA })).toEqual([])
   })
 })
 

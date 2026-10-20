@@ -97,6 +97,14 @@ describe('extractFlac', () => {
     expect(await exists(`${dir}/audio.flac`)).toBe(false)
   })
 
+  test('an occurrence directory that is a link is refused, even when it holds a recording', async () => {
+    const real = await occurrenceDir('real')
+    toneMkv(`${real}/recording/meeting.mkv`, 2)
+    await symlink(real, `${tmp}/linked`)
+    await expect(extractFlac(`${tmp}/linked`)).rejects.toThrow('not a plain directory')
+    expect(await exists(`${real}/audio.flac`)).toBe(false)
+  })
+
   test('a directory with no recording throws', async () => {
     const dir = await occurrenceDir('empty')
     await expect(extractFlac(dir)).rejects.toThrow('There is no recording')

@@ -82,7 +82,8 @@ export async function openMemberFile(
 
 /**
  * The descriptor-checked open both public openers use: `O_NOFOLLOW | O_NONBLOCK`, then the descriptor's real path must
- * lie inside `dir` and `fstat` must say it is a regular file. Anything else closes the descriptor and gives null.
+ * lie inside `dir` and `fstat` must say it is a regular file with one link (a hard link to a file outside `dir` has the
+ * same real path inside it, but a second name outside). Anything else closes the descriptor and gives null.
  */
 async function openInside(lexical: string, dir: string): Promise<OpenedFile | null> {
   let handle: FileHandle
@@ -98,7 +99,7 @@ async function openInside(lexical: string, dir: string): Promise<OpenedFile | nu
       realpath(dir),
       handle.stat()
     ])
-    if (info.isFile() && actual.startsWith(base + sep)) return { handle, name: lexical }
+    if (info.isFile() && info.nlink === 1 && actual.startsWith(base + sep)) return { handle, name: lexical }
   } catch (e) {
     await handle.close().catch(() => undefined)
     if (isMissing(e)) return null

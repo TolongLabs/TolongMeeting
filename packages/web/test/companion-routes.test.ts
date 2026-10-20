@@ -53,6 +53,8 @@ const nativePayload = (occurrenceId: string) => ({
 beforeAll(async () => {
   db = await createTestDb()
   fx = await seedCompanionFixture(db)
+  // A native job is live only while its meeting is in the transcript wait.
+  await db.update(occurrences).set({ state: 'transcribing' })
   for (const key of ['a1', 'a2', 'b1'] as const) {
     const { token, hash } = newDeviceToken()
     await db.update(deviceTokens).set({ tokenHash: hash }).where(eq(deviceTokens.id, fx[key].deviceId))

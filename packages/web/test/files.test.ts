@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, open, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, open, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { artefacts, type Db } from '../db'
 import { createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
-import { openMemberFile, serveFile, type OpenedFile } from '../lib/files'
+import { openMemberFile, openOccurrenceFile, serveFile, type OpenedFile } from '../lib/files'
 import { createScope } from '../lib/scope'
 
 let db: Db
@@ -203,6 +203,18 @@ test('openMemberFile refuses a final symlink even inside, a directory, a file th
   for (const path of ['recording/alias.mkv', 'forms', 'recording/gone.mp4', 'recording/pipe']) {
     expect([path, await openMemberFile(scope, occurrenceId, path)]).toEqual([path, null])
   }
+})
+
+test('openMemberFile and openOccurrenceFile refuse a hard link to a file outside the occurrence directory', async () => {
+  const { scope, occurrenceId, dir } = await occurrenceFixture()
+  const secret = await file('hard-secret.txt', 'not yours')
+  await link(secret, join(dir, 'recording', 'hard.mp4'))
+  await register(scope, occurrenceId, 'recording/hard.mp4')
+  expect(await openMemberFile(scope, occurrenceId, 'recording/hard.mp4')).toBeNull()
+  expect(await openOccurrenceFile(dir, 'recording/hard.mp4')).toBeNull()
+  // Once the outside name is gone the file is the occurrence's own again.
+  await unlink(secret)
+  expect(await readOpened(await openOccurrenceFile(dir, 'recording/hard.mp4'))).toBe('not yours')
 })
 
 test('openMemberFile allows a path through a directory symlink that stays inside the occurrence', async () => {

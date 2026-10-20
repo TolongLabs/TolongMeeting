@@ -28,6 +28,12 @@ export async function extractFlac(
   occDir: string,
   signal?: AbortSignal
 ): Promise<{ path: string; durationSec: number; bytes: number }> {
+  // A link in place of the occurrence directory is refused, as the web side's `nativeDir` does; a missing one has no recording.
+  const top = await lstat(occDir).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null
+    throw err
+  })
+  if (top !== null && !top.isDirectory()) throw new Error(`${occDir} is not a plain directory`)
   const joined = await joinedRecording(occDir, signal)
   if (joined === null) throw new Error(`There is no recording in ${occDir} to cut audio from`)
   const { root, recording } = joined
