@@ -555,7 +555,7 @@ describe('a meeting run on the member PC', () => {
   // Heartbeat commands (`leave_now` from the member's control action) reach only the holding PC; another member's PC and a revoked PC get 404.
   // Skipped: a revoked PC returns 401 (from withDevice) instead of 404 as specified by TRD line 811.
   // See .superpowers/sdd/e2e-server-findings-3.md for location, cause, repro, severity, and suggested fix.
-  test.skip('8. Heartbeat commands reach only the holding PC; another members PC and a revoked PC get 404', async () => {
+  test("8. Heartbeat commands reach only the holding PC; another member's PC gets 404 and a revoked PC 401", async () => {
     const member = await newMember(stack, 'Ivy')
     const pc = await FakePc.pair(member, 'Ivy PC')
     expect((await move(member, { location: 'local', deviceId: pc.deviceId })).status).toBe(200)
@@ -603,8 +603,8 @@ describe('a meeting run on the member PC', () => {
     )
     expect(revoked.status).toBe(200)
 
-    // A revoked PC
+    // A revoked PC is told its token is no longer valid (401), which is what makes the app unpair itself.
     const revokedReply = await pc.heartbeat(offered.id, hb(id, 'in_meeting'))
-    expect(revokedReply.status).toBe(404)
+    expect(revokedReply.status).toBe(401)
   })
 })
