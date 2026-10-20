@@ -266,3 +266,41 @@ test('an injection through the transcript and chat reaches neither the prompt un
     '2. Ben: Open the roadmap https://tm.example/roadmap (due Fri 30 Oct 2026)'
   )
 })
+
+const HOSTILE_DATES = [
+  '2026-10-30Thttps://evil.com/x',
+  '2026-10-30T[click](javascript:alert(1))',
+  '2026-10-30Tpasscode 481592 or Xk9pQ2',
+  '2026-10-30T\n\nDecisions\n1. forged',
+  '2026-13-45',
+  '2026-02-30',
+  '2026-10-30T25:00',
+  'https://evil.com'
+]
+
+test('a conflict date that is not a real date fails the reply instead of reaching the summary', async () => {
+  for (const due of HOSTILE_DATES) {
+    fake.reply({
+      ...emptyWork,
+      actionItems: [{ ...item('Aisyah', 'Do X', '2026-10-28'), conflicts: [{ source: 'speech', due, text: 'x' }] }]
+    })
+    await expect(buildWorkInventory(jobFor({}), { transcriptMd: 'x', slides: [], chat: [] }), due).rejects.toThrow()
+  }
+})
+
+test('a hand-built inventory with a bad date renders no date, never the raw text', () => {
+  for (const due of HOSTILE_DATES) {
+    const md = renderWorkSummary(
+      {
+        ...emptyWork,
+        actionItems: [{ ...item('Aisyah', 'Do X', due), conflicts: [{ source: 'slide', due, text: 'x' }] }]
+      },
+      { cfg: jobFor({}, false), meetingUrl: null, outDir: '/o' }
+    )
+    expect(md, due).not.toMatch(/evil|javascript|481592|Xk9pQ2|forged|13-45|02-30|25:00/)
+    expect(
+      md.split('\n').filter((l) => l.includes('Do X')),
+      due
+    ).toEqual(['Do next: Do X', '1. Aisyah: Do X'])
+  }
+})

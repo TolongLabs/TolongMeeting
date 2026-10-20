@@ -30,7 +30,7 @@ export const WorkInventorySchema = z.object({
       conflicts: z.array(
         z.object({
           source: Source,
-          due: z.string().nullable(),
+          due: Due.nullable(),
           text: z.string()
         })
       )

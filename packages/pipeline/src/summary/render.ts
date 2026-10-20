@@ -1,6 +1,6 @@
 import { localParts, type JobConfig } from '@tm/core'
 import { scrub } from '../scrub'
-import type { Inventory, InventoryItem } from './inventory'
+import { parseDue, type Inventory, type InventoryItem } from './inventory'
 
 type Source = InventoryItem['source']
 
@@ -18,14 +18,14 @@ const RANK: Record<Source, number> = { slide: 0, lecturer_chat: 1, speech: 2 }
 const SAYS: Record<Source, string> = { slide: 'slide says', lecturer_chat: 'chat says', speech: 'heard as' }
 const NOTHING_TO_DO = 'nothing to do from this session'
 
-// "Sun 1 Nov 2026" or "Sun 1 Nov 2026, 23:59" from "YYYY-MM-DD[Thh:mm]". The string has no zone, so it is read as
-// UTC and the process zone cannot move the weekday.
-export function dateText(due: string): string {
-  const [datePart, time] = due.split('T') as [string, string | undefined]
-  const [year, month, day] = datePart.split('-').map(Number) as [number, number, number]
-  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]
-  const date = `${weekday} ${day} ${MONTHS[month - 1]} ${year}`
-  return time === undefined ? date : `${date}, ${time}`
+// "Sun 1 Nov 2026" or "Sun 1 Nov 2026, 23:59" from "YYYY-MM-DD[THH:mm]". The string has no zone, so it is read as
+// UTC and the process zone cannot move the weekday. Anything that is not a real date gives null, never the raw text.
+export function dateText(due: string): string | null {
+  const parts = parseDue(due)
+  if (parts === null) return null
+  const weekday = WEEKDAYS[new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay()]
+  const date = `${weekday} ${parts.day} ${MONTHS[parts.month - 1]} ${parts.year}`
+  return parts.time === null ? date : `${date}, ${parts.time}`
 }
 
 /**
@@ -34,7 +34,8 @@ export function dateText(due: string): string {
  */
 export function chooseDue(item: Dated): { due: string | null; note: string | null } {
   const versions = [{ source: item.source, due: item.due }, ...item.conflicts]
-  const dated = versions.filter((v): v is { source: Source; due: string } => v.due !== null)
+  // A value that is not a real date counts as no date: it is neither shown nor ranked.
+  const dated = versions.filter((v): v is { source: Source; due: string } => v.due !== null && dateText(v.due) !== null)
   const best = dated.reduce<(typeof dated)[number] | null>(
     (top, v) => (top === null || RANK[v.source] < RANK[top.source] ? v : top),
     null

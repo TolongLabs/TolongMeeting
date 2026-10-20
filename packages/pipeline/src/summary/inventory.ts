@@ -8,8 +8,23 @@ import type { Slide } from '../slides'
 
 export const Source = z.enum(['slide', 'lecturer_chat', 'speech'])
 
-// "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm", in the entry's time zone.
-export const Due = z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/)
+const DUE_SHAPE = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/
+
+/** The parts of a real "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" value; null for anything else (month 13, 31 Feb, 25:00, text). */
+export function parseDue(due: string): { year: number; month: number; day: number; time: string | null } | null {
+  const m = DUE_SHAPE.exec(due)
+  if (m === null) return null
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const probe = new Date(Date.UTC(year, month - 1, day))
+  // Date.UTC rolls 31 Feb over to 3 Mar; a real date reads back unchanged.
+  if (month < 1 || month > 12 || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null
+  if (m[4] === undefined) return { year, month, day, time: null }
+  if (Number(m[4]) > 23 || Number(m[5]) > 59) return null
+  return { year, month, day, time: `${m[4]}:${m[5]}` }
+}
+
+// "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm", in the entry's time zone. Also used for the dates in "conflicts".
+export const Due = z.string().refine((due) => parseDue(due) !== null, 'not a date: use YYYY-MM-DD or YYYY-MM-DDTHH:mm')
 
 export const InventorySchema = z.object({
   sessionLabel: z.string().nullable(),
@@ -24,7 +39,7 @@ export const InventorySchema = z.object({
       conflicts: z.array(
         z.object({
           source: Source,
-          due: z.string().nullable(),
+          due: Due.nullable(),
           text: z.string()
         })
       )

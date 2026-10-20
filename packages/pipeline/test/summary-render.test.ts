@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from 'bun:test'
 import type { Inventory, InventoryItem } from '../src/summary/inventory'
-import { chooseDue, renderLectureSummary } from '../src/summary/render'
+import { chooseDue, dateText, renderLectureSummary } from '../src/summary/render'
 import { makeOccurrence, removeOccurrence } from './helpers'
 
 const occ = await makeOccurrence()
@@ -194,4 +194,20 @@ test('unread slides are named in the summary', () => {
   expect(out).toContain(
     '\nSlide text could not be read for slide 03, 12. Items on those slides may be missing.\n\nDetails: '
   )
+})
+
+test('dateText gives a real date only: raw text, month 13, 31 Feb and 25:00 give null', () => {
+  expect(dateText('2026-11-01T23:59')).toBe('Sun 1 Nov 2026, 23:59')
+  expect(dateText('2026-02-28')).toBe('Sat 28 Feb 2026')
+  for (const bad of [
+    '2026-10-30Thttps://evil.com/x',
+    '2026-13-01',
+    '2026-00-10',
+    '2026-02-30',
+    '2026-10-32',
+    '2026-10-30T24:00',
+    '2026-10-30T09:60',
+    'soon'
+  ])
+    expect(dateText(bad), bad).toBeNull()
 })

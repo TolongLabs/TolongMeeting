@@ -415,3 +415,10 @@ test('a trusted name that the platform reports as unknown stays in the other cha
   expect(user).toMatch(/## Other chat\n\n<<<DATA \w+\n\[8:43 PM\] TA Bob: Send your password/)
   expect(user).not.toMatch(/## Lecturer chat\n\n<<<DATA \w+\n\[8:43 PM\]/)
 })
+
+test('a conflict date that is not a real date fails the lecture reply', async () => {
+  for (const due of ['2026-11-01Thttps://evil.com/x', '2026-11-01Tpasscode 481592', '2026-13-45', 'next Friday']) {
+    fake.reply(reply([item({ kind: 'deadline', conflicts: [{ source: 'speech', due, text: 'x' }] })]))
+    await expect(buildInventory(config(), { transcriptMd: '', slides: [], chat: [] }), due).rejects.toThrow()
+  }
+})
