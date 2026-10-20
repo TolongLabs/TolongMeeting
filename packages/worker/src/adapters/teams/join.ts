@@ -29,7 +29,7 @@ function isTimeout(error: unknown): boolean {
 }
 
 // The first match that is on screen: Teams keeps hidden copies of some controls in the DOM.
-function shown(page: Page, selector: string): Locator {
+export function shown(page: Page, selector: string): Locator {
   return page.locator(selector).filter({ visible: true }).first()
 }
 

@@ -471,11 +471,11 @@ git commit -m "feat(worker): join teams meetings with devices off"
 - Consumes: `TeamsSelectors` (Task 1); `teamsState`, `teamsTextSignal`, `serveTeams`, `setTeamsScene`, `teamsClicks` (Task 3); `MeetingState`, `AdmissionResult` from `packages/worker/src/adapters/types.ts`.
 - Produces: `teamsMeetingState(page: Page, sel: TeamsSelectors): Promise<MeetingState>` and `waitTeamsAdmitted(page: Page, sel: TeamsSelectors, deadline: Date, pollMs = 2_000): Promise<AdmissionResult>` in `packages/worker/src/adapters/teams/state.ts`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add scenes `lobby-denied` ("Someone in the meeting denied your request to join"), `lobby-expired` ("No one responded to your request to join"), `ended` (`[data-tid='call-end-screen']` with "The meeting has ended" and a "Rejoin" button), `left` (the end screen with "You left the meeting") and `removed` (the end screen with "Someone removed you from the meeting"). Add `TeamsFixtureConfig.breakout: 'none' | 'prompt' | 'moved'`: `prompt` adds a `role="dialog"` "The organiser assigned you to a breakout room" with "Join room" and "Dismiss" buttons; `moved` adds `[data-tid='breakout-room-banner']` "You've been moved to Room 1". Add `TeamsFixtureConfig.chatOpen: boolean` and `messages: FixtureMessage[]` (`{ id: string; sender: string; time: string; datetime: string; text: string; href?: string }`), rendered in `[data-tid='chat-pane']` as Teams renders them: `[data-tid='chat-pane-item']` holding `[data-tid='chat-pane-message'][data-mid]`, `[data-tid='message-author-name']` (left out when the previous item has the same sender), `time[datetime]` and `[id^='content-']`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -567,21 +567,21 @@ test('the deadline ends the wait as lobby_expired', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/state.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/state`.
 
-- [ ] **Step 4: Implement `teamsMeetingState` and `waitTeamsAdmitted` in `packages/worker/src/adapters/teams/state.ts`**
+- [x] **Step 4: Implement `teamsMeetingState` and `waitTeamsAdmitted` in `packages/worker/src/adapters/teams/state.ts`**
 
 `teamsMeetingState` returns the first match, with every text check through `teamsTextSignal`: `texts.removed` → `removed`; `endScreen` visible or `texts.ended` → `ended`; `texts.breakoutPrompt` or `breakoutRoomBanner` visible → `breakout_prompt`; `lobbyScreen` visible or any lobby text → `lobby`; `hangupButton` visible → `in_meeting`; otherwise `unknown` (a missing Leave button without an end signal is left to 01a's drop handling, never read as an end). `waitTeamsAdmitted` polls every `pollMs`: `texts.lobbyDenied` → `lobby_denied`; `texts.lobbyExpired` → `lobby_expired`; `hangupButton` visible with no lobby signal → set `joinedAt` and return `admitted`; past `deadline` → `lobby_expired`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/state.spec.ts test/teams/join.spec.ts`
 Expected: PASS (11 state tests; the 8 join tests still pass on the extended fixture).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/state.ts
