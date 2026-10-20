@@ -1,0 +1,134 @@
+// Starts the website for the page specs: a scratch database, two seeded members with real Better Auth sessions, a
+// production build and `next start`. Stops the site and drops the database on SIGTERM or SIGINT.
+import { createHmac, randomBytes } from 'node:crypto'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { eq } from 'drizzle-orm'
+import { schema } from '../../db'
+import { createTestDb, dropAllTestDbs, seedAuthUser, seedMember, testDbUrl, TEST_MASTER } from '../../db/testing'
+import { createAuth } from '../../lib/auth'
+import { STATE_FILE, type E2eState } from './state'
+
+const webRoot = join(import.meta.dir, '..', '..')
+const port = Number(process.argv[2])
+const origin = `http://127.0.0.1:${port}`
+const DAY = 24 * 3_600_000
+
+const db = await createTestDb()
+
+// Which GitHub user each fake token belongs to; sign-in links the member with the same login.
+const users: Record<string, { id: number; login: string }> = {
+  gho_admin: { id: 1001, login: 'e2e-admin' },
+  gho_member: { id: 1002, login: 'e2e-member' }
+}
+const auth = createAuth({
+  db,
+  master: TEST_MASTER,
+  publicUrl: origin,
+  clientId: 'e2e-client-id',
+  clientSecret: 'e2e-client-secret',
+  org: 'tolonglabs',
+  github: { user: async (token) => users[token]!, orgMembership: async () => 'active' }
+})
+const ctx = await auth.$context
+
+async function signedIn(login: string, role: 'admin' | 'member', token: string, full: boolean) {
+  const seeded = await seedMember(db, { githubLogin: login, role, full })
+  const authUserId = await seedAuthUser(db, { githubToken: token })
+  const session = await ctx.internalAdapter.createSession(authUserId)
+  const signature = createHmac('sha256', ctx.secret).update(session.token).digest('base64')
+  return {
+    seeded,
+    cookie: { name: ctx.authCookies.sessionToken.name, value: encodeURIComponent(`${session.token}.${signature}`) }
+  }
+}
+
+const admin = await signedIn('e2e-admin', 'admin', 'gho_admin', true)
+const member = await signedIn('e2e-member', 'member', 'gho_member', false)
+
+// The admin has a lecture tomorrow, a meeting in progress and an old failed one that is deleted in 2 days.
+const now = Date.now()
+const { ids, memberId, identityId } = admin.seeded
+await db
+  .update(schema.occurrences)
+  .set({ scheduledStart: new Date(now + DAY), scheduledEnd: new Date(now + DAY + 2 * 3_600_000) })
+  .where(eq(schema.occurrences.id, ids.occurrences))
+const base = {
+  memberId,
+  entryId: ids.timetableEntries,
+  identityId,
+  entryType: 'work',
+  transcription: 'live'
+} as const
+await db.insert(schema.occurrences).values([
+  {
+    ...base,
+    entryName: 'Live standup',
+    state: 'in_meeting' as const,
+    scheduledStart: new Date(now - 600_000),
+    scheduledEnd: new Date(now + 3_000_000),
+    deleteAfter: new Date(now + 30 * DAY)
+  },
+  {
+    ...base,
+    entryName: 'Old lecture',
+    state: 'failed' as const,
+    scheduledStart: new Date(now - 28 * DAY),
+    scheduledEnd: new Date(now - 28 * DAY + 3_600_000),
+    deleteAfter: new Date(now + 2 * DAY)
+  }
+])
+
+const state: E2eState = { cookies: { admin: admin.cookie, member: member.cookie } }
+mkdirSync(tmpdir(), { recursive: true })
+writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 })
+
+const keyFile = join(tmpdir(), `tm-web-e2e-key-${randomBytes(4).toString('hex')}`)
+writeFileSync(keyFile, TEST_MASTER.toString('base64'), { mode: 0o600 })
+const env = {
+  ...process.env,
+  DATABASE_URL: testDbUrl(db),
+  TM_PUBLIC_URL: origin,
+  GITHUB_CLIENT_ID: 'e2e-client-id',
+  GITHUB_CLIENT_SECRET: 'e2e-client-secret',
+  GITHUB_ORG: 'tolonglabs',
+  TM_MASTER_KEY_FILE: keyFile
+}
+
+// Every page, plus the sign-in API, and no other route handler. `next build` of the route handlers that import
+// `@tm/exports` fails where Bun cannot load `sharp` while collecting page data; the pages do not need them.
+const buildPaths = process.env.TM_E2E_BUILD_PATHS ?? 'app/**/page.tsx,app/api/auth/**'
+const build = Bun.spawn(['bun', '--bun', 'next', 'build', '--debug-build-paths', buildPaths], {
+  cwd: webRoot,
+  env,
+  stdout: 'inherit',
+  stderr: 'inherit'
+})
+if ((await build.exited) !== 0) {
+  await cleanup()
+  throw new Error('next build failed')
+}
+const site = Bun.spawn(['bun', '--bun', 'next', 'start', '-H', '127.0.0.1', '-p', String(port)], {
+  cwd: webRoot,
+  env,
+  stdout: 'inherit',
+  stderr: 'inherit'
+})
+
+async function cleanup() {
+  rmSync(keyFile, { force: true })
+  rmSync(STATE_FILE, { force: true })
+  await dropAllTestDbs()
+}
+
+async function stop() {
+  site.kill()
+  await site.exited
+  await cleanup()
+  process.exit(0)
+}
+process.on('SIGTERM', stop)
+process.on('SIGINT', stop)
+await site.exited
+await cleanup()
