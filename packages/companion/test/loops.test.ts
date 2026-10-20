@@ -44,7 +44,7 @@ async function rig(
     paired?: boolean
     ntfyThrows?: number
     runnerStopMs?: number
-    local?: { signin?: boolean; image?: string }
+    local?: { signin?: boolean; image?: string; identities?: { id: string; name: string }[] }
   } = {}
 ) {
   const base = await mkdtemp(join(tmpdir(), 'tm-loops-'))
@@ -79,6 +79,7 @@ async function rig(
   const localRuns: string[] = []
   const localEnds: Array<() => void> = []
   const signinOpened: string[] = []
+  let changes = 0
   let localStopped = false
   let signinDeps!: Parameters<LoopImpl['makeSignin']>[0]
   let localDeps!: Parameters<LoopImpl['makeLocal']>[0]
@@ -87,7 +88,10 @@ async function rig(
       apiOpts = o
       log.push('api')
       return {
-        identities: async () => ({ identities: [], image: opts.local?.image ?? 'ghcr.io/tl/worker:1' })
+        identities: async () => ({
+          identities: opts.local?.identities ?? [],
+          image: opts.local?.image ?? 'ghcr.io/tl/worker:1'
+        })
       } as unknown as CompanionApi
     },
     startNtfy: (d) => {
@@ -168,6 +172,7 @@ async function rig(
     jobsDir: join(base, 'jobs'),
     openPairing: () => log.push('openPairing'),
     openSettings: () => {},
+    onChange: () => void changes++,
     onError: (e) => void errors.push(e.message),
     impl,
     restartDelayMs: () => 5,
@@ -194,6 +199,9 @@ async function rig(
     localRuns,
     localEnds,
     signinOpened,
+    get changes() {
+      return changes
+    },
     get localStopped() {
       return localStopped
     },
@@ -395,6 +403,59 @@ describe('Loops', () => {
       'could not open the sign-in view: the website named a worker image outside the trusted repository'
     ])
     await bad.loops.stop()
+  })
+
+  test('the status is Not paired, Offline until the command stream opens, Connected while it is open', async () => {
+    const unpaired = await rig({ paired: false })
+    await unpaired.loops.start()
+    expect(unpaired.loops.status()).toBe('not_paired')
+
+    const r = await rig()
+    await r.loops.start()
+    expect(r.loops.status()).toBe('offline')
+    const started = r.changes
+    r.streamDeps.onStatus(true)
+    expect(r.loops.status()).toBe('connected')
+    r.streamDeps.onStatus(false)
+    expect(r.loops.status()).toBe('offline')
+    expect(r.changes).toBe(started + 2)
+    await r.loops.stop()
+  })
+
+  test('an unpairing turns the status to Not paired and forgets the identities', async () => {
+    const r = await rig({ local: { signin: true, identities: [{ id: 'u1', name: 'University' }] } })
+    await r.loops.start()
+    r.streamDeps.onStatus(true)
+    await sleep(5)
+    expect(r.loops.identities()).toEqual([{ id: 'u1', name: 'University' }])
+    r.apiOpts.onRevoked()
+    await sleep(20)
+    expect(r.loops.status()).toBe('not_paired')
+    expect(r.loops.identities()).toEqual([])
+  })
+
+  test('the local identities are listed when the stream opens, and signIn opens the chosen one', async () => {
+    const r = await rig({ local: { signin: true, identities: [{ id: 'u1', name: 'University' }] } })
+    await r.loops.start()
+    expect(r.loops.identities()).toEqual([])
+    r.streamDeps.onStatus(true)
+    await sleep(5)
+    expect(r.loops.identities()).toEqual([{ id: 'u1', name: 'University' }])
+    await r.loops.signIn('u1')
+    expect(r.signinOpened).toEqual(['u1'])
+    await r.loops.stop()
+    expect(r.loops.identities()).toEqual([])
+    await r.loops.signIn('u1')
+    expect(r.signinOpened).toEqual(['u1'])
+  })
+
+  test('without a sign-in window no identities are listed', async () => {
+    const r = await rig({ local: { identities: [{ id: 'u1', name: 'University' }] } })
+    await r.loops.start()
+    r.streamDeps.onStatus(true)
+    await sleep(5)
+    expect(r.loops.identities()).toEqual([])
+    await r.loops.stop()
   })
 
   test('without a sign-in window, open_signin is ignored', async () => {

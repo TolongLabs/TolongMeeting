@@ -21,6 +21,7 @@ import { localAfter, LocalRunner, type LocalRunnerDeps } from '../local/run'
 import { SigninController, type SigninDeps } from '../local/signin'
 import type { LocalPaths } from '../local/vault'
 import type { ShellPort } from './ports'
+import type { TrayStatus } from './tray-menu'
 
 /** Something that runs until it is stopped. The runner's `stop` waits for its job to let go. */
 interface Stoppable {
@@ -68,10 +69,12 @@ export interface LoopsDeps {
   shell: ShellPort
   /** The folder for per-job scratch space, under the app's own data. */
   jobsDir: string
-  /** Opens the pairing window. TODO(figma-gate): until the window exists the caller logs instead. */
+  /** Opens the pairing window. */
   openPairing(): void
-  /** Opens the settings window. TODO(figma-gate): until the window exists the caller logs instead. */
+  /** Opens the settings window. */
   openSettings(): void
+  /** Called when the status or the list of local identities changed (the tray shows both). */
+  onChange?(): void
   /** Reports a crash or a failure. Never gets a token or a transcript. Default: `console.error`. */
   onError?(error: Error): void
   spawn?: SpawnLike
@@ -85,10 +88,7 @@ export interface LoopsDeps {
     dataDir: string
     /** Where local runs keep their data, short-lived files and profiles (`data` is `dataDir`). */
     paths: LocalPaths
-    /**
-     * Shows a sign-in view for a local identity. TODO(figma-gate): until the window exists the app passes nothing, and
-     * `open_signin` commands are ignored.
-     */
+    /** Shows a sign-in view for a local identity. Without it, `open_signin` commands are ignored. */
     openSigninWindow?: SigninDeps['openWindow']
     /** Only a worker image under this repository cuts the audio (the app's `TM_WORKER_IMAGE_PREFIX`). */
     imagePrefix: string
@@ -125,6 +125,10 @@ export class Loops {
   private localImage: string | null = null
   /** Aborted when the loops stop (quit or unpair): an upload in progress ends and its files stay. */
   private halt = new AbortController()
+  /** The command stream is open (the tray's `Connected`). */
+  private connected = false
+  /** The identities that run on this PC, as the website last listed them (the tray's sign-in items). */
+  private identityList: { id: string; name: string }[] = []
   private resumed = false
   private resuming: Promise<void> | null = null
   private poller: (Stoppable & { trigger(): void }) | null = null
@@ -144,6 +148,22 @@ export class Loops {
   /** Whether this PC holds a device token. */
   async paired(): Promise<boolean> {
     return (await this.d.secrets.get('deviceToken')) !== null
+  }
+
+  /** `Not paired` until the loops run; then `Offline` until the command stream is open, and `Connected` while it is. */
+  status(): TrayStatus {
+    if (!this.running) return 'not_paired'
+    return this.connected ? 'connected' : 'offline'
+  }
+
+  /** The local identities the member can sign in to from the tray. Empty before pairing. */
+  identities(): readonly { id: string; name: string }[] {
+    return this.identityList
+  }
+
+  /** Opens the sign-in view of a local identity the member chose in the tray. Failures are reported, not thrown. */
+  async signIn(identityId: string): Promise<void> {
+    if (this.api !== null && this.running) await this.openSignin(this.api, identityId)
   }
 
   /** Starts every loop when this PC is paired. Returns whether it did. */
@@ -175,6 +195,7 @@ export class Loops {
     this.makeLocal(this.api, this.runner)
     await this.launch('poller')
     this.requestSync()
+    this.d.onChange?.()
     return true
   }
 
@@ -209,6 +230,9 @@ export class Loops {
     if (this.revokedOnce) return
     this.revokedOnce = true
     this.running = false
+    this.connected = false
+    this.identityList = []
+    this.d.onChange?.()
     handleRevoked({
       secrets: this.d.secrets,
       stopAll: () => void this.stop(),
@@ -284,7 +308,12 @@ export class Loops {
         },
         // A reconnect may have missed a summary, so sync after every open.
         onStatus: (open) => {
-          if (open) this.requestSync()
+          this.connected = open
+          this.d.onChange?.()
+          if (open) {
+            this.requestSync()
+            void this.refreshIdentities(api)
+          }
         },
         onError,
         onRevoked: () => this.revoked()
@@ -412,6 +441,17 @@ export class Loops {
       })
   }
 
+  /** Lists the local identities for the tray. Only when a sign-in window can be shown. */
+  private async refreshIdentities(api: CompanionApi): Promise<void> {
+    if (this.signin === null) return
+    try {
+      this.identityList = (await api.identities()).identities
+      this.d.onChange?.()
+    } catch (e) {
+      this.fail('could not list the local identities', e)
+    }
+  }
+
   /** Opens the sign-in view of a local identity the member asked for. A refusal or a failure is reported, not thrown. */
   private async openSignin(api: CompanionApi, identityId: string): Promise<void> {
     const signin = this.signin
@@ -454,6 +494,8 @@ export class Loops {
     const local = this.local
     const signin = this.signin
     this.local = this.signin = null
+    this.connected = false
+    this.identityList = []
     // The runner is asked first and waited for last: it ends its job and lets the PC sleep again meanwhile.
     const runnerDone = (async () => loops[0]?.stop())().catch((e: unknown) => this.fail('the runner did not stop', e))
     for (const loop of loops.slice(1)) {
