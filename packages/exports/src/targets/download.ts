@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { ExportError, type ExportContext } from '../types'
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
@@ -10,7 +10,8 @@ function codeOf(e: unknown): string | undefined {
 }
 
 /**
- * Writes a finished download to `<outDir>/<exportId>.<ext>` and returns that path. The occurrence directory must still
+ * Writes a finished download to `<outDir>/<exportId>.<ext>` and returns its path relative to the occurrence directory
+ * (`dirname(outDir)`), for example `exports/<exportId>.zip`, as `ExportRow.filePath` is stored. The occurrence directory must still
  * exist: `outDir` is created without `recursive`, so a meeting deleted mid-export is never recreated. An `outDir` that is
  * not a plain directory (a symlink planted by the worker) is refused. The file lands by rename, so a reader never sees a
  * partial download.
@@ -36,5 +37,5 @@ export async function writeDownload(ctx: ExportContext, ext: 'zip' | 'pdf', byte
     await rm(temp, { force: true })
     throw e
   }
-  return target
+  return relative(dirname(ctx.outDir), target)
 }

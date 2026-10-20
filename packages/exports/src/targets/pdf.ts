@@ -6,6 +6,7 @@ import { bundleDocument, type DocBlock, type Run } from '../render/doc'
 import { bundleImages, type Jpeg } from '../render/images'
 import type { ExportTarget } from '../types'
 import { writeDownload } from './download'
+import { renderGuard } from './guard'
 
 type Node = Record<string, unknown>
 
@@ -145,7 +146,9 @@ export async function renderPdf(doc: DocBlock[], images: Map<string, Jpeg>, titl
 export const pdfTarget: ExportTarget = {
   id: 'pdf',
   async run(bundle, ctx) {
-    const bytes = await renderPdf(bundleDocument(bundle), await bundleImages(bundle), bundle.title)
+    const bytes = await renderGuard(async () =>
+      renderPdf(bundleDocument(bundle), await bundleImages(bundle), bundle.title)
+    )
     const filePath = await writeDownload(ctx, 'pdf', bytes)
     return { url: null, filePath, note: null }
   }

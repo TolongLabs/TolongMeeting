@@ -1,5 +1,5 @@
 import { marked, type Token, type Tokens } from 'marked'
-import type { ExportBundle } from '../types'
+import { ExportError, type ExportBundle } from '../types'
 
 /** A span of text with the same look. `href` is always an https URL. */
 export interface Run {
@@ -216,13 +216,71 @@ function blocks(tokens: Token[]): DocBlock[] {
   return out
 }
 
+/** Longest Markdown text one file may hand the parser (characters). The 8 MB file cap alone would let marked run for minutes. */
+export const MAX_MARKDOWN_CHARS = 1_000_000
+/** Longest run of leading spaces, tabs and `>` marks on a line. marked is quadratic in nesting depth, so deeper input is refused. */
+export const MAX_NESTING_MARKS = 64
+/**
+ * `*`, `_` and `~` marks in one paragraph, and in one file. marked is quadratic in the marks of a paragraph (8,000 unmatched `*`
+ * take 3 s), so a hostile chat message could stall the runner. Real text has a few dozen.
+ */
+export const MAX_BLOCK_EMPHASIS = 4000
+export const MAX_FILE_EMPHASIS = 20_000
+/** Lines in one run without a blank line (one paragraph, list or table). marked stalls on tens of thousands (64,000 lines never finish). */
+export const MAX_BLOCK_LINES = 20_000
+
+function markdownError(why: string): ExportError {
+  return new ExportError('failed', `A meeting file cannot be exported: ${why}.`)
+}
+
+/** Refuses text that is too long, nests too deeply or holds too many emphasis marks for marked to lex in reasonable time. Linear. */
+function checkMarkdown(md: string): void {
+  if (md.length > MAX_MARKDOWN_CHARS) throw markdownError('it is too long')
+  let run = 0
+  let inPrefix = true
+  let blank = true
+  let block = 0
+  let file = 0
+  let lines = 0
+  for (let i = 0; i < md.length; i++) {
+    const c = md.charCodeAt(i)
+    if (c === 10) {
+      if (blank) {
+        block = 0
+        lines = 0
+      } else if (++lines > MAX_BLOCK_LINES) throw markdownError('it has a paragraph that is too long')
+      run = 0
+      inPrefix = true
+      blank = true
+      continue
+    }
+    if (c !== 32 && c !== 9 && c !== 13) blank = false
+    if (inPrefix) {
+      if (c !== 32 && c !== 9 && c !== 62) inPrefix = false
+      else if (++run > MAX_NESTING_MARKS) throw markdownError('it is nested too deeply')
+    }
+    if ((c === 42 || c === 95 || c === 126) && (++block > MAX_BLOCK_EMPHASIS || ++file > MAX_FILE_EMPHASIS))
+      throw markdownError('it has too much emphasis markup')
+  }
+}
+
 /**
  * Turns pipeline Markdown into blocks. The Markdown comes from untrusted meeting content, so it is only ever text here:
  * raw HTML is dropped, links keep `href` only when they are https (others, and `#anchor` links, become plain text) and
- * images are kept only for the bundle's `slides/NN.webp` files.
+ * images are kept only for the bundle's `slides/NN.webp` files. Text over `MAX_MARKDOWN_CHARS`, with a line that opens
+ * with more than `MAX_NESTING_MARKS` spaces, tabs and `>` marks, with too many `*`, `_` and `~` marks, or with a paragraph of more than `MAX_BLOCK_LINES` lines, is refused; any other throw (marked's `RangeError` on
+ * deep input, for one) becomes `ExportError('failed')`.
  */
 export function parseMarkdown(md: string): DocBlock[] {
-  return blocks(marked.lexer(md))
+  checkMarkdown(md)
+  try {
+    return blocks(marked.lexer(md))
+  } catch (e) {
+    if (e instanceof ExportError) throw e
+    const error = markdownError('it could not be read')
+    error.cause = e
+    throw error
+  }
 }
 
 /** The summary, `transcript.md`, `slides.md` and `chat.md` (those present), with a `break` between files. */

@@ -1,6 +1,7 @@
 import { zipSync, type Zippable } from 'fflate'
 import { ExportError, type BundleFile, type ExportBundle, type ExportTarget } from '../types'
 import { writeDownload } from './download'
+import { renderGuard } from './guard'
 
 const TEXT_FILES = new Set(['transcript.md', 'slides.md', 'chat.md'])
 const SLIDE = /^slides\/(\d{2,3})\.webp$/
@@ -34,7 +35,7 @@ export function zipBundle(bundle: ExportBundle): Uint8Array {
 export const zipTarget: ExportTarget = {
   id: 'zip',
   async run(bundle, ctx) {
-    const filePath = await writeDownload(ctx, 'zip', zipBundle(bundle))
+    const filePath = await writeDownload(ctx, 'zip', await renderGuard(() => zipBundle(bundle)))
     return { url: null, filePath, note: null }
   }
 }

@@ -51,16 +51,17 @@ test('zipBundle refuses a path it did not choose or a folder name that is not a 
   expect(() => zipBundle({ title: 't', dirName: '../x', summaryFile: 't.md', files: [] })).toThrow(ExportError)
 })
 
-test('zipTarget writes <exportId>.zip in outDir', async () => {
+test('zipTarget writes <exportId>.zip in outDir and returns the path relative to the occurrence', async () => {
   const ctx = testContext({ exportId: 'exp-1' })
   const r = await zipTarget.run(await loadBundle(fixture), ctx)
   expect(r).toEqual({
     url: null,
-    filePath: join(ctx.outDir, 'exp-1.zip'),
+    filePath: 'exports/exp-1.zip',
     note: null
   })
-  expect((await stat(r.filePath!)).size).toBeGreaterThan(0)
-  expect(unzipSync(await readFile(r.filePath!))[`${FOLDER}/summary.md`]).toBeDefined()
+  const file = join(dirname(ctx.outDir), r.filePath!)
+  expect((await stat(file)).size).toBeGreaterThan(0)
+  expect(unzipSync(await readFile(file))[`${FOLDER}/summary.md`]).toBeDefined()
   expect(await readdir(ctx.outDir)).toEqual(['exp-1.zip'])
 })
 

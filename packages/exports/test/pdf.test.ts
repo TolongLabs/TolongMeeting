@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { extractText, getDocumentProxy } from 'unpdf'
 import { loadBundle } from '../src/bundle'
 import { bundleDocument, type DocBlock } from '../src/render/doc'
@@ -53,6 +53,8 @@ test('a break starts a new page, and blocks without glyphs do not fail', async (
 test('pdfTarget writes <exportId>.pdf', async () => {
   const ctx = testContext({ exportId: 'exp-2' })
   const result = await pdfTarget.run(await loadBundle(fixture), ctx)
-  expect(result.filePath).toBe(join(ctx.outDir, 'exp-2.pdf'))
-  expect(new TextDecoder().decode((await readFile(result.filePath!)).subarray(0, 5))).toBe('%PDF-')
+  expect(result.filePath).toBe('exports/exp-2.pdf')
+  expect(new TextDecoder().decode((await readFile(join(dirname(ctx.outDir), result.filePath!))).subarray(0, 5))).toBe(
+    '%PDF-'
+  )
 })

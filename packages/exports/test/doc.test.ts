@@ -1,6 +1,7 @@
-import { expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { loadBundle } from '../src/bundle'
-import { bundleDocument, parseMarkdown } from '../src/render/doc'
+import { bundleDocument, MAX_MARKDOWN_CHARS, parseMarkdown } from '../src/render/doc'
+import { ExportError } from '../src/types'
 import { fixture } from './fixture'
 
 test('drops the contents list and anchor links', () => {
@@ -94,4 +95,36 @@ test('flattens nested lists, emits quotes as paragraphs and keeps code and rules
 
 test('strips control characters from text', () => {
   expect(parseMarkdown('a\u0000b\u0007c')).toEqual([{ kind: 'paragraph', runs: [{ text: 'abc' }] }])
+})
+
+describe('hostile Markdown', () => {
+  const refused = (md: string) => {
+    const started = performance.now()
+    expect(() => parseMarkdown(md)).toThrow(ExportError)
+    expect(performance.now() - started).toBeLessThan(1000)
+  }
+
+  test('text over the size cap is refused', () => {
+    refused('x'.repeat(MAX_MARKDOWN_CHARS + 1))
+    expect(parseMarkdown('x'.repeat(MAX_MARKDOWN_CHARS))).toHaveLength(1)
+  })
+
+  test('deep blockquote and list nesting is refused at once, shallow nesting is read', () => {
+    refused('>'.repeat(100_000) + ' x')
+    refused(Array.from({ length: 2000 }, (_, i) => ' '.repeat(i * 2) + '- a').join('\n'))
+    const shallow = Array.from({ length: 10 }, (_, i) => ' '.repeat(i * 2) + '- a').join('\n')
+    expect(parseMarkdown(shallow)).toHaveLength(1)
+    expect(parseMarkdown('> > > quoted')).toEqual([{ kind: 'paragraph', runs: [{ text: 'quoted' }] }])
+  })
+
+  test('paragraphs that stall marked are refused', () => {
+    refused('*a '.repeat(8000))
+    refused('~~a '.repeat(8000))
+    refused('a  \n'.repeat(64_000))
+  })
+
+  test('ordinary emphasis and many short paragraphs are read', () => {
+    expect(parseMarkdown('**bold** and _it_ and snake_case_name')).toHaveLength(1)
+    expect(parseMarkdown('line\n\n'.repeat(50_000))).toHaveLength(50_000)
+  })
 })
