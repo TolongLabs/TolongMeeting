@@ -510,7 +510,9 @@ test('site links come from TM_PUBLIC_URL', () => {
   expect(siteLinks(cfg, undefined)).toBeNull()
   expect(siteLinks(cfg, 'https://tolong.example.com/')).toEqual({
     meetingPage: 'https://tolong.example.com/meetings/occ-1',
-    signIn: 'https://tolong.example.com/accounts/ident-1/signin'
+    signIn: 'https://tolong.example.com/accounts/ident-1/signin',
+    leave: 'https://tolong.example.com/meetings/occ-1/leave',
+    takeOver: 'https://tolong.example.com/meetings/occ-1/take-over'
   })
   expect(() => siteLinks(cfg, 'http://tolong.example.com')).toThrow('TM_PUBLIC_URL must be an https URL')
 })

@@ -797,6 +797,7 @@ The milestone plans were written in parallel against this page. Each marks the s
 - **`FormTrigger`**: plan 01a defines the 1A subset, routing manual-only pings through `manual_only` (`checking_trust` to `needs_member`) rather than a new state. Plan 01b replaced it with the full union for every state in the design and removed `manual_only` with the 1A pinger (Task 14).
 - **`HeartbeatReply`** gains `link` (plan 01c: a link the member pasted on the website); **`Heartbeat`** gains `linkUsed` (plan 06). `startHeartbeat` gains an `onReply` callback (plan 01c).
 - **`JobConfig.identity`** gains `formProviders` (plan 01a) and `organisation: { name, emailDomain } | null` (plan 01b).
+- **`SiteLinks`** (notify) gains `leave` (`<meetingPage>/leave`) and `takeOver` (`<meetingPage>/take-over`) (plan N0, from `siteLinks` in the worker). The joined ping has three actions: "Open meeting page", "Make the bot leave" and "Take over". Ping copy carries only these website URLs, never a meeting link or passcode.
 - **Recordings**: `recording/meeting.mkv` is the joined master; `recording/meeting.mp4` is a remux for browser playback (plan 01c).
 
 ### Name reconciliation

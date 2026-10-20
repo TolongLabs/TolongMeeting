@@ -309,11 +309,80 @@ test('capacity clash copy', () => {
   ).toEqual(COPY_CASES[3][2])
 })
 
-test('pings that send the member to the website carry one action each', () => {
-  const links = { meetingPage: 'https://t.example/meetings/1', signIn: 'https://t.example/accounts/2/signin' }
-  expect(joinedPing('Data Mining', 3, links).actions).toEqual([{ label: 'Open meeting page', url: links.meetingPage }])
+test('the joined ping carries its three website actions, and none without links', () => {
+  const links = {
+    meetingPage: 'https://t.example/meetings/1',
+    signIn: 'https://t.example/accounts/2/signin',
+    leave: 'https://t.example/meetings/1/leave',
+    takeOver: 'https://t.example/meetings/1/take-over'
+  }
+  expect(joinedPing('Data Mining', 3, links).actions).toEqual([
+    { label: 'Open meeting page', url: links.meetingPage },
+    { label: 'Make the bot leave', url: links.leave },
+    { label: 'Take over', url: links.takeOver }
+  ])
+  expect(joinedPing('Data Mining', 3, null).actions).toBeUndefined()
   expect(joinedPing('Data Mining', 3).actions).toBeUndefined()
-  for (const kind of ['zoom_signin', 'signin_forms'] as const) {
+})
+
+test('a Meet sign-in pings with the copy and the Sign in again action', () => {
+  const links = {
+    meetingPage: 'https://t.example/meetings/1',
+    signIn: 'https://t.example/accounts/2/signin',
+    leave: 'https://t.example/meetings/1/leave',
+    takeOver: 'https://t.example/meetings/1/take-over'
+  }
+  expect(alertPing('Data Mining', 'meet_signin').message).toBe(
+    "Google asked to sign in, so the bot couldn't join the Meet call. Sign in to Google again for this identity."
+  )
+  expect(alertPing('Data Mining', 'meet_signin', undefined, links)).toEqual({
+    title: 'Alert: Data Mining',
+    message:
+      "Google asked to sign in, so the bot couldn't join the Meet call. Sign in to Google again for this identity.",
+    priority: 'high',
+    actions: [{ label: 'Sign in again', url: links.signIn }]
+  })
+})
+
+test('a mention pings with its transcript, and never shows a meeting link, meeting ID or passcode', () => {
+  const meetingUrl = 'https://tm.example/meetings/o1'
+  const takeOverUrl = 'https://tm.example/meetings/o1/take-over'
+  const spoken =
+    'the link is https://zoom.us/j/123456789?pwd=abc and meet.google.com/abc-defg-hij, passcode 482913, g.co/meet/xyz, teams.microsoft.com/l/meetup-join/1'
+  const p = pings.nameMentioned({
+    entry: 'Data Mining',
+    at: 'Wed 21 Oct, 14:32',
+    transcript: spoken,
+    meetingUrl,
+    takeOverUrl
+  })
+  expect(p).toEqual({
+    title: 'Your name was mentioned: Data Mining',
+    message:
+      'Heard at Wed 21 Oct, 14:32. The last 30 seconds:\nthe link is [removed] and [removed] passcode [removed], [removed] [removed]',
+    priority: 'high',
+    actions: [
+      { label: 'Open meeting page', url: meetingUrl },
+      { label: 'Take over', url: takeOverUrl }
+    ]
+  })
+  expect(
+    pings.nameMentioned({ entry: 'Data Mining', at: 'x', transcript: 'hi', meetingUrl: null, takeOverUrl: null })
+  ).toEqual({
+    title: 'Your name was mentioned: Data Mining',
+    message: 'Heard at x. The last 30 seconds:\nhi',
+    priority: 'high'
+  })
+})
+
+test('pings that send the member to the website carry one action each', () => {
+  const links = {
+    meetingPage: 'https://t.example/meetings/1',
+    signIn: 'https://t.example/accounts/2/signin',
+    leave: 'https://t.example/meetings/1/leave',
+    takeOver: 'https://t.example/meetings/1/take-over'
+  }
+  for (const kind of ['zoom_signin', 'meet_signin', 'signin_forms'] as const) {
     expect(alertPing('Data Mining', kind, 'Google', links).actions).toEqual([
       { label: 'Sign in again', url: links.signIn }
     ])

@@ -12,6 +12,7 @@ export type AlertKind =
   | 'not_admitted'
   | 'join_failed'
   | 'zoom_signin'
+  | 'meet_signin'
   | 'devices_on'
   | 'no_audio'
   | 'signin_forms'
@@ -32,6 +33,8 @@ const SUMMARY_LIMIT_BYTES = 3900
 export interface SiteLinks {
   meetingPage: string
   signIn: string
+  leave: string
+  takeOver: string
 }
 
 export function joinedPing(entry: string, participants: number | null, links?: SiteLinks | null): Ping {
@@ -43,7 +46,16 @@ export function joinedPing(entry: string, participants: number | null, links?: S
     title: `Joined: ${entry}`,
     message,
     priority: 'default',
-    ...(links ? { actions: [{ label: 'Open meeting page', url: links.meetingPage }] } : {})
+    // Three actions at most (ntfy's limit).
+    ...(links
+      ? {
+          actions: [
+            { label: 'Open meeting page', url: links.meetingPage },
+            { label: 'Make the bot leave', url: links.leave },
+            { label: 'Take over', url: links.takeOver }
+          ]
+        }
+      : {})
   }
 }
 
@@ -78,7 +90,9 @@ export function formNotFilledPing(entry: string, c: FormCandidate, hhmm: string,
 // One action each (ntfy allows at most 3 per message).
 function alertActions(kind: AlertKind, links: SiteLinks | null | undefined): PingAction[] | null {
   if (!links) return null
-  if (kind === 'zoom_signin' || kind === 'signin_forms') return [{ label: 'Sign in again', url: links.signIn }]
+  if (kind === 'zoom_signin' || kind === 'meet_signin' || kind === 'signin_forms') {
+    return [{ label: 'Sign in again', url: links.signIn }]
+  }
   if (kind === 'no_link') return [{ label: 'Open meeting page', url: links.meetingPage }]
   return null
 }
@@ -263,6 +277,26 @@ export const pings = {
     }
   },
 
+  // The member's name was said in a live-transcribed meeting. The transcript is cut of links and long numbers first.
+  // The actions are left out when a URL is null (job-file runs have no website address).
+  nameMentioned(p: {
+    entry: string
+    at: string
+    transcript: string
+    meetingUrl: string | null
+    takeOverUrl: string | null
+  }): Ping {
+    return {
+      title: `Your name was mentioned: ${p.entry}`,
+      message: `Heard at ${p.at}. The last 30 seconds:\n${withoutMeetingDetails(p.transcript)}`,
+      priority: 'high',
+      ...withActions([
+        ['Open meeting page', p.meetingUrl],
+        ['Take over', p.takeOverUrl]
+      ])
+    }
+  },
+
   // The bot cannot watch a chat for the link. "Sign in again" is offered only when the chat app signed the bot out.
   watcherProblem(p: {
     entry: string
@@ -329,6 +363,8 @@ function alertMessage(kind: AlertKind, detail: string | undefined): string {
       return `The bot couldn't join: ${requireDetail(kind, detail)}.`
     case 'zoom_signin':
       return 'Zoom asked to sign in. Re-seed the profile, then run the job again.'
+    case 'meet_signin':
+      return "Google asked to sign in, so the bot couldn't join the Meet call. Sign in to Google again for this identity."
     case 'devices_on':
       return 'A microphone or camera showed as on, so the bot left the meeting.'
     case 'no_audio':
@@ -363,6 +399,19 @@ function requireDetail(kind: AlertKind, detail: string | undefined): string {
     throw new Error(`alertPing ${kind} needs a detail`)
   }
   return detail
+}
+
+// Spoken text can carry a join link, a meeting ID or a passcode. A ping must never show one, so meeting-host links and
+// runs of six or more digits (meeting IDs and six-digit passcodes) are replaced. Spoken words are not caught.
+const MEETING_DETAILS: RegExp[] = [
+  /(?:https?|zoommtg|zoomus|msteams|ms-teams):\S*/gi,
+  /\b(?:[\w-]+\.)*(?:zoom\.us|zoomgov\.com|teams\.microsoft\.com|teams\.live\.com|meet\.google\.com)\S*/gi,
+  /\bg\.co\/meet\S*/gi,
+  /\d{6,}/g
+]
+
+function withoutMeetingDetails(text: string): string {
+  return MEETING_DETAILS.reduce((out, pattern) => out.replace(pattern, '[removed]'), text)
 }
 
 // Cuts text to at most `limit` UTF-8 bytes without splitting a character.
