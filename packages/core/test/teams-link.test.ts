@@ -113,6 +113,23 @@ describe('normaliseTeamsLink', () => {
     expect(normaliseTeamsLink('https://teams.microsoft.com/other/#/meet/1234567890123')).toBeNull()
   })
 
+  // The URL parser strips tabs and line breaks from a path, so one decoded out of `url=` would turn a bad link good.
+  test.each(['%09', '%0A', '%0D'])('a launcher url= holding %s is refused, plain and in Safe Links', (escape) => {
+    const control = decodeURIComponent(escape)
+    for (const target of [
+      `/_#/l/meetup-join/${THREAD}/${control}0?context=${CONTEXT}`,
+      `/l/meet${control}/1234567890123`
+    ]) {
+      const launcher = `https://teams.microsoft.com/dl/launcher/launcher.html?url=${encodeURIComponent(target)}`
+      expect(launcher).toContain(escape)
+      expect(normaliseTeamsLink(launcher)).toBeNull()
+      expect(normaliseTeamsLink(safelink(launcher))).toBeNull()
+    }
+    const chat = `https://teams.microsoft.com/dl/launcher/launcher.html?url=${encodeURIComponent(`/l/chat/19%3ATESTCHAT%40thread.v2/conv${control}ersations`)}`
+    expect(normaliseTeamsChatUrl(chat)).toBeNull()
+    expect(normaliseTeamsChatUrl(safelink(chat))).toBeNull()
+  })
+
   test('encoded nested links are only peeled by the known wrappers', () => {
     const twice = encodeURIComponent(encodeURIComponent(JOIN))
     expect(normaliseTeamsLink(`https://apc01.safelinks.protection.outlook.com/?url=${twice}`)).toBeNull()

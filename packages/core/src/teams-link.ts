@@ -33,6 +33,8 @@ function decodeSegment(segment: string): string | null {
 function locateRelative(relative: string, origin: string): Located | null {
   // A leading `//` or `/\` would make the URL parser switch host.
   if (!/^\/(?![/\\])/.test(relative)) return null
+  // The URL parser would silently strip tabs and line breaks, so a decoded one is refused first.
+  if (CONTROL_CHARACTERS.test(relative)) return null
   const u = new URL(relative, origin)
   return u.origin === origin ? { host: u.hostname, pathname: u.pathname, params: u.searchParams } : null
 }
