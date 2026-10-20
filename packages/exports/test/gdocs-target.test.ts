@@ -80,6 +80,17 @@ test('a re-export updates the Doc it made and never creates or deletes another',
   expectSafeCalls(f)
 })
 
+test('no answer from Google during an export fails it with a fixed sentence', async () => {
+  const down = (async () => {
+    throw new TypeError('fetch failed')
+  }) as unknown as typeof fetch
+  const { result } = await run({}, googleConn(), { http: down })
+  await expect(result).rejects.toMatchObject({
+    code: 'failed',
+    message: 'Google did not answer as expected. Try again later.'
+  })
+})
+
 test('a file that is not ours, not a Doc, in the bin or not owned is never updated', async () => {
   const mark = 'x'.repeat(64)
   const base = { id: DOC, mimeType: DOC_MIME, trashed: false, ownedByMe: true, appProperties: { tmMeeting: mark } }

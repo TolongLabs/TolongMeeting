@@ -56,6 +56,30 @@ function setup(stored?: Connection) {
   return { save, saved }
 }
 
+test('no answer from GitHub (network, timeout, abort) is github_unavailable and saves nothing', async () => {
+  const failures = [
+    () => new TypeError('fetch failed'),
+    () => new DOMException('The operation timed out.', 'TimeoutError'),
+    () => new DOMException('The operation was aborted.', 'AbortError')
+  ]
+  for (const fail of failures) {
+    for (const downAt of [`${REPO}`, `${REPO}/branches/main`]) {
+      const { save, saved } = setup()
+      const up = github()
+      const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === downAt) throw fail()
+        return up.fetch(input, init)
+      }) as typeof globalThis.fetch
+      const res = await save({ ...base, token: TOKEN }, { fetch } as ReturnType<typeof github>)
+      expect([res.status, res.body]).toEqual([
+        502,
+        { error: 'github_unavailable', message: 'GitHub did not answer as expected. Try again later.' }
+      ])
+      expect(saved).toEqual([])
+    }
+  }
+})
+
 test('saving checks the token and the repository', async () => {
   const { save, saved } = setup()
   expect(await save({ ...base, token: 'ghp_classic' })).toEqual({

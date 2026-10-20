@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ApiResult } from '../api'
 import type { MemberConnections } from '../store-types'
 import { ExportError, type ConnectionSummary, type GitHubConnection } from '../types'
+import { isTransportError } from './transport'
 
 // GitHub is the one connection with no OAuth app: the member pastes a fine-grained token limited to one repository.
 // Nothing here stores or logs a token, and every message is a fixed sentence (never text from GitHub).
@@ -109,8 +110,15 @@ function invalid(message: string): ApiResult {
 
 type SaveDeps = { connections: Pick<MemberConnections, 'get' | 'save'>; http: typeof fetch }
 
-async function probe(http: typeof fetch, token: string, path: string): Promise<number> {
-  const res = await http(`${GITHUB_API}${path}`, { method: 'GET', headers: githubHeaders(token), redirect: 'error' })
+/** The status GitHub answered, or null when it gave no answer at all (network, timeout, abort). */
+async function probe(http: typeof fetch, token: string, path: string): Promise<number | null> {
+  let res: Response
+  try {
+    res = await http(`${GITHUB_API}${path}`, { method: 'GET', headers: githubHeaders(token), redirect: 'error' })
+  } catch (e) {
+    if (isTransportError(e)) return null
+    throw e
+  }
   await res.body?.cancel()
   return res.status
 }
@@ -158,11 +166,13 @@ export async function saveGitHubConnection(rawBody: string, deps: SaveDeps): Pro
   }
   const rejected = invalid('GitHub rejected this token.')
   const repoStatus = await probe(deps.http, token, `/repos/${owner}/${repo}`)
+  if (repoStatus === null) return unavailable
   if (repoStatus === 401) return rejected
   if (repoStatus === 403 || repoStatus === 404)
     return invalid(`This token can't see ${owner}/${repo}. Give it access to that repository.`)
   if (repoStatus !== 200) return unavailable
   const branchStatus = await probe(deps.http, token, `/repos/${owner}/${repo}/branches/${encodePath(branch)}`)
+  if (branchStatus === null) return unavailable
   if (branchStatus === 401) return rejected
   if (branchStatus === 404) return invalid(`Branch ${branch} doesn't exist in ${owner}/${repo}.`)
   if (branchStatus !== 200) return unavailable

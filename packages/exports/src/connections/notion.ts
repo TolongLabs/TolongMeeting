@@ -11,6 +11,7 @@ import {
 } from '../types'
 import { redact } from '../vault'
 import { newOAuthState, OAUTH_STATE_ERROR, oauthRedirectUri, sealOAuthState, verifyOAuthState } from './oauth'
+import { guarded, isTransportError } from './transport'
 
 // Notion's public-integration OAuth flow and REST client (https://developers.notion.com/guides/get-started/authorization,
 // /reference/request-limits, /reference/patch-block-children, /guides/data-apis/uploading-small-files).
@@ -136,6 +137,8 @@ function waitMs(res: Response, attempt: number): number {
  * refresh token, or when the refresh is refused, it fails with `reconnect_needed`.
  */
 export function createNotionClient(conn: NotionConnection, deps: NotionClientDeps): NotionClient {
+  // No answer from Notion (network, timeout, abort) is a fixed "did not answer" error, never a bare TypeError.
+  const http = guarded(deps.http, MESSAGES.unavailable)
   let current = conn
   const everSeen = new Set<string>([conn.accessToken, ...(conn.refreshToken ? [conn.refreshToken] : [])])
   let refreshed = false
@@ -163,7 +166,7 @@ export function createNotionClient(conn: NotionConnection, deps: NotionClientDep
   async function refresh(): Promise<void> {
     if (refreshed || current.refreshToken === null) throw new ExportError('reconnect_needed', MESSAGES.removed)
     refreshed = true
-    const res = await deps.http(`${NOTION_API}/v1/oauth/token`, {
+    const res = await http(`${NOTION_API}/v1/oauth/token`, {
       method: 'POST',
       headers: {
         Authorization: basicAuth(deps.client),
@@ -207,7 +210,7 @@ export function createNotionClient(conn: NotionConnection, deps: NotionClientDep
         headers['Content-Type'] = 'application/json'
         init.body = JSON.stringify(payload.json)
       }
-      const res = await deps.http(`${NOTION_API}${path}`, init)
+      const res = await http(`${NOTION_API}${path}`, init)
       if (res.ok) return res
       if (res.status === 429 || res.status === 529) {
         const wait = waitMs(res, attempt)
@@ -352,17 +355,24 @@ export async function completeNotionConnect(
   if (url.searchParams.has('error') || code === null || code === '' || code.length > MAX_CODE_CHARS)
     return { status: 400, body: { error: 'not_granted', message: MESSAGES.denied } }
 
-  const res = await deps.http(`${NOTION_API}/v1/oauth/token`, {
-    method: 'POST',
-    headers: {
-      Authorization: basicAuth(deps.client),
-      'Notion-Version': NOTION_VERSION,
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    },
-    body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: deps.client.redirectUri }),
-    redirect: 'error'
-  })
+  let res: Response
+  try {
+    res = await deps.http(`${NOTION_API}/v1/oauth/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: basicAuth(deps.client),
+        'Notion-Version': NOTION_VERSION,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: deps.client.redirectUri }),
+      redirect: 'error'
+    })
+  } catch (e) {
+    if (isTransportError(e))
+      return { status: 502, body: { error: 'notion_unavailable', message: MESSAGES.unavailable } }
+    throw e
+  }
   if (!res.ok) {
     await res.body?.cancel()
     return { status: 502, body: { error: 'notion_rejected', message: MESSAGES.signIn } }

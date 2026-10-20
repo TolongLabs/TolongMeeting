@@ -303,6 +303,48 @@ test('the picker gets an access token, the key and the app id, never the refresh
   expect(g.calls).toEqual([])
 })
 
+/** What `fetch` rejects with when nothing answers: a network error, or an abort or timeout. */
+const NO_ANSWER = [
+  () => new TypeError('fetch failed'),
+  () => new DOMException('The operation timed out.', 'TimeoutError'),
+  () => new DOMException('The operation was aborted.', 'AbortError')
+]
+
+test('no answer from Google is google_unavailable for the code exchange, the picker and the folder', async () => {
+  const UNAVAILABLE = { error: 'google_unavailable', message: 'Google did not answer as expected. Try again later.' }
+  for (const fail of NO_ANSWER) {
+    const down = (async () => {
+      throw fail()
+    }) as unknown as typeof fetch
+    const s = started()
+    const callback = await completeGoogleConnect('m1', callbackUrl(s.state), s.sealed, {
+      connections: memberStore(),
+      http: down,
+      client,
+      master
+    })
+    expect([callback.status, callback.body]).toEqual([502, UNAVAILABLE])
+
+    const connections = memberStore(googleConn())
+    const picker = await pickerToken({ connections, http: down, client, apiKey: 'k', appId: '1' })
+    expect([picker.status, picker.body]).toEqual([502, UNAVAILABLE])
+    const folder = await setGoogleFolder('{"useDefault":true}', { connections, http: down, client })
+    expect([folder.status, folder.body]).toEqual([502, UNAVAILABLE])
+  }
+  // A failure that is not "no answer" is a bug and still throws.
+  const s = started()
+  await expect(
+    completeGoogleConnect('m1', callbackUrl(s.state), s.sealed, {
+      connections: memberStore(),
+      http: (async () => {
+        throw new RangeError('bug')
+      }) as unknown as typeof fetch,
+      client,
+      master
+    })
+  ).rejects.toThrow('bug')
+})
+
 test('a revoked grant marks the connection broken with a fixed message and reveals nothing', async () => {
   for (const run of [
     (connections: ReturnType<typeof memberStore>) =>

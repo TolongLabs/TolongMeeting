@@ -220,6 +220,46 @@ const tokenRoute = (status = 200, body: unknown = {}): Route => [
     )
 ]
 
+test('no answer from Notion on the code exchange is notion_unavailable and saves nothing', async () => {
+  for (const fail of [
+    () => new TypeError('fetch failed'),
+    () => new DOMException('The operation timed out.', 'TimeoutError')
+  ]) {
+    const f = routeFetch([])
+    const { saved, deps } = connect(f)
+    const { state, sealed } = sealedFor('m1')
+    const result = await completeNotionConnect(
+      'm1',
+      new URL(`https://tm.example/cb?code=c0de&state=${state}`),
+      sealed,
+      {
+        ...deps,
+        http: (async () => {
+          throw fail()
+        }) as unknown as typeof fetch
+      }
+    )
+    expect([result.status, (result.body as { error: string }).error]).toEqual([502, 'notion_unavailable'])
+    expect(saved).toEqual([])
+  }
+})
+
+test('no answer from Notion on a request is a fixed ExportError', async () => {
+  const { client } = clientOver([
+    [
+      'GET',
+      '/v1/users/me',
+      () => {
+        throw new TypeError('fetch failed')
+      }
+    ]
+  ])
+  await expect(client.request('GET', '/v1/users/me')).rejects.toMatchObject({
+    code: 'failed',
+    message: 'Notion did not answer as expected. Try again later.'
+  })
+})
+
 test('the callback exchanges the code and saves the connection with no parent', async () => {
   const f = routeFetch([tokenRoute()])
   const { saved, deps } = connect(f)

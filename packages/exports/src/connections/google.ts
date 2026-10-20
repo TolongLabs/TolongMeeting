@@ -4,6 +4,7 @@ import type { MemberConnections } from '../store-types'
 import { ExportError, type GoogleConnection, type OAuthClient } from '../types'
 import { redact } from '../vault'
 import { newOAuthState, OAUTH_STATE_ERROR, sealOAuthState, verifyOAuthState } from './oauth'
+import { guarded } from './transport'
 
 // Google sign-in (OAuth 2.0 web server flow with PKCE) and the Drive calls the export needs. Only `drive.file` is asked
 // for: the app sees files it created and folders the member picked. Hosts are fixed: accounts.google.com (the browser
@@ -139,9 +140,11 @@ export function googleSession(o: {
   http: typeof fetch
 }): GoogleSession {
   let token = o.accessToken
+  // No answer from Google (network, timeout, abort) is the same fixed "did not answer" error as a bad answer.
+  const http = guarded(o.http, UNAVAILABLE_MESSAGE)
 
   async function refresh(): Promise<string> {
-    const res = await tokenRequest(o.http, {
+    const res = await tokenRequest(http, {
       grant_type: 'refresh_token',
       refresh_token: o.refreshToken,
       client_id: o.client.clientId,
@@ -161,7 +164,7 @@ export function googleSession(o: {
 
   async function send(url: string, init: DriveInit, bearer: string): Promise<Response> {
     assertDriveUrl(url)
-    return o.http(url, {
+    return http(url, {
       method: init.method ?? 'GET',
       headers: { ...init.headers, Authorization: `Bearer ${bearer}` },
       body: init.body,
@@ -355,14 +358,19 @@ export async function completeGoogleConnect(
   if (url.searchParams.get('error') !== null) return failure(400, 'google_denied', DENIED_MESSAGE)
   if (code === null || code === '') return STATE_REFUSED
 
-  const res = await tokenRequest(deps.http, {
-    grant_type: 'authorization_code',
-    code,
-    code_verifier: verifier,
-    client_id: deps.client.clientId,
-    client_secret: deps.client.clientSecret,
-    redirect_uri: deps.client.redirectUri
-  })
+  let res: Response
+  try {
+    res = await tokenRequest(guarded(deps.http, UNAVAILABLE_MESSAGE), {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      client_id: deps.client.clientId,
+      client_secret: deps.client.clientSecret,
+      redirect_uri: deps.client.redirectUri
+    })
+  } catch (e) {
+    return answerForFailure(e, null)
+  }
   if (!res.ok) {
     const said = await oauthError(res)
     return said.error === 'invalid_grant'
