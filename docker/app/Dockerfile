@@ -2,7 +2,7 @@
 #   docker compose -f docker/compose.yaml --env-file .env build
 # One install serves every target. The tree is owned by `bun` (uid 1000 and gid 1000, the worker's uid), which the
 # website and the scheduler run as; the scheduler must share the uid with the files it writes for workers.
-FROM oven/bun:1 AS base
+FROM oven/bun:1.4.3 AS base
 WORKDIR /app
 RUN chown bun:bun /app
 USER bun
