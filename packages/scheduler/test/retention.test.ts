@@ -5,7 +5,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFil
 import { type OccurrenceState } from '@tm/core'
 import type { Ping } from '@tm/notify'
 import { count, eq } from 'drizzle-orm'
-import { artefacts, events, forms, occurrences, profiles } from '@tm/web/db'
+import { artefacts, events, exports as exportsTable, forms, occurrences, profiles } from '@tm/web/db'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
@@ -35,6 +35,7 @@ interface Options {
   stateReason?: string
   files?: string[]
   withRows?: boolean
+  withExport?: boolean
   orphanOccurrenceDir?: boolean
   orphanProfileDir?: boolean
   checkpoints?: string[]
@@ -116,6 +117,21 @@ async function retentionFixture(o: Options = {}) {
       dataHash: 'h'
     })
   }
+  if (o.withExport) {
+    const [exported] = await db
+      .insert(exportsTable)
+      .values({
+        occurrenceId: id,
+        memberId,
+        target: 'zip',
+        status: 'succeeded',
+        title: 'Data Mining',
+        filePath: 'exports/x.zip'
+      })
+      .returning()
+    await mkdir(`${dir}/exports`, { recursive: true })
+    await writeFile(`${dir}/exports/${exported!.id}.zip`, 'zip')
+  }
   if (o.orphanOccurrenceDir) await mkdir(`${env.dataRoot}/occurrences/${randomUUID()}/recording`, { recursive: true })
   if (o.orphanProfileDir) await mkdir(`${env.profileRoot}/${randomUUID()}/work`, { recursive: true })
   const cpDir = `${env.profileRoot}/${identityId}/checkpoints`
@@ -136,7 +152,7 @@ async function retentionFixture(o: Options = {}) {
     root,
     occurrence: async () => (await db.select().from(occurrences).where(eq(occurrences.id, id)))[0]!,
     events: () => db.select().from(events).where(eq(events.occurrenceId, id)),
-    count: async (t: typeof forms | typeof artefacts) =>
+    count: async (t: typeof forms | typeof artefacts | typeof exportsTable) =>
       (await db.select({ n: count() }).from(t).where(eq(t.occurrenceId, id)))[0]!.n,
     checkpointNames: async () => (await readdir(cpDir)).sort()
   }
@@ -221,6 +237,26 @@ test('a meeting past its deletion time is gone from disk and database', async ()
     containerName: null,
     controlTokenHash: null
   })
+})
+
+test('a meeting takes its exports with it: rows, titles and files', async () => {
+  const f = await retentionFixture({ state: 'completed', files: ['a.txt'], withExport: true })
+  expect(await f.count(exportsTable)).toBe(1)
+  await deleteOccurrenceData(f.deps, f.id, now)
+  expect(await f.count(exportsTable)).toBe(0)
+  expect(await exists(f.dir)).toBe(false)
+  expect((await f.occurrence()).state).toBe('deleted')
+  // A tombstone retry removes an export row left behind.
+  await f.db.insert(exportsTable).values({
+    occurrenceId: f.id,
+    memberId: f.memberId,
+    target: 'pdf',
+    status: 'failed',
+    errorCode: 'failed',
+    error: 'x'
+  })
+  await deleteOccurrenceData(f.deps, f.id, now)
+  expect(await f.count(exportsTable)).toBe(0)
 })
 
 test('a meeting in progress is never deleted', async () => {

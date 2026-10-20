@@ -3,7 +3,16 @@ import { join } from 'node:path'
 import { ACTIVE_STATES, formatDay, formatWhen, type OccurrenceState } from '@tm/core'
 import { pings } from '@tm/notify'
 import { and, eq, inArray, isNotNull, isNull, gt, lte, notInArray, sql } from 'drizzle-orm'
-import { artefacts, events, forms, identities, members, occurrences, profiles } from '@tm/web/db'
+import {
+  artefacts,
+  events,
+  exports as exportsTable,
+  forms,
+  identities,
+  members,
+  occurrences,
+  profiles
+} from '@tm/web/db'
 import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import { applyTrigger } from '@tm/web/db/transitions'
 import { resolveEnv } from './container-spec'
@@ -102,6 +111,7 @@ export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: strin
     if (!row) throw new Error(`No occurrence ${occurrenceId}`)
     if (row.state === 'deleted') {
       await tx.delete(artefacts).where(eq(artefacts.occurrenceId, occurrenceId))
+      await tx.delete(exportsTable).where(eq(exportsTable.occurrenceId, occurrenceId))
       return
     }
     if (BUSY_STATES.has(row.state)) throw new OccurrenceActiveError(occurrenceId)
@@ -113,6 +123,9 @@ export async function deleteOccurrenceData(deps: LaunchDeps, occurrenceId: strin
 
     await tx.delete(forms).where(eq(forms.occurrenceId, occurrenceId))
     await tx.delete(artefacts).where(eq(artefacts.occurrenceId, occurrenceId))
+    // The tombstone keeps the occurrence row, so the cascade never fires: the exports (titles, file paths) go here. Their
+    // files are in the occurrence directory and go with it.
+    await tx.delete(exportsTable).where(eq(exportsTable.occurrenceId, occurrenceId))
     await tx.delete(events).where(eq(events.occurrenceId, occurrenceId))
     await applyTrigger(tx, occurrenceId, 'delete', { reason: row.stateReason === 'deleting' ? 'member' : 'expired' })
     await tx
