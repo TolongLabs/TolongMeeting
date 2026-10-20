@@ -114,7 +114,8 @@ export const HeartbeatSchema = z.object({
   recording: z.boolean(),
   participants: z.int().min(0).max(1_000_000).nullable(),
   events: z.array(MeetingEventSchema).max(MAX_HEARTBEAT_EVENTS),
-  linkUsed: httpsUrl.optional()
+  // Optional and best effort: a value that is not an https URL of at most 2,048 characters is ignored, never a 400.
+  linkUsed: httpsUrl.optional().catch(undefined)
 }) satisfies z.ZodType<Heartbeat>
 
 export const ControlCommandSchema = z.enum(keysOf(CONTROL_COMMAND_TABLE))

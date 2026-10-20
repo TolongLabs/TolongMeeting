@@ -112,15 +112,20 @@ const hb = (): Heartbeat => ({
   events: []
 })
 
-test('a heartbeat may carry the joined link, https only and bounded', () => {
+test('a heartbeat may carry the joined link; a value that is not an https URL is ignored, not refused', () => {
   const linkUsed = 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
   expect(HeartbeatSchema.parse({ ...hb(), linkUsed }).linkUsed).toBe(linkUsed)
   expect(HeartbeatSchema.safeParse(hb()).success).toBe(true)
-  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'javascript:alert(1)' }).success).toBe(false)
-  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'http://example.zoom.us/j/1' }).success).toBe(false)
-  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: `https://example.zoom.us/${'a'.repeat(2048)}` }).success).toBe(
-    false
-  )
+  for (const bad of [
+    'javascript:alert(1)',
+    'http://example.zoom.us/j/1',
+    `https://example.zoom.us/${'a'.repeat(2048)}`,
+    42
+  ]) {
+    const parsed = HeartbeatSchema.parse({ ...hb(), linkUsed: bad })
+    expect(parsed.linkUsed, String(bad)).toBeUndefined()
+    expect(parsed.state).toBe('in_meeting')
+  }
 })
 
 test('a left_by_member state event may name the command that ended the meeting', () => {

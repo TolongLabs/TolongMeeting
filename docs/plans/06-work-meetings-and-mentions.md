@@ -536,7 +536,7 @@ Rules:
 - `leaveMeeting`: when `meetingState` is neither `in_meeting` nor `lobby`, return `'left'` without clicking. Otherwise call `adapter.leave(stage)` and poll `meetingState` every `pollMs` until it is neither; if that hasn't happened within `confirmMs`, or `leave` throws, close the stage page (`stage.close({ runBeforeUnload: false })`) and return `'closed'`.
 - `dispatchCommands` calls `h.leave` once per batch, with `'take_over'` when the batch holds one, else `'leave_now'`.
 - `run.ts`: 01c's leave handler calls `leaveMeeting` in place of `adapter.leave`, and only after it returns emits `left_by_member` with `command`; the rest of 01c's finish is unchanged. From the moment joining starts, `getStatus` sends `linkUsed`. The joined ping's actions become `Open meeting page`, `Make the bot leave` and `Take over`, from `siteLinks`. The leave step's bound (`BOUND.leave`) is 20 s, so the 10 s confirmation of `leaveMeeting` is not cut; a leave that failed or was cut also closes the browser. A leave or take-over command waits first for the form submit in progress (the dispatcher settles its running forms, bounded by `BOUND.forms`), then leaves; no Submit is clicked twice. A take-over ends with `left_by_member` and no summary hand-over.
-- `HeartbeatSchema` accepts an optional `linkUsed`: an `https:` URL of at most 2,048 characters.
+- `HeartbeatSchema` accepts an optional `linkUsed`: an `https:` URL of at most 2,048 characters. Any other value is read as absent (`.catch(undefined)`), so a bad optional link never makes the whole heartbeat a 400.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -601,7 +601,8 @@ test('a heartbeat may carry the joined link', () => {
       linkUsed: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
     }).success
   ).toBe(true)
-  expect(HeartbeatSchema.safeParse({ ...hb(), linkUsed: 'javascript:alert(1)' }).success).toBe(false)
+  // A value that is not an https URL is ignored, never a refused heartbeat.
+  expect(HeartbeatSchema.parse({ ...hb(), linkUsed: 'javascript:alert(1)' }).linkUsed).toBeUndefined()
 })
 ```
 

@@ -867,12 +867,12 @@ describe('the link the worker joined with', () => {
     const f = await controlFixture({ state: 'joining', linkUsed: OLD })
     for (const linkUsed of ['https://evil.example.com/j/1?pwd=X', 'http://example.zoom.us/j/1']) {
       const r = await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'joining', [], { linkUsed }))
-      expect(r.status === 200 || r.status === 400).toBe(true)
+      expect(r.status).toBe(200)
       expect((await f.occurrence()).linkUsed).toBe(OLD)
     }
     const long = `https://example.zoom.us/j/1?x=${'a'.repeat(2100)}`
     expect((await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'joining', [], { linkUsed: long }))).status).toBe(
-      400
+      200
     )
     expect((await f.occurrence()).linkUsed).toBe(OLD)
   })
