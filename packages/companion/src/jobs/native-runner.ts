@@ -1,11 +1,20 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CompanionJob, NativeJobPayload } from '@tm/core'
-import { CompanionApiError, DeviceRevokedError, type CompanionApi } from '../api'
+import { CompanionApiError, DeviceRevokedError, MAX_AUDIO_BYTES, type CompanionApi } from '../api'
 import type { KeepAwake } from '../keep-awake'
 import type { DesktopNotifier } from '../notifier'
 import type { Settings } from '../settings'
 import { buildWhisperArgv, collectOutputs, runWhisper, whisperTimeoutMs, type SpawnLike } from './whisper'
+
+/** FLAC audio of one second takes far less than this (48 kHz mono, 16 bit, uncompressed, is 96 000 bytes). */
+const AUDIO_BYTES_PER_SECOND = 192_000
+const AUDIO_SLACK_BYTES = 16 * 1024 ** 2
+
+/** The most a recording of `durationSec` may weigh when downloaded: its length at a generous rate, never above the ceiling. */
+export function audioLimitBytes(durationSec: number): number {
+  return Math.min(MAX_AUDIO_BYTES, Math.ceil(durationSec * AUDIO_BYTES_PER_SECOND) + AUDIO_SLACK_BYTES)
+}
 
 type NativeJob = CompanionJob & { kind: 'native_transcription'; payload: NativeJobPayload }
 
@@ -212,7 +221,7 @@ export class NativeRunner {
     const audio = join(dir, 'audio.flac')
 
     try {
-      await this.d.api.downloadAudio(job.id, audio, signal)
+      await this.d.api.downloadAudio(job.id, audio, signal, audioLimitBytes(job.payload.durationSec))
     } catch (e) {
       if (signal.aborted || isLost(e)) return
       ;(this.d.onError ?? ((err) => console.error(err)))(e)

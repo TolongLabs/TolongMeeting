@@ -242,9 +242,17 @@ export class CompanionApi {
 
   /**
    * Downloads the recording to `dest`. Bytes land in `${dest}.part` first, and a later call resumes from the end of
-   * that file with a `Range` request. The file is renamed to `dest` only when every byte has arrived.
+   * that file with a `Range` request. The file is renamed to `dest` only when every byte has arrived. More than
+   * `maxBytes` (the caller's size for this recording; never above `MAX_AUDIO_BYTES`) is refused.
    */
-  async downloadAudio(jobId: string, dest: string, signal?: AbortSignal): Promise<void> {
+  async downloadAudio(
+    jobId: string,
+    dest: string,
+    signal?: AbortSignal,
+    maxBytes: number = MAX_AUDIO_BYTES
+  ): Promise<void> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new RangeError('bad download limit')
+    const cap = Math.min(maxBytes, MAX_AUDIO_BYTES)
     const part = `${dest}.part`
     await mkdir(dirname(dest), { recursive: true })
     let offset = await sizeOf(part)
@@ -268,7 +276,7 @@ export class CompanionApi {
     if (res.status === 206) {
       const m = ContentRange.exec(res.headers.get('content-range') ?? '')
       const [start, end, total] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [NaN, NaN, NaN]
-      if (start !== offset || end !== total - 1 || total > MAX_AUDIO_BYTES) {
+      if (start !== offset || end !== total - 1 || total > cap) {
         await discard(res)
         throw new InvalidResponseError()
       }
@@ -278,13 +286,13 @@ export class CompanionApi {
       offset = 0
       const declared = res.headers.get('content-length')
       expectedTotal = declared === null ? null : Number(declared)
-      if (expectedTotal !== null && !(expectedTotal <= MAX_AUDIO_BYTES)) {
+      if (expectedTotal !== null && !(expectedTotal <= cap)) {
         await discard(res)
         throw new InvalidResponseError()
       }
     }
 
-    const written = await appendBody(res, part, offset, expectedTotal)
+    const written = await appendBody(res, part, offset, expectedTotal, cap)
     if (expectedTotal !== null && written !== expectedTotal) throw new InvalidResponseError()
     await rename(part, dest)
   }
@@ -456,8 +464,14 @@ async function sizeOf(file: string): Promise<number> {
 }
 
 /** Streams the body into `file` starting at `offset` (0 truncates) and returns the file size. Stops at `limit` bytes. */
-async function appendBody(res: Response, file: string, offset: number, limit: number | null): Promise<number> {
-  const cap = limit ?? MAX_AUDIO_BYTES
+async function appendBody(
+  res: Response,
+  file: string,
+  offset: number,
+  limit: number | null,
+  ceiling: number
+): Promise<number> {
+  const cap = limit ?? ceiling
   const handle = await open(file, offset > 0 ? 'a' : 'w', 0o600)
   let size = offset
   let overflow = false

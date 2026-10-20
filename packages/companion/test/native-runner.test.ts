@@ -4,9 +4,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CompanionJob } from '@tm/core'
-import { CompanionApiError } from '../src/api'
+import { CompanionApiError, MAX_AUDIO_BYTES } from '../src/api'
 import { buildWhisperArgv, nodeSpawn, runWhisper, whisperTimeoutMs, type SpawnLike } from '../src/jobs/whisper'
-import { NativeRunner, type NativeRunnerDeps } from '../src/jobs/native-runner'
+import { audioLimitBytes, NativeRunner, type NativeRunnerDeps } from '../src/jobs/native-runner'
 import { KeepAwake } from '../src/keep-awake'
 import type { DesktopNotification } from '../src/notifier'
 import type { Settings } from '../src/settings'
@@ -119,7 +119,9 @@ class FakeApi implements Api {
   async fail(jobId: string, error: string) {
     this.failures.push({ jobId, error })
   }
-  async downloadAudio(jobId: string, dest: string) {
+  downloadLimits: number[] = []
+  async downloadAudio(jobId: string, dest: string, _signal?: AbortSignal, maxBytes?: number) {
+    this.downloadLimits.push(maxBytes ?? -1)
     await writeFile(dest, Buffer.alloc(1000))
     void jobId
   }
@@ -282,6 +284,17 @@ describe('NativeRunner', () => {
     expect(api.failures).toEqual([])
   })
 
+  test('the recording download is capped by the job length, not by the 16 GiB ceiling', async () => {
+    const runner = runnerWith()
+    runner.offer([pending('j1')])
+    await idle(runner)
+    expect(api.downloadLimits).toEqual([audioLimitBytes(60)])
+    expect(audioLimitBytes(60)).toBe(60 * 192_000 + 16 * 1024 ** 2)
+    expect(audioLimitBytes(60)).toBeLessThan(MAX_AUDIO_BYTES)
+    expect(audioLimitBytes(10 * 3600)).toBe(10 * 3600 * 192_000 + 16 * 1024 ** 2)
+    expect(audioLimitBytes(1e9)).toBe(MAX_AUDIO_BYTES)
+  })
+
   test('the lease is renewed while the transcriber runs', async () => {
     const runner = runnerWith({ mode: 'slow', progressMs: 20 })
     runner.offer([pending('j1')])
@@ -334,12 +347,12 @@ describe('NativeRunner', () => {
     expect(existsSync(join(r.jobsDir, 'j1'))).toBe(false)
   })
 
-  test('a transcriber crash reports its last line without paths, and cleans up', async () => {
+  test('a transcriber crash reports a fixed reason, never its own words, and cleans up', async () => {
     const runner = runnerWith({ mode: 'crash' })
     runner.offer([pending('j1')])
     await idle(runner)
-    expect(api.failures).toEqual([{ jobId: 'j1', error: 'RuntimeError: CUDA out of memory in <path>' }])
-    expect(JSON.stringify(api.failures)).not.toContain('Users')
+    expect(api.failures).toEqual([{ jobId: 'j1', error: 'The transcriber stopped with exit code 3' }])
+    expect(JSON.stringify(api.failures)).not.toMatch(/CUDA|Users|model\.py/)
     expect(existsSync(join(r.jobsDir, 'j1'))).toBe(false)
     expect(power.calls).toEqual(['start prevent-app-suspension', 'stop 7'])
   })

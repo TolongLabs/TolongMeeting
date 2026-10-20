@@ -87,11 +87,31 @@ describe('binding', () => {
       /loopback/
     )
   })
-  test('the bind host check allows loopback and private bridge addresses only', () => {
-    for (const h of ['127.0.0.1', '127.0.0.5', '::1', '172.17.0.1', '172.31.255.1', '10.0.0.2', '192.168.65.1'])
-      expect(isAllowedBindHost(h)).toBe(true)
-    for (const h of ['0.0.0.0', '::', '172.32.0.1', '172.15.0.1', '8.8.8.8', '169.254.169.254', 'localhost', 'fe80::1'])
+  test('the bind host check allows loopback and the Docker bridge gateway only', () => {
+    for (const h of ['127.0.0.1', '127.0.0.5', '::1', '172.17.0.1']) expect(isAllowedBindHost(h)).toBe(true)
+    for (const h of [
+      '0.0.0.0',
+      '::',
+      '172.32.0.1',
+      '172.15.0.1',
+      '8.8.8.8',
+      '169.254.169.254',
+      'localhost',
+      'fe80::1',
+      // Any other private address is the home network, which must not reach the relay.
+      '172.31.255.1',
+      '172.17.0.2',
+      '10.0.0.2',
+      '192.168.1.20',
+      '192.168.65.1'
+    ])
       expect(isAllowedBindHost(h)).toBe(false)
+  })
+  test('another bridge gateway can be named, but only a private address', () => {
+    expect(isAllowedBindHost('172.20.0.1', '172.20.0.1')).toBe(true)
+    expect(isAllowedBindHost('172.17.0.1', '172.20.0.1')).toBe(false)
+    expect(isAllowedBindHost('8.8.8.8', '8.8.8.8')).toBe(false)
+    expect(isAllowedBindHost('0.0.0.0', '0.0.0.0')).toBe(false)
   })
   test('each run gets its own token', async () => {
     const [a, b] = [await start(replying([])), await start(replying([]))]

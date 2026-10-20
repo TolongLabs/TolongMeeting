@@ -190,11 +190,8 @@ export async function runWhisper(o: {
       const message = outcome.error instanceof Error ? outcome.error.message : ''
       return { ok: false, error: safeReason(message, 'The transcriber could not start') }
     }
-    if (outcome.code !== 0)
-      return {
-        ok: false,
-        error: safeReason(proc.stderrTail(), `The transcriber stopped with exit code ${outcome.code}`)
-      }
+    // The transcriber's own words stay on this PC: a crash line can hold a path, a name or a piece of the meeting.
+    if (outcome.code !== 0) return { ok: false, error: `The transcriber stopped with exit code ${outcome.code}` }
     return { ok: true }
   } finally {
     for (const t of timers) clearTimeout(t)

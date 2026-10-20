@@ -259,6 +259,21 @@ describe('downloadAudio', () => {
     expect(await readdir(join(dest, '..'))).toEqual(['audio.flac'])
   })
 
+  test('a recording above the caller limit is refused, with or without a declared size', async () => {
+    const dest = join(await tmpDir(), 'audio.flac')
+    const refused = (res: () => Response) =>
+      expect(apiWith(recorder([], res)).downloadAudio('j1', dest, undefined, 1000)).rejects
+    await refused(() => new Response(new Uint8Array(1001))).toBeInstanceOf(InvalidResponseError)
+    const chunked = () =>
+      new Response(new ReadableStream({ start: (c) => (c.enqueue(new Uint8Array(1001)), c.close()) }), { status: 200 })
+    await refused(chunked).toBeInstanceOf(InvalidResponseError)
+    await refused(
+      () => new Response(new Uint8Array(10), { status: 206, headers: { 'content-range': 'bytes 0-9/1001' } })
+    ).toBeInstanceOf(InvalidResponseError)
+    await apiWith(recorder([], () => new Response(new Uint8Array(1000)))).downloadAudio('j1', dest, undefined, 1000)
+    expect(Bun.file(dest).size).toBe(1000)
+  })
+
   test('a server that ignores the range sends the whole file again', async () => {
     const dest = join(await tmpDir(), 'audio.flac')
     await Bun.write(`${dest}.part`, new Uint8Array(400))

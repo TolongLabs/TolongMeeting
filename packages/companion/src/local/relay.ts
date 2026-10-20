@@ -48,10 +48,12 @@ export interface RelayDeps {
   jobId: string
   occurrenceId: string
   /**
-   * The address to listen on: loopback (the default) or the dedicated Docker bridge address, as an IP literal. The
+   * The address to listen on: loopback (the default) or the Docker bridge gateway, as an IP literal. The
    * wildcard addresses and any public address are refused.
    */
   bindHost?: string
+  /** The Docker bridge's gateway address, the one non-loopback address `bindHost` may be. Default `DOCKER_BRIDGE_GATEWAY`. */
+  bridgeGateway?: string
   /** The sign-in container's report (08 Task 10). Without it, `/signin` is a 404. */
   onSignin?: (hb: SigninHeartbeat) => SigninReply | Promise<SigninReply>
   /** Progress lines. They never hold the token, a header or a body. */
@@ -71,13 +73,26 @@ const FIXED = {
 
 const digest = (s: string) => createHash('sha256').update(s).digest()
 
-/** True when `host` is an IPv4/IPv6 loopback or a private IPv4 address (a Docker bridge), never a wildcard. */
-export function isAllowedBindHost(host: string): boolean {
+/** The gateway address of Docker's default bridge: where a container on that bridge finds the PC. */
+export const DOCKER_BRIDGE_GATEWAY = '172.17.0.1'
+
+function privateV4(host: string): boolean {
+  if (isIP(host) !== 4) return false
+  const [a, b] = host.split('.').map(Number)
+  return a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168)
+}
+
+/**
+ * True when `host` is a loopback address (IPv4 `127.0.0.0/8` or `::1`) or exactly the Docker bridge gateway
+ * (`bridgeGateway`, a private IPv4 literal; default `DOCKER_BRIDGE_GATEWAY`). Any other address, including the rest of
+ * a home network (`192.168.x.x`, `10.x.x.x`) and every wildcard, is refused: the relay must not be reachable from the LAN.
+ */
+export function isAllowedBindHost(host: string, bridgeGateway: string = DOCKER_BRIDGE_GATEWAY): boolean {
   const kind = isIP(host)
   if (kind === 6) return host === '::1'
   if (kind !== 4) return false
-  const [a, b] = host.split('.').map(Number)
-  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  if (Number(host.split('.')[0]) === 127) return true
+  return privateV4(bridgeGateway) && host === bridgeGateway
 }
 
 class BodyTooLarge extends Error {}
@@ -124,8 +139,8 @@ function send(res: ServerResponse, status: number, body: string, after?: () => v
 
 export async function startRelay(d: RelayDeps): Promise<Relay> {
   const host = d.bindHost ?? '127.0.0.1'
-  if (!isAllowedBindHost(host))
-    throw new RangeError('The relay listens on loopback or a private Docker bridge address only')
+  if (!isAllowedBindHost(host, d.bridgeGateway))
+    throw new RangeError('The relay listens on loopback or the Docker bridge gateway only')
   const now = d.now ?? Date.now
   const log = d.log ?? (() => {})
   const token = randomBytes(32).toString('base64url')

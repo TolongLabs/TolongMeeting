@@ -178,6 +178,7 @@ const afterFor = (w: World, signal?: AbortSignal) =>
   localAfter({
     api: apiFor(w),
     docker: w.docker,
+    imagePrefix: 'ghcr.io/tl/',
     settings: () => defaultSettings(w.base, w.server.url),
     spawn: noSpawn,
     retryMs: 10,
