@@ -14,7 +14,17 @@ export function SeekButton({ seconds, label }: { seconds: number; label: string 
         const video = document.getElementById('meeting-video')
         if (!(video instanceof HTMLVideoElement)) return
         video.currentTime = seconds
-        void video.play()
+        video.play().catch((e: unknown) => {
+          if (
+            (typeof DOMException !== 'undefined' &&
+              e instanceof DOMException &&
+              (e.name === 'AbortError' || e.name === 'NotAllowedError')) ||
+            (e instanceof Error && (e.name === 'AbortError' || e.name === 'NotAllowedError'))
+          ) {
+            return
+          }
+          throw e
+        })
       }}
     >
       {label}

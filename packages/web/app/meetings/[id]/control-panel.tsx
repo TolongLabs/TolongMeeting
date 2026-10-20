@@ -50,12 +50,20 @@ function OpenLink({ link, label }: { link: string; label: string }) {
 export function ControlPanel({ id, mode }: { id: string; mode: 'leave' | 'take-over' }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const mounted = useRef(true)
+  const statusRef = useRef<HTMLParagraphElement | null>(null)
+
   useEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
     }
   }, [])
+
+  useEffect(() => {
+    if (phase.kind === 'waiting') {
+      statusRef.current?.focus()
+    }
+  }, [phase.kind])
 
   async function start() {
     setPhase({ kind: 'waiting' })
@@ -72,7 +80,23 @@ export function ControlPanel({ id, mode }: { id: string; mode: 'leave' | 'take-o
     let outcome: 'left' | 'timeout'
     try {
       // A page that was closed stops asking: any state outside the meeting ends the wait at once.
-      outcome = await waitUntilLeft(async () => (mounted.current ? await fetchState(id) : 'left_by_member'))
+      outcome = await waitUntilLeft(async () => {
+        if (!mounted.current) return 'left_by_member'
+        const RETRIES = 2
+        const INTERVAL_MS = 1_000
+        let lastError: unknown
+        for (let attempt = 0; attempt <= RETRIES; attempt++) {
+          try {
+            return await fetchState(id)
+          } catch (e) {
+            lastError = e
+            if (attempt < RETRIES && mounted.current) {
+              await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS))
+            }
+          }
+        }
+        throw lastError
+      })
     } catch (e) {
       console.error(e)
       return setPhase({ kind: 'unchecked' })
@@ -96,7 +120,7 @@ export function ControlPanel({ id, mode }: { id: string; mode: 'leave' | 'take-o
       )
     case 'waiting':
       return (
-        <p role="status">
+        <p role="status" tabIndex={-1} ref={statusRef}>
           <button type="button" disabled>
             {button}
           </button>{' '}

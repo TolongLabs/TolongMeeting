@@ -18,10 +18,16 @@ const STATUS: Record<ExportView['status'], string> = {
 const LOAD_FAILED = 'Your exports did not load. Reload the page to try again.'
 const START_FAILED = 'The export did not start. Try again.'
 const REPLACED = 'This download was replaced by a newer export, so its file is gone.'
+const SESSION_ENDED = 'Your session has ended. Reload the page and sign in again.'
+const RUNNING_CAP_NOTE =
+  'An export has been running for 15 minutes. Polling has stopped. Reload the page to check again.'
+const MAX_RUNNING_MS = 15 * 60 * 1_000
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { cache: 'no-store' })
-  if (!response.ok) throw new Error(`${url} answered ${response.status}`)
+  if (response.redirected || response.status === 401) throw new Error(SESSION_ENDED)
+  const isJson = response.headers.get('content-type')?.includes('application/json') ?? false
+  if (!response.ok || !isJson) throw new Error(`${url} answered ${response.status}`)
   return (await response.json()) as T
 }
 
@@ -34,7 +40,11 @@ export function ExportPanel({ occurrenceId, timeZone }: { occurrenceId: string; 
   const [connections, setConnections] = useState<ConnectionSummary[] | null>(null)
   const [rows, setRows] = useState<ExportView[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const [announcement, setAnnouncement] = useState<string | null>(null)
   const startedHere = useRef(new Set<string>())
+  const prevStatuses = useRef<Map<string, ExportView['status']>>(new Map())
+  const runningStartRef = useRef<number | null>(null)
+  const [runningCapped, setRunningCapped] = useState(false)
   const listUrl = `/api/meetings/${encodeURIComponent(occurrenceId)}/exports`
 
   const refresh = useCallback(async () => {
@@ -46,6 +56,15 @@ export function ExportPanel({ occurrenceId, timeZone }: { occurrenceId: string; 
       setConnections(found)
       setRows(exports)
       for (const row of exports) {
+        const prev = prevStatuses.current.get(row.id)
+        if (prev !== undefined && (prev === 'queued' || prev === 'running')) {
+          if (row.status === 'succeeded') {
+            setAnnouncement(`${row.label} export finished.`)
+          } else if (row.status === 'failed') {
+            setAnnouncement(`${row.label} export failed.`)
+          }
+        }
+        prevStatuses.current.set(row.id, row.status)
         if (startedHere.current.has(row.id) && row.status !== 'queued' && row.status !== 'running') {
           startedHere.current.delete(row.id)
           if (row.downloadUrl) window.location.assign(row.downloadUrl)
@@ -53,7 +72,7 @@ export function ExportPanel({ occurrenceId, timeZone }: { occurrenceId: string; 
       }
     } catch (e) {
       console.error(e)
-      setProblem(LOAD_FAILED)
+      setProblem(e instanceof Error && e.message === SESSION_ENDED ? SESSION_ENDED : LOAD_FAILED)
     }
   }, [listUrl])
 
@@ -61,24 +80,65 @@ export function ExportPanel({ occurrenceId, timeZone }: { occurrenceId: string; 
     void refresh()
   }, [refresh])
 
+  const isRunning = rows?.some((r) => r.status === 'running') ?? false
   const busy = rows?.some((r) => r.status === 'queued' || r.status === 'running') ?? false
+
   useEffect(() => {
-    if (!busy) return
+    if (isRunning) {
+      const now = Date.now()
+      const runningRow = rows?.find((r) => r.status === 'running')
+      const rowAge = runningRow ? now - new Date(runningRow.createdAt).getTime() : 0
+      if (rowAge >= MAX_RUNNING_MS) {
+        setRunningCapped(true)
+      } else if (runningStartRef.current === null) {
+        runningStartRef.current = now
+      } else if (now - runningStartRef.current >= MAX_RUNNING_MS) {
+        setRunningCapped(true)
+      }
+    } else {
+      runningStartRef.current = null
+      setRunningCapped(false)
+    }
+  }, [isRunning, rows])
+
+  useEffect(() => {
+    if (!busy || runningCapped) return
     const timer = setTimeout(() => void refresh(), POLL_MS)
     return () => clearTimeout(timer)
-  }, [busy, rows, refresh])
+  }, [busy, runningCapped, rows, refresh])
 
   async function start(target: ExportTargetId) {
     setProblem(null)
-    const response = await fetch(listUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target })
-    })
-    const body = (await response.json()) as { exportId?: string; message?: string }
-    if (!response.ok) return setProblem(typeof body.message === 'string' ? body.message : START_FAILED)
-    if (body.exportId) startedHere.current.add(body.exportId)
-    await refresh()
+    try {
+      const response = await fetch(listUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target })
+      })
+      if (response.redirected || response.status === 401) {
+        return setProblem(SESSION_ENDED)
+      }
+      const isJson = response.headers.get('content-type')?.includes('application/json') ?? false
+      if (!response.ok) {
+        if (isJson) {
+          try {
+            const body = (await response.json()) as { message?: string }
+            return setProblem(typeof body.message === 'string' ? body.message : START_FAILED)
+          } catch {
+            return setProblem(START_FAILED)
+          }
+        }
+        return setProblem(START_FAILED)
+      }
+      if (!isJson) {
+        return setProblem(START_FAILED)
+      }
+      const body = (await response.json()) as { exportId?: string; message?: string }
+      if (body.exportId) startedHere.current.add(body.exportId)
+      await refresh()
+    } catch {
+      setProblem(START_FAILED)
+    }
   }
 
   const time = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone })
@@ -122,6 +182,8 @@ export function ExportPanel({ occurrenceId, timeZone }: { occurrenceId: string; 
         </>
       )}
       {problem !== null && <Notice kind="error">{problem}</Notice>}
+      {runningCapped && <Notice>{RUNNING_CAP_NOTE}</Notice>}
+      <div aria-live="polite">{announcement}</div>
       {newestFirst.length > 0 && (
         <>
           <h3>Your exports of this meeting</h3>
