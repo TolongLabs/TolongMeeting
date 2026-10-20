@@ -32,7 +32,7 @@ jobs:
       - name: Build the worker image
         run: sh scripts/build-worker-image.sh
       - name: Self-check
-        run: docker run --rm tm-worker:dev selfcheck
+        run: docker run --rm --shm-size=2g tm-worker:dev selfcheck
       - name: Image specs
         run: docker run --rm --shm-size=2g tm-worker:dev test --project=image
       - name: Recorder integration test
