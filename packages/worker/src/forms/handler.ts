@@ -193,14 +193,14 @@ class FormRun {
   private async open(): Promise<PageKind> {
     await this.deskOpen()
     try {
-      this.tab = await openDeskTab(this.ctx.desk)
+      this.tab = await this.ctx.deskStep(() => openDeskTab(this.ctx.desk))
     } catch (error) {
       if (error instanceof TabNotOnDeskError) await this.fail('tab_not_on_desk')
       throw error
     }
     this.driver = await driverFor(this.f.provider)
     try {
-      return await openForm(this.tab, canonicalFormUrl(this.f.finalUrl), this.driver)
+      return await this.ctx.deskStep(() => openForm(this.tab!, canonicalFormUrl(this.f.finalUrl), this.driver!))
     } catch (error) {
       if (error instanceof OpenTimeoutError) {
         await this.closeTab() // before anything else, so a slow page cannot go on loading
@@ -250,8 +250,11 @@ class FormRun {
     }
     await this.beforeDeadline()
     try {
-      await driver.fill(tab, page, plan.answers)
-      if (!verifyFill(plan, await driver.readPage(tab, n))) await this.fail('fill_failed')
+      const verified = await this.ctx.deskStep(async () => {
+        await driver.fill(tab, page, plan.answers)
+        return verifyFill(plan, await driver.readPage(tab, n))
+      })
+      if (!verified) await this.fail('fill_failed')
     } catch (error) {
       if (error instanceof FormStepError)
         await this.stepFailed(error, error.code === 'not_a_form' ? 'unknown_page' : 'fill_failed')
@@ -266,7 +269,7 @@ class FormRun {
     }
     if (page.hasNext) {
       try {
-        await driver.next(tab)
+        await this.ctx.deskStep(() => driver.next(tab))
       } catch (error) {
         if (error instanceof FormStepError)
           await this.stepFailed(error, error.code === 'not_a_form' ? 'unknown_page' : 'next_failed')
@@ -280,7 +283,7 @@ class FormRun {
 
   private async read(n: number): Promise<FormPage> {
     try {
-      return await this.driver!.readPage(this.tab!, n)
+      return await this.ctx.deskStep(() => this.driver!.readPage(this.tab!, n))
     } catch (error) {
       if (error instanceof FormStepError && error.code === 'not_a_form') await this.stepFailed(error, 'unknown_page')
       throw error
@@ -335,7 +338,7 @@ class FormRun {
       throw error
     }
     try {
-      await this.driver!.submit(this.tab!, { signal: this.ctx.signal })
+      await this.ctx.deskStep(() => this.driver!.submit(this.tab!, { signal: this.ctx.signal }))
     } catch (error) {
       // The meeting ended before the click: nothing was sent, so the form is failed, not maybe-submitted.
       if (error instanceof FormStepError && error.code === 'meeting_ended') await this.fail('meeting_ended')
@@ -344,7 +347,7 @@ class FormRun {
       }
       throw error // submit_unconfirmed and anything unexpected: handled as maybe-submitted by the caller
     }
-    const kind = await this.driver!.pageKind(this.tab!)
+    const kind = await this.ctx.deskStep(() => this.driver!.pageKind(this.tab!))
     if (kind === 'already_answered') await this.finish('already_answered_seen')
     if (kind !== 'confirmation') await this.fail('submit_unconfirmed')
     this.rec = { ...this.rec, submittedAt: new Date().toISOString() }

@@ -61,7 +61,8 @@ function fakeBase(dir: string) {
       pings.push(p)
     },
     matchLabels: async () => new Map(),
-    waitForSignin: async () => true
+    waitForSignin: async () => true,
+    deskStep: async (step) => step()
   }
   return { base, pings, events }
 }

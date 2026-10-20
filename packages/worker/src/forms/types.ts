@@ -90,6 +90,8 @@ export interface FormContextBase {
   waitForSignin(tab: Page, provider: FormProvider, signal: AbortSignal): Promise<boolean>
   /** Resolves when the member does not hold the desk (a sign-in pause). Absent: the desk is always free. */
   deskOpen?(): Promise<void>
+  /** Runs one driver call on the desk page. A pause waits for it to finish; without a desk pause it just runs `step`. */
+  deskStep<T>(step: () => Promise<T>): Promise<T>
 }
 
 export interface FormContext extends FormContextBase {

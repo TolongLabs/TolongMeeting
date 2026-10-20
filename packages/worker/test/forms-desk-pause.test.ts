@@ -64,3 +64,40 @@ test('without a desk pause the desk is always free', async () => {
   const ctx = await context(null)
   expect(ctx.deskOpen).toBeUndefined()
 })
+
+test('a pause requested during a slow fill starts only after the fill, and no driver call runs while paused', async () => {
+  const p = pause()
+  const ctx = await context(p)
+  const log: string[] = []
+  let finishFill: () => void = () => undefined
+  const fill = ctx.deskStep(
+    () =>
+      new Promise<void>((resolve) => {
+        log.push('fill starts')
+        finishFill = () => {
+          log.push(`fill ends, paused: ${p.paused}`)
+          resolve()
+        }
+      })
+  )
+  const paused = p.pause()
+  await Bun.sleep(1)
+  expect(p.paused).toBe(false)
+  finishFill()
+  await fill
+  await paused
+  expect(p.paused).toBe(true)
+  let nextRan = false
+  const next = ctx.deskStep(async () => void (nextRan = true))
+  await Bun.sleep(1)
+  expect(nextRan).toBe(false)
+  await p.resume('command')
+  await next
+  expect(nextRan).toBe(true)
+  expect(log).toEqual(['fill starts', 'fill ends, paused: false'])
+})
+
+test('without a desk pause a driver step runs at once', async () => {
+  const ctx = await context(null)
+  expect(await ctx.deskStep(async () => 'done')).toBe('done')
+})

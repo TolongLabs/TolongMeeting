@@ -28,7 +28,9 @@ async function waitForResume(
   })
   if (reason === null) return false
   if (reason === 'command') return true
-  return waitForTabSignin(tab, await driverFor(provider), signal, 0)
+  // One read of the tab, a desk step: a pause requested meanwhile starts after it. (The 15-minute poll of the no-pause
+  // path is not gated: it would hold the desk for the whole sign-in.)
+  return pause.deskStep(async () => waitForTabSignin(tab, await driverFor(provider), signal, 0))
 }
 
 // The parts of a FormContext that do not depend on one form. A failed ping is reported as an `error` event, never thrown:
@@ -65,6 +67,7 @@ export function makeFormContextBase(
       pause === null
         ? waitForTabSignin(tab, await driverFor(provider), signal)
         : waitForResume(pause, tab, provider, signal),
+    deskStep: (step) => (pause === null ? step() : pause.deskStep(step)),
     ...(pause === null ? {} : { deskOpen: () => pause.whenOpen() })
   }
 }
