@@ -52,6 +52,47 @@ test('redact removes Google API key and client secret shapes', () => {
   expect(redact('short AIzaSy stays', [])).toBe('short AIzaSy stays')
 })
 
+test('redact removes single-quoted credential values', () => {
+  expect(redact("password: 'hunter2'", [])).toBe("password: '[redacted]'")
+})
+
+test('redact removes bare credential values', () => {
+  expect(redact('password: hunter2 next', [])).toBe('password: [redacted] next')
+})
+
+test('redact removes Token authorization values', () => {
+  expect(redact('Authorization: Token abc123', [])).toBe('Authorization: Token [redacted]')
+})
+
+test('redact removes api key header values', () => {
+  expect(redact('x-api-key: abc123', [])).toBe('x-api-key: [redacted]')
+})
+
+test('redact removes a URL-encoded connection token', () => {
+  expect(redact('failed for tok%31envalue-1234', ['tok1envalue-1234'])).toBe('failed for [redacted]')
+})
+
+test('redact removes a connection token split by a line break', () => {
+  expect(redact('failed for tok1envalue-\n1234', ['tok1envalue-1234'])).toBe('failed for [redacted]')
+})
+
+test('redact removes JSON numeric credential values', () => {
+  expect(redact('{"token":12345678}', [])).toBe('{"token":[redacted]}')
+})
+
+test('redact replaces the line break after a Bearer scheme with a space', () => {
+  expect(redact('Authorization: Bearer\nvalue', [])).toBe('Authorization: Bearer [redacted]')
+})
+
+test('redact is linear on hostile input with the new forms', () => {
+  const unit = `password: 'x password: y Authorization: Token z x-api-key: k "token":123 tok%31envalue- tok1envalue- `
+  const text = unit.repeat(Math.ceil((8 * 1024) / unit.length)).slice(0, 8 * 1024)
+  const started = performance.now()
+  const out = redact(text, ['tok1envalue-1234'])
+  expect(performance.now() - started).toBeLessThan(50)
+  expect(out).not.toContain("password: 'x")
+})
+
 test('redact is linear on hostile input', () => {
   for (const unit of ['a-', 'a.', 'a ', 'Bearer ', 'token=', '"token":"', 'https://a']) {
     const text = unit.repeat(Math.ceil(200_000 / unit.length))

@@ -49,9 +49,9 @@ test('the package index does not export the runner store', async () => {
   expect(Object.keys(await import('../src'))).not.toContain('runnerStore')
 })
 
-test('no web app or lib file imports the runner store', async () => {
+test('no web app, lib or db file imports the runner store', async () => {
   const offenders: string[] = []
-  for (const dir of ['app', 'lib']) {
+  for (const dir of ['app', 'lib', 'db']) {
     const cwd = join(webRoot, dir)
     for (const file of await scan(cwd)) {
       if (RUNNER_STORE.test(await Bun.file(join(cwd, file)).text())) offenders.push(`${dir}/${file}`)
