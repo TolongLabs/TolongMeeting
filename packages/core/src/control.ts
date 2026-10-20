@@ -12,8 +12,14 @@ export type AccountStatus = Partial<Record<AccountKind, { verifiedAt: string; si
 /** The host paths and public URLs a container spec is built from (shared by the scheduler, the website and the pipeline). */
 export type SpecEnv = { dataRoot: string; profileRoot: string; publicUrl: string; ntfyUrl: string }
 
-/** What a worker `state` event carries when the state changed. */
-export type StateEventData = { state: OccurrenceState }
+/** Where the meeting link the bot joined came from. */
+export const JOINED_LINK_SOURCES = ['fixed', 'watched', 'pasted'] as const
+
+/** What a worker `state` event carries when the state changed. `link` (host only, never the URL) rides on `joining`. */
+export type StateEventData = {
+  state: OccurrenceState
+  link?: { source: (typeof JOINED_LINK_SOURCES)[number]; host: string }
+}
 
 /** What a worker `state` event carries after an account check. */
 export type AccountCheckData = { account: AccountKind; signedIn: boolean }
@@ -72,7 +78,10 @@ const keysOf = <T extends string>(table: Record<T, true>) => Object.keys(table) 
 
 export const OccurrenceStateSchema = z.enum(keysOf(OCCURRENCE_STATE_TABLE))
 export const AccountKindSchema = z.enum(ACCOUNT_KINDS)
-export const StateEventDataSchema = z.object({ state: OccurrenceStateSchema })
+export const StateEventDataSchema = z.object({
+  state: OccurrenceStateSchema,
+  link: z.object({ source: z.enum(JOINED_LINK_SOURCES), host: z.string().min(1).max(255) }).optional()
+}) satisfies z.ZodType<StateEventData>
 export const AccountCheckDataSchema = z.object({ account: AccountKindSchema, signedIn: z.boolean() })
 
 const stamp = z.iso.datetime({ offset: true })

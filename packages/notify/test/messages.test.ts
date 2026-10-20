@@ -325,3 +325,85 @@ test('pings that send the member to the website carry one action each', () => {
   })
   expect(alertPing('Data Mining', 'dropped', undefined, links).actions).toBeUndefined()
 })
+
+test('not-attended copy, with the action only when the meeting page URL is known', () => {
+  const meetingUrl = 'https://tm.example/meetings/o1'
+  expect(pings.noLinkStopped({ entry: 'Data Mining', until: 'Wed 21 Oct, 14:30', meetingUrl })).toEqual({
+    title: 'Not attended: Data Mining',
+    message: 'No meeting link arrived by Wed 21 Oct, 14:30, so the bot stopped without joining Data Mining.',
+    priority: 'default',
+    actions: [{ label: 'Open meeting page', url: meetingUrl }]
+  })
+  expect(pings.noLinkStopped({ entry: 'Data Mining', until: 'Wed 21 Oct, 14:30', meetingUrl: null })).toEqual({
+    title: 'Not attended: Data Mining',
+    message: 'No meeting link arrived by Wed 21 Oct, 14:30, so the bot stopped without joining Data Mining.',
+    priority: 'default'
+  })
+})
+
+test('watcher problems: one message each, and sign-in offered only for a sign-out', () => {
+  const meetingUrl = 'https://tm.example/meetings/o1'
+  const signInUrl = 'https://tm.example/accounts/i1/signin'
+  const ping = (problem: Parameters<typeof pings.watcherProblem>[0]['problem']) =>
+    pings.watcherProblem({ entry: 'Data Mining', app: 'whatsapp', problem, meetingUrl, signInUrl: null })
+  expect(ping('not_found')).toMatchObject({
+    title: 'Not watching WhatsApp: Data Mining',
+    priority: 'high',
+    message:
+      "The bot couldn't find the chat named on the timetable entry. Check it, and paste the meeting link on the meeting page this time."
+  })
+  expect(ping('ambiguous').message).toBe(
+    'More than one WhatsApp chat has the name on the timetable entry. Rename one or change the entry, and paste the meeting link on the meeting page this time.'
+  )
+  expect(ping('not_loaded').message).toBe(
+    "WhatsApp didn't finish loading within 60 seconds, so the bot isn't watching the chat. Paste the meeting link on the meeting page if one is posted."
+  )
+  expect(ping('lost').message).toBe(
+    "The bot lost the chat and stopped watching it. Paste the meeting link on the meeting page if one is posted; forms posted there won't be seen."
+  )
+  expect(ping('lost').actions).toEqual([{ label: 'Open meeting page', url: meetingUrl }])
+  const p = pings.watcherProblem({ entry: 'Data Mining', app: 'discord', problem: 'signed_out', meetingUrl, signInUrl })
+  expect([p.title, p.priority, p.actions]).toEqual([
+    'Not watching Discord: Data Mining',
+    'high',
+    [
+      { label: 'Open meeting page', url: meetingUrl },
+      { label: 'Sign in again', url: signInUrl }
+    ]
+  ])
+  expect(p.message).toBe(
+    "Discord signed the bot out while it was watching. Sign in again; until then, new links in the chat aren't seen."
+  )
+  expect(
+    pings.watcherProblem({
+      entry: 'Data Mining',
+      app: 'whatsapp',
+      problem: 'signed_out',
+      meetingUrl: null,
+      signInUrl: null
+    }).actions
+  ).toBeUndefined()
+})
+
+test('watching-off copy for the home-only and switched-off gates', () => {
+  const meetingUrl = 'https://tm.example/meetings/o1'
+  const accountsUrl = 'https://tm.example/accounts'
+  expect(pings.watchingOff({ entry: 'Data Mining', app: 'whatsapp', gate: 'none', meetingUrl, accountsUrl })).toEqual({
+    title: 'Not watching WhatsApp: Data Mining',
+    message:
+      "WhatsApp watching is switched off, so the bot won't watch it for Data Mining. Paste the meeting link on the meeting page.",
+    priority: 'high',
+    actions: [
+      { label: 'Open meeting page', url: meetingUrl },
+      { label: 'Open accounts', url: accountsUrl }
+    ]
+  })
+  expect(
+    pings.watchingOff({ entry: 'Data Mining', app: 'discord', gate: 'home_only', meetingUrl: null, accountsUrl: null })
+  ).toEqual({
+    title: 'Not watching Discord: Data Mining',
+    message:
+      "Discord is watched only for identities that run at home or on your PC, so the bot won't watch it for Data Mining. Paste the meeting link on the meeting page, or change where this identity runs.",
+    priority: 'high'
+  })
+})

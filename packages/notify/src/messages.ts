@@ -1,4 +1,4 @@
-import type { FormCandidate } from '@tm/core'
+import type { ChatApp, FormCandidate } from '@tm/core'
 import type { Ping, PingAction } from './ntfy'
 
 export type AlertKind =
@@ -114,6 +114,33 @@ export function summaryFailedPing(entry: string, status: number): Ping {
 export type WorkerFailureReason =
   'it crashed 3 times' | "it couldn't start" | 'it ran past the hard stop' | 'worker_unreachable'
 
+/** Why the bot is not watching a chat for a meeting link. */
+export type WatcherProblem = 'not_found' | 'ambiguous' | 'not_loaded' | 'lost' | 'signed_out'
+
+const APP_NAME: Record<ChatApp, string> = { whatsapp: 'WhatsApp', discord: 'Discord', teams: 'Teams' }
+
+// The actions whose URL is known. A null URL leaves its action out; no action at all leaves the field out.
+function withActions(pairs: [label: string, url: string | null][]): { actions?: PingAction[] } {
+  const actions = pairs.flatMap(([label, url]) => (url === null ? [] : [{ label, url }]))
+  return actions.length > 0 ? { actions } : {}
+}
+
+function watcherProblemMessage(app: ChatApp, problem: WatcherProblem): string {
+  const name = APP_NAME[app]
+  switch (problem) {
+    case 'not_found':
+      return "The bot couldn't find the chat named on the timetable entry. Check it, and paste the meeting link on the meeting page this time."
+    case 'ambiguous':
+      return `More than one ${name} chat has the name on the timetable entry. Rename one or change the entry, and paste the meeting link on the meeting page this time.`
+    case 'not_loaded':
+      return `${name} didn't finish loading within 60 seconds, so the bot isn't watching the chat. Paste the meeting link on the meeting page if one is posted.`
+    case 'lost':
+      return "The bot lost the chat and stopped watching it. Paste the meeting link on the meeting page if one is posted; forms posted there won't be seen."
+    case 'signed_out':
+      return `${name} signed the bot out while it was watching. Sign in again; until then, new links in the chat aren't seen.`
+  }
+}
+
 // The member-facing pings of plan 01c. Each wording is fixed here; callers pass only the values that fill it in.
 export const pings = {
   notificationsTest(): Ping {
@@ -223,6 +250,59 @@ export const pings = {
       message: 'Post-processing failed. The recording, chat and transcript are kept on the meeting page.',
       priority: 'high',
       actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
+  // No link arrived by the time the bot gave up (T+30). `until` is the formatted give-up time.
+  noLinkStopped(p: { entry: string; until: string; meetingUrl: string | null }): Ping {
+    return {
+      title: `Not attended: ${p.entry}`,
+      message: `No meeting link arrived by ${p.until}, so the bot stopped without joining ${p.entry}.`,
+      priority: 'default',
+      ...withActions([['Open meeting page', p.meetingUrl]])
+    }
+  },
+
+  // The bot cannot watch a chat for the link. "Sign in again" is offered only when the chat app signed the bot out.
+  watcherProblem(p: {
+    entry: string
+    app: ChatApp
+    problem: WatcherProblem
+    meetingUrl: string | null
+    signInUrl: string | null
+  }): Ping {
+    return {
+      title: `Not watching ${APP_NAME[p.app]}: ${p.entry}`,
+      message: watcherProblemMessage(p.app, p.problem),
+      priority: 'high',
+      ...withActions([
+        ['Open meeting page', p.meetingUrl],
+        ['Sign in again', p.problem === 'signed_out' ? p.signInUrl : null]
+      ])
+    }
+  },
+
+  // The gate keeps the bot off a chat: `home_only` for this identity's location, `none` for WhatsApp switched off.
+  watchingOff(p: {
+    entry: string
+    app: ChatApp
+    gate: 'home_only' | 'none'
+    meetingUrl: string | null
+    accountsUrl: string | null
+  }): Ping {
+    const name = APP_NAME[p.app]
+    const message =
+      p.gate === 'none'
+        ? `${name} watching is switched off, so the bot won't watch it for ${p.entry}. Paste the meeting link on the meeting page.`
+        : `${name} is watched only for identities that run at home or on your PC, so the bot won't watch it for ${p.entry}. Paste the meeting link on the meeting page, or change where this identity runs.`
+    return {
+      title: `Not watching ${name}: ${p.entry}`,
+      message,
+      priority: 'high',
+      ...withActions([
+        ['Open meeting page', p.meetingUrl],
+        ['Open accounts', p.accountsUrl]
+      ])
     }
   }
 }

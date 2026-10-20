@@ -10,6 +10,7 @@ import {
   SigninHeartbeatSchema,
   SigninJobSchema,
   SigninReplySchema,
+  StateEventDataSchema,
   controlTokenHash,
   vncSecret
 } from '../src/control'
@@ -82,4 +83,21 @@ test('sign-in jobs, reports, replies and events are checked', () => {
     reason: 'idle'
   })
   expect(SigninEventDataSchema.safeParse({ signin: 'gone' }).success).toBe(false)
+})
+
+test('a joining state event carries the link source and host, and the URL itself is dropped', () => {
+  expect(StateEventDataSchema.parse({ state: 'in_meeting' })).toEqual({ state: 'in_meeting' })
+  expect(StateEventDataSchema.parse({ state: 'joining', link: { source: 'pasted', host: 'example.zoom.us' } })).toEqual(
+    {
+      state: 'joining',
+      link: { source: 'pasted', host: 'example.zoom.us' }
+    }
+  )
+  expect(
+    StateEventDataSchema.parse({ state: 'joining', link: { source: 'watched', host: 'h.example', url: 'https://h' } })
+  ).toEqual({ state: 'joining', link: { source: 'watched', host: 'h.example' } })
+  expect(StateEventDataSchema.safeParse({ state: 'joining', link: { source: 'discord', host: 'h' } }).success).toBe(
+    false
+  )
+  expect(StateEventDataSchema.safeParse({ state: 'joining', link: { source: 'fixed', host: '' } }).success).toBe(false)
 })
