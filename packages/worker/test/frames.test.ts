@@ -27,7 +27,7 @@ const hostHas = (bins: string[]): boolean => {
 }
 
 // Host tests: a real Xvfb display and real ffmpeg. The host has no PulseAudio, so audio uses a generated signal.
-const canGrab = hostHas(['ffmpeg', 'ffplay', 'Xvfb', 'xdpyinfo'])
+const canGrab = hostHas(['ffmpeg', 'ffplay', 'Xvfb', 'xdpyinfo', 'xwininfo'])
 const hasFfmpeg = hostHas(['ffmpeg'])
 
 async function pixels(png: Buffer): Promise<{ width: number; height: number; rgb: Buffer }> {
@@ -49,6 +49,21 @@ function paint(display: string, colour: string, left: number): ChildProcess {
   )
 }
 
+// Waits until `count` ffplay windows are mapped on the display and have had time to paint, so a slow runner can't
+// capture a black screen. A fixed sleep was not enough on CI.
+async function painted(display: string, count: number): Promise<void> {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    const tree = execFileSync('xwininfo', ['-root', '-children', '-display', display], { encoding: 'utf8' })
+    if ((tree.match(/1920x1080\+/g) ?? []).length >= count) {
+      await sleep(1000)
+      return
+    }
+    await sleep(200)
+  }
+  throw new Error(`the ${count} painter windows did not appear on ${display}`)
+}
+
 describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
   let screen: Screen
   let painters: ChildProcess[]
@@ -56,7 +71,7 @@ describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
     screen = await startScreen({ windowManager: 'none' })
     // stage page red, desk page blue
     painters = [paint(screen.display, 'red', screen.stage.x), paint(screen.display, 'blue', screen.desk.x)]
-    await sleep(1500)
+    await painted(screen.display, 2)
   })
   afterEach(async () => {
     for (const p of painters) {
