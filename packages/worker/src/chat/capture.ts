@@ -260,6 +260,9 @@ export async function startChatCapture(
     try {
       messages = await found()
     } catch (err) {
+      // stop() was called while this tick ran: the page can close under it (a leave the page did not confirm). The
+      // rows are on disk or the next start reads them again, so a failure here is not a fault and must not ping.
+      if (stopped) return
       await report(step, err, FAILED_MESSAGE[step])
       return
     }

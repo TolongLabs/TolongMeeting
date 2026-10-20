@@ -16,7 +16,7 @@ type ScriptEvent =
 
 // Runs in the meeting page (the fixture's zoom-meeting-top.html, inside its iframe): it plays the clip on the stage and
 // applies the events the test scripts, the way the Zoom server would push them.
-const MEETING_SCRIPT = `<script>
+const meetingScript = (leaveWorks: boolean): string => `<script>
 (() => {
   const video = document.createElement('video')
   Object.assign(video, { src: '/__e2e/stage.webm', autoplay: true, loop: true, playsInline: true })
@@ -45,12 +45,15 @@ const MEETING_SCRIPT = `<script>
   }
   // Leave Meeting in the fixture only logs the click. The real client takes the participant out of the meeting, so the
   // Leave button goes and the page says so (otherwise every leave runs into its 10 s confirmation and closes the page).
-  document.addEventListener('click', (event) => {
-    if (!event.target.closest('[data-click="leave meeting"]')) return
-    document.getElementById('leave')?.remove()
-    document.getElementById('leave-confirm').hidden = true
-    document.querySelector('main').append(Object.assign(document.createElement('p'), { textContent: 'You have left the meeting' }))
-  }, true)
+  // With leaveWorks false the fake keeps the old no-op click, for the F2 repro of a leave the page does not confirm.
+  if (${leaveWorks}) {
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('[data-click="leave meeting"]')) return
+      document.getElementById('leave')?.remove()
+      document.getElementById('leave-confirm').hidden = true
+      document.querySelector('main').append(Object.assign(document.createElement('p'), { textContent: 'You have left the meeting' }))
+    }, true)
+  }
   let since = 0
   setInterval(async () => {
     const body = await (await fetch('/__e2e/events?since=' + since)).json()
@@ -72,6 +75,11 @@ const LOBBY_SCRIPT = `<script>
 })()
 </script>`
 
+export interface FakeZoomOptions {
+  /** Whether Leave Meeting takes the participant out of the meeting, as the real client does. Default true. */
+  leaveWorks?: boolean
+}
+
 export interface FakeZoom {
   /** The port Chrome's host-resolver rule sends every *.zoom.us name to. */
   port: number
@@ -89,9 +97,13 @@ export interface FakeZoom {
   close(): Promise<void>
 }
 
+// Test-only switch for the F2 repro: `TM_E2E_FAKE_LEAVE=ignore` is the old fake whose Leave Meeting click did nothing.
+const LEAVE_WORKS = process.env.TM_E2E_FAKE_LEAVE !== 'ignore'
+
 // A stand-in for Zoom's web client built from the repository's fixtures (pre-join, waiting room, meeting in an
 // iframe), served over TLS. The pre-join page always leads to the waiting room; the host's script decides what follows.
-export async function startFakeZoom(pki: Pki, clip: Buffer): Promise<FakeZoom> {
+export async function startFakeZoom(pki: Pki, clip: Buffer, opts: FakeZoomOptions = {}): Promise<FakeZoom> {
+  const leaveWorks = opts.leaveWorks ?? LEAVE_WORKS
   const events: ScriptEvent[] = []
   const slides = new Map<string, Buffer>()
   const requests: string[] = []
@@ -139,7 +151,7 @@ export async function startFakeZoom(pki: Pki, clip: Buffer): Promise<FakeZoom> {
     if (file === null) return send(404, 'text/plain', 'not found')
     let body = file
     if (name === 'zoom-lobby.html') body = file.replace('</body>', `${LOBBY_SCRIPT}</body>`)
-    if (name === 'zoom-meeting-top.html') body = file.replace('</body>', `${MEETING_SCRIPT}</body>`)
+    if (name === 'zoom-meeting-top.html') body = file.replace('</body>', `${meetingScript(leaveWorks)}</body>`)
     return send(200, TYPES[extname(name)]!, body)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

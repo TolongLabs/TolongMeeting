@@ -8,6 +8,8 @@ import { startFormDispatcher } from '../src/forms/dispatcher'
 import { loadFormRecords, saveFormRecord } from '../src/forms/store'
 import { CheckpointAuthError } from '../src/profile/profile'
 import { runOccurrence } from '../src/run'
+import type { PlatformAdapter } from '../src/adapters'
+import { startChatCapture } from '../src/chat/capture'
 import { fakeDeps, makeCfg, type FakeDeps } from './helpers/fake-deps'
 
 let lectureCfg: JobConfig
@@ -82,7 +84,8 @@ test('hard stop at end + 30 minutes sweeps chat before leaving', async () => {
   const o = await runOccurrence(lectureCfg, d)
   expect(o.endedBy).toBe('hard_stop')
   expect(+d.leftAt!).toBe(+new Date(lectureCfg.entry.end) + 30 * 60_000)
-  expect(d.calls.indexOf('sweepNow')).toBe(d.calls.indexOf('leave') - 1)
+  expect(d.calls.indexOf('sweepNow')).toBeLessThan(d.calls.indexOf('chat.stop'))
+  expect(d.calls.indexOf('chat.stop')).toBeLessThan(d.calls.indexOf('leave'))
 })
 
 test('busy Zoom account falls back to a guest stage', async () => {
@@ -431,10 +434,61 @@ test('a failed or timed-out leave closes the browser at once, before the next st
     const d = fakeDeps({ states: 'always_in_meeting', leave, teardownBudgetMs: 800 })
     await runOccurrence(cfg, d)
     expect(d.calls.indexOf('context.close')).toBe(d.calls.indexOf('leave') + 1)
-    expect(d.calls.indexOf('chat.stop')).toBeGreaterThan(d.calls.indexOf('context.close'))
+    expect(d.calls.indexOf('chat.stop')).toBeLessThan(d.calls.indexOf('leave'))
     await rm(join(cfg.dataDir, '..'), { recursive: true, force: true })
   }
 })
+
+// F2: a leave the page does not confirm closes the stage 10 s after the click. The poll stops before it, so the closed
+// page cannot turn into a false "chat capture stopped working" alert; the sweep has already kept the last row.
+test('a leave the page does not confirm: the chat poll stops first, no false alert, the last row is swept', async () => {
+  const d = fakeDeps({ states: 'always_in_meeting', leaveStays: true })
+  const first = chatMessage({ key: 'first' })
+  const last = chatMessage({ key: 'last', text: 'the last message' })
+  const record = (name: string): void => {
+    if (!d.calls.includes(name)) d.calls.push(name)
+  }
+  d.startChatCapture = async (page, adapter, file, onMessage, opts = {}) => {
+    const capture = await startChatCapture(
+      page,
+      {
+        ...adapter,
+        readChat: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          if (d.stageCloses > 0) throw new Error('Target page, context or browser has been closed')
+          return { messages: [first], cursor: { seenKeys: [] } }
+        },
+        sweepChat: async () => [first, last]
+      } as PlatformAdapter,
+      file,
+      onMessage,
+      { ...opts, pollMs: 20 }
+    )
+    return {
+      loaded: capture.loaded,
+      sweepNow: async () => {
+        record('sweepNow')
+        await capture.sweepNow()
+      },
+      stop: async () => {
+        record('chat.stop')
+        await capture.stop()
+      }
+    }
+  }
+  const o = await runOccurrence(lectureCfg, d)
+  expect(o).toMatchObject({ endedBy: 'hard_stop' })
+  expect(d.stageCloses).toBe(1)
+  expect(d.calls.indexOf('sweepNow')).toBeLessThan(d.calls.indexOf('chat.stop'))
+  expect(d.calls.indexOf('chat.stop')).toBeLessThan(d.calls.indexOf('leave'))
+  expect((await events(lectureCfg)).filter((e) => e.type === 'error')).toEqual([])
+  expect(messages(d)).not.toContain("The bot's chat capture stopped working. The recording continues.")
+  const rows = (await readFile(join(lectureCfg.dataDir, 'chat.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as ChatMessage)
+  expect(rows.map((m) => m.key)).toEqual(['first', 'last'])
+}, 30_000)
 
 test('joinRecording runs last, and is skipped with an event when no time is left', async () => {
   const d = fakeDeps({ states: ['ended'], checkpoint: hang, teardownBudgetMs: 600 })

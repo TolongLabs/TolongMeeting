@@ -1696,6 +1696,9 @@ class OccurrenceRun {
     if (this.inMeeting) {
       const chat = this.chat
       if (chat) await this.bounded('chat.sweepNow', BOUND.sweep, () => chat.sweepNow())
+      // The poll stops with the sweep done and before the leave: a leave the page does not confirm closes the stage
+      // under it, and a read in flight then would report a false fault. A stop overrun is still ignored by the capture.
+      if (chat) await this.bounded('chat.stop', BOUND.stopChat, () => chat.stop())
       if (this.endRequest === 'leave') await this.settleForms()
       await this.leave()
     } else if (this.isAborted) {
