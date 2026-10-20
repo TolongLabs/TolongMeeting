@@ -58,13 +58,14 @@ async function checkWhatsApp(page: Page): Promise<Verdict> {
   return (await page.locator(sel.chatList).count()) > 0 ? true : null
 }
 
-// The Discord watcher's own rule: the login path or the visible login form means signed out.
+// The Discord watcher's own rule: the login path or the visible login form means signed out. The message list is the
+// positive signal; a page still loading has neither and stays unknown.
 async function checkDiscord(page: Page): Promise<Verdict> {
   if (hostOf(page) !== 'discord.com') return null
   const sel = await discordSelectors()
   if (new URL(page.url()).pathname.replace(/\/+$/, '') === '/login') return false
   if ((await page.locator(sel.loginForm).filter({ visible: true }).count()) > 0) return false
-  return true
+  return (await page.locator(sel.scroller).count()) > 0 ? true : null
 }
 
 async function findPage(account: CheckedKind, pages: readonly Page[]): Promise<Page | null> {

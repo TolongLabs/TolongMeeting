@@ -16,6 +16,8 @@ interface FakeState {
   chatList?: boolean
   /** Discord's login form is on screen. */
   loginForm?: boolean
+  /** Discord's message list is on screen. */
+  scroller?: boolean
   /** A form provider's email/password field is on screen. */
   formSignIn?: boolean
   /** Every read of the page throws, as a page that navigated away or closed under the check does. */
@@ -46,6 +48,7 @@ function fakePage(state: FakeState): Page {
           if (selector.includes('QR')) return state.qr === true ? 1 : 0
           if (selector === '#pane-side') return state.chatList === true ? 1 : 0
           if (selector === 'input[name="email"]') return state.loginForm === true ? 1 : 0
+          if (selector.includes('messagesWrapper')) return state.scroller === true ? 1 : 0
           if (selector.startsWith('input[type=email]')) return state.formSignIn === true ? 1 : 0
           return 0
         },
@@ -66,7 +69,7 @@ test('every kind is reported signed in from the pages the session left open', as
     fakePage({ url: 'https://zoom.us/profile' }),
     fakePage({ url: 'https://teams.microsoft.com/v2/' }),
     fakePage({ url: 'https://web.whatsapp.com/', chatList: true }),
-    fakePage({ url: 'https://discord.com/channels/@me' })
+    fakePage({ url: 'https://discord.com/channels/@me', scroller: true })
   ]
   expect(accounts(await checkSigninAccounts(desk, pages))).toEqual([
     ['zoom', true],
@@ -110,7 +113,7 @@ test('an unreadable page or a page that is gone is unknown, never signed in', as
     desk,
     fakePage({ url: 'https://zoom.us/profile', broken: true }),
     fakePage({ url: 'https://web.whatsapp.com/', chatList: true, broken: true }),
-    fakePage({ url: 'https://discord.com/channels/@me', broken: true })
+    fakePage({ url: 'https://discord.com/channels/@me', scroller: true, broken: true })
   ]
   // No Teams tab at all: unknown, like a page that could not be read.
   expect(accounts(await checkSigninAccounts(desk, pages))).toEqual([
