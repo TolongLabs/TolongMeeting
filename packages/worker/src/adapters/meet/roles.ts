@@ -1,6 +1,6 @@
 import type { SenderRole } from '@tm/core'
 import type { Page } from 'playwright'
-import { shown } from './join'
+import { shown, withPanel } from '../common'
 import { meetState } from './page-state'
 import type { MeetSelectors } from './selectors'
 
@@ -28,24 +28,7 @@ export function rolesFromPeople(rows: string[][]): Map<string, SenderRole> {
   return roles
 }
 
-// One side-panel job at a time per page. Reading roles clicks People and then Chat, and a sweep scrolls the chat list: a
-// second job in the middle would meet the wrong panel or move the list under the sweep and lose rows. Chat reads,
-// sweeps, role reads and the layout pass take this; a job that is already inside it calls `readRolesNow` instead.
-const queues = new WeakMap<Page, Promise<void>>()
-
-export function withMeetPanel<T>(page: Page, job: () => Promise<T>): Promise<T> {
-  const run = (queues.get(page) ?? Promise.resolve()).then(job)
-  queues.set(
-    page,
-    run.then(
-      () => undefined,
-      () => undefined
-    )
-  )
-  return run
-}
-
-// The caller holds `withMeetPanel`. Opens People unless it is open, reads it, and brings Chat back.
+// The caller holds `withPanel`. Opens People unless it is open, reads it, and brings Chat back.
 export async function readRolesNow(page: Page, sel: MeetSelectors): Promise<Map<string, SenderRole>> {
   const { peopleButton, peopleList, peopleItem, chatButton, chatScroller } = sel.selectors
   if (!(await shown(page, peopleList).isVisible())) {
@@ -75,5 +58,5 @@ export async function readRolesNow(page: Page, sel: MeetSelectors): Promise<Map<
 // Sender (trimmed, lower-cased) to role, read from the People panel, which is the only place Meet states who the host
 // is. Stored in `meetState(page).roles`.
 export function readMeetRoles(page: Page, sel: MeetSelectors): Promise<Map<string, SenderRole>> {
-  return withMeetPanel(page, () => readRolesNow(page, sel))
+  return withPanel(page, () => readRolesNow(page, sel))
 }

@@ -1,9 +1,9 @@
 import type { Page } from 'playwright'
+import { shown, withPanel } from '../common'
 import type { Rect } from '../types'
-import { logStep, shown } from './join'
+import { logStep } from './join'
 import { meetState } from './page-state'
 import type { MeetSelectors } from './selectors'
-import { withMeetPanel } from './roles'
 
 const STEP_TIMEOUT_MS = 10_000
 
@@ -23,7 +23,7 @@ export async function meetParticipantCount(page: Page, sel: MeetSelectors): Prom
 // a missing menu item is a fault, not a reason to pick another control. It runs under the page's panel lock, so it never
 // interleaves with a role read or a chat sweep (both take the same lock).
 export function ensureMeetLayout(page: Page, sel: MeetSelectors): Promise<void> {
-  return withMeetPanel(page, () => layoutNow(page, sel))
+  return withPanel(page, () => layoutNow(page, sel))
 }
 
 async function layoutNow(page: Page, sel: MeetSelectors): Promise<void> {
@@ -46,20 +46,23 @@ async function layoutNow(page: Page, sel: MeetSelectors): Promise<void> {
   await shown(page, selectors.moreButton).click({ timeout: STEP_TIMEOUT_MS })
   logStep('click moreButton')
   await page
-    .locator('[role="menu"] [role="menuitem"]')
+    .locator(selectors.menu)
+    .locator(selectors.menuItem)
     .filter({ hasText: new RegExp(texts.layoutMenu, 'i'), visible: true })
     .first()
     .click({ timeout: STEP_TIMEOUT_MS })
   logStep('click layout menu item')
-  await page
-    .locator('[role="dialog"] [role="radio"]')
+  const spotlight = page
+    .locator(selectors.radio)
     .filter({ hasText: new RegExp(texts.spotlight, 'i'), visible: true })
     .first()
-    .click({ timeout: STEP_TIMEOUT_MS })
+  // The dialog that holds the Spotlight option, so Close never lands on another dialog's or the side panel's.
+  const dialog = page.locator(selectors.dialog).filter({ has: spotlight, visible: true }).first()
+  await spotlight.click({ timeout: STEP_TIMEOUT_MS })
   logStep('click spotlight')
-  await shown(page, selectors.dialogClose).click({ timeout: STEP_TIMEOUT_MS })
+  await dialog.locator(selectors.dialogClose).filter({ visible: true }).first().click({ timeout: STEP_TIMEOUT_MS })
   logStep('click dialog close')
-  await shown(page, selectors.dialogClose).waitFor({ state: 'hidden', timeout: STEP_TIMEOUT_MS })
+  await dialog.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT_MS })
   state.shareSeen = true
 }
 

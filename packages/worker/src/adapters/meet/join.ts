@@ -1,12 +1,12 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { Locator, Page } from 'playwright'
+import { DeviceControlMissing, isTimeout, shown, stepTimeout } from '../common'
 import type { JoinResult } from '../types'
 import { navigationGuard } from '../zoom/root'
 import type { MeetSelectors } from './selectors'
 import { meetTextSignal } from './text'
 
 const JOIN_POLL_MS = 500
-const STEP_TIMEOUT_MS = 10_000
 // How long the toggles get to show "off" after their click before the join gives up on them.
 const TOGGLE_SETTLE_MS = 2_000
 const MAX_PERMISSION_CLICKS = 3
@@ -17,32 +17,10 @@ export function logStep(step: string): void {
   console.info(`meet: ${step}`)
 }
 
-// A step's action timeout: the usual step timeout, cut to what is left before the deadline (at least 1 ms, because
-// Playwright reads 0 as "no timeout").
-function stepTimeout(deadline: number): number {
-  return Math.max(1, Math.min(STEP_TIMEOUT_MS, deadline - Date.now()))
-}
-
-// Playwright's TimeoutError, by name: an action that was cut to the deadline fails with it.
-function isTimeout(error: unknown): boolean {
-  return error instanceof Error && error.name === 'TimeoutError'
-}
-
-// The first match that is on screen: Meet keeps hidden copies of some controls in the DOM.
-export function shown(page: Page, selector: string): Locator {
-  return page.locator(selector).filter({ visible: true }).first()
-}
+export { shown }
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-// A toggle that vanished: the device state can no longer be confirmed, so the join stops.
-class DeviceControlMissing extends Error {
-  constructor(name: string) {
-    super(`meet: ${name} is not on screen, cannot confirm the device is off`)
-    this.name = 'DeviceControlMissing'
-  }
 }
 
 // Starts on the page the caller has opened at the normalised link and never navigates itself. Every 500 ms it
@@ -69,7 +47,7 @@ export async function joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_00
       ['cameraToggle', selectors.cameraToggle, selectors.cameraOff]
     ] as const) {
       const control = shown(page, toggle)
-      if (!(await control.isVisible())) throw new DeviceControlMissing(name)
+      if (!(await control.isVisible())) throw new DeviceControlMissing('meet', name)
       const isOff = await control.evaluate((el, css) => el.matches(css), off, { timeout: stepTimeout(deadline) })
       if (!isOff) on.push(name)
     }

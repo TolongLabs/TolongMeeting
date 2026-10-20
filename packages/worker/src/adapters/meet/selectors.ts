@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { loadSelectors, pattern, selector } from '../selectors'
+import { loadSelectors, noticeDanger, pattern, selector } from '../selectors'
 
 // Strict at every level: a key the adapter does not read, or a misspelt one, fails when the map loads.
 export const MeetSelectorsSchema = z
@@ -28,6 +28,12 @@ export const MeetSelectorsSchema = z
         peopleList: selector,
         peopleItem: selector,
         moreButton: selector,
+        // ARIA menus and dialogs: the open menu and its items, a dialog, a radio option in it, and the Close control
+        // inside a dialog (looked for within one dialog, never page-wide).
+        menu: selector,
+        menuItem: selector,
+        dialog: selector,
+        radio: selector,
         dialogClose: selector,
         captionsOnButton: selector,
         captionsRegion: selector,
@@ -53,7 +59,7 @@ export const MeetSelectorsSchema = z
         ended: pattern,
         removed: pattern,
         // A dialog matching one of these asks for something: an OK or Got it in it is not a plain acknowledgement.
-        noticeDanger: z.array(z.object({ name: z.string().min(1), source: pattern }).strict()).min(1)
+        noticeDanger
       })
       .strict(),
     // Exact button texts the adapter may click inside a notice.

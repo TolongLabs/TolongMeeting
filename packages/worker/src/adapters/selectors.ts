@@ -21,6 +21,10 @@ export const pattern = z
     { message: 'not a valid regular expression' }
   )
 
+// One notice danger rule: a notice whose text matches `source` asks for something, so its buttons are left alone. Strict, so
+// a misspelt key fails when the map loads.
+export const noticeDanger = z.array(z.object({ name: z.string().min(1), source: pattern }).strict()).min(1)
+
 // Reads `<dir>/<name>.json` (`dir` defaults to TM_SELECTORS_DIR, then /app/config/selectors) and validates it. A
 // missing file or a map that fails the schema throws: an adapter must not run on selectors it could not check.
 export async function loadSelectors<T>(

@@ -35,7 +35,8 @@ export async function ensureTeamsLayout(page: Page, sel: TeamsSelectors): Promis
   await shown(page, selectors.viewButton).click({ timeout: STEP_TIMEOUT_MS })
   logStep('click viewButton')
   const focus = page
-    .locator('[role="menu"] [role="menuitem"], [role="menu"] [role="menuitemradio"]')
+    .locator(selectors.menu)
+    .locator(selectors.menuItem)
     .filter({ hasText: new RegExp(texts.focusOnContent, 'i'), visible: true })
     .first()
   await focus.click({ timeout: STEP_TIMEOUT_MS })

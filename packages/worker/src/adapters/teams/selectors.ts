@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { loadSelectors, pattern, selector } from '../selectors'
+import { loadSelectors, noticeDanger, pattern, selector } from '../selectors'
 
 // Strict at every level: a key the adapter does not read, or a misspelt one, fails when the map loads.
 export const TeamsSelectorsSchema = z
@@ -22,6 +22,11 @@ export const TeamsSelectorsSchema = z
         cameraButton: selector,
         cameraOff: selector,
         moreButton: selector,
+        // ARIA menus: the open menu, and the items of the menus the adapter picks from (View, More).
+        menu: selector,
+        menuItem: selector,
+        // The entries of the menu Leave opens for an organiser.
+        hangupMenuItem: selector,
         incomingAudioOff: selector,
         chatButton: selector,
         chatPane: selector,
@@ -60,7 +65,7 @@ export const TeamsSelectorsSchema = z
       .strict(),
     // A notice whose text matches one of these asks for something (or says something is on offer): an allowlisted button
     // in it is not a plain acknowledgement and is left alone. The breakout prompt text is checked as well.
-    noticeDanger: z.array(z.object({ name: z.string().min(1), source: pattern })).min(1),
+    noticeDanger,
     // Exact button texts the adapter may click inside a notice.
     noticeAllowlist: z.array(z.string().min(1)).min(1)
   })

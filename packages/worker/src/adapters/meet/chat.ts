@@ -2,12 +2,12 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import type { ChatMessage, SenderRole } from '@tm/core'
 import type { Page } from 'playwright'
 import { extractLinks } from '../../forms/links'
+import { shown, withPanel } from '../common'
 import { navigationGuard } from '../zoom/root'
 import type { ChatCursor } from '../types'
 import { parseMeetMessages, type RawMeetMessage } from './chat-dom'
-import { shown } from './join'
 import { meetState } from './page-state'
-import { readRolesNow, withMeetPanel } from './roles'
+import { readRolesNow } from './roles'
 import type { MeetSelectors } from './selectors'
 
 // A sweep stops after this long: a list that keeps growing, or a page that stalls, must not hold the meeting loop.
@@ -60,7 +60,7 @@ export async function readMeetChat(
   cursor: ChatCursor
 ): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }> {
   const read = () =>
-    withMeetPanel(page, async () => {
+    withPanel(page, async () => {
       const scroller = sel.selectors.chatScroller
       if (!(await shown(page, scroller).isVisible())) return null
       const seen = new Set(cursor.seenKeys)
@@ -140,5 +140,5 @@ export function sweepMeetChat(page: Page, sel: MeetSelectors, budgetMs = SWEEP_B
     else console.warn(`meet: chat sweep partial, reached ${Math.round(y)} of ${height} px in ${budgetMs} ms`)
     return toMeetChatMessages(rows, { roles, seenAt: new Date().toISOString() })
   }
-  return withMeetPanel(page, async () => (await navigationGuard('sweepChat', 'meet').run(sweep)) ?? [])
+  return withPanel(page, async () => (await navigationGuard('sweepChat', 'meet').run(sweep)) ?? [])
 }
