@@ -161,6 +161,8 @@ test('the checkpoint container passes the docker allow-list, gets its key from a
   const args = log.runs[0]!
   expect(args.slice(-3)).toEqual([IMAGE, 'checkpoint-only', 'u1'])
   expect(args).toContain('tm-profile-u1:/tm/profiles/u1/vol')
+  // The checkpoint needs no network at all.
+  expect(args.join(' ')).toContain('--network none')
   // The key is on no command line and in no environment value.
   expect(args.join(' ')).not.toContain(identityKeyFile(localKey, 'u1'))
   expect(existsSync(log.keyFile)).toBe(false)

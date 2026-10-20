@@ -119,6 +119,8 @@ export async function checkpointVolume(d: CheckpointRun, identityId: string): Pr
       '256',
       '--memory',
       '1g',
+      '--network',
+      'none',
       ...profileMounts(d.paths, identityId).flatMap((v) => ['-v', v]),
       '-v',
       `${key.dir}:/run/tm:ro`,

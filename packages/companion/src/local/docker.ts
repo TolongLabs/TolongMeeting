@@ -145,6 +145,7 @@ const RULES: Record<string, Rule> = {
   }, false),
   '--hostname': rule(matching(/^tm-[A-Za-z0-9_-]{1,20}$/, 'a host name')),
   '--network': rule((v) => {
+    if (v === 'none') return
     const joined = v.startsWith('container:') ? v.slice('container:'.length) : null
     if (joined !== null ? !RESOURCE.test(joined) : !NETWORK.test(v)) throw new UnsafeDockerInput('a network')
   }),
