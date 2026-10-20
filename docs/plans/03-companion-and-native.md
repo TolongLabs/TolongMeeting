@@ -122,7 +122,7 @@ export const NATIVE_MAX_ATTEMPTS = 2
 export function shortDate(iso: string, timeZone: string): string // 'Wed 21 Oct': en-GB, weekday short, day numeric, month short
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('shortDate formats in the member time zone', () => {
@@ -170,21 +170,21 @@ test('whisper JSON keeps start, end and text', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/core/src/companion.test.ts`
 Expected: FAIL with "Cannot find module './companion'"
 
-- [ ] **Step 3: Implement the types, schemas and constants above in `packages/core/src/companion.ts`**
+- [x] **Step 3: Implement the types, schemas and constants above in `packages/core/src/companion.ts`**
 
 `PairResponseSchema.token` is `z.string().startsWith(DEVICE_TOKEN_PREFIX)`; `CompanionCommandSchema` is a `z.discriminatedUnion('type', [...])` so plan 08 can add members.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/core/src/companion.test.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/companion.ts packages/core/src/companion.test.ts packages/core/src/index.ts
