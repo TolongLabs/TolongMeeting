@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { JobConfigSchema, type OccurrenceState } from '@tm/core'
+import { JobConfigSchema, type LinkSource, type OccurrenceState, type WatchGate } from '@tm/core'
 import { and, eq, sql } from 'drizzle-orm'
 import { events, identities, occurrences, profiles, schema, signinSessions, type Db } from '@tm/web/db'
 import { FakeNotifier } from '@tm/web/db/notifier'
@@ -39,7 +39,8 @@ afterAll(async () => {
 }, 60_000)
 
 interface Options {
-  link?: { kind: 'paste' } | { kind: 'fixed'; url: string }
+  link?: LinkSource
+  watchGate?: WatchGate
   pasted?: string
   clashWith?: { start: string; end: string }
   activeElsewhere?: number
@@ -153,6 +154,7 @@ async function launchFixture(o: Options = {}) {
     notifier,
     master: MASTER,
     env,
+    ...(o.watchGate ? { watchGate: o.watchGate } : {}),
     remux: async () => false,
     exitPollMs: 10
   }
@@ -650,4 +652,49 @@ test('a Docker that is down at restart leaves the files to the watcher, which de
   } finally {
     console.error = spy
   }
+})
+
+describe('the watch gate', () => {
+  const chat = { kind: 'chat', app: 'whatsapp', chat: 'Class group' } as const
+
+  test('a WhatsApp chat the gate refuses fails the launch with one ping and starts nothing', async () => {
+    const f = await launchFixture({ link: chat, watchGate: { whatsapp: 'home_only', discord: 'allowed' } })
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'watching_not_allowed' })
+    expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Not watching WhatsApp: Data Mining'])
+    const actions = f.notifier.sent[0]!.ping.actions ?? []
+    expect(JSON.stringify(actions)).toContain(`https://tm.example/meetings/${f.id}`)
+    expect(JSON.stringify(actions)).toContain('https://tm.example/accounts')
+    expect(f.docker.created).toEqual([])
+    expect(await f.heldBy()).toBeNull()
+  })
+
+  test('the default gate refuses WhatsApp on the server', async () => {
+    const f = await launchFixture({ link: chat })
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+    expect(f.docker.created).toEqual([])
+  })
+
+  test('a switched-off app says so in the ping', async () => {
+    const f = await launchFixture({ link: chat, watchGate: { whatsapp: 'none', discord: 'allowed' } })
+    await launchOccurrence(f.deps, f.job, f.tMinus60)
+    expect(f.notifier.sent[0]!.ping.message).toContain('watching is switched off')
+  })
+
+  test('an allowed chat launches without a ping', async () => {
+    const f = await launchFixture({ link: chat, watchGate: { whatsapp: 'allowed', discord: 'allowed' } })
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+    expect((await f.job0()).entry.link).toEqual(chat)
+    expect(f.notifier.sent).toEqual([])
+  })
+
+  test('a link pasted for the occurrence skips the gate', async () => {
+    const f = await launchFixture({
+      link: chat,
+      pasted: 'https://example.zoom.us/j/22222222222',
+      watchGate: { whatsapp: 'none', discord: 'allowed' }
+    })
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+    expect(f.notifier.sent).toEqual([])
+  })
 })

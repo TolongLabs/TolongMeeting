@@ -4,6 +4,7 @@ import {
   CHAT_FIELD_COPY,
   chatAppOptions,
   showsBanRiskNotice,
+  signinNotes,
   watchingNotAllowedMessage,
   WatchingNotAllowedError
 } from '../lib/link-notices'
@@ -49,4 +50,21 @@ test('a refusal carries the gate message', () => {
 test('the chat field copy names each app', () => {
   expect(CHAT_FIELD_COPY.whatsapp.label).toBe('WhatsApp chat name')
   expect(CHAT_FIELD_COPY.discord.placeholder).toBe('https://discord.com/channels/<server>/<channel>')
+})
+
+test('sign-in notes follow the gate', () => {
+  const home = { whatsapp: 'home_only', discord: 'allowed' } as const
+  expect(signinNotes('server', home).whatsapp).toStartWith("Don't link WhatsApp here")
+  expect(signinNotes('local', home).whatsapp).toStartWith('WhatsApp Web: on your phone')
+  expect(signinNotes('server', { whatsapp: 'none', discord: 'home_only' })).toEqual({
+    whatsapp: "WhatsApp watching is switched off, so there's no need to link it.",
+    discord:
+      "Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC."
+  })
+  expect(signinNotes('local', { whatsapp: 'none', discord: 'home_only' }).whatsapp).toBe(
+    "WhatsApp watching is switched off, so there's no need to link it."
+  )
+  expect(signinNotes('server', { whatsapp: 'allowed', discord: 'allowed' }).discord).toStartWith(
+    'Discord: sign in at discord.com'
+  )
 })

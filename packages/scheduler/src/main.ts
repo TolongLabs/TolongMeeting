@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs'
-import type { SpecEnv } from '@tm/core'
+import { watchGateFromEnv, type SpecEnv } from '@tm/core'
 import { closeDb, getDb } from '@tm/web/db'
 import { runMigrations } from '@tm/web/db/migrate'
 import { memberNotifier } from '@tm/web/db/notifier'
@@ -248,6 +248,7 @@ async function main(): Promise<void> {
     notifier: memberNotifier(db, master, env.spec.ntfyUrl),
     master,
     env: env.spec,
+    watchGate: watchGateFromEnv(process.env),
     // The monitor makes the browser MP4 of a meeting that ends without the pipeline; the host runs ffmpeg for it.
     remux: remuxRecording
   }

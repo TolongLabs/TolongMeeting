@@ -1,5 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { ACTIVE_STATES, formatWhen, profileKey, type SpecEnv } from '@tm/core'
+import {
+  ACTIVE_STATES,
+  formatWhen,
+  gateLinkSource,
+  profileKey,
+  watchGateFromEnv,
+  type SpecEnv,
+  type WatchGate
+} from '@tm/core'
 import { pings, type WorkerFailureReason } from '@tm/notify'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { identities, members, occurrences, profiles, signinSessions, timetableEntries, type Db } from '@tm/web/db'
@@ -25,6 +33,7 @@ import { acquireProfile, releaseProfile } from './locks'
 export const SERVER_WORKER_CAP = 2
 /** One transaction at a time decides who launches, so the capacity and identity checks see each other's writes. */
 export const LAUNCH_LOCK = 4242
+const DEFAULT_WATCH_GATE = watchGateFromEnv({})
 const DEFER_MS = 15_000
 const EXIT_POLL_MS = 5_000
 
@@ -35,6 +44,11 @@ export type LaunchDeps = {
   notifier: Notifier
   master: Buffer
   env: SpecEnv
+  /**
+   * Which chat apps a server identity may watch (`watchGateFromEnv(process.env)` in `main.ts`). It lives here and not in
+   * `SpecEnv`, which is also the Docker gate's config. Unset means the defaults (WhatsApp `home_only`, Discord `allowed`).
+   */
+  watchGate?: WatchGate
   /**
    * Makes the browser MP4 of a recording in an occurrence's data directory (`remuxRecording` of `@tm/pipeline`); true when
    * a checked `meeting.mp4` is in place. The monitor calls it for a meeting that ends without the pipeline, once the
@@ -354,7 +368,7 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
   // The entry was deleted after the occurrence was made: there is nothing to attend.
   const [entry] = occ.entryId
     ? await db
-        .select({ id: timetableEntries.id })
+        .select({ id: timetableEntries.id, link: timetableEntries.link })
         .from(timetableEntries)
         .where(and(eq(timetableEntries.id, occ.entryId), eq(timetableEntries.memberId, occ.memberId)))
     : []
@@ -382,6 +396,27 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
 
   // Plan 08 replaces this step.
   if (identity.runLocation !== 'server') return refuse('run_location_unavailable')
+
+  // A chat the gate refuses is never watched, and a paste entry can't be told from one with no link, so the launch fails
+  // with one ping (a gate tightened after the entry was saved lands here). A link pasted for this occurrence skips the gate.
+  const gate = deps.watchGate ?? DEFAULT_WATCH_GATE
+  const { blockedApp } = occ.pastedLink ? { blockedApp: null } : gateLinkSource(entry.link, identity.runLocation, gate)
+  if (blockedApp !== null && blockedApp !== 'teams') {
+    await launchThen(db, occ.id, 'fail', 'watching_not_allowed')
+    outbox.push(() =>
+      deps.notifier.notify(
+        occ.memberId,
+        pings.watchingOff({
+          entry: occ.entryName,
+          app: blockedApp,
+          gate: gate[blockedApp] === 'none' ? 'none' : 'home_only',
+          meetingUrl: `${publicUrl}/meetings/${occ.id}`,
+          accountsUrl: `${publicUrl}/accounts`
+        })
+      )
+    )
+    return 'failed'
+  }
 
   const [profile] = await db
     .select({ heldBy: profiles.heldBy })

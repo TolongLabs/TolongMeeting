@@ -59,6 +59,9 @@ services:
       NTFY_ADMIN_TOKEN: ${NTFY_ADMIN_TOKEN:?set NTFY_ADMIN_TOKEN in .env}
       TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
       TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      # Passed through only when set in .env: watchGateFromEnv throws on an empty value, so no ":-" default here.
+      TM_WHATSAPP_FROM_SERVER:
+      TM_DISCORD_FROM_SERVER:
       TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
     secrets: [tm_master_key]
     # Artefacts are served from here, read-only.
@@ -99,6 +102,9 @@ services:
       TM_DATA_ROOT: ${TM_DATA_ROOT:?set TM_DATA_ROOT in .env}
       TM_PROFILE_ROOT: ${TM_PROFILE_ROOT:?set TM_PROFILE_ROOT in .env}
       TM_PUBLIC_URL: ${TM_PUBLIC_URL:?set TM_PUBLIC_URL in .env}
+      # Passed through only when set in .env: watchGateFromEnv throws on an empty value, so no ":-" default here.
+      TM_WHATSAPP_FROM_SERVER:
+      TM_DISCORD_FROM_SERVER:
       TM_MASTER_KEY_FILE: /run/secrets/tm_master_key
       DOCKER_PROXY_URL: http://docker-proxy:2375
       RCLONE_CONFIG: /run/secrets/rclone_conf
