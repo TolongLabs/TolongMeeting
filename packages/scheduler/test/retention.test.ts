@@ -6,6 +6,7 @@ import type { Ping } from '@tm/notify'
 import { count, eq } from 'drizzle-orm'
 import { artefacts, events, forms, occurrences, profiles } from '@tm/web/db'
 import { FakeNotifier } from '@tm/web/db/notifier'
+import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
 import { FakeDocker, OccurrenceActiveError, deleteOccurrenceData, retentionTick, type LaunchDeps } from '../src/index'
 
@@ -260,6 +261,73 @@ test('a meeting still in the pipeline is busy: delete is refused and the tick sk
     expect(await exists(`${f.dir}/recording/meeting.mp4`)).toBe(true)
     expect(await f.count(artefacts)).toBe(1)
   }
+})
+
+test('a meeting stuck in the pipeline 40 days past its time is failed and deleted', async () => {
+  for (const state of ['transcribing', 'waiting_for_pc', 'post_processing'] as const) {
+    const f = await retentionFixture({
+      state,
+      stateReason: state === 'post_processing' ? 'ai_key_error' : undefined,
+      deleteAfter: new Date(now.getTime() - 40 * 24 * HOUR),
+      files: ['recording/meeting.mp4'],
+      withRows: true
+    })
+    expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 1, skipped: 0 })
+    expect(await f.occurrence()).toMatchObject({ state: 'deleted' })
+    expect(await exists(f.dir)).toBe(false)
+    expect(await f.count(artefacts)).toBe(0)
+    expect((await f.events()).map((e) => e.data.to)).toEqual(['deleted'])
+  }
+})
+
+test('a stuck meeting is only taken over after 3 hours past its time', async () => {
+  const young = await retentionFixture({ state: 'post_processing', deleteAfter: new Date(now.getTime() - 2 * HOUR) })
+  expect(await retentionTick(young.deps, now)).toMatchObject({ deleted: 0, skipped: 1 })
+  expect((await young.occurrence()).state).toBe('post_processing')
+  const old = await retentionFixture({ state: 'post_processing', deleteAfter: new Date(now.getTime() - 4 * HOUR) })
+  expect(await retentionTick(old.deps, now)).toMatchObject({ deleted: 1, skipped: 0 })
+})
+
+test('a stuck meeting whose pipeline holds the lock is skipped, and deleted once the lock is free', async () => {
+  const f = await retentionFixture({
+    state: 'post_processing',
+    stateReason: 'ai_key_error',
+    deleteAfter: new Date(now.getTime() - 40 * 24 * HOUR),
+    files: ['recording/meeting.mp4']
+  })
+  let release = () => {}
+  const released = new Promise<void>((resolve) => (release = resolve))
+  let locked = () => {}
+  const lockTaken = new Promise<void>((resolve) => (locked = resolve))
+  // The consumer's own lock call, held in a transaction the way a running pipeline holds it.
+  const pipeline = f.db.transaction(async (tx) => {
+    expect(await tryPipelineLock(tx, f.id)).toBe(true)
+    locked()
+    await released
+  })
+  await lockTaken
+  expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 0, skipped: 1 })
+  expect(await f.occurrence()).toMatchObject({ state: 'post_processing', stateReason: 'ai_key_error' })
+  expect(await exists(`${f.dir}/recording/meeting.mp4`)).toBe(true)
+  release()
+  await pipeline
+  expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 1, skipped: 0 })
+  expect((await f.occurrence()).state).toBe('deleted')
+})
+
+test('a stuck meeting that holds the profile is never taken over', async () => {
+  const f = await retentionFixture({
+    state: 'transcribing',
+    deleteAfter: new Date(now.getTime() - 40 * 24 * HOUR),
+    files: ['a.txt']
+  })
+  await f.db
+    .update(profiles)
+    .set({ heldBy: `occ:${f.id}` })
+    .where(eq(profiles.identityId, f.identityId))
+  expect(await retentionTick(f.deps, now)).toMatchObject({ deleted: 0, skipped: 1 })
+  expect((await f.occurrence()).state).toBe('transcribing')
+  expect(await exists(`${f.dir}/a.txt`)).toBe(true)
 })
 
 test('retrying a tombstone also removes artefact rows left behind', async () => {

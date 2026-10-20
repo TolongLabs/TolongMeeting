@@ -4,6 +4,7 @@ import { ACTIVE_STATES, formatDay, formatWhen, type OccurrenceState } from '@tm/
 import { pings } from '@tm/notify'
 import { and, eq, inArray, isNotNull, isNull, gt, lte, notInArray, sql } from 'drizzle-orm'
 import { artefacts, events, forms, identities, members, occurrences, profiles } from '@tm/web/db'
+import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import { applyTrigger } from '@tm/web/db/transitions'
 import { resolveEnv } from './container-spec'
 import type { LaunchDeps } from './launch'
@@ -18,6 +19,14 @@ const BUSY_STATES: ReadonlySet<OccurrenceState> = new Set<OccurrenceState>([
   'waiting_for_pc',
   'post_processing'
 ])
+/** The states in which the pipeline owns a meeting. Retention takes over one of them only after the grace below. */
+const PIPELINE_STATES: readonly OccurrenceState[] = ['transcribing', 'waiting_for_pc', 'post_processing']
+/**
+ * How long past `delete_after` a pipeline job gets to finish: its retry budget (about 1 h) plus the 2 h queue expiry.
+ * After that the meeting is failed (`retention_expired`) and deleted, so a rejected key or an absent PC cannot keep
+ * a recording past its 30 days.
+ */
+const PIPELINE_GRACE_MS = 3 * 3_600_000
 /** A temp file this young may belong to a checkpoint still being written. Same limit as the worker's own cleanup. */
 const FRESH_TMP_MS = 60_000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -277,6 +286,30 @@ async function pruneCheckpoints(deps: LaunchDeps, now: Date): Promise<number> {
 }
 
 /**
+ * Fails a meeting that has sat in the pipeline for more than the grace past its `delete_after`, so the delete that
+ * follows is allowed. The pipeline's per-occurrence lock is tried without waiting: a held lock means a run is going
+ * (`OccurrenceActiveError`, the tick skips the meeting and tries again next hour). A held profile blocks it as well.
+ */
+async function failStuck(deps: LaunchDeps, occurrenceId: string): Promise<void> {
+  await deps.db.transaction(async (tx) => {
+    if (!(await tryPipelineLock(tx, occurrenceId))) throw new OccurrenceActiveError(occurrenceId)
+    const held = await tx
+      .select({ identityId: profiles.identityId })
+      .from(profiles)
+      .where(eq(profiles.heldBy, `occ:${occurrenceId}`))
+    if (held.length > 0) throw new OccurrenceActiveError(occurrenceId)
+    const [row] = await tx
+      .select({ state: occurrences.state })
+      .from(occurrences)
+      .where(eq(occurrences.id, occurrenceId))
+      .for('update')
+    // A run that ended since the list was read left the state somewhere else; the delete below decides about it.
+    if (row && PIPELINE_STATES.includes(row.state))
+      await applyTrigger(tx, occurrenceId, 'fail', { reason: 'retention_expired' })
+  })
+}
+
+/**
  * The hourly retention pass: warns about meetings 3 days from deletion, deletes expired ones, removes orphaned
  * directories and prunes old checkpoints. A step (or one meeting inside a step) that fails does not stop the others;
  * the failures are thrown together at the end, and the error message lists theirs. Those messages hold paths, ids and
@@ -296,12 +329,14 @@ export async function retentionTick(deps: LaunchDeps, now: Date): Promise<Retent
   await step(() => warnSoon(deps, now, result, (e) => void failures.push(e)))
   await step(async () => {
     const expired = await deps.db
-      .select({ id: occurrences.id })
+      .select({ id: occurrences.id, state: occurrences.state, deleteAfter: occurrences.deleteAfter })
       .from(occurrences)
       .where(and(notInArray(occurrences.state, [...ACTIVE_STATES, 'deleted']), lte(occurrences.deleteAfter, now)))
-    for (const { id } of expired) {
+    for (const { id, state, deleteAfter } of expired) {
       await step(async () => {
         try {
+          if (PIPELINE_STATES.includes(state) && now.getTime() - deleteAfter.getTime() > PIPELINE_GRACE_MS)
+            await failStuck(deps, id)
           await deleteOccurrenceData(deps, id, now)
           result.deleted++
         } catch (e) {

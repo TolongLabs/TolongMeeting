@@ -593,13 +593,16 @@ describe('a member deletes a meeting that is still in the pipeline', () => {
     expect(await exists(worker.dataDir)).toBe(false)
   })
 
-  // FINDING 2: retention skips every meeting in transcribing, waiting_for_pc or post_processing for ever, so a meeting
-  // that waits on a rejected key or an absent PC outlives its 30 days.
-  test.skip('retention deletes a meeting that is still waiting on a rejected key after 30 days', async () => {
+  // Finding 2: a meeting stuck in transcribing, waiting_for_pc or post_processing (a rejected key, an absent PC) must
+  // not outlive its 30 days. Retention deletes it once delete_after is more than 3 h past and no pipeline holds it.
+  test('retention deletes a meeting that is still waiting on a rejected key long after 30 days', async () => {
     const alice = await newMember(stack, 'Ivan')
     const { id, worker } = await inPostProcessing(alice, 'rejected')
     const { deleteAfter } = await rowOf(stack, id)
-    await retentionTick(stack.deps, new Date(deleteAfter.getTime() + MINUTE))
+    // Just past the day: a pipeline may still be finishing, so the meeting stays.
+    expect(await retentionTick(stack.deps, new Date(deleteAfter.getTime() + MINUTE))).toMatchObject({ skipped: 1 })
+    expect((await rowOf(stack, id)).state).toBe('post_processing')
+    await retentionTick(stack.deps, new Date(deleteAfter.getTime() + 40 * DAY))
     expect((await rowOf(stack, id)).state).toBe('deleted')
     expect(await exists(worker.dataDir)).toBe(false)
   })
