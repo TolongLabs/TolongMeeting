@@ -2,3 +2,4 @@
 # *.spec.ts files are Playwright Test specs (bunx playwright test -c packages/worker/playwright.config.ts).
 # test/image/ holds bun tests that run only inside the worker image (TM_IN_IMAGE=1).
 pathIgnorePatterns = ["**/*.spec.ts", "**/test/image/**"]
+preload = ["./test/preload.ts"]

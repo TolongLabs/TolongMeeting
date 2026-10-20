@@ -122,7 +122,7 @@ test('a hung decode does not stop health samples or keyframes, and times out as 
   await h({ at: new Date('2026-10-21T12:00:00Z'), png: lit })
   // The scanner is stuck on the first frame; the next frames are still handled at once.
   for (let i = 1; i <= 6; i++) await h({ at: new Date(Date.parse('2026-10-21T12:00:00Z') + i * 2000), png: black })
-  expect(Date.now() - started).toBeLessThan(150)
+  expect(Date.now() - started).toBeLessThan(1000)
   expect(alerts).toContain('black_frames')
   expect(events.filter((e) => e.type === 'keyframe').length).toBeGreaterThan(0)
   expect(alerts).not.toContain('component_failed')

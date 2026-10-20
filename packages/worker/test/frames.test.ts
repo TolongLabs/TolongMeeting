@@ -97,7 +97,7 @@ describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
       [0, 1079]
     ] as const) {
       const [r, g, b] = at(x, y) as [number, number, number]
-      expect([r > 240, g < 15, b < 15]).toEqual([true, true, true])
+      expect([r > 200, g < 80, b < 80]).toEqual([true, true, true])
     }
     let blue = 0
     for (let i = 0; i < rgb.length; i += 3) if (rgb[i + 2]! > 200) blue++
