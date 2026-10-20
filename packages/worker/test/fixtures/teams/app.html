@@ -257,8 +257,15 @@
         go(next)
       }
       window.__addMessage = (m) => {
+        // Like Teams, a list that is at the bottom stays there as messages arrive; one scrolled up stays where it is.
+        const vp = document.querySelector("[data-tid='message-pane-list-viewport']")
+        const atBottom = vp && vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 2
         st.messages.push(m)
         renderList()
+        if (atBottom) {
+          vp.scrollTop = vp.scrollHeight
+          renderList()
+        }
       }
       window.__addRoster = (p) => {
         st.roster.push(p)

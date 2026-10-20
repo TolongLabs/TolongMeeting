@@ -743,7 +743,7 @@ git commit -m "feat(worker): add teams devices, notices, leave"
   - `readTeamsChat(page: Page, sel: TeamsSelectors, cursor: ChatCursor): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>` and `sweepTeamsChat(page: Page, sel: TeamsSelectors): Promise<ChatMessage[]>` in `packages/worker/src/adapters/teams/chat.ts`.
   - `TEAMS_CHAT_HISTORY_MS = 60 * 60 * 1000` in `packages/worker/src/adapters/teams/chat.ts`.
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -825,25 +825,25 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `bun test packages/worker/src/adapters/teams/chat.test.ts`
 Expected: FAIL, module `./chat` not found.
 
-- [ ] **Step 3: Implement `toTeamsChatMessages` and `roleFromTeamsLabel`**
+- [x] **Step 3: Implement `toTeamsChatMessages` and `roleFromTeamsLabel`**
 
 `toTeamsChatMessages` drops messages whose `datetime` is earlier than `cutoffMs` (messages without a `datetime` are kept), sets `key` to `id` or `${sender}|${time}|${text.slice(0, 200)}`, looks up `senderRole` by the trimmed lower-cased sender (`unknown` when absent or when `roles` is null), and sets `links` to the `http`/`https` `hrefs` followed by 01a's `extractLinks(text)`, de-duplicated in order; `replyTo` is always `null`, because Teams meeting chat quotes replies inline instead of threading them. `roleFromTeamsLabel` returns `co_host` when the label matches `/co-?organi[sz]er/i`, `host` when it matches `/organi[sz]er/i`, otherwise `participant`.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `bun test packages/worker/src/adapters/teams/chat.test.ts`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Extend the fixture**
+- [x] **Step 5: Extend the fixture**
 
 Make the chat list virtualised like Teams: messages are 60 px tall inside `[data-tid='message-pane-list-viewport']`, and only the items within the visible window plus 2 on each side are in the DOM. Add `TeamsFixtureConfig.chatScroll: 'top' | 'bottom'` (start position, default `bottom`; the list stays where it is when messages arrive), `roster: { name: string; role?: string }[]` (rendered in `[data-tid='roster-pane']` as `[data-tid^='participantsInCall-']` items whose first text line is the name and second line the role), and `window.__addMessage(m)` and `window.__addRoster(p)`. Clicking `#roster-button` replaces the chat pane with the roster pane; clicking `#chat-button` brings the chat pane back with its full history, as Teams does.
 
-- [ ] **Step 6: Write the failing browser test**
+- [x] **Step 6: Write the failing browser test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -961,23 +961,23 @@ test('a sender still missing from the roster is unknown, after one roster read',
 })
 ```
 
-- [ ] **Step 7: Run it to verify it fails**
+- [x] **Step 7: Run it to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/chat.spec.ts`
 Expected: FAIL, `readTeamsChat` is not exported from `../../src/adapters/teams/chat`.
 
-- [ ] **Step 8: Implement `parseTeamsMessages`, `readTeamsRoles`, `readTeamsChat` and `sweepTeamsChat`**
+- [x] **Step 8: Implement `parseTeamsMessages`, `readTeamsRoles`, `readTeamsChat` and `sweepTeamsChat`**
 
 - `readTeamsRoles`: click `rosterButton`, wait for `rosterPane`, map each `rosterItem`'s first text line (trimmed, lower-cased) to `roleFromTeamsLabel` of its remaining lines, click `chatButton`, wait for `chatPane`, store the map in `teamsState(page).roles` and return it.
 - `readTeamsChat`: if `chatPane` isn't visible, return no messages and the cursor unchanged (Task 7's `ensureTeamsLayout` reopens it). Otherwise set `chatScroller.scrollTop` to its `scrollHeight`, parse, and keep messages whose key isn't in `cursor.seenKeys`. The cutoff is `(joinedAt ?? the first call's time) - TEAMS_CHAT_HISTORY_MS`; set `joinedAt` on the first call when it is null. If any kept message has links and a sender absent from the role map (or the map is null), call `readTeamsRoles` once, re-parse and map again. Return the messages and a cursor with their keys appended; the caller adopts the cursor only after writing the messages (CHAT-03).
 - `sweepTeamsChat`: call `readTeamsRoles` first, then scroll `chatScroller` from the top to the bottom in steps of `max(200, clientHeight / 2)` px with a random 300 to 350 ms pause, parsing at each step, and return the union by key, ordered as the list orders it, after the same cutoff.
 
-- [ ] **Step 9: Run it to verify it passes**
+- [x] **Step 9: Run it to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/chat.spec.ts`
 Expected: PASS (5 tests).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/chat-dom.ts packages/worker/src/adapters/teams/roles.ts packages/worker/src/adapters/teams/chat.ts packages/worker/src/adapters/teams/chat.test.ts
