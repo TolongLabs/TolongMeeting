@@ -73,7 +73,11 @@ const sleep = (ms: number, signal: AbortSignal) =>
   })
 
 /** Polls Docker until the container is gone or stopped, then deletes its job and key files. */
-function removeFilesWhenExited(deps: Pick<LaunchDeps, 'docker' | 'exitPollMs'>, container: string, base: string): void {
+export function removeFilesWhenExited(
+  deps: Pick<LaunchDeps, 'docker' | 'exitPollMs'>,
+  container: string,
+  base: string
+): void {
   const stop = new AbortController()
   const poll = deps.exitPollMs ?? EXIT_POLL_MS
   const done = (async () => {
@@ -126,7 +130,7 @@ export async function resumeJobFileWatchers(
 // --- startAttempt --------------------------------------------------------------------------------------------------
 
 /** What is safe to log about a failure: Docker's or the directory check's own short message, else the error's name. */
-const describe = (e: unknown): string =>
+export const describe = (e: unknown): string =>
   e instanceof DockerError || e instanceof HostDirError ? e.message : e instanceof Error ? e.name : 'unknown'
 
 const ERRNO_CODE = /^E[A-Z0-9]+$/
@@ -136,7 +140,7 @@ const ERRNO_CODE = /^E[A-Z0-9]+$/
  * errno such as `EACCES`. Those fail the launch. Anything else (a Postgres error above all, which would leave the
  * transaction aborted) is not this function's to hide.
  */
-function isLaunchFailure(e: unknown): boolean {
+export function isLaunchFailure(e: unknown): boolean {
   if (e instanceof DockerError || e instanceof HostDirError) return true
   if (!(e instanceof Error)) return false
   if (e.name === 'TimeoutError' || e.name === 'AbortError') return true

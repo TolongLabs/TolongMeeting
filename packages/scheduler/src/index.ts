@@ -22,6 +22,13 @@ export {
 export { acquireProfile, releaseProfile } from './locks'
 export { HostDirError, WORKER_UID, removeJobFiles, writeJobFiles } from './job-files'
 export {
+  SIGNIN_SILENT_MS,
+  SIGNIN_START_MS,
+  SIGNIN_UNREACHABLE_FAIL_MS,
+  monitorSignins,
+  startSigninContainer
+} from './signin'
+export {
   LAUNCH_LOCK,
   SERVER_WORKER_CAP,
   launchOccurrence,

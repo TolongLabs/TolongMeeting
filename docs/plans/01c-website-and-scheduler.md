@@ -2626,6 +2626,8 @@ As built (deviations from the snippets above): the tests live in `packages/worke
 - Modify: `packages/web/lib/control.ts` (sign-in events, `authoriseVnc`, `handleSigninHeartbeat`), `packages/scheduler/src/monitor.ts` (silent sessions)
 - Test: `packages/web/lib/signin.test.ts`, `packages/scheduler/src/signin.test.ts`, `packages/scheduler/src/monitor.test.ts`
 
+**As built (non-UI parts):** the tests live in `packages/web/test/signin.test.ts` and `packages/scheduler/test/signin.test.ts` (the monitor cases are there too, not in `monitor.test.ts`). The server actions are in `app/accounts/[identityId]/signin/actions.ts` (`startSigninAction`, `finishSigninAction`, `signinStatusAction`, `vncPasswordAction`), thin wrappers over the scope-taking functions. `vncPassword(scope, sessionId)` is new: the viewer gets the noVNC password only through that action. `MemberScope` gains `sendCommand(occurrenceId, command)`. `startSigninContainer` can also answer `deferred`. Not done: `page.tsx` and `viewer.tsx` (deferred: Figma gate).
+
 **Interfaces:**
 
 - Consumes: `MemberScope` (Task 4); `auth` (Task 5); `Queue`, `QUEUES` (Task 6); `ACTIVE_STATES`, `WORKER_STATES` (Task 3); `SigninJob`, `SigninHeartbeat`, `SigninReply`, `SigninEventData` (Task 17); `LaunchDeps`, `acquireProfile`, `releaseProfile`, `writeJobFiles`, `containerSpec`, `containerName`, `jobFileBase`, `profileKey` (Tasks 2, 13 and 14); `handleHeartbeat` (Task 15).
@@ -2642,7 +2644,7 @@ Flow:
 - **`authoriseVnc`**: `X-Forwarded-Uri` must match `^/vnc/<uuid>/`; no Better Auth session gives 401; a session row of another member, or one that isn't `ready`, gives 403; otherwise 200 with header `X-Vnc-Upstream: <upstream>`, where `upstream` must match `^tm-(worker|signin)-[0-9a-f-]+(-a\d+)?:6080$`. The route returns an empty body with that status and header.
 - **Page**: `/accounts/<identityId>/signin` starts or reuses a session, polls `signinStatus` every 2 seconds, then mounts noVNC's `RFB` (package `@novnc/novnc`) on `wss://<host>/vnc/<sessionId>/websockify` with `scaleViewport`. Beside the view it lists what to sign in to (Zoom, Microsoft, Google, WhatsApp Web by scanning the code with the phone, Discord, Teams), the note `This view shows only the unrecorded side of the bot's screen. It closes after 15 minutes without input.`, and a "Done" button calling `finishSignin`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/signin.test.ts
@@ -2771,21 +2773,21 @@ test('a sign-in session silent for 30 seconds is ended and its container stopped
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/signin.test.ts packages/scheduler/src/signin.test.ts packages/scheduler/src/monitor.test.ts`
 
 Expected: FAIL with `Cannot find module './signin'`.
 
-- [ ] **Step 3: Implement the sign-in functions, the two routes, the page and viewer, and the scheduler handler**
+- [ ] **Step 3: Implement the sign-in functions, the two routes, the page and viewer, and the scheduler handler** (functions, routes, server actions and scheduler handler done; `page.tsx` and `viewer.tsx` are deferred: Figma gate)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
-Run: `bun test packages/web/lib/signin.test.ts packages/scheduler/src/signin.test.ts packages/scheduler/src/monitor.test.ts && bun run typecheck`
+Run: `bun test packages/web/test/signin.test.ts packages/scheduler/test/signin.test.ts && bun run typecheck`
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit** (deferred: Figma gate; the non-UI parts are committed as `feat(web): remote sign-in sessions`)
 
 ```bash
 git add packages/web packages/scheduler/src

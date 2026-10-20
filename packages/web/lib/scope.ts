@@ -2,7 +2,7 @@ import { resolve, sep } from 'node:path'
 import { symmetricDecrypt } from 'better-auth/crypto'
 import { and, asc, eq, inArray, isNull, ne, notExists, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import { ACTIVE_STATES } from '@tm/core'
+import { ACTIVE_STATES, type ControlCommand } from '@tm/core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
 import type { Queue } from '../db/queues'
@@ -40,6 +40,12 @@ export interface MemberScope {
   transaction<R>(fn: (s: MemberScope) => Promise<R>): Promise<R>
   /** Takes a transaction-level advisory lock named `name` for this member. Throws outside `transaction`. */
   lock(name: string): Promise<void>
+  /**
+   * Queues a command for this member's running worker, to be returned by its next heartbeat. The append is one
+   * statement, so a heartbeat that clears the queue at the same moment can't lose it or replay an old command. Does
+   * nothing (returns 0) when the command is already queued or the occurrence is not this member's.
+   */
+  sendCommand(occurrenceId: string, command: ControlCommand): Promise<number>
   artefactFile(occurrenceId: string, relPath: string): Promise<string | null>
   /** Brings this member's future scheduled occurrences in line with their timetable (see `syncOccurrences`). */
   syncOccurrences(queue: Queue, now: Date): Promise<{ created: number; removed: number }>
@@ -122,6 +128,21 @@ export function createScope(db: Db, memberId: string, inTransaction = false): Me
     async lock(name) {
       if (!inTransaction) throw new Error('lock() is only valid inside scope.transaction()')
       await db.execute(sql`select pg_advisory_xact_lock(hashtextextended(${name + ':' + memberId}, 0))`)
+    },
+
+    async sendCommand(occurrenceId, command) {
+      const rows = await db
+        .update(occurrences)
+        .set({ pendingCommands: sql`array_append(${occurrences.pendingCommands}, ${command})` })
+        .where(
+          and(
+            eq(occurrences.id, occurrenceId),
+            eq(occurrences.memberId, memberId),
+            sql`not (${command} = any(${occurrences.pendingCommands}))`
+          )
+        )
+        .returning({ id: occurrences.id })
+      return rows.length
     },
 
     async artefactFile(occurrenceId, relPath) {

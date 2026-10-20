@@ -11,6 +11,7 @@ import { removeJobFiles } from './job-files'
 import { startAttempt, type LaunchDeps } from './launch'
 import { releaseProfile } from './locks'
 import { checkpointFiles } from './retention'
+import { monitorSignins } from './signin'
 
 /** A worker whose last heartbeat is older than this has crashed. */
 export const HEARTBEAT_TIMEOUT_MS = 30_000
@@ -233,6 +234,7 @@ export async function monitorTick(deps: LaunchDeps, now: Date): Promise<MonitorR
     }
     for (const row of active) if (!handled.has(row.id)) await removeLaunchFiles(deps, row, now)
     result.released.push(...(await releaseFinished(deps, now)))
+    await monitorSignins(deps, now)
     return result
   } finally {
     if (ticking.get(deps.db) === mine) ticking.delete(deps.db)

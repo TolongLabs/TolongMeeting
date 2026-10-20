@@ -147,6 +147,17 @@ export async function ensureMachineId(profileRoot: string, identityId: string): 
   return file
 }
 
+/** Throws a `HostDirError` unless the scheduler runs as the worker uid: it never chowns what it creates. */
+function assertWorkerUid(): void {
+  const want = expectedUid()
+  const actual = process.getuid?.()
+  if (actual !== want) {
+    throw new HostDirError(
+      `the scheduler must run as uid ${want} (the worker uid) so that bind-mounted files are shared; it runs as uid ${actual}`
+    )
+  }
+}
+
 /**
  * Prepares the host paths a worker container binds, as real directories: the occurrence's data directory, the
  * identity's profile directory and its `job/` directory (mode 0700). Returns the `job/` directory. The scheduler must
@@ -158,16 +169,25 @@ export async function prepareHostDirs(
   identityId: string,
   occurrenceId: string
 ): Promise<string> {
-  const want = expectedUid()
-  const actual = process.getuid?.()
-  if (actual !== want) {
-    throw new HostDirError(
-      `the scheduler must run as uid ${want} (the worker uid) so that bind-mounted files are shared; it runs as uid ${actual}`
-    )
-  }
+  assertWorkerUid()
   await ensureMachineId(env.profileRoot, identityId)
   await mkdir(`${env.dataRoot}/occurrences`, { recursive: true, mode: 0o755 })
   await ensureRealDir(`${env.dataRoot}/occurrences/${occurrenceId}`, 0o755)
+  const profileDir = `${env.profileRoot}/${identityId}`
+  await ensureRealDir(profileDir, 0o755)
+  const jobDir = `${profileDir}/job`
+  await ensureRealDir(jobDir, 0o700)
+  return jobDir
+}
+
+/**
+ * Prepares the host paths a sign-in container binds: the identity's profile directory and its `job/` directory (mode
+ * 0700), with the same checks as `prepareHostDirs` (the worker uid, real directories, no group or other write). A
+ * sign-in container has no occurrence data directory. Returns the `job/` directory.
+ */
+export async function prepareSigninDirs(env: { profileRoot: string }, identityId: string): Promise<string> {
+  assertWorkerUid()
+  await ensureMachineId(env.profileRoot, identityId)
   const profileDir = `${env.profileRoot}/${identityId}`
   await ensureRealDir(profileDir, 0o755)
   const jobDir = `${profileDir}/job`

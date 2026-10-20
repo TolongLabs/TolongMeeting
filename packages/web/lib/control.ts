@@ -4,6 +4,8 @@ import {
   AccountCheckDataSchema,
   HeartbeatSchema,
   IllegalTransition,
+  SigninEventDataSchema,
+  SigninHeartbeatSchema,
   StateEventDataSchema,
   canonicalFormUrl,
   isFormPageUrl,
@@ -13,13 +15,27 @@ import {
   type Heartbeat,
   type HeartbeatReply,
   type MeetingEvent,
-  type OccurrenceState
+  type OccurrenceState,
+  type SigninEventData,
+  type SigninReply
 } from '@tm/core'
-import { and, count, eq, sql } from 'drizzle-orm'
+import { and, count, eq, ne, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { FORM_SOURCES, FORM_STATES, events, forms, getDb, occurrences, profiles, type Db } from '../db'
+import {
+  FORM_SOURCES,
+  FORM_STATES,
+  events,
+  forms,
+  getDb,
+  members,
+  occurrences,
+  profiles,
+  signinSessions,
+  type Db
+} from '../db'
 import { QUEUES, queueDbOf, type Queue } from '../db/queues'
 import { applyTrigger, hashEventData } from '../db/transitions'
+import { getAuth } from './auth'
 import { getQueue } from './queue'
 
 /** A heartbeat body larger than this (bytes) is refused before it is parsed. */
@@ -231,6 +247,44 @@ export async function handleHeartbeat(
   })
 }
 
+/** Stores what an account check saw in `profiles.account_status`, stamped with the server's clock. */
+async function recordAccount(
+  tx: Db,
+  row: { identityId: string; memberId: string },
+  check: { account: string; signedIn: boolean },
+  now: Date
+): Promise<void> {
+  const value = JSON.stringify({ verifiedAt: now.toISOString(), signedIn: check.signedIn })
+  await tx
+    .update(profiles)
+    .set({
+      accountStatus: sql`jsonb_set(${profiles.accountStatus}, array[${check.account}]::text[], ${value}::jsonb)`
+    })
+    .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
+}
+
+/**
+ * The worker handed its desk to the member (`paused`: the session is ready) or took it back (`resumed`: it has ended,
+ * `idle` or `done`). Only the worker-mode sessions of this heartbeat's own occurrence and member change.
+ */
+async function applySigninEvent(tx: Db, row: OccurrenceRow, data: SigninEventData, now: Date): Promise<void> {
+  const mine = and(
+    eq(signinSessions.occurrenceId, row.id),
+    eq(signinSessions.memberId, row.memberId),
+    eq(signinSessions.mode, 'worker')
+  )
+  if (data.signin === 'paused')
+    await tx
+      .update(signinSessions)
+      .set({ state: 'ready', lastHeartbeatAt: now })
+      .where(and(mine, eq(signinSessions.state, 'starting')))
+  else
+    await tx
+      .update(signinSessions)
+      .set({ state: 'ended', endedAt: now, endReason: data.reason === 'idle' ? 'idle' : 'done' })
+      .where(and(mine, ne(signinSessions.state, 'ended')))
+}
+
 async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, hb: Heartbeat): Promise<HeartbeatReply> {
   const { now, queue } = deps
   // The worker's clock decides nothing that matters: an event outside this window is dropped, not moved into it.
@@ -354,15 +408,10 @@ async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, h
     if (event.type === 'state') {
       const check = AccountCheckDataSchema.safeParse(event.data)
       const change = StateEventDataSchema.safeParse(event.data)
-      if (check.success) {
-        const value = JSON.stringify({ verifiedAt: now.toISOString(), signedIn: check.data.signedIn })
-        await tx
-          .update(profiles)
-          .set({
-            accountStatus: sql`jsonb_set(${profiles.accountStatus}, array[${check.data.account}]::text[], ${value}::jsonb)`
-          })
-          .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
-      } else if (change.success) await moveTo(change.data.state)
+      const signin = SigninEventDataSchema.safeParse(event.data)
+      if (check.success) await recordAccount(tx, row, check.data, now)
+      else if (change.success) await moveTo(change.data.state)
+      else if (signin.success) await applySigninEvent(tx, row, signin.data, now)
     } else if (event.type === 'form') await upsertForm(tx, row, event.data, now, range, logError)
   }
   await moveTo(hb.state)
@@ -418,4 +467,158 @@ export async function handleHeartbeatRequest(
   const result =
     raw === null ? badRequest() : await handleHeartbeat({ ...deps, now }, request.headers.get('authorization'), body)
   return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
+}
+
+// --- The sign-in container's heartbeat -----------------------------------------------------------------------------
+
+/** A sign-in heartbeat body larger than this (bytes) is refused before it is parsed (a real one is under 1 KB). */
+export const MAX_SIGNIN_BODY_BYTES = 16 * 1024
+
+export type SigninHeartbeatResult = { status: 200; body: SigninReply } | { status: 400 | 401; body: { error: string } }
+
+/** The database the sign-in route passes on. Routes never open the database themselves. */
+export function signinDeps(): { db: Db } {
+  return { db: getDb() }
+}
+
+const SIGNIN_TOKEN = /^Bearer (s\.[A-Za-z0-9_-]{1,200})$/
+const signinUnauthorized = (): SigninHeartbeatResult => ({ status: 401, body: { error: 'unauthorized' } })
+const signinBadRequest = (): SigninHeartbeatResult => ({ status: 400, body: { error: 'invalid request' } })
+
+/**
+ * One report from a sign-in container. The token (`Authorization: Bearer s.<random>`) is compared by its SHA-256 hash in
+ * constant time against the row of `body.sessionId`; the member and the identity come from that row only. The first
+ * report makes the session `ready`; one with `ended: true` ends it (reason `done`, `idle` or `error`) and stores the
+ * account check it carries. The reply is `stop` once the member pressed Done, or when the session has ended already.
+ */
+export async function handleSigninHeartbeat(
+  deps: { db: Db; now: Date },
+  authorization: string | null,
+  body: unknown
+): Promise<SigninHeartbeatResult> {
+  const header = SIGNIN_TOKEN.exec(authorization ?? '')
+  if (!header) return signinUnauthorized()
+  const hash = sha256hex(header[1]!)
+  const target = z.object({ sessionId: z.uuid() }).safeParse(body)
+  if (!target.success) return signinBadRequest()
+  const { db, now } = deps
+
+  const sameToken = (row: typeof signinSessions.$inferSelect | undefined) =>
+    row !== undefined && row.mode === 'container' && sameHash(row.controlTokenHash, hash)
+  // A cheap check first, so a caller without a valid token never holds the row lock.
+  const [first] = await db.select().from(signinSessions).where(eq(signinSessions.id, target.data.sessionId))
+  if (!sameToken(first)) return signinUnauthorized()
+  const parsed = SigninHeartbeatSchema.safeParse(body)
+  if (!parsed.success) return signinBadRequest()
+  const hb = parsed.data
+
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(signinSessions).where(eq(signinSessions.id, first!.id)).for('update')
+    if (!sameToken(row)) return signinUnauthorized()
+    const wasEnded = row!.state === 'ended'
+    if (!wasEnded)
+      await tx
+        .update(signinSessions)
+        .set(
+          hb.ended
+            ? { lastHeartbeatAt: now, state: 'ended', endedAt: now, endReason: hb.reason ?? 'done' }
+            : { lastHeartbeatAt: now, state: 'ready' }
+        )
+        .where(eq(signinSessions.id, row!.id))
+    // Only kind and result are stored; the container sends nothing else about an account.
+    if (hb.ended) for (const check of hb.accounts ?? []) await recordAccount(tx, row!, check, now)
+    return { status: 200, body: { commands: wasEnded || row!.doneRequested ? ['stop'] : [] } } as const
+  })
+}
+
+/** `POST /api/control/signin`: the capped body, answered with `handleSigninHeartbeat`'s status and body. */
+export async function handleSigninRequest(
+  request: Request,
+  deps: { db: Db },
+  now: Date = new Date()
+): Promise<Response> {
+  // A caller without a well-formed token is refused before its body is read.
+  if (!SIGNIN_TOKEN.test(request.headers.get('authorization') ?? ''))
+    return Response.json(signinUnauthorized().body, { status: 401, headers: { 'cache-control': 'no-store' } })
+  const raw = await readCapped(request, MAX_SIGNIN_BODY_BYTES)
+  let body: unknown = null
+  if (raw !== null && raw !== '') {
+    try {
+      body = JSON.parse(raw)
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e
+    }
+  }
+  const result =
+    raw === null
+      ? signinBadRequest()
+      : await handleSigninHeartbeat({ ...deps, now }, request.headers.get('authorization'), body)
+  return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
+}
+
+// --- Forward auth for the remote view ------------------------------------------------------------------------------
+
+export type VncDeps = { db: Db; getSession(headers: Headers): Promise<{ userId: string } | null> }
+
+/** The database and the Better Auth session lookup the forward-auth route passes on. */
+export function vncDeps(): VncDeps {
+  return {
+    db: getDb(),
+    getSession: async (headers) => {
+      const session = await getAuth().api.getSession({ headers })
+      return session ? { userId: session.user.id } : null
+    }
+  }
+}
+
+const VNC_PATH = /^\/vnc\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([^?#]*)/
+const VNC_UPSTREAM = /^tm-(worker|signin)-[0-9a-f-]+(-a\d+)?:6080$/
+
+/** Constant-time text comparison. */
+function sameText(a: string, b: string): boolean {
+  const left = Buffer.from(a)
+  const right = Buffer.from(b)
+  return left.length === right.length && timingSafeEqual(left, right)
+}
+
+/**
+ * Caddy's `forward_auth` check for `/vnc/<sessionId>/...`. It allows the request only for a signed-in member whose OWN
+ * sign-in session, named in the forwarded path, is `ready`; the answer is the upstream to proxy to. No session is a 401;
+ * everything else (another member's session, one that isn't ready, a path that isn't `/vnc/<uuid>/`, a `..` or an
+ * escape in it) is a 403 that says nothing more. Nothing here reads or returns a secret.
+ */
+export async function authoriseVnc(
+  deps: VncDeps,
+  headers: Headers
+): Promise<{ status: 200; upstream: string } | { status: 401 | 403 }> {
+  const session = await deps.getSession(headers)
+  if (!session) return { status: 401 }
+  const path = VNC_PATH.exec(headers.get('x-forwarded-uri') ?? '')
+  if (!path || /\.\.|%|\\/.test(path[2]!)) return { status: 403 }
+  const [member] = await deps.db.select({ id: members.id }).from(members).where(eq(members.authUserId, session.userId))
+  if (!member) return { status: 403 }
+  const [row] = await deps.db.select().from(signinSessions).where(eq(signinSessions.id, path[1]!))
+  if (
+    !row ||
+    !sameText(row.memberId, member.id) ||
+    row.state !== 'ready' ||
+    row.upstream === null ||
+    !VNC_UPSTREAM.test(row.upstream)
+  )
+    return { status: 403 }
+  return { status: 200, upstream: row.upstream }
+}
+
+/** `GET /api/vnc/authorize`: an empty 200 with `X-Vnc-Upstream`, or a fixed 401 or 403. Never cached. */
+export async function authoriseVncRequest(request: Request, deps: VncDeps): Promise<Response> {
+  const verdict = await authoriseVnc(deps, request.headers)
+  if (verdict.status === 200)
+    return new Response(null, {
+      status: 200,
+      headers: { 'x-vnc-upstream': verdict.upstream, 'cache-control': 'no-store' }
+    })
+  return Response.json(
+    { error: verdict.status === 401 ? 'unauthorized' : 'forbidden' },
+    { status: verdict.status, headers: { 'cache-control': 'no-store' } }
+  )
 }
