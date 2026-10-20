@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Modes: selfcheck | test <playwright filter> | unit <bun test path> | seed --job <path> | --job <path>
+# Modes: selfcheck | test <playwright filter> | unit <bun test path> | seed --job <path> | --job <path> | --signin <path>
 set -euo pipefail
 
 usage() {
-  echo "usage: entrypoint.sh selfcheck | test <filter> | unit <path> | seed --job <path> | --job <path>" >&2
+  echo "usage: entrypoint.sh selfcheck | test <filter> | unit <path> | seed --job <path> | --job <path> | --signin <path>" >&2
   exit 2
 }
 
@@ -12,7 +12,7 @@ mode=$1
 case "$mode" in
   selfcheck | test | unit) ;;
   seed) [ $# -eq 3 ] && [ "$2" = "--job" ] || usage ;;
-  --job) [ $# -eq 2 ] || usage ;;
+  --job | --signin) [ $# -eq 2 ] || usage ;;
   *) usage ;;
 esac
 
@@ -88,4 +88,6 @@ case "$mode" in
   unit) shift; run bun test "$@" ;;
   seed) run node packages/worker/dist/cli.js --seed --job "$3" ;;
   --job) run_job "$2" ;;
+  # A sign-in container (no meeting): the member signs in through the remote view, then a checkpoint is written.
+  --signin) run node packages/worker/dist/signin.js "$2" ;;
 esac

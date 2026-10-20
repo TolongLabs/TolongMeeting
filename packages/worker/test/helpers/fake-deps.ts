@@ -5,7 +5,7 @@ import type { Page } from 'playwright'
 import type { ChatMessage, FormCandidate, FormProvider, JobConfig, ResolvedForm } from '@tm/core'
 import type { Ping } from '@tm/notify'
 import { DevicesOnError } from '../../src/adapters'
-import type { AdmissionResult, JoinResult, MeetingState, PlatformAdapter } from '../../src/adapters/types'
+import type { AdmissionResult, JoinResult, MeetingState, PlatformAdapter, Rect } from '../../src/adapters/types'
 import type { ChatCaptureOptions } from '../../src/chat/capture'
 import type { LiveAsrOptions } from '../../src/asr/live'
 import type { Frame } from '../../src/frames/frames'
@@ -27,7 +27,8 @@ export interface FakeOptions {
   devicesOn?: boolean
   /** The sink level `levelDb` reports. Default -20; null means unknown. */
   level?: number | null
-  signedOut?: FormProvider[]
+  /** The providers `checkFormProviders` reports signed out; a function is asked at every check. */
+  signedOut?: FormProvider[] | (() => FormProvider[])
   /** `startFormDispatcher` throws, as when the forms directory cannot be read. */
   dispatcherStartFails?: Error
   /** Called by the dispatcher's `close`; it may never settle. */
@@ -86,6 +87,12 @@ export interface FakeDeps extends RunDeps {
     checkpoints: { onError?: (e: unknown) => void }
   }
   clock(): Date
+  /** The remote views running now (started and not stopped), with the password each was given. */
+  vnc: { display: string; desk: Rect; secret: string }[]
+  /** The sign-in tabs open now. */
+  tabs: string[]
+  /** What `idleMs` answers. */
+  idle: number
 }
 
 export const LECTURE_START = '2026-10-21T20:00:00+08:00'
@@ -165,7 +172,10 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       audio: { fatal: [] },
       checkpoints: {}
     } as FakeDeps['hooks'],
-    clock
+    clock,
+    vnc: [] as FakeDeps['vnc'],
+    tabs: [] as string[],
+    idle: 0
   }
 
   const page = (): Page =>
@@ -297,7 +307,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     checkFormProviders: async () => {
       rec('checkFormProviders')
-      return opts.signedOut ?? []
+      return typeof opts.signedOut === 'function' ? opts.signedOut() : (opts.signedOut ?? [])
     },
     startAudioSource: async () => {
       rec('startAudioSource')
@@ -371,6 +381,17 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
         const provider = formProviderOf(c.url)
         return provider === null ? null : { ...c, finalUrl: c.url, provider }
       }),
+    startVnc: async (display, desk, secret) => {
+      rec('startVnc')
+      fake.vnc.push({ display, desk, secret })
+      return { stop: async () => void fake.vnc.pop() }
+    },
+    idleMs: async () => fake.idle,
+    openSigninTabs: async (_desk, urls) => {
+      rec('openSigninTabs')
+      fake.tabs.push(...urls)
+      return async () => void fake.tabs.splice(0)
+    },
     ...(opts.teardownBudgetMs === undefined ? {} : { teardownBudgetMs: opts.teardownBudgetMs }),
     sendPing: async (_cfg, ping) => void pings.push(ping),
     now: clock,

@@ -1,5 +1,7 @@
 import { sendPing } from '@tm/notify'
+import { openSigninTabs } from './control/desk-tabs'
 import type { HeartbeatOptions } from './control/heartbeat'
+import { idleMs, startVnc } from './control/vnc'
 import { adapterFor } from './adapters'
 import { startLiveAsr } from './asr/live'
 import { startAudioSource } from './audio/source'
@@ -43,6 +45,9 @@ export interface RunDeps {
   startLiveAsr: typeof startLiveAsr
   startFormDispatcher: typeof startFormDispatcher
   resolveFormLink: typeof resolveFormLink
+  startVnc: typeof startVnc
+  idleMs: typeof idleMs
+  openSigninTabs: typeof openSigninTabs
   sendPing: typeof sendPing
   now(): Date
   sleep(ms: number): Promise<void>
@@ -73,6 +78,9 @@ export const defaultDeps: RunDeps = {
   startLiveAsr,
   startFormDispatcher,
   resolveFormLink,
+  startVnc,
+  idleMs,
+  openSigninTabs,
   sendPing,
   now: () => new Date(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))

@@ -2511,7 +2511,7 @@ x11vnc websockify xprintidle
 if [ "$1" = "--signin" ]; then exec node /app/dist/signin.js "$2"; fi
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/control/vnc.test.ts
@@ -2595,13 +2595,13 @@ test('15 idle minutes end the session', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/control/vnc.test.ts packages/worker/src/control/desk-pause.test.ts packages/worker/src/signin/run-signin.test.ts`
 
 Expected: FAIL with `Cannot find module './vnc'`.
 
-- [ ] **Step 3: Implement the modules, wire `run.ts`, and change the image and entrypoint**
+- [x] **Step 3: Implement the modules, wire `run.ts`, and change the image and entrypoint**
 
 - [ ] **Step 4: Run tests to verify they pass, and build the image**
 
@@ -2609,12 +2609,14 @@ Run: `bun test packages/worker/src/control packages/worker/src/signin && docker 
 
 Expected: PASS, `0 fail`; the image builds and the last command prints three paths.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/control.ts packages/worker/src docker/worker
 git commit -m "feat(worker): add desk pause and sign-in"
 ```
+
+As built (deviations from the snippets above): the tests live in `packages/worker/test/` (`signin-vnc`, `desk-pause`, `run-signin`, `signin-post`, `run-desk-pause`, `forms-desk-pause`). Per the controller's VNC ruling `vncArgs(display, desk, passwordFile, opts?)` replaces `-nopw` with `-passwdfile` (the password is derived by core `vncSecret` from the hash of the control token, in a 0600 file) and `startVnc` takes the secret as its third argument. The idle time is the shorter of `xprintidle` and the time since the pause began. `SigninHeartbeat` gains an optional `accounts` (the last report only), `runSignin` takes an optional `signal` (SIGTERM ends it as `done`), and a reply with `resume_after_signin` ends it like `stop`. The entrypoint runs `--signin` as a mode (`run node packages/worker/dist/signin.js`) so the TERM trap applies. Step 4's image build is not done here (root filesystem full): the scripts pass `bash -n`, and the image is unbuilt.
 
 ### Task 18: Remote sign-in
 

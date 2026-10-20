@@ -1,6 +1,5 @@
 import { readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { JobConfig } from '@tm/core'
 import type { RunDeps } from './run-deps'
 import { CheckpointAuthError, CheckpointFormatError, listCheckpoints } from './profile/profile'
 
@@ -21,11 +20,14 @@ async function listDir(dir: string): Promise<string[]> {
   }
 }
 
+/** What `setupProfile` reads of a job: the identity and the working profile directory (a meeting job or a sign-in job). */
+export type ProfileJob = { identity: { id: string }; profileDir: string }
+
 // The identity's key and checkpoint directory. An empty working profile is restored from the newest checkpoint; one
 // that fails authentication or is not a checkpoint is skipped for the next-newest, and the run fails only when none
 // restores. Then the profile is prepared (host check, stale locks).
 export async function setupProfile(
-  cfg: JobConfig,
+  cfg: ProfileJob,
   deps: Pick<RunDeps, 'loadProfileKey' | 'prepareProfile' | 'restoreProfile'>
 ): Promise<ProfileSetup> {
   const root = process.env.TM_PROFILE_ROOT

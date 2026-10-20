@@ -52,8 +52,8 @@ export interface HeartbeatLoop extends Stopper {
   flush(): Promise<boolean>
 }
 
-/** The control URL: https, or http for 127.0.0.1 (tests). Anything else is refused before a token is sent. */
-export function heartbeatUrl(base: string): string {
+/** `<control URL>/<path>`: the control URL is https, or http for 127.0.0.1 (tests). Anything else is refused before a token is sent. */
+export function controlEndpoint(base: string, path: string): string {
   if (!URL.canParse(base)) throw new Error('the control URL is not a URL')
   const u = new URL(base)
   const local = u.protocol === 'http:' && u.hostname === '127.0.0.1'
@@ -61,8 +61,10 @@ export function heartbeatUrl(base: string): string {
   if (u.username !== '' || u.password !== '' || u.search !== '' || u.hash !== '') {
     throw new Error('the control URL must not hold credentials, a query or a fragment')
   }
-  return `${base.replace(/\/+$/, '')}/heartbeat`
+  return `${base.replace(/\/+$/, '')}/${path}`
 }
+
+export const heartbeatUrl = (base: string): string => controlEndpoint(base, 'heartbeat')
 
 const NOOP: HeartbeatLoop = { stop: async () => undefined, flush: async () => true }
 

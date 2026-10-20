@@ -3,8 +3,10 @@ import { join } from 'node:path'
 import type { Page } from 'playwright'
 import { AiKeyError } from '@tm/ai'
 import {
+  controlTokenHash,
   localParts,
   triggerFor,
+  vncSecret,
   type AccountCheckData,
   type ChatMessage,
   type EventType,
@@ -23,6 +25,7 @@ import { createAlerter, createLimiter, type Alerter } from './alerts'
 import type { AudioSource } from './audio/source'
 import type { ChatCapture } from './chat/capture'
 import { dispatchCommands } from './control/commands'
+import { DeskPause } from './control/desk-pause'
 import { startHeartbeat, type HeartbeatLoop } from './control/heartbeat'
 import { LinkOverride } from './control/link-override'
 import { siteLinks } from './control/links'
@@ -80,6 +83,8 @@ const RESERVE_SHARE = 0.4
 const STOP_SHARE = 0.2
 /** A meeting with no link is given up this long after its start (PRD LINK-4). */
 const NO_LINK_AFTER_START_MS = 30 * MINUTE
+/** A member who must sign in again is waited for until this long before the start (PRD: join T-10 to T-5). */
+const SIGNIN_DEADLINE_BEFORE_START_MS = 5 * MINUTE
 
 // The most each teardown step may take; the time left in the budget cuts it shorter. A step that overruns is reported
 // and the next one still runs.
@@ -89,6 +94,7 @@ const BOUND = {
   stopChat: 5_000,
   stopFrames: 5_000,
   stopQr: 3_000,
+  deskPause: 5_000,
   stopAsr: 5_000,
   formIntake: 6_000,
   forms: 10_000,
@@ -191,6 +197,10 @@ class OccurrenceRun {
   private outbox: EventOutbox | null = null
   private heartbeat: HeartbeatLoop | null = null
   private commandChain: Promise<void> = Promise.resolve()
+  /** The member's sign-in view of the desk; null without a control channel, and until the browser is up. */
+  private deskPause: DeskPause | null = null
+  /** `pause_for_signin` arrived before the browser was up: the pause starts as soon as it is. */
+  private pauseWanted = false
   private state: OccurrenceState = 'starting'
   private recording = false
   private endRequest: EndRequest | null = null
@@ -462,9 +472,44 @@ class OccurrenceRun {
     await dispatchCommands(commands, {
       leave: async () => this.requestEnd('leave'),
       stop: async () => this.requestEnd('stop'),
-      // The remote sign-in view (plan 01c Task 17) gives these their meaning.
-      pause: () => this.report('command', new Error('pause_for_signin is not available yet')),
-      resume: () => this.report('command', new Error('resume_after_signin is not available yet'))
+      pause: () => this.pauseDesk(),
+      resume: () => this.resumeDesk()
+    })
+  }
+
+  // `pause_for_signin`: the desk goes to the member's remote view; the recording and the stage carry on. A failure is
+  // reported and pinged (the member is waiting for the view), and the meeting goes on.
+  private async pauseDesk(): Promise<void> {
+    if (this.teardownStart !== null || this.isAborted) {
+      await this.report('command', new Error('pause_for_signin was ignored: the run is ending'))
+      return
+    }
+    this.pauseWanted = true
+    const pause = this.deskPause
+    if (pause === null) return
+    if ((await this.optional('desk pause', () => pause.pause())) === null) this.pauseWanted = false
+  }
+
+  // `resume_after_signin`: the member pressed "Done".
+  private async resumeDesk(): Promise<void> {
+    this.pauseWanted = false
+    const pause = this.deskPause
+    if (pause !== null) await this.optional('desk pause', () => pause.resume('command'))
+  }
+
+  // The desk pause of a run with a control channel (only the channel can ask for one). The view's password comes from
+  // the control token's hash, which the website also holds; it reaches no event, log or ping.
+  private makeDeskPause(screen: Screen, desk: Page, profile: ProfileSetup): DeskPause | null {
+    const { cfg, deps } = this
+    if (cfg.control === null) return null
+    const secret = vncSecret(controlTokenHash(cfg.control.token))
+    return new DeskPause({
+      startVnc: () => deps.startVnc(screen.display, screen.desk, secret),
+      idleMs: () => deps.idleMs(screen.display),
+      openTabs: (urls) => deps.openSigninTabs(desk, urls, (e) => void this.report('desk pause', e)),
+      checkpoint: async () => void (await deps.checkpointProfile(cfg.profileDir, profile.checkpointsDir, profile.key)),
+      emit: (data) => void this.ev('state', data),
+      report: (e) => this.fault('desk pause', e)
     })
   }
 
@@ -753,6 +798,11 @@ class OccurrenceRun {
     )
     if (checkpoints === ABORTED) return this.terminated()
     this.checkpoints = checkpoints
+    this.deskPause = this.makeDeskPause(screen, browser.desk, profile)
+    if (this.deskPause !== null && this.pauseWanted) {
+      const pause = this.deskPause
+      if ((await this.optional('desk pause', () => pause.pause())) === null) this.pauseWanted = false
+    }
 
     await this.setState('verifying_accounts')
     if (this.lecture) {
@@ -846,7 +896,7 @@ class OccurrenceRun {
     await this.optional('form submission', async () => {
       // The meeting page links (1C) are not known yet.
       const links = { meetingPage: this.links?.meetingPage ?? null, signIn: this.links?.signIn ?? null }
-      const base = makeFormContextBase(cfg, desk, this.ev, links, (p) => deps.sendPing(cfg.ntfy, p))
+      const base = makeFormContextBase(cfg, desk, this.ev, links, (p) => deps.sendPing(cfg.ntfy, p), this.deskPause)
       const dispatcher = await deps.startFormDispatcher(base)
       this.forms = dispatcher
       // Started after the stop signal (the setup abandoned it): nothing will use it, and teardown may be past its step.
@@ -857,24 +907,49 @@ class OccurrenceRun {
     })
   }
 
+  // Checks that each form provider is signed in on the desk. A provider that is not gets the "Sign in again" ping. With a
+  // control channel the member can sign in through the remote view: the run waits in `waiting_for_signin` until they
+  // press "Done" (then checks again), until T-5, or until the run ends. Whatever is still signed out then is left for
+  // the form ping ("link seen, not checked"): a meeting is worth recording without it.
   private async checkFormSignIns(desk: Page): Promise<void> {
     const { cfg, deps } = this
+    const deadline = this.start - SIGNIN_DEADLINE_BEFORE_START_MS
     try {
-      const signedOut = await deps.checkFormProviders(desk, cfg.identity.formProviders)
-      // The website shows when each account was last checked and whether it was signed in.
-      for (const provider of cfg.identity.formProviders) {
-        await this.ev('state', {
-          account: provider,
-          signedIn: !signedOut.includes(provider)
-        } satisfies AccountCheckData)
-      }
-      for (const provider of signedOut) {
-        this.alerter.alert('signin_forms', provider === 'google' ? 'Google' : 'Microsoft')
+      for (;;) {
+        // The desk may be in the member's hands.
+        await this.deskPause?.whenOpen()
+        const signedOut = await deps.checkFormProviders(desk, cfg.identity.formProviders)
+        // The website shows when each account was last checked and whether it was signed in.
+        for (const provider of cfg.identity.formProviders) {
+          await this.ev('state', {
+            account: provider,
+            signedIn: !signedOut.includes(provider)
+          } satisfies AccountCheckData)
+        }
+        for (const provider of signedOut) {
+          this.alerter.alert('signin_forms', provider === 'google' ? 'Google' : 'Microsoft')
+        }
+        if (signedOut.length === 0 || this.deskPause === null || this.now() >= deadline || this.isAborted) break
+        await this.setState('waiting_for_signin')
+        if ((await this.waitForSignin(this.deskPause, deadline)) !== 'resumed') break
       }
     } catch (error) {
       // Not fatal: a meeting is worth recording without it. The ping says what is unchecked.
       this.fault('form sign-in check', error)
     }
+    if (this.state === 'waiting_for_signin' && !this.isAborted) await this.setState('verifying_accounts')
+  }
+
+  // Waits for the member's "Done" (or the end of their idle time), the deadline, or the end of the run.
+  private async waitForSignin(pause: DeskPause, deadline: number): Promise<'resumed' | 'deadline' | 'aborted'> {
+    const resumed = pause.nextResume().then((): 'resumed' => 'resumed')
+    while (!this.isAborted) {
+      const left = deadline - this.now()
+      if (left <= 0) return 'deadline'
+      const first = await Promise.race([resumed, this.wait(Math.min(left, MINUTE)).then(() => null)])
+      if (first === 'resumed') return 'resumed'
+    }
+    return 'aborted'
   }
 
   // The recording's time origin is its first attempt's start, which attempts.json holds. A file that cannot be read
@@ -1279,6 +1354,8 @@ class OccurrenceRun {
   private async teardown(): Promise<void> {
     this.teardownStart = Date.now()
 
+    // The member's view of the desk goes first, and the desk work that waits for it is released.
+    if (this.deskPause) await this.bounded('desk pause', BOUND.deskPause, () => this.deskPause!.close())
     // The recording goes on to the pipeline: leaving, then (the bot out of the meeting) uploading.
     if (this.handsOver) await this.setState('leaving')
     if (this.inMeeting) {

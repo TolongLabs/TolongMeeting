@@ -70,6 +70,8 @@ export interface FormContextBase {
   ping(p: Ping): Promise<void>
   matchLabels(questions: MatchQuestion[], detailKeys: string[]): Promise<Map<string, string>>
   waitForSignin(tab: Page, provider: FormProvider, signal: AbortSignal): Promise<boolean>
+  /** Resolves when the member does not hold the desk (a sign-in pause). Absent: the desk is always free. */
+  deskOpen?(): Promise<void>
 }
 
 export interface FormContext extends FormContextBase {

@@ -1,4 +1,5 @@
 // Control-channel and sign-in contracts shared by the website, the scheduler and the worker (plan 01c).
+import { createHash, createHmac } from 'node:crypto'
 import { z } from 'zod'
 import type { ControlCommand, EventType, Heartbeat, HeartbeatReply, OccurrenceState } from './types'
 
@@ -115,3 +116,68 @@ export const HeartbeatReplyShapeSchema = z.object({
   commands: z.array(z.string().max(64)).max(32),
   link: HeartbeatReplySchema.shape.link
 })
+
+// --- Sign-in sessions (desk pause and sign-in container, plan 01c Task 17) ---
+
+/** What the sign-in container reads from its job file (`--signin <file>`). */
+export type SigninJob = {
+  sessionId: string
+  identityId: string
+  profileDir: string
+  checkpointsDir: string
+  control: { url: string; token: string }
+}
+
+/**
+ * The container's report to `<control.url>/signin`, every 5 s. `accounts` is sent once, with `ended: true`: what the
+ * container saw of the accounts when the member finished.
+ */
+export type SigninHeartbeat = {
+  sessionId: string
+  idleMs: number
+  ended: boolean
+  reason?: 'done' | 'idle' | 'error'
+  accounts?: AccountCheckData[]
+}
+
+/** The server's answer: `stop` (or `resume_after_signin`) is the member pressing "Done". */
+export type SigninReply = { commands: ControlCommand[] }
+
+/** What a worker `state` event carries when the desk was handed to the member for a sign-in, or taken back. */
+export type SigninEventData = { signin: 'paused' | 'resumed'; reason?: 'command' | 'idle' }
+
+export const SigninJobSchema = z.object({
+  sessionId: z.uuid(),
+  identityId: z.uuid(),
+  profileDir: z.string().min(1),
+  checkpointsDir: z.string().min(1),
+  control: z.object({ url: z.string().min(1), token: z.string().min(1) })
+}) satisfies z.ZodType<SigninJob>
+
+export const SigninHeartbeatSchema = z.object({
+  sessionId: z.uuid(),
+  idleMs: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  ended: z.boolean(),
+  reason: z.enum(['done', 'idle', 'error']).optional(),
+  accounts: z.array(AccountCheckDataSchema).max(ACCOUNT_KINDS.length).optional()
+}) satisfies z.ZodType<SigninHeartbeat>
+
+export const SigninReplySchema = z.object({
+  commands: z.array(ControlCommandSchema).max(32)
+}) satisfies z.ZodType<SigninReply>
+
+export const SigninEventDataSchema = z.object({
+  signin: z.enum(['paused', 'resumed']),
+  reason: z.enum(['command', 'idle']).optional()
+}) satisfies z.ZodType<SigninEventData>
+
+/** The control token as the server stores it: its SHA-256, hex. */
+export const controlTokenHash = (token: string): string => createHash('sha256').update(token).digest('hex')
+
+/**
+ * The password of a session's remote view (x11vnc), from the stored hash of its control token: the worker has the
+ * token, the website has the hash, and both get the same eight characters (the VNC protocol uses no more). The
+ * password is never logged and never leaves the worker except through the member's own authenticated view.
+ */
+export const vncSecret = (tokenHash: string): string =>
+  createHmac('sha256', tokenHash).update('tolongmeeting/vnc/v1').digest('base64url').slice(0, 8)

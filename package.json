@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build:worker": "bun build packages/worker/src/cli.ts --target=node --outdir packages/worker/dist --external playwright --external sharp --external zxing-wasm",
+    "build:worker": "bun build packages/worker/src/cli.ts --target=node --outdir packages/worker/dist --external playwright --external sharp --external zxing-wasm && bun build packages/worker/src/signin/main.ts --target=node --outfile packages/worker/dist/signin.js --external playwright --external sharp --external zxing-wasm",
     "diagrams": "bun scripts/diagram-svg.ts",
     "graph": "graphify update .",
     "image:worker": "sh scripts/build-worker-image.sh",

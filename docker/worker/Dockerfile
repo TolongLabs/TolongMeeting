@@ -23,7 +23,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xvfb openbox pulseaudio pulseaudio-utils x11vnc x11-utils \
+      xvfb openbox pulseaudio pulseaudio-utils x11vnc websockify xprintidle x11-utils \
       "ffmpeg=${FFMPEG_VERSION}" libgl1-mesa-dri \
       fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
       jq curl ca-certificates unzip \
@@ -78,7 +78,7 @@ COPY --chown=tm:tm . /app
 USER tm
 # The image is also the test runner (entrypoint modes `test` and `unit` need @playwright/test and the other dev
 # dependencies), so dev dependencies stay installed; `bun build` runs here as well, so one install serves both.
-# cli.ts arrives in Task 18; until then the image is built without dist/
+# cli.ts arrives in Task 18; until then the image is built without dist/. build:worker also builds dist/signin.js.
 RUN bun install --frozen-lockfile \
  && [ "$(node -p "require('/app/node_modules/playwright/package.json').version")" = "${PLAYWRIGHT_VERSION}" ] \
  && if [ -f packages/worker/src/cli.ts ]; then bun run build:worker; fi \

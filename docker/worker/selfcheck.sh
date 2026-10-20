@@ -8,6 +8,8 @@ google-chrome --version | grep -q " $CHROME_VERSION" || { echo "chrome mismatch"
 [ "$(dpkg-query -W -f='${Version}' ffmpeg)" = "$FFMPEG_VERSION" ] || { echo "ffmpeg mismatch"; exit 1; }
 [ "$(node -p "require('/app/node_modules/playwright/package.json').version")" = "$PLAYWRIGHT_VERSION" ] || { echo "playwright mismatch"; exit 1; }
 command -v x11vnc >/dev/null || { echo "x11vnc missing"; exit 1; }
+command -v websockify >/dev/null || { echo "websockify missing"; exit 1; }
+command -v xprintidle >/dev/null || { echo "xprintidle missing"; exit 1; }
 "$TM_WECHAT_PYTHON" -c "import cv2; cv2.wechat_qrcode_WeChatQRCode" || { echo "opencv wechat detector missing"; exit 1; }
 for f in detect.prototxt detect.caffemodel sr.prototxt sr.caffemodel; do
   [ -s "$TM_WECHAT_MODELS_DIR/$f" ] || { echo "wechat model $f missing"; exit 1; }

@@ -183,7 +183,15 @@ class FormRun {
     return await this.open()
   }
 
+  // Desk work waits while the member holds the desk for a sign-in. A meeting that ended meanwhile ends the form.
+  private async deskOpen(): Promise<void> {
+    if (this.ctx.deskOpen === undefined) return
+    await this.ctx.deskOpen()
+    if (this.ctx.signal.aborted) await this.fail('meeting_ended')
+  }
+
   private async open(): Promise<PageKind> {
+    await this.deskOpen()
     try {
       this.tab = await openDeskTab(this.ctx.desk)
     } catch (error) {
@@ -206,6 +214,7 @@ class FormRun {
   private async page(n: number): Promise<boolean> {
     const tab = this.tab!
     const driver = this.driver!
+    await this.deskOpen()
     const page = await this.read(n)
     if (n === 1) {
       this.rec = { ...this.rec, title: page.title }
@@ -291,6 +300,7 @@ class FormRun {
 
   // Checked before the fill and again before the Submit click. A form is never submitted after the meeting ended.
   private async beforeDeadline(): Promise<void> {
+    await this.deskOpen()
     if (this.ctx.signal.aborted) await this.fail('meeting_ended')
     if (Date.now() > this.deadline) await this.fail('deadline')
   }
