@@ -6,7 +6,7 @@ import { symmetricEncrypt } from 'better-auth/crypto'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
-import { MEMBER_OWNED, schema, type Db } from './index'
+import { closeDb, MEMBER_OWNED, schema, type Db } from './index'
 import { authSecret } from '../lib/auth-secret'
 import { migrationsFolder, runMigrations } from './migrate'
 import { sealColumn } from './secrets'
@@ -199,6 +199,7 @@ export async function dropTestDb(db: Db): Promise<void> {
   const handle = created.get(db)
   if (!handle) throw new Error('Not a database made by createTestDb')
   created.delete(db)
+  await closeDb()
   await handle.pool.end()
   await onAdmin((admin) => admin.query(dropSql(handle.name)))
 }
@@ -209,6 +210,7 @@ export async function dropAllTestDbs(): Promise<void> {
   template = undefined
   const handles = [...created.values()]
   created.clear()
+  await closeDb()
   await Promise.all(handles.map((h) => h.pool.end()))
   await onAdmin(async (admin) => {
     const drop = (name: string) => admin.query(dropSql(name)).then(() => undefined)
