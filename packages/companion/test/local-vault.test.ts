@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { existsSync, readdirSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { profileKey } from '@tm/core'
 import { SecretStore, type SafeStorageLike } from '../src/secrets'
+import { handleRevoked } from '../src/pairing'
 import { checkRunArgs } from '../src/local/docker'
 import type { DockerLike } from '../src/local/docker'
-import { removeAfterFirstHeartbeat, writeEphemeral } from '../src/local/ephemeral'
+import { removeAfterFirstHeartbeat, sweepPlaintext, writeEphemeral } from '../src/local/ephemeral'
 import {
   checkpointsDir,
   checkpointVolume,
@@ -176,4 +177,88 @@ test('a checkpoint container that fails throws, and its key file is still remove
     checkpointVolume({ docker, image: IMAGE, paths: localPaths(dir), localKey: Buffer.alloc(32, 9) }, 'u1')
   ).rejects.toThrow('exit 1')
   expect(existsSync(log.keyFile)).toBe(false)
+})
+
+test('the key file is removed even when docker cannot remove the container', async () => {
+  const { docker, log } = fakeDocker({})
+  let removals = 0
+  const broken: DockerLike = {
+    ...docker,
+    rm: async () => {
+      // The first call clears a leftover before the run; the one in the `finally` fails.
+      if (++removals > 1) throw new Error('docker rm failed')
+    }
+  }
+  const p = localPaths(dir)
+  await expect(
+    checkpointVolume({ docker: broken, image: IMAGE, paths: p, localKey: Buffer.alloc(32, 9) }, 'u1')
+  ).rejects.toThrow('docker rm failed')
+  expect(log.keyFile).not.toBe('')
+  expect(existsSync(log.keyFile)).toBe(false)
+  expect(existsSync(join(log.keyFile, '..'))).toBe(false)
+})
+
+test('the profile key survives an unpairing, so saved logins stay readable after pairing again', async () => {
+  const secrets = new SecretStore(join(dir, 'secrets.json'), fakeSafe())
+  await secrets.set('deviceToken', 'tmd_x')
+  await secrets.set('ntfyToken', 'tk_y')
+  const key = await ensureProfileKey(secrets)
+  await handleRevoked({ secrets, stopAll: () => {}, openPairing: () => {}, notifier: { show: () => {} } })
+  expect(await secrets.get('deviceToken')).toBeNull()
+  expect((await ensureProfileKey(new SecretStore(join(dir, 'secrets.json'), fakeSafe()))).equals(key)).toBe(true)
+})
+
+test('ephemeral remove deletes the folder even when a file cannot be overwritten, then reports it', async () => {
+  const e = await writeEphemeral(dir, { 'a.key': 'AAAA', 'b.key': 'BBBB' })
+  await chmod(join(e.dir, 'a.key'), 0o000)
+  await expect(e.remove()).rejects.toThrow()
+  expect(existsSync(e.dir)).toBe(false)
+})
+
+test('ephemeral remove never writes through a link', async () => {
+  const outside = join(dir, 'outside.txt')
+  await writeFile(outside, 'KEEP ME')
+  const e = await writeEphemeral(dir, { 'a.key': 'AAAA' })
+  await rm(join(e.dir, 'a.key'))
+  await symlink(outside, join(e.dir, 'a.key'))
+  await e.remove()
+  expect(await readFile(outside, 'utf8')).toBe('KEEP ME')
+  expect(existsSync(e.dir)).toBe(false)
+})
+
+test('sweepPlaintext overwrites with zeros and deletes everything under runs and jobs', async () => {
+  const runs = join(dir, 'runs')
+  const jobs = join(dir, 'jobs')
+  await mkdir(join(runs, 'abc'), { recursive: true })
+  await mkdir(join(jobs, 'j1', 'deep'), { recursive: true })
+  await writeFile(join(runs, 'abc', 'profile.key'), 'SECRETKEY')
+  await writeFile(join(jobs, 'j1', 'deep', 'audio.flac'), Buffer.alloc(3_000_000, 7))
+  await writeFile(join(jobs, 'loose.json'), '{"token":"x"}')
+  // Held open, so the zeros can be read after the name is gone.
+  const key = await open(join(runs, 'abc', 'profile.key'), 'r')
+  const audio = await open(join(jobs, 'j1', 'deep', 'audio.flac'), 'r')
+  await sweepPlaintext({ runs, jobs })
+  expect(readdirSync(runs)).toEqual([])
+  expect(readdirSync(jobs)).toEqual([])
+  expect((await key.readFile()).equals(Buffer.alloc(9))).toBe(true)
+  expect((await audio.readFile()).equals(Buffer.alloc(3_000_000))).toBe(true)
+  await key.close()
+  await audio.close()
+})
+
+test('sweepPlaintext follows no link and tolerates missing folders', async () => {
+  const outside = join(dir, 'outside')
+  await mkdir(outside)
+  await writeFile(join(outside, 'precious.txt'), 'KEEP ME')
+  const runs = join(dir, 'runs')
+  await mkdir(runs)
+  await symlink(outside, join(runs, 'linked-folder'))
+  await symlink(join(outside, 'precious.txt'), join(runs, 'linked-file'))
+  await sweepPlaintext({ runs, jobs: join(dir, 'no-jobs-yet') })
+  expect(readdirSync(runs)).toEqual([])
+  expect(await readFile(join(outside, 'precious.txt'), 'utf8')).toBe('KEEP ME')
+  const linkedRoot = join(dir, 'linked-root')
+  await symlink(outside, linkedRoot)
+  await expect(sweepPlaintext({ runs: linkedRoot, jobs: join(dir, 'x') })).rejects.toThrow()
+  expect(readdirSync(outside)).toEqual(['precious.txt'])
 })

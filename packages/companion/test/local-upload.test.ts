@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UPLOAD_CHUNK_MAX_BYTES } from '@tm/core'
 import { CompanionApi, CompanionApiError } from '../src/api'
-import { UploadError, isUploadPath, uploadFile, uploadSet, type UploadApi } from '../src/local/upload'
+import { UploadError, isUploadPath, sameFile, uploadFile, uploadSet, type UploadApi } from '../src/local/upload'
 import { TOKEN, fakeServer, type FakeServer } from './fake-upload-server'
 
 const roots: string[] = []
@@ -298,5 +298,18 @@ describe('what is read', () => {
       expect(e.message).not.toContain('zoom.us')
       expect(e.message).not.toContain('tm-upload-')
     }
+  })
+})
+
+describe('sameFile', () => {
+  const file = { isFile: () => true }
+  test('compares device and inode as bigints, so ids above 2^53 stay apart', () => {
+    const big = 2n ** 60n
+    // As plain numbers these two ids are the same double.
+    expect(Number(big)).toBe(Number(big + 1n))
+    expect(sameFile({ dev: 1n, ino: big }, { dev: 1n, ino: big, ...file })).toBe(true)
+    expect(sameFile({ dev: 1n, ino: big }, { dev: 1n, ino: big + 1n, ...file })).toBe(false)
+    expect(sameFile({ dev: 1n, ino: big }, { dev: 2n, ino: big, ...file })).toBe(false)
+    expect(sameFile({ dev: 1n, ino: 5n }, { dev: 1n, ino: 5n, isFile: () => false })).toBe(false)
   })
 })

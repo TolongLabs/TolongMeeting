@@ -54,9 +54,17 @@ export class SecretStore {
     })
   }
 
-  /** Forgets every secret, for example when the server revokes this PC. Needs no encryption. */
+  /**
+   * Forgets the tokens of this pairing (`deviceToken`, `ntfyToken`), for example when the server revokes this PC. The
+   * `profileKey` stays: it encrypts the saved browser profiles and does not come from the server, so a server's 401
+   * must not make every saved login unreadable. Needs no encryption.
+   */
   clear(): Promise<void> {
-    return this.writes.run(() => rm(this.file, { force: true }))
+    return this.writes.run(async () => {
+      const { deviceToken: _device, ntfyToken: _ntfy, ...kept } = await this.read()
+      if (Object.keys(kept).length === 0) await rm(this.file, { force: true })
+      else await writeFileAtomic(this.file, JSON.stringify(kept), 0o600)
+    })
   }
 
   private requireEncryption(): void {

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, mkdir, open, readdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // Files a container needs only at start (the job and the profile key), kept on the PC just long enough for it to read
@@ -7,6 +8,31 @@ import { join } from 'node:path'
 
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const DEFAULT_MAX_MS = 120_000
+const ZERO_CHUNK = 1024 * 1024
+const NOFOLLOW = constants.O_NOFOLLOW ?? 0
+
+/**
+ * Overwrites a regular file with zeros, in place, and flushes it. A link is never followed (the file is opened with
+ * `O_NOFOLLOW` where the system has it, and must be a regular file with one name); anything else is left for the
+ * caller to delete. Returns whether the contents were overwritten.
+ */
+async function zeroFile(file: string): Promise<boolean> {
+  const before = await lstat(file)
+  if (!before.isFile() || before.nlink > 1) return false
+  const handle = await open(file, constants.O_WRONLY | NOFOLLOW)
+  try {
+    const after = await handle.stat()
+    if (!after.isFile() || after.ino !== before.ino || after.dev !== before.dev) return false
+    const zeros = Buffer.alloc(Math.min(ZERO_CHUNK, Math.max(after.size, 1)))
+    for (let at = 0; at < after.size; at += zeros.length) {
+      await handle.write(zeros, 0, Math.min(zeros.length, after.size - at), at)
+    }
+    await handle.sync()
+    return true
+  } finally {
+    await handle.close()
+  }
+}
 
 export interface Ephemeral {
   dir: string
@@ -21,17 +47,18 @@ export async function writeEphemeral(dir: string, files: Record<string, string |
   const own = join(dir, randomBytes(12).toString('hex'))
   await mkdir(own, { recursive: true, mode: 0o700 })
   const remove = async (): Promise<void> => {
-    let names: string[] = []
+    // The folder goes even when a file cannot be overwritten; the failure is thrown after it is gone.
     try {
-      names = await readdir(own)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      let names: string[] = []
+      try {
+        names = await readdir(own)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      for (const name of names) await zeroFile(join(own, name))
+    } finally {
+      await rm(own, { recursive: true, force: true })
     }
-    for (const name of names) {
-      const file = join(own, name)
-      await writeFile(file, Buffer.alloc((await stat(file)).size))
-    }
-    await rm(own, { recursive: true, force: true })
   }
   try {
     for (const [name, content] of Object.entries(files))
@@ -59,4 +86,58 @@ export async function removeAfterFirstHeartbeat(
     clearTimeout(timer)
     await e.remove()
   }
+}
+
+/** Where plaintext waits on the PC for a container or the transcriber: the key and job folders, and the job scratch. */
+export interface PlaintextDirs {
+  /** `%LOCALAPPDATA%\\TolongMeeting\\runs` (`localPaths(...).runs`). */
+  runs: string
+  /** `%LOCALAPPDATA%\\TolongMeeting\\jobs` (`jobsDir(...)`). */
+  jobs: string
+}
+
+async function sweepDir(dir: string, failures: unknown[]): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    try {
+      // `Dirent` comes from the listing itself, so a link is a link here and is only unlinked, never followed.
+      if (entry.isDirectory()) {
+        await sweepDir(path, failures)
+        await rmdir(path)
+      } else {
+        if (entry.isFile()) await zeroFile(path)
+        await rm(path, { force: true })
+      }
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+}
+
+/**
+ * Run once when the app starts: a crash can leave key files, job files or audio in `runs/` and `jobs/`. Every file
+ * under them is overwritten with zeros and deleted, folders included; the two folders themselves stay. A link is
+ * removed, never followed. One file that cannot be removed does not stop the others; the failures are thrown together
+ * afterwards.
+ */
+export async function sweepPlaintext(dirs: PlaintextDirs): Promise<void> {
+  const failures: unknown[] = []
+  for (const dir of [dirs.runs, dirs.jobs]) {
+    const st = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (st === null) continue
+    if (!st.isDirectory()) throw new Error('A folder to sweep is not a real folder')
+    await sweepDir(dir, failures)
+  }
+  if (failures.length > 0)
+    throw new AggregateError(failures, `${failures.length} plaintext file(s) could not be removed`)
 }

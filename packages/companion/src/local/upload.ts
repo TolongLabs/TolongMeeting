@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
 import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
+import type { BigIntStats } from 'node:fs'
 import { join, sep } from 'node:path'
 import { UPLOAD_CHUNK_MAX_BYTES } from '@tm/core'
 import type { CompanionApi } from '../api'
@@ -45,7 +46,8 @@ export class UploadError extends Error {
 
 async function lstatOrNull(path: string) {
   try {
-    return await lstat(path)
+    // `bigint`: a Windows file id does not fit in a double, so two files could look alike as plain numbers.
+    return await lstat(path, { bigint: true })
   } catch (e) {
     if (isMissing(e)) return null
     throw e
@@ -93,6 +95,14 @@ function rank(path: string): number {
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
 
+/** Whether two looks at a file (both with `bigint: true`) are the same regular file: same device and same inode. */
+export function sameFile(
+  before: Pick<BigIntStats, 'dev' | 'ino'>,
+  after: Pick<BigIntStats, 'dev' | 'ino'> & { isFile(): boolean }
+): boolean {
+  return after.isFile() && after.ino === before.ino && after.dev === before.dev
+}
+
 /**
  * Opens `relPath` under `occDir` for reading. Each folder on the way and the file itself must be a real folder or a
  * regular file (not a link), the file is opened with `O_NOFOLLOW` where the system has it, and the open descriptor must
@@ -123,10 +133,9 @@ export async function openRegularFile(occDir: string, relPath: string): Promise<
   }
   try {
     const after = await handle.stat({ bigint: true })
-    const same = after.isFile() && after.ino === BigInt(before.ino) && after.dev === BigInt(before.dev)
     const home = await realpath(occDir)
     const real = await realpath(file)
-    if (!same || !real.startsWith(home + sep)) throw notRegular()
+    if (!sameFile(before, after) || !real.startsWith(home + sep)) throw notRegular()
     return { handle, size: Number(after.size) }
   } catch (e) {
     await handle.close()

@@ -128,12 +128,26 @@ describe('SecretStore', () => {
     await expect(store.set('ntfyToken', '')).rejects.toThrow()
   })
 
-  test('clear forgets everything, even without encryption', async () => {
+  test('clear forgets the pairing tokens, even without encryption, and keeps the profile key', async () => {
     const file = await tmpFile()
-    await new SecretStore(file, fakeSafe(true)).set('deviceToken', 'tmd_secret')
+    const first = new SecretStore(file, fakeSafe(true))
+    await first.set('deviceToken', 'tmd_secret')
+    await first.set('ntfyToken', 'tk_n')
+    await first.set('profileKey', 'a2V5a2V5')
     const store = new SecretStore(file, fakeSafe(false))
     await store.clear()
     expect(await store.get('deviceToken')).toBeNull()
+    expect(await store.get('ntfyToken')).toBeNull()
+    expect(await new SecretStore(file, fakeSafe(true)).get('profileKey')).toBe('a2V5a2V5')
+  })
+
+  test('clear of a store that holds only tokens removes the file, and of a missing file is fine', async () => {
+    const file = await tmpFile()
+    const store = new SecretStore(file, fakeSafe(true))
+    await store.set('deviceToken', 'tmd_secret')
+    await store.clear()
+    expect(await Bun.file(file).exists()).toBe(false)
+    await store.clear()
   })
 
   test('concurrent sets keep every secret', async () => {

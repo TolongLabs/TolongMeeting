@@ -135,8 +135,12 @@ export async function checkpointVolume(d: CheckpointRun, identityId: string): Pr
     const code = await d.docker.wait(name)
     if (code !== 0) throw new Error(`The profile checkpoint failed (exit ${code})`)
   } finally {
-    await d.docker.rm(name)
-    await key.remove()
+    // The key goes even when the container cannot be removed.
+    try {
+      await d.docker.rm(name)
+    } finally {
+      await key.remove()
+    }
   }
 }
 
