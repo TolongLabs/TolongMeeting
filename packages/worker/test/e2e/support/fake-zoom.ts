@@ -43,6 +43,14 @@ const MEETING_SCRIPT = `<script>
     else if (e.t === 'end') window.__fixture.endMeeting()
     else if (e.t === 'remove') window.__fixture.remove()
   }
+  // Leave Meeting in the fixture only logs the click. The real client takes the participant out of the meeting, so the
+  // Leave button goes and the page says so (otherwise every leave runs into its 10 s confirmation and closes the page).
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-click="leave meeting"]')) return
+    document.getElementById('leave')?.remove()
+    document.getElementById('leave-confirm').hidden = true
+    document.querySelector('main').append(Object.assign(document.createElement('p'), { textContent: 'You have left the meeting' }))
+  }, true)
   let since = 0
   setInterval(async () => {
     const body = await (await fetch('/__e2e/events?since=' + since)).json()

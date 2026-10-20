@@ -19,7 +19,17 @@ import { routeFormFixtures, type FixtureServer } from '../../forms/route'
 import { startFakeZoom, type FakeZoom } from './fake-zoom'
 import { stageClip } from './media'
 import { makePki, type Pki } from './pki'
-import { MODELS, startAiStub, startAsrStub, startNtfyStub, type AiStub, type AsrStub, type NtfyStub } from './stubs'
+import {
+  MODELS,
+  startAiStub,
+  startAsrStub,
+  startControlStub,
+  startNtfyStub,
+  type AiStub,
+  type AsrStub,
+  type ControlStub,
+  type NtfyStub
+} from './stubs'
 
 const REPO = resolve(import.meta.dirname, '../../../../..')
 
@@ -44,15 +54,16 @@ export interface Shared {
   clip: Buffer
 }
 
-let trusted = false
+// One per process: the ASR stub's certificate is added to this process's trust store once, so every spec file that
+// runs in the same worker must use the same certificate.
+let shared: Shared | null = null
 export function startShared(): Shared {
+  if (shared !== null) return shared
   const pki = makePki()
   // The ASR stub's socket is plain TLS with this certificate: only this process learns to trust it.
-  if (!trusted) {
-    tls.setDefaultCACertificates([...tls.getCACertificates('default'), pki.cert])
-    trusted = true
-  }
-  return { pki, clip: stageClip() }
+  tls.setDefaultCACertificates([...tls.getCACertificates('default'), pki.cert])
+  shared = { pki, clip: stageClip() }
+  return shared
 }
 
 export interface World {
@@ -61,6 +72,8 @@ export interface World {
   ntfy: NtfyStub
   ai: AiStub
   asr: AsrStub
+  /** The website's heartbeat endpoint; a run uses it only when started with `control: true`. */
+  control: ControlStub
   /** Every URL the link resolver asked the (stubbed) network for. */
   fetched: string[]
   /** Short links the stubbed network redirects: address to target. Any other address answers 200. */
@@ -72,11 +85,12 @@ export interface World {
 export async function startWorld(shared: Shared): Promise<World> {
   await mkdir(process.env.TMPDIR ?? tmpdir(), { recursive: true })
   const root = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'tm-e2e-'))
-  const [zoom, ntfy, ai, asr] = await Promise.all([
+  const [zoom, ntfy, ai, asr, control] = await Promise.all([
     startFakeZoom(shared.pki, shared.clip),
     startNtfyStub(),
     startAiStub(),
-    startAsrStub(shared.pki)
+    startAsrStub(shared.pki),
+    startControlStub()
   ])
   return {
     root,
@@ -84,11 +98,12 @@ export async function startWorld(shared: Shared): Promise<World> {
     ntfy,
     ai,
     asr,
+    control,
     fetched: [],
     redirects: new Map(),
     shared,
     stop: async () => {
-      await Promise.all([zoom.close(), ntfy.close(), ai.close(), asr.close()])
+      await Promise.all([zoom.close(), ntfy.close(), ai.close(), asr.close(), control.close()])
     }
   }
 }
@@ -98,6 +113,19 @@ export interface RunOptions {
   startInMs?: number
   endInMs?: number
   trustedSenders?: string[]
+  /** The entry's link (default: the fixed Zoom link). */
+  link?: JobConfig['entry']['link']
+  /** The entry's type (default: lecture). Forms are filled in lectures only; mentions are watched in other entries only. */
+  type?: JobConfig['entry']['type']
+  /** The member's `mentionNames`. */
+  mentionNames?: string[]
+  /** A restart of the same occurrence: the attempt number (default 1). */
+  attempt?: number
+  /** A restart in a fresh container: the working profile is removed first, so the checkpoint restores it. */
+  freshProfile?: boolean
+  /** The job carries the control channel (the world's stub); the heartbeat goes every `heartbeatMs` (default 1 s). */
+  control?: boolean
+  heartbeatMs?: number
   /** Called when the browser is up and the form fixtures are routed, before the worker opens anything. */
   onBrowser?: (run: Running) => void | Promise<void>
 }
@@ -133,14 +161,14 @@ export const jobFor = (world: World, o: RunOptions, dataDir: string, profileDir:
   const now = Date.now()
   return parseJob({
     occurrenceId: 'occ-e2e',
-    attempt: 1,
+    attempt: o.attempt ?? 1,
     entry: {
       name: 'Data Mining',
-      type: 'lecture',
+      type: o.type ?? 'lecture',
       start: new Date(now + (o.startInMs ?? 0)).toISOString(),
       end: new Date(now + (o.endInMs ?? 40 * 60_000)).toISOString(),
       timeZone: 'Asia/Kuala_Lumpur',
-      link: { kind: 'fixed', url: joinLink },
+      link: o.link ?? { kind: 'fixed', url: joinLink },
       trustedSenders: o.trustedSenders ?? [],
       transcription: 'live',
       formDetails: { course_code: 'ABC1234', section: '02', lecturer: 'Dr Example' },
@@ -156,7 +184,7 @@ export const jobFor = (world: World, o: RunOptions, dataDir: string, profileDir:
     member: {
       id: 'member-e2e',
       displayName: 'Test Student',
-      mentionNames: [],
+      mentionNames: o.mentionNames ?? [],
       details: [
         { key: 'full_name', value: 'Test Student', labels: [] },
         { key: 'student_id', value: 'A00000000', labels: [] },
@@ -168,13 +196,13 @@ export const jobFor = (world: World, o: RunOptions, dataDir: string, profileDir:
     ntfy: { url: world.ntfy.url, topic: 'e2e-topic', token: 'tk-e2e-token' },
     dataDir,
     profileDir,
-    control: null
+    control: o.control === true ? { url: world.control.url, token: world.control.token } : null
   })
 }
 
 const FORM_POST =
   /^https:\/\/docs\.google\.com\/forms\/d\/e\/[^/]+\/formResponse$|^https:\/\/forms\.office\.com\/formapi\//
-const DECOY_HOST = /\.evil\.test$/
+const DECOY_HOST = /(^|\.)evil\.test$/
 
 // Starts `runOccurrence` on the real components. Only these are replaced, each by the same function with the option the
 // code reserves for tests, or by the same function pointed at a local server: the virtual screen without a window
@@ -215,6 +243,7 @@ export function startWorker(world: World, options: RunOptions = {}): Running {
 
   const deps: Partial<RunDeps> = {
     signal: abort.signal,
+    heartbeat: { intervalMs: options.heartbeatMs ?? 1_000 },
     loadProfileKey: () => PROFILE_KEY,
     prepareProfile: (dir, id) => prepareProfile(dir, id, { hostname: hostnameFor(id), machineIdPath }),
     startScreen: () => startScreen({ windowManager: 'none' }),
@@ -255,6 +284,7 @@ export function startWorker(world: World, options: RunOptions = {}): Running {
   }
 
   const prepared = (async () => {
+    if (options.freshProfile === true) await rm(profileDir, { recursive: true, force: true })
     await mkdir(dataDir, { recursive: true })
     await writeFile(machineIdPath, `${machineIdFor(IDENTITY)}\n`)
   })()

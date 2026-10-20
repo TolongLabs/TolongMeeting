@@ -27,6 +27,8 @@ export interface SeenPing {
   /** The `view` actions' targets. */
   actionUrls: string[]
   attachment: boolean
+  /** When the stub took the request (Date.now()). */
+  at: number
   /** The whole request as it came: headers and body, for searches. */
   raw: string
 }
@@ -53,6 +55,7 @@ export async function startNtfyStub(): Promise<NtfyStub> {
         priority: Number(req.headers.priority ?? 0),
         actionUrls: actions === '' ? [] : actions.split(';').map((a) => a.split(',').slice(2).join(',').trim()),
         attachment: true,
+        at: Date.now(),
         raw: `${headers}\n(${body.length} bytes attached)`
       })
     } else {
@@ -68,6 +71,7 @@ export async function startNtfyStub(): Promise<NtfyStub> {
         priority: json.priority,
         actionUrls: (json.actions ?? []).map((a) => a.url),
         attachment: false,
+        at: Date.now(),
         raw: `${headers}\n${body.toString('utf8')}`
       })
     }
@@ -173,6 +177,8 @@ export interface AsrStub {
   /** How many sockets opened, and how many bytes of audio arrived in all. */
   sockets(): number
   audioBytes(): number
+  /** The next speech turn the stub reports says this instead of the next fixed line (queued in order). */
+  say(text: string): void
   close(): Promise<void>
 }
 
@@ -186,6 +192,7 @@ export async function startAsrStub(pki: Pki): Promise<AsrStub> {
   let sockets = 0
   let audioBytes = 0
   let line = 0
+  const said: string[] = []
   wss.on('connection', (ws: WebSocket) => {
     sockets += 1
     let heard = 0
@@ -208,7 +215,7 @@ export async function startAsrStub(pki: Pki): Promise<AsrStub> {
       send({
         type: 'conversation.item.input_audio_transcription.completed',
         item_id: itemId,
-        transcript: TRANSCRIPT_LINES[line++ % TRANSCRIPT_LINES.length]
+        transcript: said.shift() ?? TRANSCRIPT_LINES[line++ % TRANSCRIPT_LINES.length]
       })
       sinceTurn = 0
     })
@@ -218,10 +225,56 @@ export async function startAsrStub(pki: Pki): Promise<AsrStub> {
     url: `wss://localhost:${port}/realtime`,
     sockets: () => sockets,
     audioBytes: () => audioBytes,
+    say: (text) => void said.push(text),
     close: async () => {
       for (const client of wss.clients) client.terminate()
       await new Promise<void>((resolve) => wss.close(() => resolve()))
       await closeServer(server)
     }
+  }
+}
+
+// --- the control channel (the website's heartbeat endpoint) ---
+
+export interface ControlStub {
+  /** `http://127.0.0.1:<port>`: the job's `control.url`. */
+  url: string
+  token: string
+  /** Every heartbeat body the worker sent, in order. */
+  beats: {
+    state: string
+    recording: boolean
+    linkUsed?: string
+    events: { type: string; at: string; data: Record<string, unknown> }[]
+  }[]
+  /** The states the beats carried, in order, one entry per change. */
+  states(): string[]
+  /** Queued for the answer to the next heartbeat. */
+  command(...commands: string[]): void
+  close(): Promise<void>
+}
+
+// Takes every heartbeat (it checks the token), acknowledges all its events, and answers with the commands queued so far.
+export async function startControlStub(token = 'ctl-e2e-token'): Promise<ControlStub> {
+  const beats: ControlStub['beats'] = []
+  const queued: string[] = []
+  const server = createHttp(async (req, res) => {
+    const body = await readBody(req)
+    if (req.method !== 'POST' || req.url !== '/heartbeat') return void res.writeHead(404).end()
+    if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401).end()
+    const beat = JSON.parse(body.toString('utf8')) as ControlStub['beats'][number]
+    beats.push(beat)
+    res
+      .writeHead(200, { 'content-type': 'application/json' })
+      .end(JSON.stringify({ ackedEvents: beat.events.length, commands: queued.splice(0), link: null }))
+  })
+  const port = await listen(server)
+  return {
+    url: `http://127.0.0.1:${port}`,
+    token,
+    beats,
+    states: () => beats.map((b) => b.state).filter((s, i, all) => i === 0 || s !== all[i - 1]),
+    command: (...commands) => void queued.push(...commands),
+    close: () => closeServer(server)
   }
 }
