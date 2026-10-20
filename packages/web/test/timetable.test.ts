@@ -4,9 +4,9 @@ import { aiKeys, identities, occurrences, timetableEntries, type Db } from '../d
 import { FakeNotifier } from '../db/notifier'
 import { createTestDb, dropAllTestDbs, FakeQueue, seedMember } from '../db/testing'
 import { InputError, InUseError } from '../lib/identities'
+import { WatchingNotAllowedError } from '../lib/link-notices'
 import { createScope, type MemberScope } from '../lib/scope'
 import {
-  ChatLinkSchema,
   deleteEntry,
   EntryInputSchema,
   maskedLink,
@@ -55,7 +55,8 @@ async function member(withKey = true) {
     notifier: new FakeNotifier(),
     ensureNtfy: async () => {},
     now,
-    publicUrl: 'https://tm.example'
+    publicUrl: 'https://tm.example',
+    gate: { whatsapp: 'home_only', discord: 'allowed' }
   }
   return { scope: createScope(db, memberId), memberId, identityId, deps }
 }
@@ -71,20 +72,74 @@ test('lectures default to live and work meetings to native, without lecture-only
   })
 })
 
-test('a chat link is refused until link watchers exist, and chat targets are checked per app', () => {
+test('chat sources are normalised; Teams waits for plan 04', () => {
   const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
-  const r = EntryInputSchema.safeParse({
-    ...base,
-    identityId,
-    link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' }
-  })
-  expect(r.success).toBe(false)
-  expect(r.error?.issues[0]?.message).toBe('Watching a chat arrives with link watchers.')
-  expect(ChatLinkSchema.safeParse({ kind: 'chat', app: 'discord', chat: 'general' }).success).toBe(false)
+  const parse = (link: unknown) => EntryInputSchema.safeParse({ ...base, identityId, link })
   expect(
-    ChatLinkSchema.safeParse({ kind: 'chat', app: 'discord', chat: 'https://discord.com/channels/1/2' }).success
-  ).toBe(true)
-  expect(ChatLinkSchema.safeParse({ kind: 'chat', app: 'whatsapp', chat: 'Class group' }).success).toBe(true)
+    parse({
+      kind: 'chat',
+      app: 'discord',
+      chat: 'https://ptb.discord.com/channels/123456789012345678/234567890123456789/345678901234567890'
+    }).data?.link
+  ).toEqual({
+    kind: 'chat',
+    app: 'discord',
+    chat: 'https://discord.com/channels/123456789012345678/234567890123456789'
+  })
+  expect(parse({ kind: 'chat', app: 'whatsapp', chat: ' Café group ' }).data?.link).toEqual({
+    kind: 'chat',
+    app: 'whatsapp',
+    chat: 'Café group'
+  })
+  // NFC: "e" followed by a combining acute becomes one character.
+  expect(parse({ kind: 'chat', app: 'whatsapp', chat: 'Cafe\u0301' }).data?.link).toEqual({
+    kind: 'chat',
+    app: 'whatsapp',
+    chat: 'Caf\u00e9'
+  })
+  const whatsappMessage = "Type the chat's name exactly as WhatsApp shows it."
+  for (const chat of ['two\nlines', '   ', 'x'.repeat(101)]) {
+    expect(parse({ kind: 'chat', app: 'whatsapp', chat }).error?.issues[0]?.message).toBe(whatsappMessage)
+  }
+  expect(parse({ kind: 'chat', app: 'whatsapp', chat: 'x'.repeat(100) }).success).toBe(true)
+  const discordMessage = "Paste the channel's address, such as https://discord.com/channels/<server>/<channel>."
+  for (const chat of [
+    'general',
+    'https://discord.com/channels/1/2',
+    'http://discord.com/channels/123456789012345678/234567890123456789'
+  ]) {
+    expect(parse({ kind: 'chat', app: 'discord', chat }).error?.issues[0]?.message).toBe(discordMessage)
+  }
+  expect(
+    parse({ kind: 'chat', app: 'teams', chat: 'https://teams.microsoft.com/l/chat/x' }).error?.issues[0]?.message
+  ).toBe('Watching a Teams chat arrives with Teams support.')
+  expect(
+    parse({ kind: 'chat', app: 'teams', chat: 'http://teams.microsoft.com/l/chat/x' }).error?.issues[0]?.message
+  ).toBe('Enter a Teams chat link.')
+})
+
+test('saving a WhatsApp chat on a server identity follows the gate', async () => {
+  const { scope, identityId, deps } = await member() // the identity runs on the server
+  const entry = { ...base, identityId, link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' } }
+  await expect(
+    saveEntry(scope, entry, { ...deps, gate: { whatsapp: 'home_only', discord: 'allowed' } })
+  ).rejects.toThrow(WatchingNotAllowedError)
+  await expect(saveEntry(scope, entry, { ...deps, gate: { whatsapp: 'none', discord: 'allowed' } })).rejects.toThrow(
+    'WhatsApp watching is switched off. Choose another link source.'
+  )
+  expect(await scope.select(timetableEntries)).toEqual([])
+  await expect(
+    saveEntry(scope, entry, { ...deps, gate: { whatsapp: 'allowed', discord: 'allowed' } })
+  ).resolves.toMatchObject({ clashes: [] })
+  const [row] = await scope.select(timetableEntries)
+  expect(row?.link).toEqual({ kind: 'chat', app: 'whatsapp', chat: 'Class group' })
+})
+
+test('a local identity may save a WhatsApp chat under the default gate', async () => {
+  const { scope, identityId, deps } = await member()
+  await db.update(identities).set({ runLocation: 'local' }).where(eq(identities.id, identityId))
+  const entry = { ...base, identityId, link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' } }
+  await expect(saveEntry(scope, entry, deps)).resolves.toMatchObject({ clashes: [] })
 })
 
 test('a fixed link is accepted only if the worker would accept it, and the trimmed original is kept', () => {
@@ -107,18 +162,6 @@ test('a fixed link is accepted only if the worker would accept it, and the trimm
   ]) {
     expect(parse(url).success).toBe(false)
   }
-})
-
-test('a chat target must be https', () => {
-  expect(
-    ChatLinkSchema.safeParse({ kind: 'chat', app: 'discord', chat: 'http://discord.com/channels/1/2' }).success
-  ).toBe(false)
-  expect(
-    ChatLinkSchema.safeParse({ kind: 'chat', app: 'teams', chat: 'http://teams.microsoft.com/l/chat/x' }).success
-  ).toBe(false)
-  expect(
-    ChatLinkSchema.safeParse({ kind: 'chat', app: 'teams', chat: 'https://teams.microsoft.com/l/chat/x' }).success
-  ).toBe(true)
 })
 
 test('entry name and lists reject control characters and are length-capped', () => {

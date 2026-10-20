@@ -1,6 +1,7 @@
 'use server'
 
 import { InputError, InUseError } from '../../lib/identities'
+import { WatchingNotAllowedError } from '../../lib/link-notices'
 import { requireMember } from '../../lib/session'
 import { appEntryDeps, deleteEntry, NoWorkingKeyError, saveEntry, setPaused, type Clash } from '../../lib/timetable'
 
@@ -14,7 +15,12 @@ async function attempt(run: () => Promise<Clash[]>): Promise<TimetableResult> {
   try {
     return { ok: true, clashes: await run() }
   } catch (e) {
-    if (e instanceof InputError || e instanceof InUseError || e instanceof NoWorkingKeyError) {
+    if (
+      e instanceof InputError ||
+      e instanceof InUseError ||
+      e instanceof NoWorkingKeyError ||
+      e instanceof WatchingNotAllowedError
+    ) {
       return { ok: false, error: e.message }
     }
     throw e

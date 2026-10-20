@@ -1,6 +1,16 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
-import { ACTIVE_STATES, formatWhen, normaliseZoomLink, RepeatRuleSchema, type LinkSource } from '@tm/core'
+import {
+  ACTIVE_STATES,
+  chatWatchAllowed,
+  formatWhen,
+  normaliseDiscordChannelUrl,
+  normaliseZoomLink,
+  RepeatRuleSchema,
+  watchGateFromEnv,
+  type LinkSource,
+  type WatchGate
+} from '@tm/core'
 import { pings, type Ping } from '@tm/notify'
 import { loadMasterKey } from '../db/secrets'
 import { safeDbError } from '../db/errors'
@@ -11,6 +21,7 @@ import { hasWorkingKey } from './ai-keys'
 import { getQueue } from './queue'
 import { ensureNtfy, ntfyAdminFromEnv } from './ntfy-admin'
 import { InputError, InUseError, NO_CONTROL_MESSAGE, noControlCharacters } from './identities'
+import { WatchingNotAllowedError } from './link-notices'
 import type { MemberScope } from './scope'
 
 export const RECORDING_NOTICE =
@@ -38,6 +49,7 @@ export interface EntryDeps {
   ensureNtfy: () => Promise<void>
   now: Date
   publicUrl: string
+  gate: WatchGate
 }
 
 const CLASH_WINDOW_MS = 14 * 24 * 3_600_000
@@ -56,38 +68,47 @@ const FixedLinkSchema = z.object({
     .refine((url) => normaliseZoomLink(url) !== null, 'Enter a Zoom meeting link that starts with https://.')
 })
 
-const CHAT_TARGET = {
-  discord: { label: 'Discord', ok: (u: URL) => u.hostname === 'discord.com' && u.pathname.startsWith('/channels/') },
-  teams: { label: 'Teams', ok: (u: URL) => u.hostname === 'teams.microsoft.com' }
-} as const
+const WHATSAPP_NAME_MESSAGE = "Type the chat's name exactly as WhatsApp shows it."
+const DISCORD_MESSAGE = "Paste the channel's address, such as https://discord.com/channels/<server>/<channel>."
+const LINE_BREAKS = /[\p{Cc}\u2028\u2029]/u
 
-/** A chat source: a WhatsApp chat's exact name, or a Discord or Teams chat's web address. */
+/**
+ * A chat source: a WhatsApp chat's exact name (NFC-normalised, 1 to 100 characters, one line), a Discord channel's
+ * address (stored as `https://discord.com/channels/<server>/<channel>`), or a Teams chat's web address.
+ */
 export const ChatLinkSchema = z
   .object({
     kind: z.literal('chat'),
     app: z.enum(['whatsapp', 'discord', 'teams']),
-    chat: z.string().trim().min(1).max(2048).refine(noControlCharacters, NO_CONTROL_MESSAGE)
+    chat: z.string().max(2048)
   })
-  .superRefine((link, ctx) => {
-    if (link.app === 'whatsapp') {
-      if (link.chat.length > 100) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['chat'],
-          message: 'Enter the WhatsApp chat name, 100 characters or fewer.'
-        })
-      }
-      return
+  .transform((link, ctx) => {
+    const fail = (message: string) => {
+      ctx.issues.push({ code: 'custom', path: ['chat'], message, input: link.chat })
+      return z.NEVER
     }
-    const target = CHAT_TARGET[link.app]
-    const ok = URL.canParse(link.chat) && new URL(link.chat).protocol === 'https:' && target.ok(new URL(link.chat))
-    if (!ok) ctx.addIssue({ code: 'custom', path: ['chat'], message: `Enter a ${target.label} chat link.` })
+    const trimmed = link.chat.trim()
+    if (link.app === 'discord') {
+      const chat = normaliseDiscordChannelUrl(trimmed)
+      return chat === null ? fail(DISCORD_MESSAGE) : { ...link, chat }
+    }
+    if (link.app === 'whatsapp') {
+      const chat = trimmed.normalize('NFC')
+      const length = Array.from(chat).length
+      return length < 1 || length > 100 || LINE_BREAKS.test(chat) ? fail(WHATSAPP_NAME_MESSAGE) : { ...link, chat }
+    }
+    const ok =
+      noControlCharacters(trimmed) &&
+      URL.canParse(trimmed) &&
+      new URL(trimmed).protocol === 'https:' &&
+      new URL(trimmed).hostname === 'teams.microsoft.com'
+    return ok ? { ...link, chat: trimmed } : fail('Enter a Teams chat link.')
   })
 
-// Chat sources need link watchers (plan 02), so 1C checks the chat and then refuses it.
+// WhatsApp and Discord chats are watched (plan 02). A Teams chat is still refused until plan 04 adds Teams support.
 const LinkSchema = z.discriminatedUnion('kind', [
   FixedLinkSchema,
-  ChatLinkSchema.refine(() => false, 'Watching a chat arrives with link watchers.'),
+  ChatLinkSchema.refine((link) => link.app !== 'teams', 'Watching a Teams chat arrives with Teams support.'),
   z.object({ kind: z.literal('paste') }),
   // An edit sends this (or no link) to leave the stored link as it is, so the passcode never has to be shown again.
   z.object({ kind: z.literal('keep') })
@@ -179,6 +200,9 @@ export async function saveEntry(
   await deps.ensureNtfy()
   const [identity] = await scope.select(identities, eq(identities.id, value.identityId))
   if (!identity) throw new InputError('No such identity.')
+  if (value.link?.kind === 'chat' && !chatWatchAllowed(value.link.app, identity.runLocation, deps.gate)) {
+    throw new WatchingNotAllowedError(value.link.app, deps.gate)
+  }
 
   const values = {
     name: value.name,
@@ -291,6 +315,7 @@ export async function appEntryDeps(scope: MemberScope): Promise<EntryDeps> {
       await ensureNtfy(scope, ntfyAdminFromEnv(), loadMasterKey())
     },
     now: new Date(),
-    publicUrl
+    publicUrl,
+    gate: watchGateFromEnv(process.env)
   }
 }

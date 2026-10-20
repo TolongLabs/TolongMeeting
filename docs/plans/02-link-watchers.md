@@ -1217,7 +1217,7 @@ Schema and save rules:
 - `saveEntry` loads the identity's run location and throws `WatchingNotAllowedError` when `chatWatchAllowed(app, runLocation, deps.gate)` is false.
 - The entry form shows the chat field with `CHAT_FIELD_COPY`, the app choice from `chatAppOptions` (a disabled option shows its `note`), `BanRiskNotice` whenever `showsBanRiskNotice` is true, and `TRUSTED_SENDERS_CHAT_HINT` under trusted senders for chat sources. `actions.ts` passes `gate: watchGateFromEnv(process.env)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/link-notices.test.ts
@@ -1332,19 +1332,19 @@ test('saving a WhatsApp chat on a server identity follows the gate', async () =>
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/ban-risk-notice.test.tsx packages/web/lib/timetable.test.ts`
 Expected: FAIL with `Cannot find module './link-notices'`.
 
-- [ ] **Step 3: Implement `link-notices.ts`, `ban-risk-notice.tsx` and the schema, save and form changes**
+- [ ] **Step 3: Implement `link-notices.ts`, `ban-risk-notice.tsx` and the schema, save and form changes** (lib, schema, save and action wiring done; `ban-risk-notice.tsx`, its test and the `[id]/page.tsx` form are deferred: Figma gate)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/ban-risk-notice.test.tsx packages/web/lib/timetable.test.ts && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib packages/web/app/timetable docs/TRD.md

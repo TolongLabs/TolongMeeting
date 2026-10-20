@@ -442,7 +442,8 @@ export async function saveLecture(
     notifier: stack.notifier,
     ensureNtfy: async () => void (await ensureNtfy(member.scope, stack.admin, MASTER)),
     now,
-    publicUrl: PUBLIC_URL
+    publicUrl: PUBLIC_URL,
+    gate: { whatsapp: 'allowed', discord: 'allowed' }
   }
   const { entryId } = await saveEntry(
     member.scope,
