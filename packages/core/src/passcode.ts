@@ -64,3 +64,23 @@ export function stripPasscode(input: string): string {
 }
 
 const withQuery = (query: string): string => (query === '' ? '' : `?${query}`)
+
+/**
+ * The passcode a meeting link carries (`pwd`, `passcode`, and `p` on Teams hosts, in the query or the fragment), or null
+ * when it has none. It is only for removing that exact text from other text; never log or store it.
+ */
+export function meetingPasscode(input: string): string | null {
+  const url = input.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '').replace(/[\t\n\r]/g, '')
+  if (!URL.canParse(url)) return null
+  const u = new URL(url)
+  const names = new Set(ANY_HOST_PARAMS)
+  if (isTeamsHost(u.hostname)) names.add(TEAMS_PARAM)
+  const fragment = u.hash.slice(1)
+  const fromFragment = fragment.includes('?') ? fragment.slice(fragment.indexOf('?') + 1) : fragment
+  for (const query of [u.search.slice(1).replaceAll(';', '&'), fromFragment.replaceAll(';', '&')]) {
+    for (const [key, value] of new URLSearchParams(query)) {
+      if (names.has(key.toLowerCase()) && value !== '') return value
+    }
+  }
+  return null
+}

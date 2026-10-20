@@ -68,12 +68,38 @@ const PASS_WORD = `\\b(pass[ -]?code|password|pwd)\\b`
 const DIGIT_WORD = `(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)`
 const SPELLED = (min: number): string => `${DIGIT_WORD}(?:[\\s,.-]+${DIGIT_WORD}){${min},11}\\b`
 const GROUPS = `(?:[ \\t]+\\d+){0,11}`
+// "passcode for today is 481592", "password for the call is ...": up to three words between the label and "is".
+const FOR_PHRASE = `(?:\\s+(?:for|of)(?:\\s+[\\w']+){1,3}?(?=\\s+(?:is|was)\\b))?`
 const PASSCODE_MARKED = new RegExp(
-  `${PASS_WORD}(?:\\s*[:=]\\s*|\\s+[-\\u2013\\u2014]+\\s+|\\s*[\\u2013\\u2014]\\s*|\\s+(?:is|was)\\b\\s*[:=]?\\s*)` +
+  `${PASS_WORD}${FOR_PHRASE}(?:\\s*[:=]\\s*|\\s+[-\\u2013\\u2014]+\\s+|\\s*[\\u2013\\u2014]\\s*|\\s+(?:is|was)\\b\\s*[:=]?\\s*)` +
     `(?!\\[removed\\])(?:${SPELLED(0)}|\\S+${GROUPS})`,
   'gi'
 )
 const PASSCODE_BARE = new RegExp(`${PASS_WORD}\\s+(?:${SPELLED(1)}|(?=\\S*\\d)\\S+${GROUPS})`, 'gi')
+// Other words for a way in: "use code 481592", "join code Xk9pQ2", "PIN 123 456 789#", "dial-in code is ...". The value
+// must carry a digit (or be spelled digits), so "use code review" and "pin the post" stay.
+const CODE_WORD = `\\b((?:(?:use|join(?:ing)?|enter|access|entry|security|dial[ -]in)\\s+(?:the\\s+)?code|pin))\\b`
+const CODE_PHRASE = new RegExp(
+  `${CODE_WORD}${FOR_PHRASE}(?:\\s*[:=]\\s*|\\s+(?:is|was)\\b\\s*[:=]?\\s*|\\s+)` +
+    `(?!\\[removed\\])(?:${SPELLED(1)}|(?=\\S*\\d)\\S+${GROUPS}#?)`,
+  'gi'
+)
+// Digits read out in groups ("4 8 1 5 9 2", "123 456 7890"): six or more digits in groups of up to four, with a word
+// about meetings within 40 characters, are a meeting ID or a passcode. Dates and times written with - or : stay.
+const SPACED_DIGITS = /(?<![\d:.-])\d{1,4}(?:[ \t]\d{1,4})+(?![\d:-]|\.\d)/g
+const MEETING_WORD =
+  /\b(?:meeting|zoom|teams|meet|webinar|call|join|joining|dial|room|id|code|passcode|password|pin)\b/i
+const NEAR = 40
+
+// A link read out loud: "zoom dot us slash j slash 123 456 789", "evil dot com slash login". A host that names a meeting
+// service needs no slash; any other needs one, so "dot product" stays.
+const WORD = `[\\p{L}\\p{N}-]+`
+const SPOKEN_STEP = `(?:\\s+(?:slash|dash|dot)\\s+${WORD}(?:[ \\t]+\\d+){0,11}(?:\\s+${DIGIT_WORD}){0,11})`
+const SPOKEN_MEETING_HOST = new RegExp(`\\b(?:zoom|zoomgov|teams|meet)(?:\\s+dot\\s+${WORD})+${SPOKEN_STEP}*`, 'giu')
+const SPOKEN_PATH = new RegExp(
+  `\\b${WORD}(?:\\s+dot\\s+${WORD})+(?:\\s+slash\\s+${WORD}(?:[ \\t]+\\d+){0,11}(?:\\s+${DIGIT_WORD}){0,11})${SPOKEN_STEP}*`,
+  'giu'
+)
 const MEETING_ID_PHRASE = /\b(meeting\s*(?:id|number|code))\b\s*(?:is\s+)?[:#=]?\s*\d[\d \t-]*\d/gi
 // A Meet code (`abc-defg-hij`, also spoken as "abc defg hij") after a word that names it. Like a Zoom meeting ID, a
 // code on its own is not found: `one-time-pad` has the same shape.
@@ -121,9 +147,15 @@ export function scrubMeetingDetails(text: string): string {
     return clean === '' ? MEETING_LINK_REMOVED : stripEncodedPasscode(clean)
   })
   out = out.replace(BARE_ONLY, (bare) => stripEncodedPasscode(bare))
-  return out
+  out = out.replace(SPOKEN_MEETING_HOST, MEETING_LINK_REMOVED).replace(SPOKEN_PATH, MEETING_LINK_REMOVED)
+  out = out
     .replace(PASSCODE_MARKED, (_all, word: string) => `${word}: ${CODE_REMOVED}`)
     .replace(PASSCODE_BARE, (_all, word: string) => `${word}: ${CODE_REMOVED}`)
+    .replace(CODE_PHRASE, (_all, word: string) => `${word}: ${CODE_REMOVED}`)
     .replace(MEETING_ID_PHRASE, (_all, label: string) => `${label}: ${CODE_REMOVED}`)
     .replace(MEET_CODE_PHRASE, (_all, label: string) => `${label}: ${CODE_REMOVED}`)
+  return out.replace(SPACED_DIGITS, (run, at: number, whole: string) => {
+    const near = whole.slice(Math.max(0, at - NEAR), at + run.length + NEAR)
+    return run.replace(/\D/g, '').length >= 6 && MEETING_WORD.test(near) ? CODE_REMOVED : run
+  })
 }

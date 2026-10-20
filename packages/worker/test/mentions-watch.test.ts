@@ -1,6 +1,9 @@
 import { expect, spyOn, test } from 'bun:test'
 import type { Ping } from '@tm/notify'
-import { startMentionWatch, MENTION_DEBOUNCE_MS, type MentionWatchDeps } from '../src/mentions/watch'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { lastMentionPing, startMentionWatch, MENTION_DEBOUNCE_MS, type MentionWatchDeps } from '../src/mentions/watch'
 
 const r = (startMs: number, endMs: number, text: string) => ({ startMs, endMs, text })
 
@@ -121,4 +124,68 @@ test('a throwing emit does not reach the caller or stop the ping', async () => {
   } finally {
     log.mockRestore()
   }
+})
+
+test('a result whose offset goes backwards is ignored: it neither pings nor holds back later pings', async () => {
+  const d = deps({})
+  const w = startMentionWatch(d)!
+  w.onResult(r(498_000, 500_000, 'Aisyah'))
+  w.onResult(r(98_000, 100_000, 'Aisyah'))
+  w.onResult(r(298_000, 300_000, 'Aisyah'))
+  w.onResult(r(500_000 + MENTION_DEBOUNCE_MS - 2_000, 500_000 + MENTION_DEBOUNCE_MS, 'Aisyah'))
+  await Bun.sleep(0)
+  expect(d.pings).toHaveLength(2)
+  expect(d.emitted).toEqual([500_000, 500_000 + MENTION_DEBOUNCE_MS])
+})
+
+test('a ping an earlier run of the watch sent still holds the debounce', async () => {
+  const started = new Date('2026-10-21T06:00:00Z')
+  // The earlier run pinged 60 s before this one started: a mention 30 s in is 90 s after it, inside the window.
+  const d = deps({ lastPingAt: new Date(started.getTime() - 60_000) })
+  const w = startMentionWatch(d)!
+  w.onResult(r(28_000, 30_000, 'Aisyah'))
+  w.onResult(r(58_000, 60_001, 'Aisyah'))
+  await Bun.sleep(0)
+  expect(d.emitted).toEqual([30_000, 60_001])
+  expect(d.pings).toHaveLength(1)
+  expect(d.pings[0]!.message).toContain('Aisyah')
+})
+
+test('the last ping is replayed from the mention events a restarted worker finds', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tm-mentions-'))
+  try {
+    const file = join(dir, 'events.jsonl')
+    expect(await lastMentionPing(file)).toBeNull()
+    const at = (s: number) => new Date(Date.parse('2026-10-21T06:10:00Z') + s * 1000).toISOString()
+    const ev = (type: string, s: number) =>
+      JSON.stringify({ occurrenceId: 'o1', attempt: 1, at: at(s), type, data: {} })
+    // A roll call: mentions at 0 s, 10 s and 20 s are one ping at 0 s; the one at 130 s is a second ping.
+    await writeFile(
+      file,
+      [
+        ev('mention', 0),
+        ev('joined', 5),
+        ev('mention', 10),
+        'not json',
+        ev('mention', 20),
+        ev('mention', 130),
+        '{"truncated'
+      ].join('\n')
+    )
+    expect(await lastMentionPing(file)).toEqual(new Date(at(130)))
+    await writeFile(file, [ev('mention', 0), ev('mention', 100)].join('\n'))
+    expect(await lastMentionPing(file)).toEqual(new Date(at(0)))
+    await writeFile(file, ev('joined', 0))
+    expect(await lastMentionPing(file)).toBeNull()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("the passcode of the bot's own link is cut from the quote, however the speaker spaced it", async () => {
+  const d = deps({ joinedLinks: ['', 'https://us02web.zoom.us/wc/join/123456789?pwd=Xk9pQ2'] })
+  startMentionWatch(d)!.onResult(r(0, 9_000, 'Aisyah, it is X k 9 p Q 2 for the room, or xk9pq2'))
+  await Bun.sleep(0)
+  expect(d.pings[0]!.message).not.toMatch(/Xk9pQ2|X k 9|xk9pq2/i)
+  expect(d.pings[0]!.message).toContain('[removed]')
 })

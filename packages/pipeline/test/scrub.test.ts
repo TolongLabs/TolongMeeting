@@ -312,3 +312,35 @@ test('a Meet code after a word that names it is cut; a hyphenated phrase on its 
   expect(scrub('the meeting code is explained in week two')).toBe('the meeting code is explained in week two')
   expect(scrub(scrub('Meeting code: abc-defg-hij'))).toBe('Meeting code: [removed]')
 })
+
+test('a passcode named with a phrase, a code word, a PIN, spaced digits or a spoken link is cut', () => {
+  for (const [said, gone] of [
+    ['the password for the call is 481592', /481592/],
+    ['the passcode for today is Xk9pQ2', /Xk9pQ2/],
+    ['use code 481592', /481592/],
+    ['the join code is Xk9pQ2', /Xk9pQ2/],
+    ['dial in, PIN 123 456 789#', /123|789/],
+    ['the meeting needs 4 8 1 5 9 2', /4 8 1|5 9 2/],
+    ['join at zoom dot us slash j slash 81234567890', /zoom dot|81234567890/],
+    ['join at evil dot com slash login', /evil dot|login/]
+  ] as const) {
+    const out = scrub(`Ben: ${said}. Next topic`)
+    expect(out, said).not.toMatch(gone)
+    expect(out, said).toMatch(/^Ben: .*\[(?:meeting link )?removed\].*Next topic$/)
+    expect(scrub(out), said).toBe(out)
+  }
+  for (const kept of [
+    'use code review to catch that',
+    'pin the post',
+    'the dot product of a and b',
+    'at 10 30 and 11 45'
+  ])
+    expect(scrub(kept)).toBe(kept)
+})
+
+test('a spoken-link and spaced-digit scrub is fast on long text', () => {
+  const text = `${'zoom dot us slash j '.repeat(5_000)} ${'1 2 3 4 5 6 7 8 9 '.repeat(5_000)} ${'word '.repeat(50_000)}`
+  const t0 = performance.now()
+  scrub(text)
+  expect(performance.now() - t0).toBeLessThan(3_000)
+})

@@ -387,10 +387,14 @@ export const pings = {
     transcript: string
     meetingUrl: string | null
     takeOverUrl: string | null
+    /** The passcode of the link the bot joined with: that exact text is cut from the quote, however it was spoken. */
+    passcode?: string | null
   }): Ping {
+    const message = `Heard at ${p.at}. The last 30 seconds:\n${withoutMeetingDetails(p.transcript, p.passcode)}`
+    const cut = cutToBytes(message, SUMMARY_LIMIT_BYTES)
     return {
       title: `Your name was mentioned: ${p.entry}`,
-      message: `Heard at ${p.at}. The last 30 seconds:\n${withoutMeetingDetails(p.transcript)}`,
+      message: cut === null ? message : `${cut}\n(truncated)`,
       priority: 'high',
       ...withActions([
         ['Open meeting page', p.meetingUrl],
@@ -505,13 +509,32 @@ function requireDetail(kind: AlertKind, detail: string | undefined): string {
   return detail
 }
 
-// Spoken text can carry a join link, a meeting ID or a passcode. A ping must never show one. The core scrub cuts join
-// links (also percent-encoded ones), spoken, spelled and typed passcodes and meeting IDs; what is left is any other
-// link and runs of six or more digits (meeting IDs and six-digit passcodes). Every cut shows as "[removed]".
-const LEFTOVERS: RegExp[] = [/(?:https?|zoommtg|zoomus|msteams|ms-teams):\S*/gi, /\d{6,}/g]
+// Spoken text can carry a join link, a meeting ID or a passcode. A ping must never show one. The member's own link
+// passcode is cut first, as the exact text, however it is spaced. The core scrub then cuts join links (also
+// percent-encoded ones, and spoken ones such as "zoom dot us slash j slash ..."), spoken, spelled and typed passcodes,
+// codes and PINs, and meeting IDs; what is left is any other link, a bare host such as `evil.com/login`, and runs of
+// six or more digits (meeting IDs and six-digit passcodes). Every cut shows as "[removed]".
+const HOST_START = `(?<![\\p{L}\\p{N}_.@-])(?:[\\p{L}\\p{N}-]+\\.)+`
+const LEFTOVERS: RegExp[] = [
+  /(?:https?|zoommtg|zoomus|msteams|ms-teams):\S*/gi,
+  new RegExp(`${HOST_START}\\p{L}{2,24}(?::\\d{1,5})?\\/\\S*`, 'giu'),
+  new RegExp(
+    `${HOST_START}(?:com|net|org|io|co|me|ly|gl|gle|app|dev|xyz|link|info|biz|top|site|online|live|click|ru|cn|tk|us|uk)(?![\\p{L}\\p{N}_@-])(?!\\.\\p{L})`,
+    'giu'
+  ),
+  /\d{6,}/g
+]
 
-function withoutMeetingDetails(text: string): string {
-  const scrubbed = scrubMeetingDetails(text).replaceAll(MEETING_LINK_REMOVED, '[removed]')
+// The passcode as text, with any spaces, commas, dots or dashes the speaker put between its characters.
+function withoutPasscode(text: string, passcode: string | null | undefined): string {
+  const chars = [...(passcode ?? '').trim()]
+  if (chars.length < 3) return text
+  const pattern = chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s,.-]*')
+  return text.replace(new RegExp(pattern, 'giu'), '[removed]')
+}
+
+function withoutMeetingDetails(text: string, passcode?: string | null): string {
+  const scrubbed = scrubMeetingDetails(withoutPasscode(text, passcode)).replaceAll(MEETING_LINK_REMOVED, '[removed]')
   return LEFTOVERS.reduce((out, pattern) => out.replace(pattern, '[removed]'), scrubbed)
 }
 

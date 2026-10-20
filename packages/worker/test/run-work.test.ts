@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -125,6 +125,35 @@ test('a roll call pings once in 2 minutes, every mention is still an event, and 
   expect(mentionPings(d)).toHaveLength(2)
   const mentions = (await loggedEvents(work)).filter((e) => e.type === 'mention')
   expect(mentions.map((e) => e.data)).toEqual([{ atMs: 52_000 }, { atMs: 58_000 }, { atMs: 70_000 }, { atMs: 175_000 }])
+})
+
+test('a restarted worker keeps the debounce: a ping sent 60 s before the recorder started still holds', async () => {
+  const d: FakeDeps = fakeDeps({
+    states: ['in_meeting', 'in_meeting', 'in_meeting', 'ended'],
+    onState: async (n) => {
+      if (n !== 2) return
+      const say = (endMs: number) => d.hooks.asr.opts!.onResult!({ startMs: endMs - 2_000, endMs, text: 'Aisyah?' })
+      say(30_000) // 90 s after the earlier attempt's ping: inside the window
+      say(61_000) // 121 s after it: a new ping
+      await Bun.sleep(5)
+    }
+  })
+  const startRecorder = d.startRecorder
+  d.startRecorder = async (...args) => {
+    const recorder = await startRecorder(...args)
+    // What the earlier attempt left in events.jsonl: one mention (and so one ping) 60 s before this recorder started.
+    const earlier = { occurrenceId: work.occurrenceId, attempt: 1, type: 'mention', data: { atMs: 1 } }
+    const at = new Date(recorder.startedAt.getTime() - 60_000).toISOString()
+    await appendFile(join(work.dataDir, 'events.jsonl'), `${JSON.stringify({ ...earlier, at })}\n`)
+    return recorder
+  }
+  await runOccurrence(work, d)
+  expect(mentionPings(d)).toHaveLength(1)
+  expect(mentionPings(d)[0]!.message).toContain('Aisyah?')
+  const atMs = (await loggedEvents(work))
+    .filter((e) => e.type === 'mention' && e.data.atMs !== 1)
+    .map((e) => e.data.atMs)
+  expect(atMs).toEqual([30_000, 61_000])
 })
 
 test('a lecture, a native-transcription work entry and a member without names start no watch', async () => {

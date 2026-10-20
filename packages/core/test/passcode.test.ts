@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { stripPasscode } from '@tm/core'
+import { meetingPasscode, stripPasscode } from '@tm/core'
 
 test('passcodes are stripped from meeting links', () => {
   expect(stripPasscode('https://example.zoom.us/j/00000000000?pwd=PASSCODE')).toBe(
@@ -58,4 +58,14 @@ test('a passcode joined with a semicolon, written pwd%3D or put in the fragment 
   expect(stripPasscode(`${zoom}#a=1&passcode=ABC`)).toBe(`${zoom}#a=1`)
   expect(stripPasscode('https://teams.microsoft.com/meet/1#p=ABC')).toBe('https://teams.microsoft.com/meet/1')
   expect(stripPasscode(`${zoom}?b=%zz;pwd%3D%zz`)).toBe(`${zoom}?b=%zz`)
+})
+
+test('meetingPasscode reads the passcode a link carries, or null', () => {
+  expect(meetingPasscode('https://us02web.zoom.us/j/123456789?pwd=AbC123xyz')).toBe('AbC123xyz')
+  expect(meetingPasscode('https://us02web.zoom.us/j/1?a=1;passcode=481592')).toBe('481592')
+  expect(meetingPasscode('https://us02web.zoom.us/j/1#success?pwd=Frag9')).toBe('Frag9')
+  expect(meetingPasscode('https://teams.microsoft.com/meet/1?p=TeamsPw')).toBe('TeamsPw')
+  expect(meetingPasscode('https://example.com/x?p=1')).toBeNull()
+  expect(meetingPasscode('https://meet.google.com/abc-defg-hij')).toBeNull()
+  expect(meetingPasscode('not a url')).toBeNull()
 })
