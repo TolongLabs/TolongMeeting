@@ -146,3 +146,84 @@ export async function hasWorkingKey(scope: MemberScope): Promise<boolean> {
   const rows = await scope.select(aiKeys, eq(aiKeys.testOk, true))
   return rows.length > 0
 }
+
+export type KeyProvider = 'dashscope' | 'modelscope'
+
+/** What the AI keys page shows. A key is never in it: only the last four characters of each. */
+export interface AiKeyStatus {
+  dashscopeSuffix: string
+  workspaceId: string | null
+  /** False when the last test of the DashScope key failed. */
+  dashscopeOk: boolean
+  modelscope: { suffix: string; ok: boolean | null } | null
+  /** The fixed sentence from the last failed test, or `null`. */
+  testError: string | null
+  testedAt: Date | null
+}
+
+const ADD_DASHSCOPE_FIRST = 'Add a DashScope key first. ModelScope is an extra key and cannot be saved alone.'
+
+const lastFour = (key: string) => key.slice(-4)
+
+/** The member's saved keys as the page may show them, or `null` when none is saved. */
+export async function loadAiKeyStatus(scope: MemberScope, master: Buffer): Promise<AiKeyStatus | null> {
+  const [row] = await scope.select(aiKeys)
+  if (!row) return null
+  return {
+    dashscopeSuffix: lastFour(openColumn(master, scope.memberId, 'ai_keys.dashscope_key', row.dashscopeKeyEnc)),
+    workspaceId: row.workspaceId,
+    dashscopeOk: row.testOk,
+    modelscope: row.modelscopeKeyEnc
+      ? {
+          suffix: lastFour(openColumn(master, scope.memberId, 'ai_keys.modelscope_key', row.modelscopeKeyEnc)),
+          ok: row.modelscopeTestOk
+        }
+      : null,
+    testError: row.testError,
+    testedAt: row.testedAt
+  }
+}
+
+/**
+ * Adds or replaces one provider's key (or the Workspace ID) and keeps the rest of what is saved, then tests all keys.
+ * `workspaceId` present, even blank, sets or clears the Workspace ID. ModelScope cannot be saved without a DashScope key.
+ */
+export async function updateAiKeys(
+  scope: MemberScope,
+  patch: { dashscopeKey?: string; workspaceId?: string; modelscopeKey?: string },
+  deps: KeyDeps
+): Promise<KeyTestResult> {
+  const [row] = await scope.select(aiKeys)
+  const open = (column: 'dashscope_key' | 'modelscope_key', sealed: string) =>
+    openColumn(deps.master, scope.memberId, `ai_keys.${column}`, sealed)
+  const dashscopeKey = patch.dashscopeKey ?? (row ? open('dashscope_key', row.dashscopeKeyEnc) : undefined)
+  if (dashscopeKey === undefined) return { ok: false, error: ADD_DASHSCOPE_FIRST }
+  return saveAiKeys(
+    scope,
+    {
+      dashscopeKey,
+      workspaceId: 'workspaceId' in patch ? patch.workspaceId : (row?.workspaceId ?? undefined),
+      modelscopeKey:
+        patch.modelscopeKey ?? (row?.modelscopeKeyEnc ? open('modelscope_key', row.modelscopeKeyEnc) : undefined)
+    },
+    deps
+  )
+}
+
+/**
+ * Removes one provider's key. DashScope is the required key, so removing it removes the row, ModelScope key included.
+ * Removing the ModelScope key keeps the DashScope key and its last test.
+ */
+export async function removeAiKey(scope: MemberScope, provider: KeyProvider): Promise<void> {
+  if (provider === 'dashscope') {
+    await scope.remove(aiKeys, eq(aiKeys.memberId, scope.memberId))
+    return
+  }
+  const [row] = await scope.select(aiKeys)
+  if (!row) return
+  await scope.update(
+    aiKeys,
+    { modelscopeKeyEnc: null, modelscopeTestOk: null, ...(row.testOk && { testError: null }), updatedAt: new Date() },
+    eq(aiKeys.memberId, scope.memberId)
+  )
+}
