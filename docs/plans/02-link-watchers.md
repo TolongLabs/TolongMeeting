@@ -1337,7 +1337,7 @@ test('saving a WhatsApp chat on a server identity follows the gate', async () =>
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/app/timetable/ban-risk-notice.test.tsx packages/web/lib/timetable.test.ts`
 Expected: FAIL with `Cannot find module './link-notices'`.
 
-- [ ] **Step 3: Implement `link-notices.ts`, `ban-risk-notice.tsx` and the schema, save and form changes** (lib, schema, save and action wiring done; `ban-risk-notice.tsx`, its test and the `[id]/page.tsx` form are deferred: Figma gate)
+- [x] **Step 3: Implement `link-notices.ts`, `ban-risk-notice.tsx` and the schema, save and form changes** (lib, schema, save and action wiring done; `ban-risk-notice.tsx`, its test and the `[id]/page.tsx` form are deferred: Figma gate)
 
 - [x] **Step 4: Run tests to verify they pass**
 
@@ -1380,7 +1380,7 @@ discord, allowed     Discord: sign in at discord.com in this view. If Discord as
 discord, home_only   Don't sign in to Discord here: this identity runs on the server, and Discord is watched only for identities that run at home or on your PC.
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/web/lib/link-notices.test.ts (added)
@@ -1439,19 +1439,19 @@ test('a WhatsApp chat the gate refuses fails the launch, with a ping', async () 
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/link-notices.test.ts packages/web/lib/identities.test.ts packages/scheduler/src/launch.test.ts`
 Expected: FAIL with `signinNotes is not a function` (and the identity and launch tests failing on their assertions).
 
-- [ ] **Step 3: Implement the rules above, and add the two variables to `docker/compose.yaml` and `.env.example`**
+- [x] **Step 3: Implement the rules above, and add the two variables to `docker/compose.yaml` and `.env.example`**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web packages/scheduler && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/control.ts packages/web packages/scheduler docker/compose.yaml .env.example docs/TRD.md

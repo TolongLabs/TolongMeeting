@@ -129,7 +129,7 @@ export function deleteServerProfile(identityId: string, profileRoot?: string): P
 
 - Routes (adds to contracts): `PUT /api/identities/<id>/run-location` (member session, body `RunLocationChoice`); `GET /api/companion/identities` (device token) answers `{ identities: { id: string; name: string }[]; image: string }`, where `image` is `TM_WORKER_IMAGE_REF`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // companion.test.ts (added)
@@ -193,21 +193,21 @@ test('deleteServerProfile removes only that identity', async () => {
 
 `scheduled` records `scheduleJob` calls (through `mock.module`); `identityRow`, `touchDevice` and `profileRootWith` are local helpers; `t0` and `plus` are as in plan 03.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core/src/companion.test.ts packages/web/lib/run-locations packages/scheduler/src/profile-delete.test.ts`
 Expected: FAIL with "Export named 'shortTime' not found" and missing modules
 
-- [ ] **Step 3: Implement the contracts, the column and queries, `setRunLocation`, the routes, `deleteServerProfile` and the settings page**
+- [x] **Step 3: Implement the contracts, the column and queries, `setRunLocation`, the routes, `deleteServerProfile` and the settings page**
 
 `setRunLocation` writes `identities.run_location`, `identities.local_device_id` (null unless `local`) and `profiles.location` (`local` for My PC, else `server`); moving to `local` schedules `profile-delete` and emits `local_identities_changed` to the chosen device; moving away from `local` emits it to the previously bound device. The settings page warns before switching to My PC: "The server's copy of this identity's sign-ins will be deleted. You'll sign in again on <PC name>." and, for My PC, links to Docker Desktop's install page and says a PC needs about 4 GB free for Docker. `revokeDevice` sets `local_device_id = NULL` on the member's identities bound to the device, in the same transaction. Register the `profile-delete` handler in plan 01c's scheduler queue setup.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/companion.test.ts packages/web/lib/run-locations packages/scheduler/src/profile-delete.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src packages/web packages/scheduler/src/profile-delete.ts packages/scheduler/src/profile-delete.test.ts .env.example
@@ -1447,7 +1447,7 @@ test('open-signin explains an offline PC or a server identity', async () => {
 
 `controllerWith` builds a `SigninController` over fakes recording `injected`, `opened` and `log`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/companion/src/local/signin.test.ts packages/web/app/api/identities/open-signin.test.ts`
 Expected: FAIL with "Cannot find module './signin'" and a missing route

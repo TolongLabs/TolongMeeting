@@ -337,21 +337,21 @@ test('the PC ping is marked sent only once', async () => {
 
 In `beforeEach`, `db` is `await createTestDb()` and `f` is `await seedCompanionFixture(db)`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/web/db/companion.test.ts`
 Expected: FAIL with "Cannot find module './companion'"
 
-- [ ] **Step 3: Implement the tables, the functions and the fixture in `packages/web/db/companion.ts` and `packages/web/db/companion.fixtures.ts`, then generate the migration**
+- [x] **Step 3: Implement the tables, the functions and the fixture in `packages/web/db/companion.ts` and `packages/web/db/companion.fixtures.ts`, then generate the migration**
 
 `listJobsForDevice` returns the member's `pending` jobs whose `target_device_id` is null or this device, plus the jobs this device holds. `claimJob` is one `UPDATE ... WHERE id = $1 AND state = 'pending' AND member_id = $2 AND (target_device_id IS NULL OR target_device_id = $3) RETURNING *`, setting `state = 'claimed'`, `device_id` and `lease_until = now + JOB_LEASE_MS`; if no row updates, it returns `'conflict'` when the job exists for that member, else `null`. `releaseExpiredLeases` sets `state = 'pending'`, `device_id = NULL`, `lease_until = NULL` for claimed jobs whose `lease_until < now`. `failJobAttempt` increments `attempts` and returns `'failed'` (state `failed`) once `attempts >= NATIVE_MAX_ATTEMPTS`, otherwise releases the job to `pending`. `emitCompanionEvent` deletes the member's events older than 24 hours in the same transaction. `markPcPingSent` is `UPDATE ... SET pc_ping_sent_at = $now WHERE id = $1 AND pc_ping_sent_at IS NULL`. Generate the migration with `cd packages/web && bunx drizzle-kit generate`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/web/db/companion.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/db
@@ -578,7 +578,7 @@ export function companionEventStream(
 
 - Routes (adds to contracts): `GET /api/companion/events` (SSE, resumes from the `Last-Event-ID` header), `GET /api/companion/jobs` (answers `{ jobs: CompanionJob[] }` after `releaseExpiredLeases`), `POST /api/companion/jobs/<id>/claim` (200 with the job, 409 when another device holds it, 404 otherwise), `POST /api/companion/jobs/<id>/progress` (204, or 404 when this device doesn't hold the job).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // sse.test.ts
@@ -649,21 +649,21 @@ test('progress from a device that does not hold the job answers 404', async () =
 
 `collect` reads a stream to a string until it closes; `authed(path, token, method?)` builds a `Request` with the bearer header; `params(id)` builds the route context.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/companion/sse.test.ts packages/web/app/api/companion/jobs/jobs.test.ts`
 Expected: FAIL with "Cannot find module './sse'" and missing route modules
 
-- [ ] **Step 3: Implement `sse.ts` and the four routes**
+- [x] **Step 3: Implement `sse.ts` and the four routes**
 
 The events route sets `Content-Type: text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no` and `export const dynamic = 'force-dynamic'`; the stream polls `listCompanionEvents` every `pollMs`, writes `: keepalive\n\n` every `keepAliveMs`, touches `device_tokens.last_used_at` on each keepalive, and closes on `signal` abort. Caddy flushes `text/event-stream` responses immediately, so the Caddyfile needs no change.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/companion/sse.test.ts packages/web/app/api/companion/jobs/jobs.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/companion/sse.ts packages/web/lib/companion/sse.test.ts packages/web/app/api/companion/events packages/web/app/api/companion/jobs
@@ -1045,7 +1045,7 @@ export function readSummary(
 
 - Routes (adds to contracts): `GET /api/companion/summaries?after=<ISO 8601>` answers `{ summaries: SummaryListItem[] }`; `GET /api/companion/summaries/<occurrenceId>` answers `text/markdown; charset=utf-8` or 404.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // summaries.test.ts
@@ -1087,21 +1087,21 @@ test('sendPing sends tags as the ntfy Tags header', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/web/lib/companion/summaries.test.ts packages/notify/src/tags.test.ts`
 Expected: FAIL with "Cannot find module './summaries'" and a missing `tags` header
 
-- [ ] **Step 3: Implement `summaries.ts`, the two routes, `Ping.tags` and the tag on the summary-ready ping**
+- [x] **Step 3: Implement `summaries.ts`, the two routes, `Ping.tags` and the tag on the summary-ready ping**
 
 A summary is a plan 01c `artefacts` row of the summary kind on one of the member's occurrences; `fileName` is its path's base name and `readyAt` its creation time.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/web/lib/companion/summaries.test.ts packages/notify/src/tags.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib packages/web/app packages/notify/src packages/pipeline/src
@@ -1219,7 +1219,7 @@ Expected: FAIL with "Cannot find module './settings'"
 - Windows (`settings.html`, and the pairing view in Task 11) use `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, and a preload exposing only the IPC calls they need.
 - Settings, state and secrets live in `%APPDATA%\TolongMeeting\settings.json`, `state.json` and `secrets.json`; job scratch space in `%LOCALAPPDATA%\TolongMeeting\jobs\`. The default `serverUrl` is injected at build time with `bun build --define` from `TM_PUBLIC_URL`.
 
-- [ ] **Step 4: Run tests, the type check and an unpacked build**
+- [x] **Step 4: Run tests, the type check and an unpacked build**
 
 Run: `bun test packages/companion/src/shell.test.ts && bun run typecheck && cd packages/companion && bun run pack`
 Expected: PASS (5 tests); no type errors; `packages/companion/release/win-unpacked/TolongMeeting.exe` exists
@@ -1529,7 +1529,7 @@ test('the subscriber sends the token as a header and resumes with since=<last id
 Run: `bun test packages/companion/src/ntfy.test.ts`
 Expected: FAIL with "Cannot find module './ntfy'"
 
-- [ ] **Step 3: Implement `backoff.ts`, `ntfy.ts` and the wiring** (`backoff.ts` and `ntfy.ts` done; the `main/index.ts` wiring is left to the integrator)
+- [x] **Step 3: Implement `backoff.ts`, `ntfy.ts` and the wiring** (`backoff.ts` and `ntfy.ts` done; the `main/index.ts` wiring is left to the integrator)
 
 `sticky` is `priority >= 4`; `title` falls back to `TolongMeeting`; `clickUrl` is the message's `click` when it is `https:`, else the first kept button's URL. In `main/index.ts`, a click or button opens its URL with `shell.openExternal` only after a second `https:` check; `sync_summaries` calls Task 13's `syncSummaries`. Without a stored `ntfyLastId`, the first connection omits `since`. Reconnects wait `reconnectDelayMs(attempt)`, resetting after a message arrives.
 
@@ -1576,7 +1576,7 @@ export function showSummaryNotification(
 ): void
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('windowsSafeFileName replaces what Windows forbids', () => {
@@ -1652,21 +1652,21 @@ test('clicking a summary whose file was moved opens the folder', () => {
 
 `fakeSummaries(items)` implements `summaries(after)` (items with `readyAt > after`) and `summary(occurrenceId)` (the item's `text`).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/summaries.test.ts`
 Expected: FAIL with "Cannot find module './summaries'"
 
-- [ ] **Step 3: Implement `summaries.ts` and the wiring**
+- [x] **Step 3: Implement `summaries.ts` and the wiring**
 
 `windowsSafeFileName`: replace each of `<>:"/\|?*` and control characters with `-`; trim trailing dots and spaces from the stem; prefix `_` when the stem is a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`); cut the stem so the whole name is at most 200 characters, keeping `.md`. `syncSummaries` pages through `summaries(after)` until a page has fewer than 50 items, creates the folder if needed, writes through `<name>.part` and a rename, skips names that already exist, and advances `summariesAfter` after each item. The wiring shows one notification per newly written file and never calls `openPath` outside a click.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/summaries.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1703,7 +1703,7 @@ export function startJobPoller(d: {
 }): { trigger(): void; stop(): void } // default 60000
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('parseSse joins fields split across chunks and skips comments', async () => {
@@ -1758,21 +1758,21 @@ test('trigger polls at once; otherwise the poller waits for the interval', async
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/sse.test.ts`
 Expected: FAIL with "Cannot find module './sse'"
 
-- [ ] **Step 3: Implement `sse.ts`, `poller.ts` and the wiring**
+- [x] **Step 3: Implement `sse.ts`, `poller.ts` and the wiring**
 
 Each event's `data` is parsed with `CompanionEventSchema` (unknown commands are dropped); `lastEventId` is stored after `onEvent` returns. On `job_available` the wiring calls `poller.trigger()`; on every stream (re)connect it calls `syncSummaries`. A `DeviceRevokedError` from either loop runs `handleRevoked`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/sse.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1959,7 +1959,7 @@ test('the companion never changes power settings', async () => {
 Run: `bun test packages/companion/src/jobs/native-runner.test.ts`
 Expected: FAIL with "Cannot find module './whisper'"
 
-- [ ] **Step 3: Implement `keep-awake.ts`, `whisper.ts`, `native-runner.ts` and the wiring** _(The Settings window with the whisper command, folder and model fields is built: `renderer/settings.html`, `SettingsService`.)_
+- [x] **Step 3: Implement `keep-awake.ts`, `whisper.ts`, `native-runner.ts` and the wiring** _(The Settings window with the whisper command, folder and model fields is built: `renderer/settings.html`, `SettingsService`.)_
 
 Per job, in order: `claim` (skip on `null`); `keepAwake.acquire(jobId)`; every `progressMs` call `progress`; `downloadAudio` to `<jobsDir>\<jobId>\audio.flac`; run `buildWhisperArgv(settings.whisper.command, { audio, model: settings.whisper.model, outDir: <jobsDir>\<jobId>\out })` in `settings.whisper.cwd` with `whisperTimeoutMs(payload.durationSec)`; expect `out\audio.txt`, `out\audio.srt` and `out\audio.json`; `uploadTranscript`, retrying every `uploadRetryMs` until it succeeds or the job is lost (404); then delete the job folder; finally release the keep-awake and stop progress calls. On a whisper failure, a spawn error (reported as its message, for example `spawn uv ENOENT`), a timeout or missing output, call `fail` with the last 2 KB of stderr (the server uses the first line) and delete the job folder. `buildWhisperArgv` splits the template on whitespace outside double quotes, then replaces `{audio}`, `{model}` and `{outDir}` inside each token. The "Set up native transcription" notification opens the Settings window on click and is shown once per companion start.
 

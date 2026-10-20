@@ -374,7 +374,7 @@ test('applyFormTrigger appends to history without mutating', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/core/src/form-machine.test.ts`
 Expected: FAIL on the added edges (`IllegalTransition`) and "applyFormTrigger is not a function".
@@ -903,7 +903,7 @@ test('organisation evidence', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/worker/test/forms-rules.test.ts`
 Expected: FAIL with "Cannot find module './rules'".
@@ -2652,7 +2652,7 @@ test('quizzes and non-attendance forms do not count', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `bun test packages/pipeline/src/summary/attendance.test.ts`
 Expected: FAIL with "Cannot find module './attendance'".
@@ -2686,7 +2686,7 @@ Manual verification on real meetings and real forms, for the design's acceptance
 - Consumes: the whole of this plan; 1A's job file, worker image and acceptance procedure for running a meeting.
 - Produces: nothing new.
 
-- [ ] **Step 1: Add the desk view to the worker image**
+- [x] **Step 1: Add the desk view to the worker image**
 
 Add `x11vnc` to the `apt-get install` line in `docker/worker/Dockerfile`.
 Run: `docker build -t tm-worker:dev -f docker/worker/Dockerfile . && docker run --rm --entrypoint sh tm-worker:dev -c 'command -v x11vnc'`
