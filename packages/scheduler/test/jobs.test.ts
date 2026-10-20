@@ -1,7 +1,10 @@
 import { afterAll, expect, test } from 'bun:test'
+import { join } from 'node:path'
+import { sql } from 'drizzle-orm'
 import { PgBoss, type QueueResult as Queue } from 'pg-boss'
 import { QUEUES } from '@tm/web/db/queues'
 import { createTestDb, dropAllTestDbs, testDbUrl } from '@tm/web/db/testing'
+import { migrationsFolder, runMigrations } from '@tm/web/db/migrate'
 import { PIPELINE_DEAD_QUEUE, PIPELINE_QUEUE, workPipeline } from '../../pipeline/src/consumer-main'
 import type { PipelineDeps } from '../../pipeline/src/consumer'
 import {
@@ -189,6 +192,20 @@ test(
     }),
   60_000
 )
+
+test('two schedulers booting at once apply each migration once', async () => {
+  const db = await createTestDb()
+  // Back to an empty database, as a first boot finds it.
+  await db.execute(sql`drop schema drizzle cascade`)
+  await db.execute(sql`drop schema public cascade`)
+  await db.execute(sql`create schema public`)
+  const journal = (await Bun.file(join(migrationsFolder, 'meta', '_journal.json')).json()) as { entries: unknown[] }
+  await Promise.all([runMigrations(db), runMigrations(db), runMigrations(db)])
+  const applied = await db.execute(sql`select count(*)::int as n from drizzle.__drizzle_migrations`)
+  expect(applied.rows[0]).toEqual({ n: journal.entries.length })
+  // And a boot after them finds nothing to do.
+  await runMigrations(db)
+}, 60_000)
 
 test('queue names map to their handlers, and pipeline queues have none here', () => {
   expect(KEYS.map((key) => JOBS[key].queue).sort()).toEqual(

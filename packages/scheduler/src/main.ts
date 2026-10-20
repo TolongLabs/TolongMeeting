@@ -27,6 +27,13 @@ export const MONITOR_INTERVAL_MS = 5_000
 export const HEALTH_FILE = '/tmp/tm-scheduler-alive'
 /** How long a shutdown waits for running jobs, and then for running remuxes (each; both below Compose's grace period). */
 const DRAIN_MS = 30_000
+/** How long a shutdown waits for the monitor tick in flight (a tick can be stuck on a Docker call). */
+const MONITOR_STOP_MS = 15_000
+/**
+ * The hard stop: monitor 15 s, jobs 35 s and remuxes 30 s add up to 80 s, which is below Compose's 90 s grace period.
+ * If anything past that is still running, the process exits instead of waiting for SIGKILL.
+ */
+export const SHUTDOWN_DEADLINE_MS = 80_000
 
 // --- Environment -----------------------------------------------------------------------------------------------------
 
@@ -281,7 +288,12 @@ async function main(): Promise<void> {
   const drain = async (): Promise<void> => {
     if (stopping) return
     stopping = true
-    await monitor.stop()
+    // If the steps below hang, this ends the process before Compose's SIGKILL. It never keeps a finished process alive.
+    setTimeout(() => {
+      console.error(`shutdown: not finished within ${SHUTDOWN_DEADLINE_MS / 1000} s; exiting`)
+      process.exit(1)
+    }, SHUTDOWN_DEADLINE_MS).unref()
+    await bounded('monitor', MONITOR_STOP_MS, monitor.stop())
     await bounded('jobs', DRAIN_MS + 5_000, boss.stop({ graceful: true, timeout: DRAIN_MS, close: true }))
     await bounded('remuxes', DRAIN_MS, settleRemuxes())
     await stopJobFileWatchers()
