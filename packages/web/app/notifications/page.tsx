@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/PageHeader'
 import { SubmitButton } from '../../components/SubmitButton'
 import { requireMember } from '../../lib/session'
 import { sendTestPingFormAction, setUpNotificationsFormAction } from './form-actions'
+import { TokenReveal } from './token-reveal'
 
 export const metadata: Metadata = { title: 'Notifications' }
 
@@ -34,7 +35,8 @@ export default async function NotificationsPage({
 }) {
   const scope = await requireMember()
   const [me, { notice }] = await Promise.all([scope.me(), searchParams])
-  const message = typeof notice === 'string' ? NOTICES[notice] : undefined
+  // Own keys only: `?notice=__proto__` or `constructor` must not find Object.prototype entries.
+  const message = typeof notice === 'string' && Object.hasOwn(NOTICES, notice) ? NOTICES[notice] : undefined
   const topic = me.ntfyTopic && me.ntfyTokenEnc ? me.ntfyTopic : null
 
   return (
@@ -73,7 +75,8 @@ export default async function NotificationsPage({
               </dd>
             </dl>
             <p>
-              Your access token is kept secret. It is not shown on this page, and it is not shown again after set-up.
+              Your access token is secret. It is hidden until you press Show token in the phone steps below, and it is
+              never saved on this page.
             </p>
           </section>
 
@@ -85,8 +88,10 @@ export default async function NotificationsPage({
               <li>
                 Turn on &ldquo;Use another server&rdquo; and enter the server address above, then enter the topic above.
               </li>
+              <li>If the app asks for a token or a login for this server, use the access token shown below.</li>
               <li>Press Subscribe, then send a test ping below.</li>
             </ol>
+            <TokenReveal />
             <h3>On your computer</h3>
             <p>
               Open the server address in your browser, subscribe to the same topic and allow browser notifications. The

@@ -14,17 +14,28 @@ const MODELSCOPE_KEY = 'ms-e2e-good-key-7777'
 const NTFY_TOKEN = 'tk_e2e_secret_token'
 const SECRETS = [GOOD_KEY, BAD_KEY, MODELSCOPE_KEY, NTFY_TOKEN]
 
+/** One response the server sent: its URL, the server action it answers (`null` for a page) and its body. */
+interface Sent {
+  url: string
+  action: string | null
+  body: string
+}
+
 /** Everything the server sent while the test ran: pages, redirects and action replies. */
-const sent: string[] = []
+const sent: Sent[] = []
+/** The server action id of the "Show token" request, set by the Notifications test. Only its reply may hold the token. */
+let showTokenAction: string | null = null
 
 test.beforeEach(async ({ page }) => {
   const { name, value } = state().cookie
   await page.context().addCookies([{ name, value, url: 'http://127.0.0.1' }])
   page.on('response', async (response) => {
-    sent.push(response.url())
-    if (!['document', 'fetch', 'xhr'].includes(response.request().resourceType())) return
+    const request = response.request()
     // A redirect has no body to read.
-    sent.push(await response.text().catch(() => ''))
+    const body = ['document', 'fetch', 'xhr'].includes(request.resourceType())
+      ? await response.text().catch(() => '')
+      : ''
+    sent.push({ url: response.url(), action: request.headers()['next-action'] ?? null, body })
   })
 })
 
@@ -78,7 +89,11 @@ test('My details: saves details and names, keeps typed values on an error, warns
   await expectNoAxeViolations(page)
 })
 
-test('Notifications: set up, subscribe steps, test ping, token never shown', async ({ page }) => {
+test('Notifications: set up, show the token on request, test ping', async ({ page }) => {
+  // An object-prototype name in ?notice= is not a notice: the page loads with no notice box.
+  await page.goto('/notifications?notice=__proto__')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Notifications')
+  await expect(page.locator('.notice-info')).toHaveCount(0)
   await page.goto('/notifications')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Notifications')
   await expect(page.getByText('Notifications are not set up.')).toBeVisible()
@@ -92,7 +107,24 @@ test('Notifications: set up, subscribe steps, test ping, token never shown', asy
   await expect(page.locator('dd code').first()).toHaveText(state().ntfyOrigin)
   await expect(page.getByRole('heading', { level: 2, name: 'Subscribe on your phone' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ hasText: 'Install the ntfy app' })).toBeVisible()
+  // The token is not in the page before the button is pressed.
+  expect(await page.content()).not.toContain(NTFY_TOKEN)
   await expectNoAxeViolations(page)
+
+  // Show token: the token appears, from this click's reply only, which is not cached.
+  const showReply = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && r.request().headers()['next-action'] !== undefined
+  )
+  await page.getByRole('button', { name: 'Show token' }).click()
+  const reply = await showReply
+  showTokenAction = reply.request().headers()['next-action']!
+  expect(reply.status()).toBe(200)
+  expect(reply.headers()['cache-control']).toContain('no-store')
+  expect(await reply.text()).toContain(NTFY_TOKEN)
+  await expect(page.getByText(NTFY_TOKEN, { exact: true })).toBeVisible()
+  await expectNoAxeViolations(page)
+  await page.getByRole('button', { name: 'Hide token' }).click()
+  await expect(page.getByText(NTFY_TOKEN, { exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Send a test ping' }).click()
   await expect(page).toHaveURL(/\/notifications\?notice=ping-sent$/)
@@ -175,7 +207,7 @@ test('AI keys: add a failing key, replace it, add and remove ModelScope, remove 
   await expectNoAxeViolations(page)
 })
 
-test('no key, token or secret appears in any page, redirect or action reply', async ({ page }) => {
+test('no key, token or secret appears in any page, redirect or other action reply', async ({ page }) => {
   // Visit every page the member can reach after the steps above, and add a key once more so it is in the database.
   await page.goto('/ai-keys')
   await page.getByLabel('DashScope key', { exact: true }).fill(GOOD_KEY)
@@ -187,6 +219,10 @@ test('no key, token or secret appears in any page, redirect or action reply', as
     await page.goto(path)
     html.push(await page.content())
   }
-  const everything = [...html, ...sent].join('\n')
+  // Only the Show token reply may hold the ntfy token. Every other response must be free of every secret.
+  const isShowToken = (s: Sent) => showTokenAction !== null && s.action === showTokenAction
+  const replies = sent.map((s) => (isShowToken(s) ? s.body.replaceAll(NTFY_TOKEN, '') : s.body))
+  const everything = [...html, ...sent.map((s) => s.url), ...replies].join('\n')
   for (const secret of SECRETS) expect(everything, secret).not.toContain(secret)
+  expect(sent.some((s) => isShowToken(s) && s.body.includes(NTFY_TOKEN))).toBe(true)
 })

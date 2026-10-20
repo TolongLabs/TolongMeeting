@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto'
 import { pings } from '@tm/notify'
 import type { Notifier } from '../db/notifier'
-import { sealColumn } from '../db/secrets'
+import { openColumn, sealColumn } from '../db/secrets'
 import type { MemberScope } from './scope'
 
-// The ntfy admin API. Only this module and the scope-taking helpers below hold the admin token; a member's publish
-// token is the only credential that leaves the server, and it is never logged or returned to the client.
+// The ntfy admin API. Only this module and the scope-taking helpers below hold the admin token. A member's publish
+// token is never logged, and it leaves the server only in the reply to that member's own "Show token" request.
 
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -157,4 +157,11 @@ async function deleteUserQuietly(admin: NtfyAdmin, username: string): Promise<vo
 /** Sends the member's test ping through `notifier`. Resolves `true` only when the ping was sent. */
 export async function sendTestPing(scope: MemberScope, notifier: Notifier): Promise<boolean> {
   return notifier.notify(scope.memberId, pings.notificationsTest())
+}
+
+/** The member's own publish token, opened for the "Show token" button. Resolves `null` when no token is saved yet. */
+export async function revealNtfyToken(scope: MemberScope, master: Buffer): Promise<string | null> {
+  const me = await scope.me()
+  if (!me.ntfyTokenEnc) return null
+  return openColumn(master, scope.memberId, 'members.ntfy_token', me.ntfyTokenEnc)
 }
