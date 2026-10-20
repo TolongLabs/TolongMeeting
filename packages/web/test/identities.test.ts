@@ -30,19 +30,9 @@ async function bare(): Promise<{ scope: MemberScope; identityId: string }> {
   return { scope: createScope(db, memberId), identityId }
 }
 
-const WORK = { name: 'Work', runLocation: 'server', zoomGuestName: 'A Member' }
+const WORK = { name: 'Work', zoomGuestName: 'A Member' }
 
 describe('IdentityInputSchema', () => {
-  test('only the server run location is accepted for now', () => {
-    expect(
-      IdentityInputSchema.safeParse({
-        name: 'Home',
-        runLocation: 'local',
-        zoomGuestName: 'A'
-      }).error?.issues[0]?.message
-    ).toBe('Only "Server" is available until run locations are added.')
-  })
-
   test('name and zoom guest name are trimmed and length-checked', () => {
     expect(IdentityInputSchema.parse({ ...WORK, name: '  Work  ', zoomGuestName: ' A ' })).toMatchObject({
       name: 'Work',
@@ -227,10 +217,6 @@ test('the actions return refusals as messages and keep other members’ identiti
   const mine = (await listIdentities(owner.scope)).find((row) => row.name === 'Work')
   expect(mine).toBeDefined()
 
-  expect(await createIdentityFor(owner.scope, { ...WORK, name: 'Bad', runLocation: 'local' })).toEqual({
-    ok: false,
-    error: 'Only "Server" is available until run locations are added.'
-  })
   await owner.scope.update(profiles, { heldBy: 'occ:x' }, eq(profiles.identityId, mine!.id))
   expect(await deleteIdentityFor(owner.scope, mine!.id)).toEqual({
     ok: false,

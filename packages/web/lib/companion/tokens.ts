@@ -9,9 +9,9 @@ import {
   type NtfyConfig,
   type PairResponse
 } from '@tm/core'
-import { and, count, eq, gt, isNull, lt, sql } from 'drizzle-orm'
+import { and, count, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { safeDbError } from '../../db/errors'
-import { deviceTokens, devicePairings } from '../../db/schema'
+import { companionJobs, deviceTokens, devicePairings, identities } from '../../db/schema'
 import type { createScope, MemberScope } from '../scope'
 
 /** The database (or a transaction) the pairing functions that act for no member work on. */
@@ -224,13 +224,35 @@ export async function listDevices(scope: MemberScope): Promise<DeviceSummary[]> 
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 }
 
-/** Revokes one of the member's devices. `false` when it is not theirs, does not exist or is revoked already. */
+/**
+ * Revokes one of the member's devices. `false` when it is not theirs, does not exist or is revoked already. In the same
+ * transaction the identities bound to it lose the binding (`local_device_id` is null; they stay on My PC, so they never
+ * quietly run on the server: at T-60 they are skipped with a "no PC is paired" ping) and its unfinished `local_run`
+ * jobs are cancelled, so no job aimed at it can be claimed afterwards.
+ */
 export async function revokeDevice(scope: MemberScope, deviceId: string, now: Date = new Date()): Promise<boolean> {
   if (!UUID.test(deviceId)) return false
-  const changed = await guarded(() =>
-    scope.update(deviceTokens, { revokedAt: now }, and(eq(deviceTokens.id, deviceId), isNull(deviceTokens.revokedAt))!)
+  return guarded(() =>
+    scope.transaction(async (s) => {
+      const changed = await s.update(
+        deviceTokens,
+        { revokedAt: now },
+        and(eq(deviceTokens.id, deviceId), isNull(deviceTokens.revokedAt))!
+      )
+      if (changed === 0) return false
+      await s.update(identities, { localDeviceId: null }, eq(identities.localDeviceId, deviceId))
+      await s.update(
+        companionJobs,
+        { state: 'cancelled', leaseUntil: null, updatedAt: now },
+        and(
+          eq(companionJobs.targetDeviceId, deviceId),
+          eq(companionJobs.kind, 'local_run'),
+          inArray(companionJobs.state, ['pending', 'claimed'])
+        )!
+      )
+      return true
+    })
   )
-  return changed > 0
 }
 
 /** Failures per key in a sliding window. A key with `max` failures in the window is locked until the oldest ages out. */

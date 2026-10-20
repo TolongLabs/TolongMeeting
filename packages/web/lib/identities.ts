@@ -2,7 +2,7 @@ import { and, eq, notInArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { ACCOUNT_KINDS, type AccountKind } from '@tm/core/control'
 import { safeDbError } from '../db/errors'
-import { identities, OCCURRENCE_STATES, occurrences, profiles, RUN_LOCATIONS, timetableEntries } from '../db/schema'
+import { identities, OCCURRENCE_STATES, occurrences, profiles, timetableEntries } from '../db/schema'
 import type { MemberScope } from './scope'
 
 export type IdentityRow = typeof identities.$inferSelect
@@ -57,9 +57,6 @@ const FINISHED_STATES: (typeof OCCURRENCE_STATES)[number][] = [
 export const IdentityInputSchema = z
   .object({
     name: z.string().trim().min(1).max(40).refine(noControlCharacters, NO_CONTROL_MESSAGE),
-    runLocation: z.enum(RUN_LOCATIONS).refine((value) => value === 'server', {
-      message: 'Only "Server" is available until run locations are added.'
-    }),
     zoomGuestName: z.string().trim().min(1).max(64).refine(noControlCharacters, NO_CONTROL_MESSAGE),
     orgName: z.preprocess(
       blankAsAbsent,
@@ -90,7 +87,6 @@ function parseInput(input: unknown): z.infer<typeof IdentityInputSchema> {
 function settings(value: z.infer<typeof IdentityInputSchema>) {
   return {
     name: value.name,
-    runLocation: value.runLocation,
     zoomGuestName: value.zoomGuestName,
     orgName: value.orgName ?? null,
     orgEmailDomain: value.orgEmailDomain ?? null
@@ -103,7 +99,7 @@ async function assertNameFree(scope: MemberScope, name: string, exceptId?: strin
   if (taken) throw new InputError(`You already have an identity called "${name}".`)
 }
 
-/** Creates an identity for the member and its profile. */
+/** Creates an identity for the member and its profile. It runs on the server; only `setRunLocation` moves it. */
 export async function createIdentity(scope: MemberScope, input: unknown): Promise<IdentityRow> {
   const value = parseInput(input)
   try {
@@ -139,6 +135,24 @@ export async function updateIdentity(scope: MemberScope, id: string, input: unkn
 }
 
 /**
+ * Refuses (`InUseError`) while an occurrence of the identity is not finished (every state except `FINISHED_STATES`: a
+ * meeting still to start, running, uploading, transcribing or summarising) or a meeting or sign-in holds its profile.
+ * Deleting an identity and changing where it runs (`setRunLocation`) share this rule.
+ */
+export async function assertIdentityIdle(
+  s: MemberScope,
+  identityId: string,
+  profile: { heldBy: string | null }
+): Promise<void> {
+  const [open] = await s.select(
+    occurrences,
+    and(eq(occurrences.identityId, identityId), notInArray(occurrences.state, FINISHED_STATES))
+  )
+  if (open) throw new InUseError('This identity has a meeting or sign-in that has not finished.')
+  if (profile.heldBy !== null) throw new InUseError('This identity is in use by a meeting or a sign-in.')
+}
+
+/**
  * Deletes an identity. Refused while any of these holds: a timetable entry uses it (the `restrict` foreign key is the
  * backstop); an occurrence is not finished (every state except `FINISHED_STATES`: a meeting still to start, running,
  * uploading, transcribing or summarising); or a meeting or sign-in holds its profile. Finished occurrences don't block:
@@ -151,12 +165,7 @@ export async function deleteIdentity(scope: MemberScope, id: string): Promise<vo
       if (!profile) throw new Error('No such identity.')
       const [entry] = await s.select(timetableEntries, eq(timetableEntries.identityId, id))
       if (entry) throw new InUseError('This identity has timetable entries.')
-      const [open] = await s.select(
-        occurrences,
-        and(eq(occurrences.identityId, id), notInArray(occurrences.state, FINISHED_STATES))
-      )
-      if (open) throw new InUseError('This identity has a meeting or sign-in that has not finished.')
-      if (profile.heldBy !== null) throw new InUseError('This identity is in use by a meeting or a sign-in.')
+      await assertIdentityIdle(s, id, profile)
       await s.remove(identities, eq(identities.id, id))
     })
   } catch (e) {
