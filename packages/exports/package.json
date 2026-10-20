@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@tm/core": "workspace:*",
+    "@tm/web": "workspace:*",
+    "drizzle-orm": "0.45.4",
     "docx": "9.8.1",
     "fflate": "0.8.3",
     "marked": "18.1.0",
