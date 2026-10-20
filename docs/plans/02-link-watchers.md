@@ -1367,7 +1367,7 @@ Rules:
 
 - **Identity settings**: `updateIdentity` refuses a run-location change after which `chatWatchAllowed` would be false for any unpaused entry of that identity, with `InUseError('This identity has entries that watch <App>, which is watched only at home or on your PC. Change those entries first.')`. Until plan 08 enables other run locations this can't trigger in the app, but plan 08 relies on it.
 - **Sign-in page**: the WhatsApp and Discord lines of 01c's list come from `signinNotes`, followed by `BAN_RISK_NOTICE`.
-- **Launch**: in `launchOccurrence` step 6, apply `gateLinkSource(snapshot.link, identity.runLocation, deps.env.watchGate)` to the snapshot before it is stored; when `blockedApp` is set, send `pings.watchingOff` with the meeting page and Accounts URLs. The occurrence then runs as a pasted-link entry. This covers a gate tightened after an entry was saved.
+- **Launch**: in `launchOccurrence` step 6, apply `gateLinkSource(snapshot.link, identity.runLocation, deps.env.watchGate)` to the snapshot before it is stored; when `blockedApp` is set, send `pings.watchingOff` with the meeting page and Accounts URLs. The launch then fails with `watching_not_allowed` (the accepted change from "runs as a pasted-link entry": a paste entry can't be told from one with no link). This covers a gate tightened after an entry was saved. The entry snapshot is gated again when it is rebuilt, and a restarted attempt (`startAttempt`) is gated too.
 - **Deployment**: `TM_WHATSAPP_FROM_SERVER` and `TM_DISCORD_FROM_SERVER` are set on `web` and `scheduler` in `docker/compose.yaml` from `.env`, and their values are copied from `watchers.whatsappFromServer` and `watchers.discordFromServer` in `spikes/DECISIONS.md`.
 
 `signinNotes` copy (exact):
@@ -1428,13 +1428,13 @@ test('moving an identity to the server is refused while it has WhatsApp-watched 
 
 ```ts
 // packages/scheduler/src/launch.test.ts (added)
-test('a WhatsApp chat the gate refuses launches as a pasted-link entry, with a ping', async () => {
+test('a WhatsApp chat the gate refuses fails the launch, with a ping', async () => {
   const f = await launchFixture({
     link: { kind: 'chat', app: 'whatsapp', chat: 'Class group' },
     watchGate: { whatsapp: 'home_only', discord: 'allowed' }
   })
-  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
-  expect((await f.job0()).entry.link).toEqual({ kind: 'paste' })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'watching_not_allowed' })
   expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Not watching WhatsApp: Data Mining'])
 })
 ```
