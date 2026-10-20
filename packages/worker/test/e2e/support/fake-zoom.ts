@@ -9,6 +9,7 @@ const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.j
 
 type ScriptEvent =
   | { t: 'chat'; sender: string; time: string; text: string }
+  | { t: 'participant'; name: string; role?: string }
   | { t: 'share'; slide: string }
   | { t: 'stopShare' }
   | { t: 'end' }
@@ -18,6 +19,7 @@ type ScriptEvent =
 // applies the events the test scripts, the way the Zoom server would push them.
 const meetingScript = (leaveWorks: boolean): string => `<script>
 (() => {
+  window.__fixture?.setParticipants?.([{ name: 'Dr Example', role: '(Host)' }])
   const video = document.createElement('video')
   Object.assign(video, { src: '/__e2e/stage.webm', autoplay: true, loop: true, playsInline: true })
   Object.assign(video.style, { position: 'fixed', left: '1420px', top: '700px', width: '170px', height: '96px', zIndex: 1 })
@@ -38,6 +40,7 @@ const meetingScript = (leaveWorks: boolean): string => `<script>
   }
   const apply = (e) => {
     if (e.t === 'chat') window.__fixture.addMessage({ sender: e.sender, time: e.time, text: e.text })
+    else if (e.t === 'participant') window.__fixture.addParticipant({ name: e.name, role: e.role ?? '' })
     else if (e.t === 'share') share(e.slide)
     else if (e.t === 'stopShare') window.__fixture.stopShare()
     else if (e.t === 'end') window.__fixture.endMeeting()
@@ -90,6 +93,7 @@ export interface FakeZoom {
   admit(): void
   deny(): void
   chat(sender: string, text: string): void
+  participant(name: string, role?: string): void
   share(slide: Buffer): void
   stopShare(): void
   end(): void
@@ -163,6 +167,9 @@ export async function startFakeZoom(pki: Pki, clip: Buffer, opts: FakeZoomOption
     joinPageLoads: () => joinLoads,
     admit: () => void (lobby = 'admitted'),
     deny: () => void (lobby = 'denied'),
+    participant(name, role = '') {
+      push({ t: 'participant', name, role })
+    },
     chat(sender, text) {
       chats += 1
       push({ t: 'chat', sender, text, time: `8:${String(40 + chats).padStart(2, '0')} PM` })

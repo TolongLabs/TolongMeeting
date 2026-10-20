@@ -74,7 +74,7 @@ test('Meet: a student who takes the host name is not the host', async () => {
   await spoofOn(meetMeeting())
 })
 
-// Zoom has no roster read: the role is the "(Host)" label Zoom puts after the name in the chat.
+// Zoom reads the roster when a link appears: a sender is host or co-host only if verified by the roster.
 async function zoomSpoof(spoofer: string, spooferRole: string): Promise<void> {
   const { world } = ctx
   test.setTimeout(5 * MINUTE)
@@ -84,6 +84,7 @@ async function zoomSpoof(spoofer: string, spooferRole: string): Promise<void> {
   world.zoom.chat(HOST, `Attendance: ${googleUrl('attendance')}`)
   await until('the genuine form submitted', 90_000, () => r.posts.length === 1, alive)
   await until('its receipt', 30_000, () => world.ntfy.titled('Attendance submitted').length === 1, alive)
+  world.zoom.participant(spoofer)
   world.zoom.chat(spoofer, `Please also fill ${microsoftUrl('attendance')}`)
   await until('the second link settled', 60_000, () => formSettled(r, 'microsoft'), alive)
   await pause(15_000)
@@ -97,8 +98,7 @@ test('Zoom: a student with the lecturer name but no host label is a participant'
   await zoomSpoof('Dr Example', 'participant')
 })
 
-// The student's display name is the lecturer's, label and all: the chat cannot tell them apart. Fails today: the
-// spoofer's link is trusted as the host's and submitted (.superpowers/sdd/e2e-findings-2.md, F1).
-test.fixme('Zoom: a student who takes the exact host display name is not the host', async () => {
+// The student's display name is the lecturer's, label and all: duplicate name makes the role unknown.
+test('Zoom: a student who takes the exact host display name is not the host', async () => {
   await zoomSpoof(HOST, 'unknown')
 })

@@ -38,6 +38,37 @@
       #chat-panel[hidden] {
         display: none;
       }
+      #participants-panel {
+        position: fixed;
+        top: 60px;
+        right: 0;
+        width: 320px;
+        background: #fff;
+        border: 1px solid #000;
+        z-index: 5;
+      }
+      #participants-panel[hidden] {
+        display: none;
+      }
+      .participants-ul {
+        list-style: none;
+        margin: 0;
+        padding: 8px;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      .participants-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+      }
+      .participants-item__name {
+        font-weight: bold;
+      }
+      .participants-item__role {
+        color: #666;
+        margin-left: 4px;
+      }
       .chat-container__chat-list {
         height: 300px;
         overflow-y: auto;
@@ -105,6 +136,9 @@
       <div class="chat-container__chat-list"><div id="chat-rows"></div></div>
       <textarea data-click="chat input" aria-label="Type message here ..."></textarea>
     </section>
+    <section id="participants-panel" hidden>
+      <ul class="participants-ul" aria-label="Participants"></ul>
+    </section>
     <div id="audio-prompt" class="notice" role="dialog" style="top: 10px">
       <p>Hear the meeting</p>
       <button type="button" data-click="join audio by computer">Join Audio by Computer</button>
@@ -169,6 +203,44 @@
                 text: 'Done, thanks'
               }
             ]
+
+      const participants = params.has('seed')
+        ? Array.from({ length: 7 }, (_, i) => ({ name: `Student ${i % 7}`, role: '' }))
+        : params.has('cold')
+          ? [
+              { name: 'Dr Lecturer', role: '(Host)' },
+              { name: 'Student A', role: '' },
+              { name: 'Student B', role: '' }
+            ]
+          : [
+              { name: 'Dr Lecturer', role: '(Host)' },
+              { name: 'Student A', role: '' },
+              { name: 'Student C', role: '' }
+            ]
+
+      const participantsPanel = document.getElementById('participants-panel')
+      const participantsUl = document.querySelector('.participants-ul')
+
+      function renderParticipants() {
+        if (!participantsUl) return
+        participantsUl.innerHTML = ''
+        for (const p of participants) {
+          const li = document.createElement('li')
+          li.className = 'participants-item'
+          const nameSpan = document.createElement('span')
+          nameSpan.className = 'participants-item__name'
+          nameSpan.textContent = p.name
+          li.append(nameSpan)
+          if (p.role) {
+            const roleSpan = document.createElement('span')
+            roleSpan.className = 'participants-item__role'
+            roleSpan.textContent = p.role
+            li.append(roleSpan)
+          }
+          participantsUl.append(li)
+        }
+      }
+      renderParticipants()
 
       function element(tag, className, text) {
         const el = document.createElement(tag)
@@ -324,6 +396,15 @@
         showNotice() {
           notice('Notice', [['Got it'], ['OK'], ['OK', true]])
           notice('Permission', [['Allow'], ['Start Video'], ['Join Breakout Room']])
+        },
+        addParticipant(p) {
+          participants.push(p)
+          renderParticipants()
+        },
+        setParticipants(list) {
+          participants.length = 0
+          participants.push(...list)
+          renderParticipants()
         }
       })
 
@@ -334,9 +415,14 @@
         const name = el.dataset.click
         window.__fixture.click(name === 'join' ? 'breakout join' : name)
         if (name === 'leave') document.getElementById('leave-confirm').hidden = false
+        if (name === 'participants') {
+          if (participantsPanel) {
+            participantsPanel.hidden = false
+            renderParticipants()
+          }
+        }
         if (name === 'chat') {
           panel.hidden = false
-          openChat.setAttribute('aria-label', 'close the chat panel')
           render()
         }
         if (name === 'join audio by computer') document.getElementById('audio-prompt').remove()
