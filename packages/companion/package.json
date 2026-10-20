@@ -1,0 +1,42 @@
+{
+  "name": "@tm/companion",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "start": "bun run build && electron .",
+    "pack": "bun run build && electron-builder --win --dir",
+    "dist": "bun run build && electron-builder --win",
+    "electron:install": "node node_modules/electron/install.js",
+    "typecheck": "tsc"
+  },
+  "build": {
+    "appId": "com.tolonglabs.tolongmeeting",
+    "productName": "TolongMeeting",
+    "files": [
+      "dist/**",
+      "assets/**",
+      "src/renderer/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
+  },
+  "dependencies": {
+    "@tm/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.17.0"
+  }
+}

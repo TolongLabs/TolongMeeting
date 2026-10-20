@@ -1168,7 +1168,7 @@ export interface DesktopNotifier {
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('defaults: Documents\\Meeting summaries and whisper model medium', () => {
@@ -1206,12 +1206,12 @@ test('loadSettings rejects a malformed file and keeps defaults for missing keys'
 
 `fakeSafe(available)` reverses and base64-encodes strings; `tmpFile(content?)` writes a file in a temporary directory.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/shell.test.ts`
 Expected: FAIL with "Cannot find module './settings'"
 
-- [ ] **Step 3: Implement the modules and the Electron shell**
+- [x] **Step 3: Implement the modules and the Electron shell**
 
 - `package.json`: `"main": "dist/main/index.js"`; scripts `build` (`bun build src/main/index.ts src/preload.ts --target=node --format=cjs --external electron --outdir dist`), `start` (`bun run build && electron .`), `pack` (`bun run build && electron-builder --win --dir`), `dist` (`bun run build && electron-builder --win`); `build` key: `appId` `com.tolonglabs.tolongmeeting`, `productName` `TolongMeeting`, `files` `["dist/**", "assets/**", "src/renderer/**"]`, `directories.output` `release`, `win.target` `nsis`, `win.icon` `assets/icon.ico`, `nsis.oneClick` `true`, `nsis.perMachine` `false`. The build is unsigned (internal tool); the acceptance task covers the SmartScreen prompt.
 - `main/index.ts`, in this order: `app.requestSingleInstanceLock()` (quit if taken); `app.setAppUserModelId(APP_USER_MODEL_ID)`; `app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] })`; build `ports.ts` adapters (`safeStorage`, `powerSaveBlocker`, `Notification` with `actions: [{ type: 'button', text }]` and `timeoutType: 'never'` when sticky, `shell.openPath`, `shell.openExternal`); create the tray; open no window when started with `--hidden`. Later tasks start their loops from here.
@@ -1224,7 +1224,9 @@ Expected: FAIL with "Cannot find module './settings'"
 Run: `bun test packages/companion/src/shell.test.ts && bun run typecheck && cd packages/companion && bun run pack`
 Expected: PASS (5 tests); no type errors; `packages/companion/release/win-unpacked/TolongMeeting.exe` exists
 
-- [ ] **Step 5: Commit**
+> Built without the Figma-gated UI (`tray.ts`, `preload.ts`, `renderer/settings.html`, `assets/`: see the `TODO(figma-gate)` in `main/index.ts`). Deviations: tests are in `packages/companion/test/` (`shell`, `ports`, and the opt-in `smoke` run with `TM_ELECTRON_SMOKE=1 xvfb-run -a`); the bundle is `dist/main/index.cjs` built by `scripts/build.ts`; no root `trustedDependencies` (run `bun run electron:install` where the binary is needed); `pack`/`dist` need a Windows runner and were not run here.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json bun.lock packages/companion

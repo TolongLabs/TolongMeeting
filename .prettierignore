@@ -10,3 +10,4 @@ spikes/03-qr/.venv/
 graphify-out/
 packages/web/db/migrations/meta/
 packages/exports/test/fixtures/
+packages/companion/release/
