@@ -81,6 +81,8 @@ test('the allow-list names exactly those files', () => {
   const allowed = ['lib/scope.ts', 'lib/auth.ts', 'lib/control.ts', 'lib/companion/scope.ts', 'lib/companion/deps.ts']
   const refused = [
     'lib/companion/tokens.ts',
+    'lib/companion/guard.ts',
+    'proxy.ts',
     'lib/companion/scope.ts.bak',
     'lib/companion/x/deps.ts',
     'app/lib/scope.ts'
@@ -101,6 +103,9 @@ async function sourceFiles(): Promise<string[]> {
 test('only lib/{scope,auth,control}.ts and lib/companion/{scope,deps}.ts open the database in packages/web', async () => {
   const files = await sourceFiles()
   expect(files).toContain('lib/scope.ts')
+  // The request gate runs on every request and must not be able to reach the database.
+  expect(files).toContain('proxy.ts')
+  expect(files).toContain('lib/companion/guard.ts')
 
   const offenders: string[] = []
   for (const file of files) {

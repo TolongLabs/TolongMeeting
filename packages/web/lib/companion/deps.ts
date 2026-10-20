@@ -25,6 +25,11 @@ const globalForLimiters = globalThis as typeof globalThis & {
   __tmPairLimiters?: Pick<PairDeps, 'ipLimiter' | 'globalLimiter'>
 }
 
+/** What the device routes run on (`withDevice`): `DATABASE_URL`. */
+export function companionDeps(): { db: Db } {
+  return { db: getDb() }
+}
+
 /** What `POST /api/companion/pair` runs on: `DATABASE_URL`, `TM_MASTER_KEY_FILE` and `NTFY_URL`. Throws when one is unset. */
 export function pairDeps(): PairDeps {
   const ntfyUrl = process.env.NTFY_URL

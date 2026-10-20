@@ -464,9 +464,9 @@ git commit -m "feat(web): pair PCs with device tokens"
 
 **Files:**
 
-- Create: `packages/web/lib/companion/scope.ts`
-- Modify: `packages/web/middleware.ts` (plan 01c), so it runs the guard on every request, including plan 01c's `forward_auth` endpoint for remote views
-- Test: `packages/web/lib/companion/scope.test.ts`
+- Create: `packages/web/lib/companion/guard.ts` (pure path and header checks), `packages/web/lib/companion/scope.ts` (`withDevice`, `DeviceScope`; re-exports the guard), `packages/web/proxy.ts` (Next 16 name for middleware; runs the guard on every request, including the `forward_auth` endpoint for remote views)
+- Modify: `packages/web/lib/companion/deps.ts` (`companionDeps`), `packages/web/test/no-direct-db.test.ts`
+- Test: `packages/web/test/companion-scope.test.ts`
 
 **Interfaces:**
 
@@ -477,11 +477,11 @@ git commit -m "feat(web): pair PCs with device tokens"
 export function isCompanionPath(pathname: string): boolean // after URL normalisation, starts with '/api/companion/'
 export function misplacedDeviceToken(pathname: string, authorization: string | null): boolean
 export function withDevice<C>(
-  handler: (req: Request, device: DeviceAuth, ctx: C) => Promise<Response>
+  handler: (req: Request, scope: DeviceScope, ctx: C) => Promise<Response>
 ): (req: Request, ctx: C) => Promise<Response>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test.each([
@@ -532,24 +532,24 @@ test('withDevice passes the authenticated device to the handler', async () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/web/lib/companion/scope.test.ts`
+Run: `bun test packages/web/test/companion-scope.test.ts`
 Expected: FAIL with "Cannot find module './scope'"
 
-- [ ] **Step 3: Implement `scope.ts` and call `misplacedDeviceToken` first in the middleware**
+- [x] **Step 3: Implement `scope.ts` and call `misplacedDeviceToken` first in the middleware**
 
 The middleware answers `403` with `{ "error": "device_token_not_allowed" }`. `withDevice` reads only the `Authorization` header and answers `401` with `{ "error": "device_revoked_or_unknown" }` when `authenticateDevice` returns `null`. Every route under `packages/web/app/api/companion/` except `pair` is wrapped in `withDevice`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/web/lib/companion/scope.test.ts`
+Run: `bun test packages/web/test/companion-scope.test.ts`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/web/lib/companion/scope.ts packages/web/lib/companion/scope.test.ts packages/web/middleware.ts
+git add packages/web/lib/companion packages/web/proxy.ts packages/web/test/companion-scope.test.ts
 git commit -m "feat(web): scope device tokens to companion API"
 ```
 
