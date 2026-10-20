@@ -54,10 +54,11 @@ jobs:
         run: |
           $installer = Get-ChildItem packages/companion/release -Filter '*Setup*.exe' | Select-Object -First 1
           Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
-          Get-ChildItem "$env:LOCALAPPDATA\Programs\TolongMeeting"
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'TolongMeeting.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'the installer did not install TolongMeeting.exe' }
+          Write-Output "installed at $($exe.FullName)"
+          "TM_ELECTRON_PACKAGED=$($exe.FullName)" >> $env:GITHUB_ENV
       - name: Boot the installed app
-        run: |
-          $env:TM_ELECTRON_PACKAGED = "$env:LOCALAPPDATA\Programs\TolongMeeting\TolongMeeting.exe"
-          bun test packages/companion/test/smoke.test.ts --timeout 120000 -t "packaged app"
+        run: bun test packages/companion/test/smoke.test.ts --timeout 120000 -t "packaged app"
         env:
           TM_ELECTRON_SMOKE: '1'
