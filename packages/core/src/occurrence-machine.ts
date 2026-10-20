@@ -32,6 +32,7 @@ export type OccurrenceTrigger =
   | 'left'
   | 'uploaded'
   | 'wait_for_pc'
+  | 'pc_claimed'
   | 'transcript_ready'
   | 'summary_done'
   | 'crash'
@@ -78,7 +79,7 @@ const EXPLICIT: Record<OccurrenceState, Edges> = {
   leaving: { left: 'uploading' },
   uploading: { uploaded: 'transcribing' },
   transcribing: { transcript_ready: 'post_processing', wait_for_pc: 'waiting_for_pc' },
-  waiting_for_pc: { transcript_ready: 'post_processing' },
+  waiting_for_pc: { pc_claimed: 'transcribing', transcript_ready: 'post_processing' },
   post_processing: { summary_done: 'completed' },
   completed: {},
   skipped_capacity: {},

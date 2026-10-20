@@ -17,7 +17,7 @@ const EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3])
  * recording directory is not trusted, and a text file named `.mkv` must not be read as an HLS or concat playlist
  * (which could name any file or URL).
  */
-const MATROSKA_INPUT = ['-f', 'matroska', '-protocol_whitelist', 'file']
+export const MATROSKA_INPUT = ['-f', 'matroska', '-protocol_whitelist', 'file']
 const MP4_INPUT = ['-f', 'mp4', '-protocol_whitelist', 'file']
 
 /** The ffmpeg arguments that copy the Matroska file `input` into the fast-start MP4 `output` for the browser. */
@@ -25,7 +25,7 @@ export function remuxArgs(input: string, output: string): string[] {
   return ['-y', ...MATROSKA_INPUT, '-i', input, '-c', 'copy', '-movflags', '+faststart', output]
 }
 
-async function tool(cmd: 'ffmpeg' | 'ffprobe', args: string[], opts: { cwd?: string; signal?: AbortSignal }) {
+export async function tool(cmd: 'ffmpeg' | 'ffprobe', args: string[], opts: { cwd?: string; signal?: AbortSignal }) {
   const base = cmd === 'ffmpeg' ? ['-hide_banner', '-loglevel', 'error', '-nostdin'] : []
   try {
     const { stdout } = await run(cmd, [...base, ...args], { maxBuffer: 10_000_000, ...opts })
@@ -66,7 +66,7 @@ async function startsWithEbml(path: string): Promise<boolean> {
   }
 }
 
-async function durationOf(file: string, format: string[], signal?: AbortSignal): Promise<number> {
+export async function durationOf(file: string, format: string[], signal?: AbortSignal): Promise<number> {
   const out = (
     await tool('ffprobe', [...format, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], {
       signal
@@ -144,14 +144,37 @@ async function recordingDirOf(dir: string): Promise<{ root: string; recording: s
 /** A work directory left behind by a remux that died is deleted after this long. */
 const STALE_WORK_MS = 10 * 60_000
 
-/** Deletes `.remux-*` and `.join-*` directories (real directories only, never links) older than ten minutes. */
+/** Deletes `.remux-*`, `.join-*` and `.flac-*` directories (real directories only, never links) older than ten minutes. */
 async function removeStaleWork(root: string): Promise<void> {
   for (const name of await readdir(root)) {
-    if (!name.startsWith('.remux-') && !name.startsWith('.join-')) continue
+    if (!name.startsWith('.remux-') && !name.startsWith('.join-') && !name.startsWith('.flac-')) continue
     const info = await infoOf(join(root, name))
     if (info === null || !info.isDirectory() || Date.now() - info.mtimeMs < STALE_WORK_MS) continue
     await rm(join(root, name), { recursive: true, force: true })
   }
+}
+
+/**
+ * The path of a plain `<dir>/recording/meeting.mkv` that can be read, for a caller that needs the whole recording while
+ * the meeting is still being processed (the native transcription cuts its audio from it). The same checks as the
+ * remux apply: the recording directory must be a real directory inside `dir`, the file must be a regular file that
+ * starts with the Matroska header, and a recording the worker left as segments is joined first, by the same safe join.
+ * Null when there is no recording. The caller must have seen `container_name` cleared, as for `remuxRecording`.
+ */
+export async function joinedRecording(
+  dir: string,
+  signal?: AbortSignal
+): Promise<{ root: string; recording: string; path: string } | null> {
+  const where = await recordingDirOf(dir)
+  if (where === null) return null
+  const { root, recording } = where
+  await removeStaleWork(root)
+  const path = join(recording, 'meeting.mkv')
+  if ((await regularFile(path)) === null && !(await joinSegments(root, recording, signal))) return null
+  if ((await regularFile(path)) === null || !(await startsWithEbml(path))) {
+    throw new Error(`${path} is not a Matroska file`)
+  }
+  return { root, recording, path }
 }
 
 /**

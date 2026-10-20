@@ -10,6 +10,7 @@ import type { Notifier } from '@tm/web/db/notifier'
 import { QUEUES, queueDbOf, type Queue } from '@tm/web/db/queues'
 import { applyTrigger, hashEventData } from '@tm/web/db/transitions'
 import { describeError } from './errors'
+import { startNativeTranscription } from './native/start'
 import type { PipelineResult } from './pipeline'
 
 export interface PipelineDeps {
@@ -45,8 +46,13 @@ type OccurrenceRow = typeof occurrences.$inferSelect
  *   has a `container_name` (cleared by the monitor once Docker reports the container gone) throws before it changes
  *   anything, and pg-boss retries it after `retryDelay`. A job whose retries run out goes to the dead-letter queue, and
  *   `handleDeadPipelineJob` fails its occurrence.
- * - `transcribing`: a `native` occurrence waits for the member's PC (`waiting_for_pc`); a `live` one moves on to
- *   `post_processing`. A job that dies in `post_processing` is run again by pg-boss and starts from there.
+ * - `transcribing`: a `live` occurrence moves on to `post_processing`. A `native` one whose transcript is not uploaded
+ *   yet gets its FLAC cut and a companion job for the member's PC (`startNativeTranscription`, once: a second job
+ *   finds the first one's job) and the outcome is `waiting_for_pc`, although the occurrence stays in `transcribing`
+ *   until `native-job-check` finds no PC has claimed the job in time (it then applies `wait_for_pc`, and `pc_claimed`
+ *   takes it back). The upload of the transcript applies `transcript_ready` and queues this job again, which then
+ *   starts from `post_processing`; a native occurrence found in `transcribing` with its transcript already there moves
+ *   on at once. A job that dies in `post_processing` is run again by pg-boss and starts from there.
  * - The recording is remuxed first, then the pipeline runs with the member's AI config built here (`loadJobConfig`),
  *   then the artefacts are registered; `summary_done` makes it `completed`. A remux that fails does not fail the
  *   meeting: the error is logged and recorded as an `error` event `remux_failed`, the summary is made anyway, and the
@@ -151,12 +157,16 @@ async function handleLocked(deps: PipelineDeps, id: string, signal?: AbortSignal
   const meetingUrl = `${new URL(env.publicUrl).origin}/meetings/${id}`
 
   if (occ.state === 'transcribing') {
-    if (occ.transcription === 'native') {
-      await applyTrigger(db, id, 'wait_for_pc')
-      await deps.notifier.notify(occ.memberId, pings.waitingForPc({ entry: occ.entryName, meetingUrl }))
-      return 'waiting_for_pc'
-    }
     await assertWorkerGone(db, id)
+    if (occ.transcription === 'native') {
+      if (!occ.entrySnapshot) throw new Error(`Occurrence ${id} has no entry snapshot`)
+      const started = await startNativeTranscription(
+        deps,
+        { occurrenceId: id, memberId: occ.memberId, dataDir: dataDirOf(env, id), entry: occ.entrySnapshot },
+        signal
+      )
+      if (started !== null) return 'waiting_for_pc'
+    }
     await applyTrigger(db, id, 'transcript_ready')
   } else if (occ.state === 'post_processing' && RUNNABLE_REASONS.has(occ.stateReason)) {
     await assertWorkerGone(db, id)

@@ -674,7 +674,7 @@ git commit -m "feat(web): add companion event stream and jobs"
 
 **Files:**
 
-- Create: `packages/pipeline/src/native/flac.ts`, `packages/pipeline/src/native/start.ts`, `packages/pipeline/src/native/pc-check.ts`
+- Create: `packages/pipeline/src/native/flac.ts`, `packages/pipeline/src/native/start.ts`; the check is `checkNativeJob` in `packages/scheduler/src/native-check.ts` (it replaces the P0-Q stub; `pc-check.ts` is not made). Built as written in preflight N1/N2: `extractFlac` reads the safely joined recording (`joinedRecording` in `remux.ts`) and has no `RunLike` argument (tests run real ffmpeg); `startNativeTranscription(deps, input, signal)` takes `{ db, queue }` and the occurrence's fields, and finds an active job instead of making a second; the claim route hook belongs to Task 5. Tests are in `packages/<pkg>/test/`
 - Modify: `packages/core/src/occurrence-machine.ts` (one trigger); `packages/notify/src/messages.ts` (the waiting ping); plan 01c's pipeline job consumer in `packages/pipeline/src/` (the pg-boss handler that calls `runPipeline`), where `startNativeTranscription` replaces 01c's immediate `wait_for_pc` for native occurrences, and which registers the `native-job-check` handler; `packages/web/app/api/companion/jobs/[id]/claim/route.ts` (move a `waiting_for_pc` occurrence back to `transcribing`)
 - Test: `packages/pipeline/src/native/flac.test.ts`, `packages/pipeline/src/native/pc-check.test.ts`, `packages/core/src/occurrence-machine.test.ts`
 
@@ -710,7 +710,7 @@ export function checkNativeJob(
 ): Promise<'done' | 'failed' | 'claimed' | 'waiting_for_pc'>
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // occurrence-machine.test.ts (added cases)
@@ -821,21 +821,21 @@ test('a done job stops the checks', async () => {
 
 `deps` records `pings`, `transitions` and `scheduled`; its `transition` also updates the fixture occurrence's state; `cfgA` is a `JobConfig` for `f.occA` with entry "Data Mining" starting `2026-10-21T14:00:00+08:00`, time zone `Asia/Kuala_Lumpur`, transcription `native`; `fakeFfmpeg` answers duration `5400.5`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/core/src/occurrence-machine.test.ts packages/pipeline/src/native`
 Expected: FAIL with "Cannot find module './flac'" and an `IllegalTransition` for `pc_claimed`
 
-- [ ] **Step 3: Implement the triggers, `flac.ts`, `start.ts`, `pc-check.ts`, the consumer branch and the claim hook**
+- [x] **Step 3: Implement the triggers, `flac.ts`, `start.ts`, `pc-check.ts`, the consumer branch and the claim hook**
 
 `checkNativeJob`: return `done` or `failed` for finished jobs without rescheduling; otherwise call `releaseExpiredLeases`; if the job is `pending` and the occurrence is `transcribing`, apply `wait_for_pc`, and send the ping above only when `markPcPingSent` returns `true`; reschedule itself after `JOB_LEASE_MS / 1000` seconds while the job is `pending` or `claimed`. The consumer branch runs only when `cfg.entry.transcription === 'native'` and the occurrence is `transcribing`: when `startNativeTranscription` returns a job id the consumer stops there, and when it returns `null` (the native transcript is already uploaded) the consumer goes on to `runPipeline` as for live mode. The claim route applies `pc_claimed` after a successful claim when the occurrence is `waiting_for_pc`. ffmpeg and ffprobe are already in the image `tm-pipeline` runs in (plan 01a).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/core/src/occurrence-machine.test.ts packages/pipeline/src/native`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/occurrence-machine.ts packages/core/src/occurrence-machine.test.ts packages/pipeline/src packages/web/app/api/companion/jobs packages/notify/src/messages.ts
@@ -1283,7 +1283,7 @@ export function handleRevoked(d: {
 }): Promise<void>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('requests carry the token in the Authorization header, never in the URL', async () => {
@@ -1373,21 +1373,21 @@ test('handleRevoked clears secrets, stops loops and shows the unpaired notificat
 
 `recorder(seen, respond)` is a fake `fetch` that records each `Request` and answers with `respond()`; `apiWith(fetch)` builds a `CompanionApi` with token `tmd_x`; `pairResponse` is a valid `PairResponse` fixture.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/api.test.ts`
 Expected: FAIL with "Cannot find module './api'"
 
-- [ ] **Step 3: Implement `api.ts`, `pairing.ts`, the pairing view and the wiring**
+- [x] **Step 3: Implement `api.ts`, `pairing.ts`, the pairing view and the wiring**
 
 The pairing view has two fields, "Website address" (prefilled with `Settings.serverUrl`) and "Pairing code", and shows the server's error text on failure. `ntfy.url` and `ntfy.topic` go into `state.json`; the ntfy token goes only into the `SecretStore`. The device name is `os.hostname()`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/api.test.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
@@ -1836,7 +1836,7 @@ export class NativeRunner {
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('buildWhisperArgv keeps paths with spaces as one argument', () => {
@@ -1954,7 +1954,7 @@ test('the companion never changes power settings', async () => {
 
 `runnerWith` builds a `NativeRunner` over `fakeApi` (records `claims`, `uploads`, `uploadAttempts`, `flacPresentAtEachUpload`, `progressCalls`, `failures`; `downloadAudio` writes a 1000-byte `audio.flac`) with `uploadRetryMs: 10`; `okProcess()`, `slowProcess(ms)`, `writesOutputs()`, `failingProcess(code, stderr)` and `spawnError(message)` are `SpawnLike` fakes; `pending(id)` is a pending native `CompanionJob`; `idle(r)` waits until `r.busy` is false. The last test skips its own file, the only one that names the command.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/jobs/native-runner.test.ts`
 Expected: FAIL with "Cannot find module './whisper'"
@@ -1963,12 +1963,12 @@ Expected: FAIL with "Cannot find module './whisper'"
 
 Per job, in order: `claim` (skip on `null`); `keepAwake.acquire(jobId)`; every `progressMs` call `progress`; `downloadAudio` to `<jobsDir>\<jobId>\audio.flac`; run `buildWhisperArgv(settings.whisper.command, { audio, model: settings.whisper.model, outDir: <jobsDir>\<jobId>\out })` in `settings.whisper.cwd` with `whisperTimeoutMs(payload.durationSec)`; expect `out\audio.txt`, `out\audio.srt` and `out\audio.json`; `uploadTranscript`, retrying every `uploadRetryMs` until it succeeds or the job is lost (404); then delete the job folder; finally release the keep-awake and stop progress calls. On a whisper failure, a spawn error (reported as its message, for example `spawn uv ENOENT`), a timeout or missing output, call `fail` with the last 2 KB of stderr (the server uses the first line) and delete the job folder. `buildWhisperArgv` splits the template on whitespace outside double quotes, then replaces `{audio}`, `{model}` and `{outDir}` inside each token. The "Set up native transcription" notification opens the Settings window on click and is shown once per companion start.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/jobs/native-runner.test.ts`
 Expected: PASS (11 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src

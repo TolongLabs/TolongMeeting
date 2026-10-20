@@ -263,9 +263,6 @@ test('every queue sets expiry, retention, deletion and retry; a queue that stran
 
 test('plan 03 and 08 stubs have no schedule and fail loudly, naming their task, if a job reaches them', async () => {
   const stubs = {
-    nativeJobCheck: 'plan 03 T6',
-    nativeJobDead: 'plan 03 T6',
-    profileDelete: 'plan 08 T1',
     localClaimCheck: 'plan 08 T2',
     localStartCheck: 'plan 08 T2',
     localStartDead: 'plan 08 T2',

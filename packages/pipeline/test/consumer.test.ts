@@ -1,10 +1,11 @@
 import { tmpdir } from 'node:os'
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { AiKeyError } from '@tm/ai'
 import type { JobConfig, OccurrenceState } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { artefacts, events, occurrences, schema } from '@tm/web/db'
+import { artefacts, companionJobs, events, occurrences, schema } from '@tm/web/db'
 import { buildEntrySnapshot } from '@tm/web/db/job-config'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { sealColumn } from '@tm/web/db/secrets'
@@ -14,6 +15,7 @@ import { PgBoss } from 'pg-boss'
 import { handleDeadPipelineJob, handlePipelineJob, type PipelineDeps } from '../src/consumer'
 import { PIPELINE_QUEUE, workPipeline } from '../src/consumer-main'
 import type { PipelineResult } from '../src/pipeline'
+import { toneMkv } from './native-fixtures'
 
 const MASTER = Buffer.alloc(32, 5)
 const START = new Date('2026-10-21T06:00:00Z')
@@ -170,13 +172,71 @@ describe('handlePipelineJob', () => {
     }
   )
 
-  test('native mode waits for the PC with one ping', async () => {
+  /** A real recording in the fixture's occurrence directory, as the worker leaves it. */
+  async function recorded(f: Awaited<ReturnType<typeof pipelineFixture>>): Promise<string> {
+    const dir = `${f.env.dataRoot}/occurrences/${f.id}`
+    await mkdir(`${dir}/recording`, { recursive: true })
+    toneMkv(`${dir}/recording/meeting.mkv`, 2)
+    return dir
+  }
+
+  test('native mode cuts the FLAC, makes one job for the PC and waits without a ping', async () => {
     const f = await pipelineFixture({ state: 'transcribing', transcription: 'native' })
+    const dir = await recorded(f)
     expect(await handlePipelineJob(f.deps, f.id)).toBe('waiting_for_pc')
-    expect(await handlePipelineJob(f.deps, f.id)).toBe('stale')
-    expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Waiting for your PC: Data Mining'])
-    expect((await f.occurrence()).state).toBe('waiting_for_pc')
+    // The occurrence stays in `transcribing` until native-job-check finds no PC took the job within the grace.
+    expect((await f.occurrence()).state).toBe('transcribing')
+    const jobs = await f.db.select().from(companionJobs).where(eq(companionJobs.occurrenceId, f.id))
+    expect(jobs).toMatchObject([{ kind: 'native_transcription', state: 'pending' }])
+    expect(f.queue.sent.map((s) => [s.name, s.data])).toEqual([[QUEUES.nativeJobCheck, { jobId: jobs[0]!.id }]])
+    expect(f.notifier.sent).toEqual([])
+    expect(existsSync(`${dir}/audio.flac`)).toBe(true)
+    // The later remux still finds the recording.
+    expect(existsSync(`${dir}/recording/meeting.mkv`)).toBe(true)
     expect(f.runs).toBe(0)
+    expect(f.remuxed).toEqual([])
+    // A second pipeline job for the same occurrence finds the job and makes no other.
+    expect(await handlePipelineJob(f.deps, f.id)).toBe('waiting_for_pc')
+    expect(await f.db.select().from(companionJobs).where(eq(companionJobs.occurrenceId, f.id))).toHaveLength(1)
+    expect(f.queue.sent.filter((s) => s.name === QUEUES.nativeJobCheck)).toHaveLength(1)
+  })
+
+  test('native mode whose transcript is already uploaded runs the pipeline as live mode does', async () => {
+    const f = await pipelineFixture({ state: 'transcribing', transcription: 'native' })
+    const dir = await recorded(f)
+    await mkdir(`${dir}/transcript/native`, { recursive: true })
+    await writeFile(`${dir}/transcript/native/audio.json`, '{"segments":[]}')
+    expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+    expect(f.runs).toBe(1)
+    expect(await f.db.select().from(companionJobs)).toEqual([])
+    expect(existsSync(`${dir}/audio.flac`)).toBe(false)
+  })
+
+  test('native mode continues from post_processing after the PC uploaded the transcript', async () => {
+    const f = await pipelineFixture({ state: 'post_processing', transcription: 'native' })
+    await recorded(f)
+    expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+    expect(f.order).toEqual(['remux', 'run'])
+  })
+
+  test('native mode does not read the recording while the worker container is not gone', async () => {
+    const f = await pipelineFixture({ state: 'transcribing', transcription: 'native' })
+    const dir = await recorded(f)
+    await f.db.update(occurrences).set({ containerName: 'tm-worker-x-a1' }).where(eq(occurrences.id, f.id))
+    await expect(handlePipelineJob(f.deps, f.id)).rejects.toThrow('not gone yet')
+    expect(existsSync(`${dir}/audio.flac`)).toBe(false)
+    expect(await f.db.select().from(companionJobs)).toEqual([])
+    expect(f.queue.sent).toEqual([])
+    await f.db.update(occurrences).set({ containerName: null }).where(eq(occurrences.id, f.id))
+    expect(await handlePipelineJob(f.deps, f.id)).toBe('waiting_for_pc')
+  })
+
+  test('native mode with no recording throws for the retry and creates no job', async () => {
+    const f = await pipelineFixture({ state: 'transcribing', transcription: 'native' })
+    await expect(handlePipelineJob(f.deps, f.id)).rejects.toThrow()
+    expect((await f.occurrence()).state).toBe('transcribing')
+    expect(await f.db.select().from(companionJobs)).toEqual([])
+    expect(f.notifier.sent).toEqual([])
   })
 
   test('a rejected key keeps everything and a re-run completes', async () => {

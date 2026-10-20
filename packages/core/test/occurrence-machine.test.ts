@@ -44,6 +44,14 @@ test('side exits', () => {
   expect(nextOccurrenceState('completed', 'delete')).toBe('deleted')
 })
 
+test('a PC that claims the native job takes the occurrence back to transcribing', () => {
+  expect(nextOccurrenceState('waiting_for_pc', 'pc_claimed')).toBe('transcribing')
+  expect(nextOccurrenceState('waiting_for_pc', 'transcript_ready')).toBe('post_processing')
+  expect(triggerFor('waiting_for_pc', 'transcribing')).toBe('pc_claimed')
+  expect(() => nextOccurrenceState('transcribing', 'pc_claimed')).toThrow(IllegalTransition)
+  expect(() => nextOccurrenceState('in_meeting', 'pc_claimed')).toThrow(IllegalTransition)
+})
+
 test('illegal moves throw', () => {
   expect(() => nextOccurrenceState('scheduled', 'admitted')).toThrow(IllegalTransition)
   expect(() => nextOccurrenceState('in_meeting', 'delete')).toThrow(IllegalTransition)
