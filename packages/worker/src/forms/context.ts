@@ -34,9 +34,10 @@ async function waitForResume(
 // The parts of a FormContext that do not depend on one form. A failed ping is reported as an `error` event, never thrown:
 // the form's record already holds the outcome. `send` is how a ping goes out (default: ntfy from the job's config).
 // `pause` is the desk pause of a run with a control channel: desk work waits for it, and so does the sign-in wait.
+// `desk` can be a function: the desk page is replaced when the member closes it, and each form then reads the current one.
 export function makeFormContextBase(
   cfg: JobConfig,
-  desk: Page,
+  desk: Page | (() => Page),
   emitEvent: FormContextBase['emitEvent'],
   links: FormLinks = { meetingPage: null, signIn: null },
   send: (p: Ping) => Promise<void> = (p) => sendPing(cfg.ntfy, p),
@@ -44,7 +45,9 @@ export function makeFormContextBase(
 ): FormContextBase {
   return {
     cfg,
-    desk,
+    get desk() {
+      return typeof desk === 'function' ? desk() : desk
+    },
     links,
     emitEvent,
     async ping(p) {

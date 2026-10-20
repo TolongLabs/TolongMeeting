@@ -8,7 +8,7 @@ import {
   type SigninJob
 } from '@tm/core'
 import { launchBrowser } from '../chrome/launch'
-import { openSigninTabs } from '../control/desk-tabs'
+import { openSigninTabs, restoreDeskAnchor } from '../control/desk-tabs'
 import { realClock } from '../control/desk-pause'
 import { idleMs, startVnc } from '../control/vnc'
 import { startScreen } from '../display/screen'
@@ -81,7 +81,8 @@ export function signinDeps(job: SigninJob, signal?: AbortSignal): SigninDeps {
           )
         },
         checkAccounts: async (): Promise<AccountCheckData[]> => {
-          const signedOut = await checkFormProviders(browser.desk, CHECKED_PROVIDERS)
+          // The member may have closed the anchor tab.
+          const signedOut = await checkFormProviders(await restoreDeskAnchor(browser.desk), CHECKED_PROVIDERS)
           return CHECKED_PROVIDERS.map((account) => ({ account, signedIn: !signedOut.includes(account) }))
         },
         close: async () => {

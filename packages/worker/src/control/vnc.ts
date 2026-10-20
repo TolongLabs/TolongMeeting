@@ -28,8 +28,6 @@ const READY_TIMEOUT_MS = 10_000
 const KILL_AFTER_MS = 5_000
 
 export interface VncOptions {
-  /** The member only watches. Sign-ins and desk pauses leave this false: the member types. */
-  viewOnly?: boolean
   vncPort?: number
   wsPort?: number
 }
@@ -39,6 +37,11 @@ export interface VncOptions {
  * asks for the password in `passwordFile` (never in an argument, where `ps` would show it). websockify turns the
  * VNC port into a WebSocket for noVNC; it listens on all interfaces of the container, which has no published ports:
  * only Caddy, on the worker network, reaches it, behind the website's check.
+ *
+ * The view is always interactive (the member types a password and a code); watching-only observers are deferred. Keys
+ * are not filtered here: x11vnc has `-skip_keycodes`, but it only drops server keycodes that a keysym maps to twice
+ * (`-xkb` mode) and cannot be checked without the image, so it is not a way to block Alt or Super. The window manager
+ * has no key binding for them at all (docker/worker/openbox/rc.xml, tested), which is what keeps the member on the desk.
  */
 export function vncArgs(
   display: string,
@@ -59,7 +62,6 @@ export function vncArgs(
       '-localhost',
       '-passwdfile',
       passwordFile,
-      ...(opts.viewOnly ? ['-viewonly'] : []),
       '-forever',
       '-shared',
       '-noxdamage',

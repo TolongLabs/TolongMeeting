@@ -5,7 +5,9 @@ import { SIGNIN_START_URLS } from '../src/control/vnc'
 
 // A desk pause with scripted collaborators and a clock the test moves. `idle` is what xprintidle reports; `now` is
 // the clock; `tick()` runs the 10-second idle check and lets it finish.
-function deskFixture(over: { openTabs?: () => Promise<void>; checkpoint?: () => Promise<void> } = {}) {
+function deskFixture(
+  over: { openTabs?: () => Promise<void>; checkpoint?: () => Promise<void>; anchor?: () => Promise<void> } = {}
+) {
   let tick: (() => void) | null = null
   const f = {
     idle: 0,
@@ -16,6 +18,8 @@ function deskFixture(over: { openTabs?: () => Promise<void>; checkpoint?: () => 
     vncStarted: 0,
     vncStopped: 0,
     tabsClosed: 0,
+    anchors: 0,
+    order: [] as string[],
     checkpoints: 0,
     reported: [] as unknown[],
     async tick() {
@@ -37,7 +41,15 @@ function deskFixture(over: { openTabs?: () => Promise<void>; checkpoint?: () => 
       openTabs: async (urls) => {
         await over.openTabs?.()
         f.openedTabs.push(...urls)
-        return async () => void (f.tabsClosed += 1)
+        return async () => {
+          f.tabsClosed += 1
+          f.order.push('closeTabs')
+        }
+      },
+      anchor: async () => {
+        f.anchors += 1
+        f.order.push('anchor')
+        await over.anchor?.()
       },
       checkpoint: async () => {
         f.checkpoints += 1
@@ -146,14 +158,59 @@ test('a failed checkpoint still ends the pause, then is thrown', async () => {
   expect(f.pause.paused).toBe(true)
 })
 
-test('an idle time that cannot be read takes the desk back and says why', async () => {
+test('one idle time that cannot be read is reported, two in a row take the desk back', async () => {
   const f = deskFixture()
   await f.pause.pause()
   f.idleFails = true
   await f.tick()
+  expect(f.pause.paused).toBe(true)
+  expect(f.reported).toHaveLength(1)
+  // A good reading in between starts the count again.
+  f.idleFails = false
+  await f.tick()
+  f.idleFails = true
+  await f.tick()
+  expect(f.pause.paused).toBe(true)
+  await f.tick()
   expect(f.pause.paused).toBe(false)
   expect(f.events.at(-1)).toEqual({ signin: 'resumed', reason: 'idle' })
-  expect(f.reported).toHaveLength(1)
+  expect(f.reported).toHaveLength(3)
+})
+
+test('the anchor tab is restored before the sign-in tabs close', async () => {
+  const f = deskFixture()
+  await f.pause.pause()
+  await f.pause.resume('command')
+  expect(f.order).toEqual(['anchor', 'closeTabs'])
+})
+
+test('a failed anchor restore still closes the tabs and ends the pause', async () => {
+  const f = deskFixture({
+    anchor: async () => {
+      throw new Error('the desk window is gone')
+    }
+  })
+  await f.pause.pause()
+  await expect(f.pause.resume('command')).rejects.toThrow('the desk window is gone')
+  expect(f.pause.paused).toBe(false)
+  expect(f.tabsClosed).toBe(1)
+})
+
+test('a pause asked for while the last one ends starts a new pause afterwards', async () => {
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  const f = deskFixture({ checkpoint: () => gate })
+  await f.pause.pause()
+  const resuming = f.pause.resume('command')
+  const again = f.pause.pause()
+  await Bun.sleep(1)
+  expect(f.vncStarted).toBe(1) // the second view waits for the first pause to end
+  release()
+  await resuming
+  await again
+  expect(f.pause.paused).toBe(true)
+  expect(f.vncStarted).toBe(2)
+  expect(f.events.map((e) => ('reason' in e ? 'resumed' : e.signin))).toEqual(['paused', 'resumed', 'paused'])
 })
 
 test('closing at teardown stops the view and frees waiters without a checkpoint', async () => {

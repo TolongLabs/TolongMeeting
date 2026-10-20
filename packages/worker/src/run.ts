@@ -499,14 +499,15 @@ class OccurrenceRun {
 
   // The desk pause of a run with a control channel (only the channel can ask for one). The view's password comes from
   // the control token's hash, which the website also holds; it reaches no event, log or ping.
-  private makeDeskPause(screen: Screen, desk: Page, profile: ProfileSetup): DeskPause | null {
+  private makeDeskPause(screen: Screen, profile: ProfileSetup): DeskPause | null {
     const { cfg, deps } = this
     if (cfg.control === null) return null
     const secret = vncSecret(controlTokenHash(cfg.control.token))
     return new DeskPause({
       startVnc: () => deps.startVnc(screen.display, screen.desk, secret),
       idleMs: () => deps.idleMs(screen.display),
-      openTabs: (urls) => deps.openSigninTabs(desk, urls, (e) => void this.report('desk pause', e)),
+      openTabs: (urls) => deps.openSigninTabs(this.deskPage(), urls, (e) => void this.report('desk pause', e)),
+      anchor: async () => void (this.desk = await deps.restoreDeskAnchor(this.deskPage())),
       checkpoint: async () => void (await deps.checkpointProfile(cfg.profileDir, profile.checkpointsDir, profile.key)),
       emit: (data) => void this.ev('state', data),
       report: (e) => this.fault('desk pause', e)
@@ -676,6 +677,12 @@ class OccurrenceRun {
     return failed('internal_error')
   }
 
+  // The desk page now: the anchor tab can be replaced when the member closes it, so nothing keeps the first page.
+  private deskPage(): Page {
+    if (this.desk === null) throw new Error('the desk is not open')
+    return this.desk
+  }
+
   // The stage's screenshot and aria snapshot, for a step that failed. Saving never throws.
   private async saveFailure(step: string): Promise<void> {
     const page = this.stage ?? this.desk
@@ -798,7 +805,7 @@ class OccurrenceRun {
     )
     if (checkpoints === ABORTED) return this.terminated()
     this.checkpoints = checkpoints
-    this.deskPause = this.makeDeskPause(screen, browser.desk, profile)
+    this.deskPause = this.makeDeskPause(screen, profile)
     if (this.deskPause !== null && this.pauseWanted) {
       const pause = this.deskPause
       if ((await this.optional('desk pause', () => pause.pause())) === null) this.pauseWanted = false
@@ -806,9 +813,7 @@ class OccurrenceRun {
 
     await this.setState('verifying_accounts')
     if (this.lecture) {
-      const started = await this.untilAborted(
-        this.checkFormSignIns(browser.desk).then(() => this.startForms(browser.desk))
-      )
+      const started = await this.untilAborted(this.checkFormSignIns().then(() => this.startForms()))
       if (started === ABORTED) return this.terminated()
     }
 
@@ -891,12 +896,19 @@ class OccurrenceRun {
 
   // The form dispatcher is an extra: if it cannot start, the meeting is still recorded, the member is told, and links
   // from trusted senders reach them as "link seen, not checked" (see onFormCandidate).
-  private async startForms(desk: Page): Promise<void> {
+  private async startForms(): Promise<void> {
     const { cfg, deps } = this
     await this.optional('form submission', async () => {
       // The meeting page links (1C) are not known yet.
       const links = { meetingPage: this.links?.meetingPage ?? null, signIn: this.links?.signIn ?? null }
-      const base = makeFormContextBase(cfg, desk, this.ev, links, (p) => deps.sendPing(cfg.ntfy, p), this.deskPause)
+      const base = makeFormContextBase(
+        cfg,
+        () => this.deskPage(),
+        this.ev,
+        links,
+        (p) => deps.sendPing(cfg.ntfy, p),
+        this.deskPause
+      )
       const dispatcher = await deps.startFormDispatcher(base)
       this.forms = dispatcher
       // Started after the stop signal (the setup abandoned it): nothing will use it, and teardown may be past its step.
@@ -911,14 +923,14 @@ class OccurrenceRun {
   // control channel the member can sign in through the remote view: the run waits in `waiting_for_signin` until they
   // press "Done" (then checks again), until T-5, or until the run ends. Whatever is still signed out then is left for
   // the form ping ("link seen, not checked"): a meeting is worth recording without it.
-  private async checkFormSignIns(desk: Page): Promise<void> {
+  private async checkFormSignIns(): Promise<void> {
     const { cfg, deps } = this
     const deadline = this.start - SIGNIN_DEADLINE_BEFORE_START_MS
     try {
       for (;;) {
         // The desk may be in the member's hands.
         await this.deskPause?.whenOpen()
-        const signedOut = await deps.checkFormProviders(desk, cfg.identity.formProviders)
+        const signedOut = await deps.checkFormProviders(this.deskPage(), cfg.identity.formProviders)
         // The website shows when each account was last checked and whether it was signed in.
         for (const provider of cfg.identity.formProviders) {
           await this.ev('state', {
@@ -930,8 +942,10 @@ class OccurrenceRun {
           this.alerter.alert('signin_forms', provider === 'google' ? 'Google' : 'Microsoft')
         }
         if (signedOut.length === 0 || this.deskPause === null || this.now() >= deadline || this.isAborted) break
+        // Registered before the state is sent: a "Done" that comes while the state goes out must still end the wait.
+        const resumed = this.deskPause.nextResume()
         await this.setState('waiting_for_signin')
-        if ((await this.waitForSignin(this.deskPause, deadline)) !== 'resumed') break
+        if ((await this.waitForSignin(resumed, deadline)) !== 'resumed') break
       }
     } catch (error) {
       // Not fatal: a meeting is worth recording without it. The ping says what is unchecked.
@@ -941,8 +955,8 @@ class OccurrenceRun {
   }
 
   // Waits for the member's "Done" (or the end of their idle time), the deadline, or the end of the run.
-  private async waitForSignin(pause: DeskPause, deadline: number): Promise<'resumed' | 'deadline' | 'aborted'> {
-    const resumed = pause.nextResume().then((): 'resumed' => 'resumed')
+  private async waitForSignin(next: Promise<unknown>, deadline: number): Promise<'resumed' | 'deadline' | 'aborted'> {
+    const resumed = next.then((): 'resumed' => 'resumed')
     while (!this.isAborted) {
       const left = deadline - this.now()
       if (left <= 0) return 'deadline'

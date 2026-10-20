@@ -28,11 +28,6 @@ test('the VNC view is clipped to the desk, bound to localhost and asks for a pas
   })
 })
 
-test('a view-only view says so, and an open one never does', () => {
-  expect(vncArgs(':99', desk, '/p', { viewOnly: true }).x11vnc).toContain('-viewonly')
-  expect(vncArgs(':99', desk, '/p').x11vnc).not.toContain('-viewonly')
-})
-
 let bin: string
 let dump: string
 let savedPath: string | undefined

@@ -3,6 +3,8 @@ import type { Stopper } from '../types'
 import { IDLE_CLOSE_MS, SIGNIN_START_URLS } from './vnc'
 
 const IDLE_CHECK_MS = 10_000
+/** This many idle checks in a row that fail take the desk back (one failure may be a blip). */
+const MAX_IDLE_FAILURES = 2
 
 export type ResumeReason = 'command' | 'idle'
 
@@ -11,6 +13,8 @@ export type DeskPauseDeps = {
   idleMs(): Promise<number>
   /** Opens the sign-in pages in new desk tabs; the result closes them. */
   openTabs(urls: string[]): Promise<() => Promise<void>>
+  /** Puts the desk page's anchor tab back when the member closed it. Runs before the pause tabs close. */
+  anchor(): Promise<void>
   checkpoint(): Promise<void>
   emit(data: SigninEventData): void
   /** A failure the pause cannot throw to anyone (the idle check runs on a timer). Never given a secret. */
@@ -41,6 +45,7 @@ export class DeskPause {
   private isPaused = false
   private closed = false
   private pausedAt = 0
+  private idleFailures = 0
   private vnc: Stopper | null = null
   private closeTabs: (() => Promise<void>) | null = null
   private timer: Stopper | null = null
@@ -57,9 +62,13 @@ export class DeskPause {
     return this.isPaused
   }
 
-  /** Hands the desk over: starts the remote view, opens the sign-in pages and tells the server. Idempotent. */
+  /**
+   * Hands the desk over: starts the remote view, opens the sign-in pages and tells the server. Idempotent. A pause asked
+   * for while the last one is still ending waits for that to finish, then starts a new one: it is never dropped.
+   */
   pause(): Promise<void> {
     if (this.closed) return Promise.reject(new Error('the desk pause is closed'))
+    if (this.resuming !== null) return this.resuming.then(undefined, () => undefined).then(() => this.pause())
     this.pausing ??= this.doPause().catch((error: unknown) => {
       this.pausing = null
       // Desk actions that queued behind a pause that never began go on.
@@ -91,6 +100,7 @@ export class DeskPause {
     this.vnc = vnc
     this.isPaused = true
     this.pausedAt = this.clock.now()
+    this.idleFailures = 0
     this.timer = this.clock.every(IDLE_CHECK_MS, () => void this.checkIdle())
     this.deps.emit({ signin: 'paused' })
   }
@@ -102,9 +112,13 @@ export class DeskPause {
     let idle: number
     try {
       idle = Math.min(await this.deps.idleMs(), this.clock.now() - this.pausedAt)
+      this.idleFailures = 0
     } catch (error) {
-      // An idle time that cannot be read cannot show the member is there: the desk is taken back.
+      // An idle time that cannot be read cannot show the member is there, but one miss may be a blip: two in a row take
+      // the desk back.
       this.deps.report?.(error)
+      this.idleFailures += 1
+      if (this.idleFailures < MAX_IDLE_FAILURES) return
       idle = IDLE_CLOSE_MS
     }
     if (idle >= IDLE_CLOSE_MS) {
@@ -113,8 +127,9 @@ export class DeskPause {
   }
 
   /**
-   * Takes the desk back: stops the view, closes the tabs the pause opened, checkpoints the profile, tells the server and
-   * releases the waiters. The waiters are released even when a step fails; the failure is thrown after that.
+   * Takes the desk back: stops the view, restores the anchor tab, closes the tabs the pause opened, checkpoints the
+   * profile, tells the server and releases the waiters. The waiters are released even when a step fails; the failure is
+   * thrown after that.
    */
   resume(reason: ResumeReason): Promise<void> {
     if (this.resuming !== null) return this.resuming
@@ -133,6 +148,8 @@ export class DeskPause {
       this.timer = null
       // The view goes first: nothing else may stay reachable while the rest is slow.
       await attempt(async () => this.vnc?.stop())
+      // The anchor first: the desk window must never be left without a tab.
+      await attempt(() => this.deps.anchor())
       await attempt(async () => this.closeTabs?.())
       await attempt(() => this.deps.checkpoint())
       this.vnc = null

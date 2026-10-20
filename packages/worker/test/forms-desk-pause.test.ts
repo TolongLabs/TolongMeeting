@@ -10,6 +10,7 @@ const pause = () =>
     startVnc: async () => ({ stop: async () => undefined }),
     idleMs: async () => 0,
     openTabs: async () => async () => undefined,
+    anchor: async () => undefined,
     checkpoint: async () => undefined,
     emit: () => undefined
   })

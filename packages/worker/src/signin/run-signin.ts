@@ -5,9 +5,10 @@ import type { Stopper } from '../types'
 const HEARTBEAT_MS = 5_000
 /** This many heartbeats in a row that fail end the session: nobody can say "Done", and the container must not linger. */
 const MAX_POST_FAILURES = 12
-// The most each ending step may take, so that the whole ending fits in the 60 s that `docker stop` gives (50 s at most
-// here: 8 + 10 + 10 + 20 + 4).
-const BOUND = { stopVnc: 8_000, accounts: 10_000, close: 10_000, checkpoint: 20_000, finalPost: 4_000 }
+// The most each ending step may take. They run one after the other, so the worst case is their sum: 8 + 10 + 10 + 13 + 4 =
+// 45 s, which leaves 15 s of the 60 s that `docker stop` gives for the heartbeat that is in flight and the process exit.
+// A stop signal skips the accounts check, so that path is 35 s at most.
+export const BOUND = { stopVnc: 8_000, accounts: 10_000, close: 10_000, checkpoint: 13_000, finalPost: 4_000 }
 
 export type SigninDeps = {
   /** Restores the profile, starts the screen and the browser. `close` closes the browser, then stops the screen. */

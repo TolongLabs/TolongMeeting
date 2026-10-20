@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from 'bun:test'
 import type { AccountCheckData, SigninHeartbeat, SigninJob, SigninReply } from '@tm/core'
 import { SIGNIN_START_URLS } from '../src/control/vnc'
-import { runSignin, type SigninDeps } from '../src/signin/run-signin'
+import { BOUND, runSignin, type SigninDeps } from '../src/signin/run-signin'
 
 const job: SigninJob = {
   sessionId: '11111111-1111-4111-8111-111111111111',
@@ -172,4 +172,8 @@ test('a server that takes no report for a minute ends the session, and the log n
   } finally {
     errors.mockRestore()
   }
+})
+
+test('the ending steps fit in 45 s even when each one overruns', () => {
+  expect(Object.values(BOUND).reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(45_000)
 })

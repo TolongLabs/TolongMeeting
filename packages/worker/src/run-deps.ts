@@ -1,5 +1,5 @@
 import { sendPing } from '@tm/notify'
-import { openSigninTabs } from './control/desk-tabs'
+import { openSigninTabs, restoreDeskAnchor } from './control/desk-tabs'
 import type { HeartbeatOptions } from './control/heartbeat'
 import { idleMs, startVnc } from './control/vnc'
 import { adapterFor } from './adapters'
@@ -48,6 +48,7 @@ export interface RunDeps {
   startVnc: typeof startVnc
   idleMs: typeof idleMs
   openSigninTabs: typeof openSigninTabs
+  restoreDeskAnchor: typeof restoreDeskAnchor
   sendPing: typeof sendPing
   now(): Date
   sleep(ms: number): Promise<void>
@@ -81,6 +82,7 @@ export const defaultDeps: RunDeps = {
   startVnc,
   idleMs,
   openSigninTabs,
+  restoreDeskAnchor,
   sendPing,
   now: () => new Date(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))

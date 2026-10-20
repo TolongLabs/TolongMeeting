@@ -387,6 +387,10 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       return { stop: async () => void fake.vnc.pop() }
     },
     idleMs: async () => fake.idle,
+    restoreDeskAnchor: async (desk) => {
+      rec('restoreDeskAnchor')
+      return desk
+    },
     openSigninTabs: async (_desk, urls) => {
       rec('openSigninTabs')
       fake.tabs.push(...urls)
