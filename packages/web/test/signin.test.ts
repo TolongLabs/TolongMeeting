@@ -210,6 +210,35 @@ describe('start, finish and status', () => {
     await expect(startSignin(f.scope, 'not-a-uuid', { queue: f.queue })).rejects.toThrow(SigninError)
   })
 
+  test('a server_via_home identity can sign in remotely when the home route is ready', async () => {
+    const f = await signinFixture()
+    await f.db.update(identities).set({ runLocation: 'server_via_home' }).where(eq(identities.id, f.identityId))
+    const r = await startSignin(f.scope, f.identityId, {
+      queue: f.queue,
+      homeRoute: { check: async () => ({ status: 'ready' }) }
+    })
+    expect(r.mode).toBe('container')
+    expect(f.queue.sent).toHaveLength(1)
+    expect(f.queue.sent[0]).toMatchObject({
+      name: 'signin-start',
+      data: { sessionId: r.sessionId }
+    })
+  })
+
+  test('a server_via_home identity refuses remote sign-in and queues nothing when the home route is offline', async () => {
+    const f = await signinFixture()
+    await f.db.update(identities).set({ runLocation: 'server_via_home' }).where(eq(identities.id, f.identityId))
+    await expect(
+      startSignin(f.scope, f.identityId, {
+        queue: f.queue,
+        homeRoute: { check: async () => ({ status: 'offline' }) }
+      })
+    ).rejects.toThrow('Your home connection is offline. Turn on your home device, then try again.')
+    expect(f.queue.sent).toEqual([])
+    const rows = await f.db.select().from(signinSessions).where(eq(signinSessions.identityId, f.identityId))
+    expect(rows).toEqual([])
+  })
+
   test('a queue that fails ends the session instead of leaving it to time out', async () => {
     const f = await signinFixture()
     const broken = {

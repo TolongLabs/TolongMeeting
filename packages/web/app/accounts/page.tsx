@@ -158,13 +158,16 @@ export default async function AccountsPage({
   }
 
   function SignIn({ identity, anySignedOut }: { identity: IdentityRow; anySignedOut: boolean }) {
-    if (identity.runLocation === 'server')
+    if (identity.runLocation === 'server' || identity.runLocation === 'server_via_home')
       return (
-        <p>
-          <Link href={`/accounts/${identity.id}/signin`}>
-            {anySignedOut ? `Sign in again to ${identity.name}` : `Sign in to ${identity.name}`}
-          </Link>
-        </p>
+        <>
+          <p>
+            <Link href={`/accounts/${identity.id}/signin`}>
+              {anySignedOut ? `Sign in again to ${identity.name}` : `Sign in to ${identity.name}`}
+            </Link>
+          </p>
+          {identity.runLocation === 'server_via_home' && <p>Sign-in goes through your home connection.</p>}
+        </>
       )
     if (identity.runLocation === 'local') {
       const bound = pcs.find((d) => d.id === identity.localDeviceId)

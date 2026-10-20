@@ -2,10 +2,21 @@ import { WORKER_STATES, vncSecret } from '@tm/core'
 import { and, eq, ne } from 'drizzle-orm'
 import { identities, occurrences, profiles, signinSessions } from '../db/schema'
 import { QUEUES, type Queue } from '../db/queues'
+import { scopeHomeNodeStore } from '../db/home-route'
+import { checkHomeRoute, homeRouteDeps, TailscaleApiError, type HomeRouteDeps } from './home-route'
 import type { MemberScope } from './scope'
 
 export type SigninMode = 'worker' | 'container'
 export type SigninState = 'starting' | 'ready' | 'ended'
+
+export type StartSigninDeps = {
+  queue: Queue
+  homeRoute?:
+    | {
+        check(scope: MemberScope): Promise<{ status: string }>
+      }
+    | HomeRouteDeps
+}
 
 /** A refused sign-in call. The message is fixed and safe to show the member: it names no id, token or path. */
 export class SigninError extends Error {
@@ -34,6 +45,40 @@ async function ownSession(scope: MemberScope, sessionId: string): Promise<Sessio
   return row
 }
 
+const OFFLINE_HOME_ROUTE = 'Your home connection is offline. Turn on your home device, then try again.'
+
+async function checkHomeRouteReady(scope: MemberScope, homeRouteDep?: StartSigninDeps['homeRoute']): Promise<void> {
+  let status: string
+  if (homeRouteDep && 'check' in homeRouteDep) {
+    status = (await homeRouteDep.check(scope)).status
+  } else if (homeRouteDep && 'api' in homeRouteDep) {
+    status = (
+      await checkHomeRoute(
+        scopeHomeNodeStore(scope),
+        homeRouteDep.api,
+        homeRouteDep.master,
+        scope.memberId,
+        homeRouteDep.now()
+      )
+    ).status
+  } else {
+    const deps = homeRouteDeps()
+    if (!deps) throw new SigninError(OFFLINE_HOME_ROUTE)
+    try {
+      status = (await checkHomeRoute(scopeHomeNodeStore(scope), deps.api, deps.master, scope.memberId, deps.now()))
+        .status
+    } catch (e) {
+      if (e instanceof TailscaleApiError || (e instanceof Error && e.name === 'TailscaleApiError')) {
+        throw new SigninError(OFFLINE_HOME_ROUTE)
+      }
+      throw e
+    }
+  }
+  if (status !== 'ready') {
+    throw new SigninError(OFFLINE_HOME_ROUTE)
+  }
+}
+
 /**
  * Starts a sign-in for one of the member's identities, or returns the one that is already open.
  *
@@ -48,15 +93,36 @@ async function ownSession(scope: MemberScope, sessionId: string): Promise<Sessio
 export async function startSignin(
   scope: MemberScope,
   identityId: string,
-  deps: { queue: Queue }
+  deps: StartSigninDeps
 ): Promise<{ sessionId: string; mode: SigninMode }> {
   if (!UUID.test(identityId)) throw new SigninError('This identity was not found.')
+  const [identity] = await scope.select(identities, eq(identities.id, identityId))
+  if (!identity) throw new SigninError('This identity was not found.')
+  if (identity.runLocation !== 'server' && identity.runLocation !== 'server_via_home')
+    throw new SigninError('Remote sign-in is only for identities that run on the server.')
+
+  if (identity.runLocation === 'server_via_home') {
+    const [open] = await scope.select(
+      signinSessions,
+      and(eq(signinSessions.identityId, identityId), ne(signinSessions.state, 'ended'))
+    )
+    if (!open) {
+      const [profile] = await scope.select(profiles, eq(profiles.identityId, identityId))
+      const holder = profile?.heldBy === null ? null : OCCURRENCE_HOLDER.exec(profile?.heldBy ?? '')
+      const [worker] = holder ? await scope.select(occurrences, eq(occurrences.id, holder[1]!)) : []
+      const workerActive = worker && (WORKER_STATES as ReadonlySet<string>).has(worker.state)
+      if (!workerActive) {
+        await checkHomeRouteReady(scope, deps.homeRoute)
+      }
+    }
+  }
+
   const started = await scope.transaction(async (s) => {
     // One start at a time per identity, so two clicks can't open two sessions.
     await s.lock(`signin:${identityId}`)
-    const [identity] = await s.select(identities, eq(identities.id, identityId))
-    if (!identity) throw new SigninError('This identity was not found.')
-    if (identity.runLocation !== 'server')
+    const [idRow] = await s.select(identities, eq(identities.id, identityId))
+    if (!idRow) throw new SigninError('This identity was not found.')
+    if (idRow.runLocation !== 'server' && idRow.runLocation !== 'server_via_home')
       throw new SigninError('Remote sign-in is only for identities that run on the server.')
 
     const [open] = await s.select(
