@@ -34,12 +34,13 @@ type OccurrenceRow = typeof occurrences.$inferSelect
  *
  * - One job per occurrence at a time: the whole call holds a Postgres advisory lock. A job that cannot take it throws, so
  *   pg-boss retries it later instead of completing it: the job holding the lock may still die, and then the retry does
- *   the work. The cost is that a long run uses up retries of its twin (`retryLimit` with a backoff); that twin then
- *   ends as failed in the queue, which is harmless. A job for an occurrence that is not waiting for the pipeline is
+ *   the work. The cost is that a long run uses up retries of its twin (`retryLimit`, `retryDelay`); that twin then
+ *   ends as failed in the queue (`retryLimit`, `retryDelay`), which is harmless. A job for an occurrence that is not waiting for the pipeline is
  *   dropped (`stale`).
  * - The pipeline never touches the occurrence directory while the worker may still run: a job whose occurrence still
  *   has a `container_name` (cleared by the monitor once Docker reports the container gone) throws before it changes
- *   anything, and pg-boss retries it after its backoff.
+ *   anything, and pg-boss retries it after `retryDelay`. A job whose retries run out goes to the dead-letter queue, and
+ *   `handleDeadPipelineJob` fails its occurrence.
  * - `transcribing`: a `native` occurrence waits for the member's PC (`waiting_for_pc`); a `live` one moves on to
  *   `post_processing`. A job that dies in `post_processing` is run again by pg-boss and starts from there.
  * - The recording is remuxed first, then the pipeline runs with the member's AI config built here (`loadJobConfig`),
@@ -58,13 +59,39 @@ export async function handlePipelineJob(
   occurrenceId: string,
   signal?: AbortSignal
 ): Promise<PipelineJobOutcome> {
-  // The transaction only holds the lock (its connection is idle until the run ends); the work uses the pool.
+  return withOccurrenceLock(deps, occurrenceId, () => handleLocked(deps, occurrenceId, signal))
+}
+
+/**
+ * Runs for a pipeline job that failed for good: its retries are spent and pg-boss copied it to the dead-letter queue
+ * (`PIPELINE_QUEUE.deadLetter`). Such a job never got its summary. A `transcribing` or `post_processing` occurrence is
+ * failed with `pipeline_never_ran` and the member gets one ping; any other state is dropped (`stale`). The ping goes
+ * first, as in `stopped`: a ping that throws leaves the occurrence unfailed, and the queue runs this again.
+ */
+export async function handleDeadPipelineJob(deps: PipelineDeps, occurrenceId: string): Promise<'failed' | 'stale'> {
+  return withOccurrenceLock(deps, occurrenceId, async () => {
+    const [occ] = await deps.db.select().from(occurrences).where(eq(occurrences.id, occurrenceId))
+    if (!occ || (occ.state !== 'transcribing' && occ.state !== 'post_processing')) {
+      console.error(`pipeline: ${occurrenceId}: dead job dropped; the occurrence is ${occ ? occ.state : 'gone'}`)
+      return 'stale'
+    }
+    console.error(`pipeline: ${occurrenceId}: the job never ran the pipeline; its retries are spent`)
+    const meetingUrl = `${new URL(deps.env.publicUrl).origin}/meetings/${occurrenceId}`
+    await deps.notifier.notify(occ.memberId, pings.pipelineFailed({ entry: occ.entryName, meetingUrl }))
+    await applyTrigger(deps.db, occurrenceId, 'fail', { reason: 'pipeline_never_ran' })
+    return 'failed'
+  })
+}
+
+/** Runs `body` while holding the occurrence's advisory lock; a lock held elsewhere throws, so pg-boss retries the job. */
+async function withOccurrenceLock<T>(deps: PipelineDeps, occurrenceId: string, body: () => Promise<T>): Promise<T> {
+  // The transaction only holds the lock (its connection is idle until the body ends); the work uses the pool.
   return deps.db.transaction(async (lock) => {
     const result = await lock.execute(
       sql`select pg_try_advisory_xact_lock(hashtextextended(${'pipeline:' + occurrenceId}, 0)) as locked`
     )
     if (result.rows[0]?.locked !== true) throw new Error(`pipeline: ${occurrenceId}: another job is running it`)
-    return handleLocked(deps, occurrenceId, signal)
+    return body()
   })
 }
 
@@ -120,7 +147,7 @@ async function handleLocked(deps: PipelineDeps, id: string, signal?: AbortSignal
 /**
  * Throws while the occurrence still names a worker container. The monitor clears `container_name` only after Docker
  * reports the container gone, so until then the worker may still be writing the occurrence directory, which must not be
- * remuxed or read. The job fails and pg-boss runs it again after its backoff.
+ * remuxed or read. The job fails and pg-boss runs it again after `retryDelay`.
  */
 async function assertWorkerGone(db: Db, id: string): Promise<void> {
   const [row] = await db

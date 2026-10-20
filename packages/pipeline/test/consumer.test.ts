@@ -10,8 +10,8 @@ import { sealColumn } from '@tm/web/db/secrets'
 import { bossQueue, QUEUES } from '@tm/web/db/queues'
 import { createTestDb, dropAllTestDbs, seedMember, testDbUrl } from '@tm/web/db/testing'
 import { PgBoss } from 'pg-boss'
-import { handlePipelineJob, type PipelineDeps } from '../src/consumer'
-import { workPipeline } from '../src/consumer-main'
+import { handleDeadPipelineJob, handlePipelineJob, type PipelineDeps } from '../src/consumer'
+import { PIPELINE_QUEUE, workPipeline } from '../src/consumer-main'
 import type { PipelineResult } from '../src/pipeline'
 
 const MASTER = Buffer.alloc(32, 5)
@@ -374,4 +374,41 @@ describe('workPipeline', () => {
       await boss.stop({ graceful: false })
     }
   }, 40_000)
+
+  test('a container that never goes is failed as pipeline_never_ran, with one ping, once the retries run out', async () => {
+    const f = await pipelineFixture({ state: 'transcribing', transcription: 'live' })
+    await f.db.update(occurrences).set({ containerName: 'tm-worker-x-a1' }).where(eq(occurrences.id, f.id))
+    const boss = new PgBoss(testDbUrl(f.db))
+    boss.on('error', (error) => {
+      throw error
+    })
+    await boss.start()
+    try {
+      // The production budget is 20 retries 180 s apart; the test keeps the same path with 2 retries 1 s apart.
+      await workPipeline(boss, f.deps, { ...PIPELINE_QUEUE, retryLimit: 2, retryDelay: 1 })
+      await bossQueue(boss).send(QUEUES.pipeline, { occurrenceId: f.id })
+      const deadline = Date.now() + 30_000
+      while ((await f.occurrence()).state !== 'failed') {
+        if (Date.now() > deadline) throw new Error('the occurrence was not failed')
+        await Bun.sleep(200)
+      }
+      // A ping sent after the failure would show here; the sleep covers any late delivery.
+      await Bun.sleep(1500)
+    } finally {
+      await boss.stop({ graceful: false })
+    }
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'pipeline_never_ran' })
+    expect(f.notifier.sent.map((s) => s.ping.title)).toEqual(['Summary failed: Data Mining'])
+    expect(f.runs).toBe(0)
+    expect(f.remuxed).toEqual([])
+  }, 40_000)
+})
+
+describe('handleDeadPipelineJob', () => {
+  test('an occurrence that already finished is dropped, with no ping', async () => {
+    const f = await pipelineFixture({ state: 'completed', transcription: 'live' })
+    expect(await handleDeadPipelineJob(f.deps, f.id)).toBe('stale')
+    expect((await f.occurrence()).state).toBe('completed')
+    expect(f.notifier.sent).toEqual([])
+  })
 })
