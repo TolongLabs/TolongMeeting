@@ -1,4 +1,4 @@
-import type { ChatApp, FormCandidate } from '@tm/core'
+import { MEETING_LINK_REMOVED, scrubMeetingDetails, type ChatApp, type FormCandidate } from '@tm/core'
 import type { Ping, PingAction } from './ntfy'
 
 export type AlertKind =
@@ -502,17 +502,14 @@ function requireDetail(kind: AlertKind, detail: string | undefined): string {
   return detail
 }
 
-// Spoken text can carry a join link, a meeting ID or a passcode. A ping must never show one, so meeting-host links and
-// runs of six or more digits (meeting IDs and six-digit passcodes) are replaced. Spoken words are not caught.
-const MEETING_DETAILS: RegExp[] = [
-  /(?:https?|zoommtg|zoomus|msteams|ms-teams):\S*/gi,
-  /\b(?:[\w-]+\.)*(?:zoom\.us|zoomgov\.com|teams\.microsoft\.com|teams\.live\.com|meet\.google\.com)\S*/gi,
-  /\bg\.co\/meet\S*/gi,
-  /\d{6,}/g
-]
+// Spoken text can carry a join link, a meeting ID or a passcode. A ping must never show one. The core scrub cuts join
+// links (also percent-encoded ones), spoken, spelled and typed passcodes and meeting IDs; what is left is any other
+// link and runs of six or more digits (meeting IDs and six-digit passcodes). Every cut shows as "[removed]".
+const LEFTOVERS: RegExp[] = [/(?:https?|zoommtg|zoomus|msteams|ms-teams):\S*/gi, /\d{6,}/g]
 
 function withoutMeetingDetails(text: string): string {
-  return MEETING_DETAILS.reduce((out, pattern) => out.replace(pattern, '[removed]'), text)
+  const scrubbed = scrubMeetingDetails(text).replaceAll(MEETING_LINK_REMOVED, '[removed]')
+  return LEFTOVERS.reduce((out, pattern) => out.replace(pattern, '[removed]'), scrubbed)
 }
 
 // Cuts text to at most `limit` UTF-8 bytes without splitting a character.

@@ -359,7 +359,7 @@ test('a mention pings with its transcript, and never shows a meeting link, meeti
   expect(p).toEqual({
     title: 'Your name was mentioned: Data Mining',
     message:
-      'Heard at Wed 21 Oct, 14:32. The last 30 seconds:\nthe link is [removed] and [removed] passcode [removed], [removed] [removed]',
+      'Heard at Wed 21 Oct, 14:32. The last 30 seconds:\nthe link is [removed] and [removed], passcode: [removed] [removed], [removed]',
     priority: 'high',
     actions: [
       { label: 'Open meeting page', url: meetingUrl },
