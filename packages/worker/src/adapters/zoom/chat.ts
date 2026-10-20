@@ -2,12 +2,14 @@ import type { Page } from 'playwright'
 import type { ChatMessage, SenderRole } from '@tm/core'
 import { extractLinks } from '../../forms/links'
 import type { ChatCursor } from '../types'
+import { readZoomRoles, resolveZoomRole, zoomState } from './roles'
 import { duringNavigation, zoomRoot } from './root'
 import { zoomSelectors } from './selectors'
 
 // A message as the in-page parser stores it: the links it found as anchors are merged with the text's links here.
 interface ParsedMessage {
   key: string
+  rawSender: string
   sender: string
   senderRole: SenderRole
   time: string
@@ -94,15 +96,18 @@ async function chatProbe(cfg: ProbeConfig): Promise<ProbeResult> {
     const parse = () => {
       const l = list()
       if (!l) return
+      let lastRawSender = ''
       let lastSender = ''
       let lastRole: SenderRole = 'unknown'
       let lastTime = ''
       for (const item of l.querySelectorAll<HTMLElement>(cfg.chatItem)) {
         // A grouped follow-up has no sender or time of its own: it takes the previous item's.
-        const rawSender = textOf(item, cfg.chatSender)
+        const itemRawSender = textOf(item, cfg.chatSender)
+        let rawSender = lastRawSender
         let sender = lastSender
         let senderRole: SenderRole = lastRole
-        if (rawSender) {
+        if (itemRawSender) {
+          rawSender = itemRawSender
           const label = roleLabel.exec(rawSender)
           sender = rawSender.replace(roleLabel, '').trim()
           if (!sender) senderRole = 'unknown'
@@ -110,6 +115,7 @@ async function chatProbe(cfg: ProbeConfig): Promise<ProbeResult> {
           else senderRole = /co.?host/i.test(label[1] ?? label[0]) ? 'co_host' : 'host'
         }
         const time = textOf(item, cfg.chatTime) || lastTime
+        lastRawSender = rawSender
         lastSender = sender
         lastRole = senderRole
         lastTime = time
@@ -133,6 +139,7 @@ async function chatProbe(cfg: ProbeConfig): Promise<ProbeResult> {
         keys.add(key)
         messages.push({
           key,
+          rawSender,
           sender,
           senderRole,
           time,
@@ -239,32 +246,87 @@ async function probe(page: Page, mode: ProbeConfig['mode'], sweepBudgetMs = SWEE
   })
 }
 
-function toChatMessage({ hrefs, ...message }: ParsedMessage): ChatMessage {
+function toChatMessage(
+  { hrefs, rawSender, ...message }: ParsedMessage,
+  resolveRole?: (rawSender: string) => SenderRole
+): ChatMessage {
   const links = [...new Set([...extractLinks(message.text), ...hrefs.filter((href) => /^https?:/i.test(href))])]
-  return { ...message, links }
+  const senderRole = resolveRole ? resolveRole(rawSender || message.sender) : message.senderRole
+  return { ...message, senderRole, links }
 }
+
+const sweeps = new WeakMap<Page, Promise<ChatMessage[]>>()
 
 // The messages parsed so far whose keys the cursor has not seen, and a cursor that has seen them too. It advances
 // nothing itself: the caller adopts the new cursor only after the messages are durably written.
 export async function zoomReadChat(
   page: Page,
   cursor: ChatCursor
-): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }> {
+): Promise<{ messages: ChatMessage[]; cursor: ChatCursor; rosterError?: unknown }> {
+  if (sweeps.has(page)) {
+    return { messages: [], cursor }
+  }
   // A page that navigates under the read yields nothing this time; the cursor stays where it was.
   const parsed = await duringNavigation('readChat', () => probe(page, 'read'))
   const seen = new Set(cursor.seenKeys)
-  const messages = (parsed?.messages ?? []).filter((m) => !seen.has(m.key)).map(toChatMessage)
-  return { messages, cursor: { seenKeys: [...cursor.seenKeys, ...messages.map((m) => m.key)] } }
+  const rawList = (parsed?.messages ?? []).filter((m) => !seen.has(m.key))
+  if (rawList.length === 0) {
+    return { messages: [], cursor }
+  }
+
+  const { texts } = await zoomSelectors()
+  const roleLabelPattern = new RegExp(texts.roleLabel, 'i')
+  const hasLink = rawList.some((m) => extractLinks(m.text).length > 0 || m.hrefs.some((href) => /^https?:/i.test(href)))
+
+  let rosterError: unknown
+  let activeRoster = zoomState(page).roster
+  if (hasLink) {
+    const freshRoster = await readZoomRoles(page).catch((error: unknown) => {
+      rosterError = error
+      return null
+    })
+    if (freshRoster) {
+      activeRoster = freshRoster
+      zoomState(page).roster = freshRoster
+    } else {
+      activeRoster = null
+    }
+  } else if (activeRoster === null && rawList.some((m) => roleLabelPattern.test(m.rawSender || m.sender))) {
+    const initialRoster = await readZoomRoles(page).catch(() => null)
+    if (initialRoster) {
+      activeRoster = initialRoster
+      zoomState(page).roster = initialRoster
+    }
+  }
+
+  const resolve = (rawSender: string) => resolveZoomRole(rawSender, activeRoster, roleLabelPattern)
+  const messages = rawList.map((m) => toChatMessage(m, resolve))
+  const next = { seenKeys: [...cursor.seenKeys, ...messages.map((m) => m.key)] }
+  return rosterError === undefined ? { messages, cursor: next } : { messages, cursor: next, rosterError }
 }
 
 // Scrolls the whole list so every row renders, and returns every message parsed so far (not only new ones). Stops after
 // `budgetMs`: the log then says how far it got, and the next sweep starts again from the top. A page that navigates
 // under the sweep yields nothing this time.
-export async function zoomSweepChat(page: Page, budgetMs: number = SWEEP_BUDGET_MS): Promise<ChatMessage[]> {
-  const result = await duringNavigation('sweepChat', () => probe(page, 'sweep', budgetMs))
-  if (!result) return []
-  if (!result.complete) {
-    console.warn(`zoom: chat sweep partial, reached ${result.reached} of ${result.total} px in ${budgetMs} ms`)
-  }
-  return result.messages.map(toChatMessage)
+export function zoomSweepChat(page: Page, budgetMs: number = SWEEP_BUDGET_MS): Promise<ChatMessage[]> {
+  const running = sweeps.get(page)
+  if (running) return running
+  const run = (async () => {
+    const { texts } = await zoomSelectors()
+    const roleLabelPattern = new RegExp(texts.roleLabel, 'i')
+    const freshRoster = await readZoomRoles(page).catch(() => null)
+    if (freshRoster) {
+      zoomState(page).roster = freshRoster
+    }
+    const activeRoster = zoomState(page).roster
+    const result = await duringNavigation('sweepChat', () => probe(page, 'sweep', budgetMs))
+    if (!result) return []
+    if (!result.complete) {
+      console.warn(`zoom: chat sweep partial, reached ${result.reached} of ${result.total} px in ${budgetMs} ms`)
+    }
+    const resolve = (rawSender: string) => resolveZoomRole(rawSender, activeRoster, roleLabelPattern)
+    return result.messages.map((m) => toChatMessage(m, resolve))
+  })().finally(() => sweeps.delete(page))
+  sweeps.set(page, run)
+  return run
 }

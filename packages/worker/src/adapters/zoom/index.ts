@@ -15,6 +15,7 @@ export { ZOOM_TIMEOUTS } from './join'
 export { zoomRoot } from './root'
 export { ZoomSelectorsSchema } from './selectors'
 export { loadSelectors } from '../selectors'
+export { readZoomRoles, readZoomRolesNow, resolveZoomRole } from './roles'
 
 export const zoomAdapter: PlatformAdapter = {
   platform: 'zoom',
