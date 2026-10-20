@@ -151,6 +151,8 @@ test('local runs keep their claim when the lease lapses; release keeps the attem
   expect(await releaseExpiredLeases(db, at('18:00'))).not.toContain(id)
   expect((await getJob(db, id))?.state).toBe('claimed')
 
+  // A native job is claimable only while its meeting waits for the transcript.
+  await db.update(occurrences).set({ state: 'transcribing' }).where(eq(occurrences.id, f.occA))
   const native = await createCompanionJob(db, {
     memberId: f.a1.memberId,
     occurrenceId: f.occA,
@@ -164,7 +166,7 @@ test('local runs keep their claim when the lease lapses; release keeps the attem
       flacBytes: 1000
     }
   })
-  await claimJob(db, f.a1, native, at('13:00'))
+  expect(await claimJob(db, f.a1, native, at('13:00'))).not.toBeNull()
   expect(await releaseJob(db, f.a1, native)).toBe(true)
   expect(await getJob(db, native)).toMatchObject({ state: 'pending', attempts: 0 })
 })
