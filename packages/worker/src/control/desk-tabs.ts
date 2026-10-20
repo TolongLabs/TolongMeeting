@@ -3,16 +3,30 @@ import { openDeskTab } from '../chrome/launch'
 
 const LOAD_TIMEOUT_MS = 15_000
 
+export interface SigninTabOptions {
+  /** Hosts that get no new tab (a chat watcher already has one: WhatsApp Web allows one live window per profile). */
+  exclude?: readonly string[]
+  /** A tab that is already open and goes to the front last, so the member sees it first. */
+  front?: Page
+}
+
+/** The URLs whose host is not excluded. */
+export function signinUrlsFor(urls: readonly string[], exclude: readonly string[] = []): string[] {
+  return urls.filter((url) => !exclude.includes(new URL(url).host))
+}
+
 /**
  * Opens each URL in a new tab of the desk window and returns what closes them again. A page that does not load is
  * reported and left open (the member can type the address); a tab that cannot be opened stops the rest, closes the ones
- * already open and throws. Closing throws when a tab is still open afterwards. The first tab is brought to the front, so
- * the desk window is raised and focused when the member arrives.
+ * already open and throws. Closing throws when a tab is still open afterwards. The first tab (or `front`, when given) is
+ * brought to the front, so the desk window is raised and focused when the member arrives. A `front` tab is not closed
+ * here: it is not ours.
  */
 export async function openSigninTabs(
   desk: Page,
   urls: string[],
-  report: (error: unknown) => void
+  report: (error: unknown) => void,
+  opts: SigninTabOptions = {}
 ): Promise<() => Promise<void>> {
   const tabs: Page[] = []
   const closeAll = async (): Promise<void> => {
@@ -29,7 +43,7 @@ export async function openSigninTabs(
     if (errors.length > 1) throw new AggregateError(errors, 'sign-in tabs did not close')
   }
   try {
-    for (const url of urls) {
+    for (const url of signinUrlsFor(urls, opts.exclude)) {
       const tab = await openDeskTab(desk)
       tabs.push(tab)
       try {
@@ -39,7 +53,7 @@ export async function openSigninTabs(
         report(error)
       }
     }
-    await tabs[0]?.bringToFront()
+    await (opts.front ?? tabs[0])?.bringToFront()
   } catch (error) {
     await closeAll()
     throw error

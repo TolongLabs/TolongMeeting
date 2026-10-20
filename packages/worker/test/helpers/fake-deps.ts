@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
-import type { ChatMessage, FormCandidate, FormProvider, JobConfig, ResolvedForm } from '@tm/core'
+import type { ChatMessage, FormCandidate, FormProvider, JobConfig, LinkSource, ResolvedForm } from '@tm/core'
 import type { Ping } from '@tm/notify'
 import { DevicesOnError } from '../../src/adapters'
 import type { AdmissionResult, JoinResult, MeetingState, PlatformAdapter, Rect } from '../../src/adapters/types'
@@ -10,12 +10,29 @@ import type { ChatCaptureOptions } from '../../src/chat/capture'
 import type { LiveAsrOptions } from '../../src/asr/live'
 import type { Frame } from '../../src/frames/frames'
 import type { FormDispatcher } from '../../src/forms/dispatcher'
+import { signinUrlsFor, type SigninTabOptions } from '../../src/control/desk-tabs'
 import { formProviderOf } from '../../src/forms/links'
+import { runChatWatcher, type ChatSourceReader } from '../../src/watchers/loop'
 import type { RunDeps } from '../../src/run-deps'
 
 const MINUTE = 60_000
 
+const EMPTY_CHAT: ChatSourceReader = { open: async () => undefined, history: async () => [], latest: async () => [] }
+
+/**
+ * A chat watcher the run can start. It is the real watcher loop over a scripted chat source, so the run meets the loop's
+ * own statuses and phases. A test sets the loop's clock and sleep with `configureWatchers` and resets them afterwards.
+ */
+export interface FakeWatcherOptions {
+  /** The chat the loop reads. Default: an empty chat. */
+  reader?: ChatSourceReader
+  /** Called at the start of each `startWatcher` with its 1-based call number: an error makes that start reject. */
+  fails?: (call: number) => Error | null
+}
+
 export interface FakeOptions {
+  /** A chat watcher for chat entries. Without it `startWatcher` answers null: the app has no watcher. */
+  watcher?: FakeWatcherOptions
   /** What `meetingState` answers, one entry per call; the last entry repeats. */
   states?: MeetingState[] | 'always_in_meeting'
   /** An 'unknown' entry stays the answer until this much fake time has passed. */
@@ -91,6 +108,12 @@ export interface FakeDeps extends RunDeps {
   vnc: { display: string; desk: Rect; secret: string }[]
   /** The sign-in tabs open now. */
   tabs: string[]
+  /** The options each sign-in pause passed to `openSigninTabs`. */
+  signinOptions: SigninTabOptions[]
+  /** Every chat source a watcher was started on, in order. */
+  watcherStarts: LinkSource[]
+  /** The desk tabs opened for watchers, with whether each is still open. */
+  watcherTabs: { closed: boolean }[]
   /** What `idleMs` answers. */
   idle: number
 }
@@ -175,6 +198,9 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     clock,
     vnc: [] as FakeDeps['vnc'],
     tabs: [] as string[],
+    signinOptions: [] as SigninTabOptions[],
+    watcherStarts: [] as LinkSource[],
+    watcherTabs: [] as { closed: boolean }[],
     idle: 0
   }
 
@@ -391,11 +417,38 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       rec('restoreDeskAnchor')
       return desk
     },
-    openSigninTabs: async (_desk, urls) => {
+    openSigninTabs: async (_desk, urls, _report, tabOpts = {}) => {
       rec('openSigninTabs')
-      fake.tabs.push(...urls)
+      fake.signinOptions.push(tabOpts)
+      fake.tabs.push(...signinUrlsFor(urls, tabOpts.exclude))
       return async () => void fake.tabs.splice(0)
     },
+    openDeskTab: (async () => {
+      rec('openDeskTab')
+      const tab = { closed: false }
+      fake.watcherTabs.push(tab)
+      return {
+        isClosed: () => tab.closed,
+        close: async () => void (tab.closed = true),
+        bringToFront: async () => undefined
+      } as unknown as Page
+    }) as RunDeps['openDeskTab'],
+    startWatcher: () =>
+      opts.watcher === undefined
+        ? null
+        : async (desk, src, onLink) => {
+            rec('startWatcher')
+            fake.watcherStarts.push(src)
+            const failure = opts.watcher?.fails?.(fake.watcherStarts.length) ?? null
+            if (failure !== null) throw failure
+            const stopper = await runChatWatcher(desk, opts.watcher?.reader ?? EMPTY_CHAT, onLink)
+            return {
+              stop: async () => {
+                rec('watcher.stop')
+                await stopper.stop()
+              }
+            }
+          },
     ...(opts.teardownBudgetMs === undefined ? {} : { teardownBudgetMs: opts.teardownBudgetMs }),
     sendPing: async (_cfg, ping) => void pings.push(ping),
     now: clock,

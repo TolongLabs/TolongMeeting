@@ -1,3 +1,4 @@
+import type { ChatApp } from '@tm/core'
 import { sendPing } from '@tm/notify'
 import { openSigninTabs, restoreDeskAnchor } from './control/desk-tabs'
 import type { HeartbeatOptions } from './control/heartbeat'
@@ -6,7 +7,7 @@ import { adapterFor } from './adapters'
 import { startLiveAsr } from './asr/live'
 import { startAudioSource } from './audio/source'
 import { startChatCapture } from './chat/capture'
-import { launchBrowser, launchGuestStage } from './chrome/launch'
+import { launchBrowser, launchGuestStage, openDeskTab } from './chrome/launch'
 import { startScreen } from './display/screen'
 import { startFormDispatcher } from './forms/dispatcher'
 import { resolveFormLink } from './forms/links'
@@ -16,6 +17,7 @@ import { checkpointProfile, prepareProfile, restoreProfile, startCheckpoints } f
 import { loadProfileKey } from './profile/key'
 import { joinRecording } from './recorder/join'
 import { startRecorder } from './recorder/recorder'
+import { watcherFor, type StartWatcher } from './watchers'
 
 export interface OccurrenceOutcome {
   result: 'completed' | 'denied' | 'not_admitted' | 'failed'
@@ -49,6 +51,10 @@ export interface RunDeps {
   idleMs: typeof idleMs
   openSigninTabs: typeof openSigninTabs
   restoreDeskAnchor: typeof restoreDeskAnchor
+  /** Opens a tab in the desk window; each chat watcher gets one. */
+  openDeskTab: typeof openDeskTab
+  /** The watcher for a chat app, or null where there is none. */
+  startWatcher: (app: ChatApp) => StartWatcher | null
   sendPing: typeof sendPing
   now(): Date
   sleep(ms: number): Promise<void>
@@ -83,6 +89,8 @@ export const defaultDeps: RunDeps = {
   idleMs,
   openSigninTabs,
   restoreDeskAnchor,
+  openDeskTab,
+  startWatcher: watcherFor,
   sendPing,
   now: () => new Date(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))

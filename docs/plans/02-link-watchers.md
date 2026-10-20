@@ -1026,7 +1026,7 @@ signed_out  <App> signed the bot out while it was watching. Sign in again; until
 - **Status**: `signed_out` sends `pings.watcherProblem('signed_out')` and `AccountCheckData { signedIn: false }`; `signed_in` sends `{ signedIn: true }`; `chat_lost` sends `pings.watcherProblem('lost')`. Each non-ok status also adds an `error` event `{ reason: 'watcher_<kind>' }`.
 - **End**: stop the watcher when the worker leaves the meeting for any reason, before the profile checkpoint.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/watchers/link-wait.test.ts
@@ -1148,19 +1148,19 @@ test('no-link and watcher copy', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/watchers/link-wait.test.ts packages/worker/src/watchers/index.test.ts packages/notify/src/messages.test.ts`
 Expected: FAIL with `Cannot find module './link-wait'`.
 
-- [ ] **Step 3: Implement `link-wait.ts`, `index.ts` and the ping builders, then wire `run.ts` as listed**
+- [x] **Step 3: Implement `link-wait.ts`, `index.ts` and the ping builders, then wire `run.ts` as listed**
 
-- [ ] **Step 4: Run tests and the type check to verify they pass**
+- [x] **Step 4: Run tests and the type check to verify they pass**
 
 Run: `bun test packages/worker/src/watchers packages/notify && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src packages/notify/src packages/core/src/control.ts docs/TRD.md

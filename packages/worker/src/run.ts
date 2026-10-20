@@ -4,10 +4,12 @@ import type { Page } from 'playwright'
 import { AiKeyError } from '@tm/ai'
 import {
   controlTokenHash,
+  formatWhen,
   localParts,
   triggerFor,
   vncSecret,
   type AccountCheckData,
+  type ChatApp,
   type ChatMessage,
   type EventType,
   type FormCandidate,
@@ -17,15 +19,16 @@ import {
   type OccurrenceState,
   type StateEventData
 } from '@tm/core'
-import { joinedPing, type Ping, type SiteLinks } from '@tm/notify'
+import { joinedPing, pings, type Ping, type SiteLinks, type WatcherProblem } from '@tm/notify'
 import { z } from 'zod'
 import { DevicesOnError } from './adapters'
 import type { JoinResult, MeetingState, PlatformAdapter, Rect } from './adapters/types'
-import { createAlerter, createLimiter, type Alerter } from './alerts'
+import { ALERT_WINDOW_MS, createAlerter, createLimiter, type Alerter } from './alerts'
 import type { AudioSource } from './audio/source'
 import type { ChatCapture } from './chat/capture'
 import { dispatchCommands } from './control/commands'
 import { DeskPause } from './control/desk-pause'
+import type { SigninTabOptions } from './control/desk-tabs'
 import { startHeartbeat, type HeartbeatLoop } from './control/heartbeat'
 import { LinkOverride } from './control/link-override'
 import { siteLinks } from './control/links'
@@ -44,15 +47,28 @@ import { closeQr } from './qr/qr'
 import type { Recorder } from './recorder/recorder'
 import { defaultDeps, type OccurrenceOutcome, type RunDeps } from './run-deps'
 import type { Screen, Stopper } from './types'
+import { CHAT_HOST } from './watchers'
+import { readJoinedLink, writeJoinedLink } from './watchers/joined-link'
+import { decideLinkWait, GIVE_UP_AFTER_MS, JOIN_FROM_MS } from './watchers/link-wait'
+import {
+  configureWatchers,
+  resetWatcherEnv,
+  WatcherChatError,
+  WatcherSigninError,
+  type WatcherStatus
+} from './watchers/loop'
+import { chooseMeetingLink, type WatchPhase } from './watchers/rules'
 
 export type { OccurrenceOutcome, RunDeps } from './run-deps'
+
+type ChatLink = Extract<JobConfig['entry']['link'], { kind: 'chat' }>
+type JoinedLinkSource = NonNullable<StateEventData['link']>['source']
 
 const MINUTE = 60_000
 const TICK_MS = 5_000
 const REFRESH_MS = 10_000
 /** A meeting that shows nothing we know for this long has dropped us. */
 const UNKNOWN_MS = 30_000
-const JOIN_LEAD_MS = 10 * MINUTE
 const HARD_STOP_AFTER_END_MS = 30 * MINUTE
 const LOBBY_ATTEMPT_MS = 10 * MINUTE
 const MAX_LOBBY_RETRIES = 2
@@ -81,8 +97,8 @@ const FINAL_HEARTBEAT_RESERVE_MS = 5_000
 const RESERVE_SHARE = 0.4
 /** The share of the final heartbeat's reserve that stopping the heartbeat keeps when the heartbeat itself overruns. */
 const STOP_SHARE = 0.2
-/** A meeting with no link is given up this long after its start (PRD LINK-4). */
-const NO_LINK_AFTER_START_MS = 30 * MINUTE
+/** A watcher reads form links posted this long before the start, and later. */
+const FORMS_LOOKBACK_MS = 10 * MINUTE
 /** A member who must sign in again is waited for until this long before the start (PRD: join T-10 to T-5). */
 const SIGNIN_DEADLINE_BEFORE_START_MS = 5 * MINUTE
 
@@ -92,6 +108,7 @@ const BOUND = {
   sweep: 10_000,
   leave: 10_000,
   stopChat: 5_000,
+  stopWatcher: 5_000,
   stopFrames: 5_000,
   stopQr: 3_000,
   deskPause: 5_000,
@@ -191,6 +208,9 @@ class OccurrenceRun {
   /** Why the website links could not be built (a bad `TM_PUBLIC_URL`): reported once the run has started. */
   private readonly linksError: unknown = null
   private readonly linkOverride: LinkOverride
+  /** The newest meeting link a chat watcher found (or an earlier attempt kept). A pasted link still beats it. */
+  private readonly watched: LinkOverride
+  private readonly watcherLimit: ReturnType<typeof createLimiter>
   private readonly wake: () => void
 
   // The control channel (absent when the job has none, and when it failed to start).
@@ -220,6 +240,8 @@ class OccurrenceRun {
   private recordingStart: Date | null = null
   private adapter: PlatformAdapter | null = null
   private url = ''
+  /** Which source supplied `url`. Only the source and the host go to the website, never the link. */
+  private linkSource: JoinedLinkSource = 'fixed'
   private forms: FormDispatcher | null = null
   /** Set once teardown closed the dispatcher: a link resolved after that is pinged as "not checked" instead. */
   private formsClosed = false
@@ -233,6 +255,15 @@ class OccurrenceRun {
   private frames: FrameLoop | null = null
   private asr: LiveAsr | null = null
   private handler: FrameHandler | null = null
+
+  // The chat watcher of a chat entry: its tab and what stops it. Null without one, and after it stopped.
+  private watcher: { app: ChatApp; tab: Page; stopper: Stopper } | null = null
+  private watchPhase: WatchPhase = 'before'
+  private watchersConfigured = false
+  /** The chat app signed the bot out and the watcher is not running (or the loop saw it signed out). */
+  private chatSignedOut = false
+  /** The "sign in again" ping for the chat app went out: a second failed start does not ping again. */
+  private chatSigninPinged = false
 
   // Teardown clock (real time, ms since the epoch). The budget counts from the stop signal (`docker stop` starts its
   // 60 s at SIGTERM) or from the start of teardown, whichever is first. Unlimited until one of them.
@@ -284,6 +315,11 @@ class OccurrenceRun {
       onRefused: () => void this.report('pasted link', new Error('the pasted link is not a link the bot can join'))
     })
     this.tickLimit = createLimiter(() => deps.now())
+    this.watcherLimit = createLimiter(() => deps.now())
+    this.watched = new LinkOverride({
+      normalise: (url) => deps.adapterFor(url)?.normaliseLink(url) ?? null,
+      onRefused: () => void this.report('watched link', new Error('the watched link is not a link the bot can join'))
+    })
     this.start = Date.parse(cfg.entry.start)
     this.end = Date.parse(cfg.entry.end)
     this.hardStop = this.end + HARD_STOP_AFTER_END_MS
@@ -510,7 +546,8 @@ class OccurrenceRun {
     return new DeskPause({
       startVnc: () => deps.startVnc(screen.display, screen.desk, secret),
       idleMs: () => deps.idleMs(screen.display),
-      openTabs: (urls) => deps.openSigninTabs(this.deskPage(), urls, (e) => void this.report('desk pause', e)),
+      openTabs: (urls) =>
+        deps.openSigninTabs(this.deskPage(), urls, (e) => void this.report('desk pause', e), this.signinTabOptions()),
       anchor: async () => void (this.desk = await deps.restoreDeskAnchor(this.deskPage())),
       checkpoint: async () => void (await deps.checkpointProfile(cfg.profileDir, profile.checkpointsDir, profile.key)),
       emit: (data) => void this.ev('state', data),
@@ -528,7 +565,7 @@ class OccurrenceRun {
   // Reports a change of state: a `state` event, and the state the next heartbeat carries. A move the server's state
   // machine has no edge for is not sent: a restarted worker is already past the early states, and a bug elsewhere is
   // reported rather than sent.
-  private async setState(next: OccurrenceState): Promise<void> {
+  private async setState(next: OccurrenceState, link?: StateEventData['link']): Promise<void> {
     if (next === this.state) return
     if (triggerFor(this.state, next) === null) {
       if (this.cfg.attempt === 1)
@@ -536,12 +573,12 @@ class OccurrenceRun {
       return
     }
     this.state = next
-    await this.ev('state', { state: next } satisfies StateEventData)
+    await this.ev('state', { state: next, ...(link === undefined ? {} : { link }) } satisfies StateEventData)
   }
 
   // The states of the first join. A rejoin after a drop keeps the state `in_meeting`.
-  private async joinState(next: OccurrenceState): Promise<void> {
-    if (this.joinedAt === null) await this.setState(next)
+  private async joinState(next: OccurrenceState, link?: StateEventData['link']): Promise<void> {
+    if (this.joinedAt === null) await this.setState(next, link)
   }
 
   // The last report: the state the meeting ended in, then every event still unsent, within the budget. A failure leaves
@@ -785,9 +822,10 @@ class OccurrenceRun {
   private async main(): Promise<Verdict> {
     const { cfg, deps } = this
     const { entry } = cfg
-    // A fixed link is the entry's own; any other source brings its link through the website (a pasted link, the only
-    // source until the link watchers of plan 02). A pasted link wins until joining starts.
-    if (entry.link.kind === 'fixed' && !this.useLink(entry.link.url)) return failed('unsupported_link')
+    // A fixed link is the entry's own; any other source brings its link through the website (a pasted link) or a chat
+    // watcher. A pasted link wins until joining starts.
+    if (entry.link.kind === 'fixed' && !this.useLink(entry.link.url, 'fixed')) return failed('unsupported_link')
+    if (cfg.attempt > 1) await this.recallJoinedLink()
 
     // These steps race the stop signal: one that hangs (a restore, Xvfb, Chrome) must not outlive SIGTERM. A step
     // abandoned that way is left running, and its late failure is swallowed.
@@ -816,16 +854,23 @@ class OccurrenceRun {
     }
 
     await this.setState('verifying_accounts')
-    if (this.lecture) {
-      const started = await this.untilAborted(this.checkFormSignIns().then(() => this.startForms()))
+    if (this.lecture || entry.link.kind === 'chat') {
+      const started = await this.untilAborted(this.verifyAccounts())
       if (started === ABORTED) return this.terminated()
     }
 
     await this.setState('watching_for_link')
     const linked = await this.untilLink()
-    if (linked === 'no_link') return failed('no_link')
+    if (linked === 'no_link') {
+      const until = formatWhen(new Date(this.start + GIVE_UP_AFTER_MS), entry.timeZone)
+      await this.sendQuiet(
+        pings.noLinkStopped({ entry: entry.name, until, meetingUrl: this.links?.meetingPage ?? null })
+      )
+      return failed('no_link')
+    }
     if (this.isAborted) return this.terminated()
     if (this.now() >= this.hardStop) return failed('past_hard_stop')
+    await this.startJoining()
     const adapter = this.adapter!
 
     const audio = await this.abortable('startAudioSource', () => deps.startAudioSource())
@@ -861,40 +906,45 @@ class OccurrenceRun {
   }
 
   // Takes a link as the one to join, if its platform's rule accepts it.
-  private useLink(raw: string): boolean {
+  private useLink(raw: string, source: JoinedLinkSource): boolean {
     const adapter = this.deps.adapterFor(raw)
     const url = adapter?.normaliseLink(raw) ?? null
     if (adapter === null || url === null) return false
     this.adapter = adapter
     this.url = url
+    this.linkSource = source
     return true
   }
 
   // Waits for the time to join (10 minutes before the start) with a link in hand. A link pasted on the website replaces
-  // the entry's own at any point up to the join. Without a link the member is pinged at the start, and the wait ends
-  // 30 minutes after it.
+  // a watched or fixed one at any point up to the join, and a watched one replaces the entry's own. Without a link the
+  // member is pinged at the start, and the wait ends 30 minutes after it (`decideLinkWait` makes each call).
   private async untilLink(): Promise<'ready' | 'no_link' | 'aborted'> {
-    const joinAt = this.start - JOIN_LEAD_MS
-    const giveUpAt = this.start + NO_LINK_AFTER_START_MS
+    const start = new Date(this.start)
     let pinged = false
     for (;;) {
       if (this.isAborted) return 'aborted'
       const pasted = this.linkOverride.current()
-      if (pasted !== null) this.useLink(pasted)
-      const now = this.now()
-      let until: number
-      if (this.url !== '') {
-        if (now >= joinAt) return 'ready'
-        until = joinAt
-      } else {
-        if (now >= this.start && !pinged) {
-          pinged = true
-          this.alerter.alert('no_link')
-        }
-        if (now >= giveUpAt) return 'no_link'
-        until = now < this.start ? this.start : giveUpAt
+      const chosen = chooseMeetingLink(this.watched.current(), pasted)
+      if (chosen !== null) this.useLink(chosen, pasted !== null ? 'pasted' : 'watched')
+      const now = this.deps.now()
+      const decision = decideLinkWait({ now, start, link: this.url === '' ? null : this.url, noLinkPinged: pinged })
+      if (decision.kind === 'join') return 'ready'
+      if (decision.kind === 'give_up') return 'no_link'
+      if (decision.kind === 'ping_no_link') {
+        pinged = true
+        this.alerter.alert('no_link')
+        continue
       }
-      await Promise.race([this.deps.sleep(Math.min(until - now, MINUTE)), this.aborted, this.linkOverride.next()])
+      const at = now.getTime()
+      const until =
+        this.url !== '' ? this.start - JOIN_FROM_MS : at < this.start ? this.start : this.start + GIVE_UP_AFTER_MS
+      await Promise.race([
+        this.deps.sleep(Math.min(until - at, MINUTE)),
+        this.aborted,
+        this.linkOverride.next(),
+        this.watched.next()
+      ])
     }
   }
 
@@ -923,29 +973,49 @@ class OccurrenceRun {
     })
   }
 
-  // Checks that each form provider is signed in on the desk. A provider that is not gets the "Sign in again" ping. With a
-  // control channel the member can sign in through the remote view: the run waits in `waiting_for_signin` until they
-  // press "Done" (then checks again), until T-5, or until the run ends. Whatever is still signed out then is left for
-  // the form ping ("link seen, not checked"): a meeting is worth recording without it.
-  private async checkFormSignIns(): Promise<void> {
+  // Accounts first, then the forms: the chat watcher starts before the sign-in check, so a chat app that is signed out
+  // is found by the same check as a form provider.
+  private async verifyAccounts(): Promise<void> {
+    await this.startWatching()
+    await this.checkAccounts()
+    if (this.lecture) await this.startForms()
+  }
+
+  // Checks that each form provider (a lecture's) and the chat app (a chat entry's) is signed in on the desk. One that
+  // is not gets the "Sign in again" ping. With a control channel the member can sign in through the remote view: the
+  // run waits in `waiting_for_signin` until they press "Done" (then checks again, and starts the watcher again), until
+  // T-5, or until the run ends. Whatever is still signed out then is left for the form ping ("link seen, not checked"),
+  // and a chat that is still signed out for pasted links only: a meeting is worth recording without it.
+  private async checkAccounts(): Promise<void> {
     const { cfg, deps } = this
     const deadline = this.start - SIGNIN_DEADLINE_BEFORE_START_MS
     try {
-      for (;;) {
+      for (let round = 0; ; round += 1) {
         // The desk may be in the member's hands.
         await this.deskPause?.whenOpen()
-        const signedOut = await deps.checkFormProviders(this.deskPage(), cfg.identity.formProviders)
+        if (round > 0 && this.chatSignedOut) await this.startWatching()
+        const signedOut = this.lecture ? await deps.checkFormProviders(this.deskPage(), cfg.identity.formProviders) : []
         // The website shows when each account was last checked and whether it was signed in.
-        for (const provider of cfg.identity.formProviders) {
-          await this.ev('state', {
-            account: provider,
-            signedIn: !signedOut.includes(provider)
-          } satisfies AccountCheckData)
+        if (this.lecture) {
+          for (const provider of cfg.identity.formProviders) {
+            await this.ev('state', {
+              account: provider,
+              signedIn: !signedOut.includes(provider)
+            } satisfies AccountCheckData)
+          }
         }
         for (const provider of signedOut) {
           this.alerter.alert('signin_forms', provider === 'google' ? 'Google' : 'Microsoft')
         }
-        if (signedOut.length === 0 || this.deskPause === null || this.now() >= deadline || this.isAborted) break
+        // The chat app is waited for once: a second failed start leaves the entry with pasted links only.
+        const chatWaits = this.chatSignedOut && round === 0
+        if (
+          (signedOut.length === 0 && !chatWaits) ||
+          this.deskPause === null ||
+          this.now() >= deadline ||
+          this.isAborted
+        )
+          break
         // Registered before the state is sent: a "Done" that comes while the state goes out must still end the wait.
         const resumed = this.deskPause.nextResume()
         await this.setState('waiting_for_signin')
@@ -1007,6 +1077,142 @@ class OccurrenceRun {
     })
   }
 
+  // --- the chat watcher ---
+
+  private get chatLink(): ChatLink | null {
+    const { link } = this.cfg.entry
+    return link.kind === 'chat' ? link : null
+  }
+
+  // A desk action runs through the desk pause's busy gate: a pause waits for it, and it waits for a pause.
+  private deskStep<T>(step: () => Promise<T>): Promise<T> {
+    return this.deskPause === null ? step() : this.deskPause.deskStep(step)
+  }
+
+  // The tabs a sign-in pause opens. A live watcher already holds the chat app's tab, and WhatsApp Web allows one live
+  // window per profile: no second tab on its host. A watcher that is signed out has its tab brought to the front.
+  private signinTabOptions(): SigninTabOptions {
+    const watcher = this.watcher
+    if (watcher === null) return {}
+    return { exclude: [CHAT_HOST[watcher.app]], ...(this.chatSignedOut ? { front: watcher.tab } : {}) }
+  }
+
+  // A restarted attempt rejoins the link an earlier attempt took from a chat: no watch wait, and a watcher that starts
+  // offers form links at once.
+  private async recallJoinedLink(): Promise<void> {
+    const kept = await this.optional('joined link', () => readJoinedLink(this.cfg.dataDir))
+    if (kept === null) return
+    this.watched.offer(kept)
+    if (this.watched.current() !== null) this.watchPhase = 'during'
+  }
+
+  // Joining starts: the watcher now offers form links, and a link a watcher found is kept for a restarted attempt.
+  private async startJoining(): Promise<void> {
+    this.watchPhase = 'during'
+    if (this.linkSource === 'watched') {
+      await this.optional('joined link', () => writeJoinedLink(this.cfg.dataDir, this.url))
+    }
+  }
+
+  // Starts the chat watcher of a chat entry in a desk tab of its own. A watcher that cannot start leaves the entry with
+  // pasted links only; the member is told why. Never throws.
+  private async startWatching(): Promise<void> {
+    const chat = this.chatLink
+    if (chat === null || this.watcher !== null) return
+    const start = this.deps.startWatcher(chat.app)
+    if (start === null) return
+    this.watchersConfigured = true
+    configureWatchers({
+      now: () => this.deps.now(),
+      phase: () => this.watchPhase,
+      formsSince: () => new Date(this.start - FORMS_LOOKBACK_MS),
+      pastedLink: () => this.linkOverride.current(),
+      deskStep: (step) => this.deskStep(step),
+      onStatus: (status) => this.onWatcherStatus(chat.app, status)
+    })
+    let tab: Page | null = null
+    try {
+      const opened = await this.deskStep(() => this.deps.openDeskTab(this.deskPage()))
+      tab = opened
+      const stopper = await start(opened, chat, (c) => this.onWatched(c))
+      this.watcher = { app: chat.app, tab: opened, stopper }
+      this.chatSignedOut = false
+      await this.ev('state', { account: chat.app, signedIn: true } satisfies AccountCheckData)
+      // Started after the stop signal (the setup abandoned it): nothing will use it, and teardown may be past its step.
+      if (this.isAborted) await this.stopWatching()
+    } catch (error) {
+      if (tab !== null && !tab.isClosed()) {
+        const failed = tab
+        await failed.close().catch((e: unknown) => this.report('watcher tab', e))
+      }
+      if (error instanceof WatcherSigninError) {
+        this.chatSignedOut = true
+        await this.ev('state', { account: chat.app, signedIn: false } satisfies AccountCheckData)
+        if (!this.chatSigninPinged) {
+          this.chatSigninPinged = true
+          this.watcherPing(chat.app, 'signed_out')
+        }
+      } else if (error instanceof WatcherChatError) {
+        await this.ev('error', { where: 'chat watcher', reason: `watcher_${error.reason}` })
+        this.watcherPing(chat.app, error.reason)
+      } else {
+        this.fault('chat watcher', error)
+      }
+    }
+  }
+
+  // Stops the watcher and closes its tab, once. Runs when the worker leaves the meeting for any reason.
+  private async stopWatching(): Promise<void> {
+    const watcher = this.watcher
+    this.watcher = null
+    if (watcher !== null) {
+      await this.bounded('watcher.stop', BOUND.stopWatcher, () => watcher.stopper.stop())
+      await this.bounded('watcher tab', BOUND.stopWatcher, async () => {
+        if (!watcher.tab.isClosed()) await watcher.tab.close()
+      })
+    }
+    if (this.watchersConfigured) resetWatcherEnv()
+    this.watchersConfigured = false
+  }
+
+  // What the watcher found. A meeting link goes to the wait for a link; a form link goes to the form intake, as a
+  // meeting-chat link does (a work entry has no forms to fill).
+  private onWatched(c: FormCandidate | { meetingUrl: string }): void {
+    if ('meetingUrl' in c) this.watched.offer(c.meetingUrl)
+    else if (this.lecture) void this.offerForm(c)
+  }
+
+  // A change in what the watcher can see. Every problem is an `error` event; the member is pinged for the ones that
+  // cost them links.
+  private onWatcherStatus(app: ChatApp, status: WatcherStatus): void {
+    if (status.kind !== 'signed_in') void this.ev('error', { where: 'chat watcher', reason: `watcher_${status.kind}` })
+    if (status.kind === 'signed_out') {
+      this.chatSignedOut = true
+      void this.ev('state', { account: app, signedIn: false } satisfies AccountCheckData)
+      this.watcherPing(app, 'signed_out')
+    } else if (status.kind === 'signed_in') {
+      this.chatSignedOut = false
+      void this.ev('state', { account: app, signedIn: true } satisfies AccountCheckData)
+    } else if (status.kind === 'chat_lost') {
+      this.watcherPing(app, 'lost')
+    }
+  }
+
+  // The "not watching" ping, at most once per problem per 10 minutes (a watcher that flaps must not flood the member).
+  private watcherPing(app: ChatApp, problem: WatcherProblem): void {
+    if (!this.watcherLimit(`watcher:${app}:${problem}`, ALERT_WINDOW_MS)) return
+    void this.ev('alert', { kind: 'watcher_problem', detail: problem })
+    void this.sendQuiet(
+      pings.watcherProblem({
+        entry: this.cfg.entry.name,
+        app,
+        problem,
+        meetingUrl: this.links?.meetingPage ?? null,
+        signInUrl: this.links?.signIn ?? null
+      })
+    )
+  }
+
   // --- joining ---
 
   // Opens the link and joins. A busy Zoom account falls back to a guest browser, once. Gives up at once when the abort
@@ -1038,7 +1244,7 @@ class OccurrenceRun {
   private async enter(): Promise<Verdict | null> {
     const { adapter } = this
     let retries = 0
-    await this.joinState('joining')
+    await this.joinState('joining', { source: this.linkSource, host: new URL(this.url).host })
     let result = await this.gotoAndJoin()
     for (;;) {
       if (result === ABORTED) return this.terminated()
@@ -1405,6 +1611,7 @@ class OccurrenceRun {
     }
     if (this.verdict?.endedBy === 'member_left') await this.setState('left_by_member')
     else if (this.handsOver) await this.setState('uploading')
+    await this.stopWatching()
     if (this.chat) await this.bounded('chat.stop', BOUND.stopChat, () => this.chat!.stop())
     if (this.frames) await this.bounded('frames.stop', BOUND.stopFrames, () => this.frames!.stop())
     this.handler?.stop()
