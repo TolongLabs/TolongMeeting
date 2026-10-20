@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   IllegalTransition,
@@ -22,6 +22,7 @@ import { applyTrigger } from '../../db/transitions'
 import { notFound, openOccurrenceFile, serveFile } from '../files'
 import { getQueue } from '../queue'
 import { companionDeps } from './deps'
+import { StreamDeadline, deadlineReader, type Deadlines } from './deadline'
 import type { DeviceDeps, DeviceScope } from './scope'
 import { readCapped } from './tokens'
 
@@ -35,6 +36,8 @@ type Db = DeviceDeps['db']
 export interface NativeDeps {
   db: Db
   queue: Queue
+  /** Test seam: shorter limits than `IDLE_MS` and `TOTAL_MS` for the upload body. */
+  deadlines?: Deadlines
 }
 
 /** The database and the queue the upload route passes on. Routes never open the database themselves. */
@@ -67,7 +70,7 @@ export async function handleAudioRequest(request: Request, scope: DeviceScope, j
 
 // --- Reading the upload ---
 
-type UploadFailure = 'too_large' | 'malformed'
+type UploadFailure = 'too_large' | 'malformed' | 'slow'
 
 class UploadError extends Error {
   constructor(readonly failure: UploadFailure) {
@@ -77,6 +80,8 @@ class UploadError extends Error {
 
 /** Part headers are a line or two: anything longer is not from the companion. */
 const MAX_PART_HEADER_BYTES = 2048
+/** Chunks of a body are gathered up to this size before they are parsed. */
+const COALESCE_BYTES = 64 * 1024
 const BOUNDARY = /^[0-9A-Za-z'()+_,\-./:=? ]{1,70}$/
 
 /** The boundary of a `multipart/form-data` content type, or null. */
@@ -98,6 +103,8 @@ function boundaryOf(contentType: string | null): string | null {
 function fieldOf(headers: string): (typeof NATIVE_UPLOAD_FIELDS)[number] {
   let name: string | null = null
   for (const line of headers.split('\r\n')) {
+    // A bare CR or LF inside a line would hide a second header from the checks below.
+    if (/[\r\n]/.test(line)) throw new UploadError('malformed')
     const colon = line.indexOf(':')
     if (colon < 1) throw new UploadError('malformed')
     const key = line.slice(0, colon).trim().toLowerCase()
@@ -118,11 +125,19 @@ function fieldOf(headers: string): (typeof NATIVE_UPLOAD_FIELDS)[number] {
  * Reads the multipart body as it arrives and stops at the first byte over a cap: `NATIVE_UPLOAD_MAX_BODY_BYTES` for the
  * whole body and `NATIVE_UPLOAD_MAX_FILE_BYTES` for each part. Nothing is held that the caps do not allow, and nothing
  * is written to disk here. Exactly the fields `txt`, `srt` and `json`, each once, in any order, no other part.
+ *
+ * Time is bounded too: 60 s without a byte, or 10 minutes in all, is a `slow` failure. Small chunks are gathered up to
+ * 64 KiB before they are parsed, so a body sent one byte at a time costs no more than one sent whole; the body must end
+ * (as HTTP bodies do) for the last bytes to be parsed.
  */
-async function readUpload(body: ReadableStream<Uint8Array>, boundary: string): Promise<Record<string, Buffer>> {
+async function readUpload(
+  body: ReadableStream<Uint8Array>,
+  boundary: string,
+  limits?: Deadlines
+): Promise<Record<string, Buffer>> {
   const delimiter = Buffer.from(`\r\n--${boundary}`)
   const parts = new Map<string, Buffer>()
-  const reader = body.getReader()
+  const reader = deadlineReader(body, limits)
   // `consume` changes it, which the compiler can't see from the loop below.
   let state = 'delimiter' as 'delimiter' | 'headers' | 'body' | 'done'
   // The first delimiter has no CRLF in front of it in the stream, so one is supplied.
@@ -186,21 +201,38 @@ async function readUpload(body: ReadableStream<Uint8Array>, boundary: string): P
     }
   }
 
+  let pending: Buffer[] = []
+  let pendingSize = 0
+  const isDone = () => state === 'done'
+  const flush = () => {
+    if (pending.length === 0) return
+    buffer = Buffer.concat([buffer, ...pending])
+    pending = []
+    pendingSize = 0
+    consume()
+  }
+
   try {
     while (state !== 'done') {
       const { done, value } = await reader.read()
-      if (done) throw new UploadError('malformed')
+      if (done) {
+        flush()
+        if (!isDone()) throw new UploadError('malformed')
+        break
+      }
       total += value.byteLength
       if (total > NATIVE_UPLOAD_MAX_BODY_BYTES) throw new UploadError('too_large')
-      buffer = Buffer.concat([buffer, value])
-      consume()
+      pending.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength))
+      pendingSize += value.byteLength
+      if (pendingSize >= COALESCE_BYTES) flush()
     }
   } catch (e) {
-    await reader.cancel().catch(() => undefined)
+    await reader.cancel()
+    if (e instanceof StreamDeadline) throw new UploadError('slow')
     throw e
   }
   // Whatever follows the closing delimiter is not read.
-  await reader.cancel().catch(() => undefined)
+  await reader.cancel()
   return Object.fromEntries(parts)
 }
 
@@ -229,15 +261,6 @@ class Refusal extends Error {
   }
 }
 
-const exists = (path: string) =>
-  lstat(path).then(
-    () => true,
-    (e: NodeJS.ErrnoException) => {
-      if (e.code === 'ENOENT') return false
-      throw e
-    }
-  )
-
 /**
  * `<occurrence>/transcript/native`, made one component at a time. Each existing component must be a real directory (not
  * a link, not a file): a worker once wrote this tree, and a link here would send the write somewhere else.
@@ -260,6 +283,40 @@ async function nativeDir(occDir: string): Promise<string> {
   }
   if ((await realpath(current)) !== join(await realpath(occDir), 'transcript', 'native')) throw new Refusal('conflict')
   return current
+}
+
+const exists = (path: string) =>
+  lstat(path).then(
+    () => true,
+    (e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return false
+      throw e
+    }
+  )
+
+/** Whether all three transcript files are on disk, as regular files, with exactly these bytes. */
+async function sameAsOnDisk(dir: string, transcript: Transcript): Promise<boolean> {
+  for (const ext of NATIVE_UPLOAD_FIELDS) {
+    const path = join(dir, `audio.${ext}`)
+    const info = await lstat(path).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null
+      throw e
+    })
+    if (info === null || !info.isFile() || !transcript[ext].equals(await readFile(path))) return false
+  }
+  return true
+}
+
+const STALE_TEMP_MS = 3_600_000
+const TEMP_NAME = /^\.upload-[0-9a-f-]{36}\.tmp$/
+
+/** Removes the temporary files an upload that crashed left behind: ours by name, and older than an hour. */
+async function sweepStaleTemps(dir: string): Promise<void> {
+  for (const name of await readdir(dir)) {
+    if (!TEMP_NAME.test(name)) continue
+    const info = await lstat(join(dir, name))
+    if (info.isFile() && Date.now() - info.mtimeMs > STALE_TEMP_MS) await unlink(join(dir, name))
+  }
 }
 
 /** A new file under a name this server makes up. `O_EXCL` refuses an existing name, a link included. */
@@ -285,7 +342,7 @@ async function writeTemp(dir: string, data: Buffer): Promise<string> {
 /**
  * `POST /api/companion/jobs/<id>/transcript`: multipart fields `txt`, `srt`, `json`. 204 when it is taken; 404 unless
  * this device holds the live lease of the `native_transcription` job; 409 when the occurrence no longer waits for a
- * transcript, or one is already there; 413 over a cap; 400 for a body that is not the three files or a `json` that is
+ * transcript, or an `audio.json` that is not this upload is there; 408 when the body is too slow; 413 over a cap; 400 for a body that is not the three files or a `json` that is
  * not Whisper output. Nothing is written before the body is valid.
  *
  * One transaction does the rest: the guarded `UPDATE` that completes the job (a second upload finds it `done` and
@@ -308,11 +365,12 @@ export async function handleTranscriptRequest(
   if (boundary === null || request.body === null) return fixed('invalid_upload', 400)
   let transcript: Transcript | null
   try {
-    const parts = await readUpload(request.body, boundary)
+    const parts = await readUpload(request.body, boundary, deps.deadlines)
     if (!NATIVE_UPLOAD_FIELDS.every((f) => parts[f] !== undefined)) return fixed('invalid_upload', 400)
     transcript = validTranscript(parts)
   } catch (e) {
     if (!(e instanceof UploadError)) throw e
+    if (e.failure === 'slow') return fixed('body_too_slow', 408)
     return e.failure === 'too_large' ? fixed('body_too_large', 413) : fixed('invalid_upload', 400)
   }
   if (transcript === null) return fixed('invalid_transcript', 400)
@@ -331,7 +389,15 @@ export async function handleTranscriptRequest(
         throw e
       }
       const dir = await nativeDir(occDir)
-      if (await exists(join(dir, 'audio.json'))) throw new Refusal('conflict')
+      await sweepStaleTemps(dir)
+      // A crash after the renames below and before the commit leaves the three files and an unfinished job. This is
+      // that retry when the files on disk are exactly what arrived again: nothing is written, the job is completed
+      // and the pipeline queued once. Any other `audio.json` is not replaced.
+      if (await exists(join(dir, 'audio.json'))) {
+        if (!(await sameAsOnDisk(dir, transcript))) throw new Refusal('conflict')
+        await deps.queue.send(QUEUES.pipeline, { occurrenceId: job.occurrenceId }, { db: queueDbOf(tx) })
+        return
+      }
 
       const temps = new Map<string, string>()
       for (const ext of ['txt', 'srt', 'json'] as const) {

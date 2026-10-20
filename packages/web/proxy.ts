@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { guardDeviceToken } from './lib/companion/guard'
+import { connectionsCsp, isConnectionsPage, newNonce } from './lib/connections-csp'
 
 /**
  * Runs before every route except the device upload routes below, `/api/vnc/authorize` (Caddy's `forward_auth`)
@@ -16,13 +17,25 @@ import { guardDeviceToken } from './lib/companion/guard'
  *
  * The excluded routes are `/api/companion/jobs/<id>/transcript` and the local-run chunk uploads
  * `/api/companion/jobs/<id>/files/<path>` (plan 08 Task 3, chunks of up to 16 MiB). To exclude another one, add one
- * alternative to the lookahead in `config.matcher`. Keep the job id pattern, so only a real job id is
+ * alternative to the lookahead in `config.matcher`. Keep the job id pattern (the UUID shape, not just 36 hex digits and dashes), so only a real job id is
  * excluded. Next reads `config` statically, so the matcher must stay one literal string.
  */
 export function proxy(request: NextRequest): Response {
-  return guardDeviceToken(request) ?? NextResponse.next()
+  const refused = guardDeviceToken(request)
+  if (refused) return refused
+  if (!isConnectionsPage(request.nextUrl.pathname)) return NextResponse.next()
+  // The Connections page loads the Google Picker, so it alone gets a Content-Security-Policy with a nonce. Next reads the
+  // nonce from the request's policy and puts it on its own scripts.
+  const policy = connectionsCsp(newNonce())
+  const headers = new Headers(request.headers)
+  headers.set('Content-Security-Policy', policy)
+  const response = NextResponse.next({ request: { headers } })
+  response.headers.set('Content-Security-Policy', policy)
+  return response
 }
 
 export const config = {
-  matcher: ['/((?!api/companion/jobs/[0-9A-Fa-f-]{36}/(?:transcript$|files/.+)).*)']
+  matcher: [
+    '/((?!api/companion/jobs/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/(?:transcript$|files/.+)).*)'
+  ]
 }

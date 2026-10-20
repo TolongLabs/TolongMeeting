@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NATIVE_UPLOAD_MAX_BODY_BYTES, NATIVE_UPLOAD_MAX_FILE_BYTES, type NativeJobPayload } from '@tm/core'
@@ -10,6 +10,7 @@ import { claimJob, createCompanionJob } from '../db/companion'
 import { seedCompanionFixture } from '../db/companion.fixtures'
 import { QUEUES, type Queue } from '../db/queues'
 import { createTestDb, dropAllTestDbs, FakeQueue } from '../db/testing'
+import type { Deadlines } from '../lib/companion/deadline'
 import { handleAudioRequest, handleTranscriptRequest } from '../lib/companion/native'
 import { withDevice } from '../lib/companion/scope'
 import { newDeviceToken } from '../lib/companion/tokens'
@@ -480,5 +481,111 @@ describe('transcript upload', () => {
     } finally {
       for (const spy of spies) spy.mockRestore()
     }
+  })
+})
+
+describe('a slow, odd or repeated upload', () => {
+  const BOUNDARY = 'tmboundary'
+  const multipart = (parts: { header: string; body: string }[]) =>
+    parts.map((p) => `--${BOUNDARY}\r\n${p.header}\r\n\r\n${p.body}\r\n`).join('') + `--${BOUNDARY}--\r\n`
+  const goodParts = (header = (name: string) => `Content-Disposition: form-data; name="${name}"`) =>
+    Object.entries(GOOD).map(([name, body]) => ({ header: header(name), body }))
+  const rawUpload = (id: string, body: BodyInit, deadlines?: Deadlines) =>
+    withDevice(
+      async (r, scope, ctx: { id: string }) => handleTranscriptRequest(r, scope, { db, queue, deadlines }, ctx.id),
+      deps
+    )(
+      authed(`/api/companion/jobs/${id}/transcript`, tokens.a1, {
+        method: 'POST',
+        body,
+        headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+        duplex: 'half'
+      }),
+      { id }
+    )
+
+  test('a body that stalls is cut off after the idle limit and writes nothing', async () => {
+    const id = await heldJob()
+    const head = new TextEncoder().encode(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="txt"\r\n\r\nhel`)
+    const stalled = new ReadableStream<Uint8Array>({ start: (c) => c.enqueue(head) })
+    const res = await rawUpload(id, stalled, { idleMs: 80 })
+    expect([res.status, await res.json()]).toEqual([408, { error: 'body_too_slow' }])
+    expect(await nativeFiles()).toEqual([])
+    expect(await stateOf(id)).toBe('claimed')
+    expect(sent()).toEqual([])
+  })
+
+  test('a body that trickles is cut off after the total limit', async () => {
+    const id = await heldJob()
+    const trickle = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        await new Promise((r) => setTimeout(r, 30))
+        c.enqueue(new TextEncoder().encode('-'))
+      }
+    })
+    expect((await rawUpload(id, trickle, { idleMs: 1000, totalMs: 200 })).status).toBe(408)
+    expect(await nativeFiles()).toEqual([])
+    expect(await stateOf(id)).toBe('claimed')
+  })
+
+  test('a header line with a bare CR or LF is refused', async () => {
+    const id = await heldJob()
+    for (const smuggled of ['\nX-Extra: 1', '\rX-Extra: 1']) {
+      const parts = goodParts((name) =>
+        name === 'txt'
+          ? `Content-Disposition: form-data; name="txt"${smuggled}`
+          : `Content-Disposition: form-data; name="${name}"`
+      )
+      expect((await rawUpload(id, multipart(parts))).status).toBe(400)
+    }
+    expect((await rawUpload(id, multipart(goodParts()))).status).toBe(204)
+  })
+
+  test('chunks are gathered, so a body sent a byte at a time costs a few parses, not one per byte', async () => {
+    const id = await heldJob()
+    const text = 'x'.repeat(150_000)
+    const body = new TextEncoder().encode(
+      multipart(goodParts().map((p) => (p.header.includes('"txt"') ? { ...p, body: text } : p)))
+    )
+    let at = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (at >= body.length) return c.close()
+        c.enqueue(body.subarray(at, at + 1))
+        at += 1
+      }
+    })
+    const concat = spyOn(Buffer, 'concat')
+    try {
+      expect((await rawUpload(id, stream)).status).toBe(204)
+      expect(concat.mock.calls.length).toBeLessThan(500)
+    } finally {
+      concat.mockRestore()
+    }
+    expect(await readFile(join(occDir, 'transcript', 'native', 'audio.txt'), 'utf8')).toBe(text)
+  })
+
+  test('a retry after a crash that left the three files completes the job and queues the pipeline once', async () => {
+    const id = await heldJob()
+    const dir = join(occDir, 'transcript', 'native')
+    await mkdir(dir, { recursive: true })
+    for (const [ext, content] of Object.entries(GOOD)) await writeFile(join(dir, `audio.${ext}`), content)
+    const old = join(dir, '.upload-11111111-1111-1111-1111-111111111111.tmp')
+    const fresh = join(dir, '.upload-22222222-2222-2222-2222-222222222222.tmp')
+    const other = join(dir, 'keep.tmp')
+    for (const path of [old, fresh, other]) await writeFile(path, 'partial')
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000)
+    await utimes(old, twoHoursAgo, twoHoursAgo)
+    await utimes(other, twoHoursAgo, twoHoursAgo)
+
+    expect((await upload(id, formOf(GOOD))).status).toBe(204)
+    expect(await stateOf(id)).toBe('done')
+    expect(await occState()).toBe('post_processing')
+    expect(sent().map((s) => s.name)).toEqual([QUEUES.pipeline])
+    expect((await readdir(dir)).sort()).toEqual(
+      ['.upload-22222222-2222-2222-2222-222222222222.tmp', 'audio.json', 'audio.srt', 'audio.txt', 'keep.tmp'].sort()
+    )
+    expect((await upload(id, formOf(GOOD))).status).toBe(404)
+    expect(sent()).toHaveLength(1)
   })
 })

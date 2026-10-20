@@ -1,14 +1,33 @@
 import { describe, expect, test } from 'bun:test'
+import { join } from 'node:path'
 import { NextRequest } from 'next/server'
-import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server'
-import { config, proxy } from '../proxy'
+import { proxy } from '../proxy'
 
 const JOB = '3f2b8a9e-6c1d-4e7a-9b0f-2d5c8e1a4f60'
-const runsOn = (url: string) => unstable_doesMiddlewareMatch({ config, url })
+const webRoot = join(import.meta.dir, '..')
+
+// `next/experimental/testing/server` loads Next's build code, which needs `sharp` and breaks other test files that run
+// in the same `bun test` process (their modules fail to load). So Next's own matcher check runs in a child process.
+const PROBE = join(webRoot, 'test', 'support', 'matcher-probe.ts')
+
+/** `[path, whether the proxy runs on it]` for each path: Next's own answer for the matcher in `proxy.ts`. */
+function runsOn(paths: string[]): [string, boolean][] {
+  const urls = paths.map((path) => `https://tm.example${path}`)
+  const child = Bun.spawnSync([process.execPath, PROBE], {
+    cwd: webRoot,
+    env: { ...process.env, PROBE_URLS: JSON.stringify(urls) },
+    stdout: 'pipe',
+    stderr: 'pipe'
+  })
+  if (child.exitCode !== 0) throw new Error(`the matcher probe failed: ${child.stderr.toString().slice(0, 500)}`)
+  const answers: boolean[] = JSON.parse(child.stdout.toString().trim().split('\n').at(-1)!)
+  return paths.map((path, i) => [path, answers[i]!])
+}
+const all = (paths: string[], runs: boolean) => paths.map((path): [string, boolean] => [path, runs])
 
 describe('the proxy matcher', () => {
   test('the proxy still runs on member routes, the remote-view check and the other device routes', () => {
-    for (const path of [
+    const paths = [
       '/',
       '/devices',
       '/api/meetings/abc',
@@ -18,53 +37,49 @@ describe('the proxy matcher', () => {
       '/api/companion/events',
       `/api/companion/jobs/${JOB}/claim`,
       `/api/companion/jobs/${JOB}/audio`,
-      `/api/companion/jobs/${JOB}/progress`
-    ]) {
-      expect([path, runsOn(`https://tm.example${path}`)]).toEqual([path, true])
-    }
+      `/api/companion/jobs/${JOB}/progress`,
+      `/api/companion/jobs/${JOB}/heartbeat`,
+      `/api/companion/jobs/${JOB}/complete`
+    ]
+    expect(runsOn(paths)).toEqual(all(paths, true))
   })
 
-  test('the proxy does not run on the transcript upload route, so its body is never buffered', () => {
-    expect(runsOn(`https://tm.example/api/companion/jobs/${JOB}/transcript`)).toBe(false)
-  })
-
-  test('the proxy does not run on the local-run chunk upload route, whatever the file path', () => {
-    for (const path of [
-      'chat.jsonl',
-      'recording/meeting.mkv',
-      'recording/attempt_2_seg_014.mkv',
-      'forms/f1/record.json',
-      'transcript/native/audio.srt'
-    ]) {
-      expect([path, runsOn(`https://tm.example/api/companion/jobs/${JOB}/files/${path}`)]).toEqual([path, false])
-    }
+  test('the proxy does not run on the upload routes, so their bodies are never buffered', () => {
+    const paths = [
+      `/api/companion/jobs/${JOB}/transcript`,
+      ...[
+        'chat.jsonl',
+        'recording/meeting.mkv',
+        'recording/attempt_2_seg_014.mkv',
+        'forms/f1/record.json',
+        'transcript/native/audio.srt'
+      ].map((file) => `/api/companion/jobs/${JOB}/files/${file}`),
+      `/api/companion/jobs/${JOB.toUpperCase()}/files/chat.jsonl`
+    ]
+    expect(runsOn(paths)).toEqual(all(paths, false))
   })
 
   test('look-alikes of the upload routes stay behind the proxy', () => {
-    for (const path of [
-      `/api/companion/jobs/${JOB}/files`,
-      `/api/companion/jobs/${JOB}/files/`,
-      `/api/companion/jobs/${JOB}/filesx/chat.jsonl`,
-      `/api/companion/jobs/not-a-job/files/chat.jsonl`,
-      `/api/companion/jobs/%2e%2e/identities/files/chat.jsonl`,
-      `/api/meetings/${JOB}/files/chat.jsonl`
-    ]) {
-      expect([path, runsOn(`https://tm.example${path}`)]).toEqual([path, true])
-    }
-  })
-
-  test('look-alikes of the transcript upload route stay behind the proxy', () => {
-    for (const path of [
+    const paths = [
       `/api/companion/jobs/${JOB}/transcript/extra`,
       `/api/companion/jobs/${JOB}/transcripts`,
       `/api/companion/jobs/%2e%2e/identities/transcript`,
       `/api/companion/jobs/${JOB}/../../identities`,
       `/api/companion/jobs/not-a-job/transcript`,
       `/api/meetings/${JOB}/transcript`,
-      `/api/companionx/jobs/${JOB}/transcript`
-    ]) {
-      expect([path, runsOn(`https://tm.example${path}`)]).toEqual([path, true])
-    }
+      `/api/companionx/jobs/${JOB}/transcript`,
+      `/api/companion/jobs/${JOB}/files`,
+      `/api/companion/jobs/${JOB}/files/`,
+      `/api/companion/jobs/${JOB}/filesx/chat.jsonl`,
+      `/api/companion/jobs/not-a-job/files/chat.jsonl`,
+      `/api/companion/jobs/%2e%2e/identities/files/chat.jsonl`,
+      `/api/meetings/${JOB}/files/chat.jsonl`,
+      // 36 characters of hex and dashes, but not the shape of a UUID.
+      `/api/companion/jobs/${'-'.repeat(36)}/files/chat.jsonl`,
+      `/api/companion/jobs/${'a'.repeat(36)}/transcript`,
+      `/api/companion/jobs/${JOB.replaceAll('-', 'a').padEnd(36, 'a')}/files/chat.jsonl`
+    ]
+    expect(runsOn(paths)).toEqual(all(paths, true))
   })
 
   test('a device token on a member route still gets 403', async () => {
