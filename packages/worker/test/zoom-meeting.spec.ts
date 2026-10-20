@@ -78,6 +78,20 @@ for (const root of ['top', 'iframe']) {
     expect(await read(page, 'forbiddenClicks')).toEqual([])
   })
 
+  // The fixture's list wrapper has an id. While it held one row, that id was taken for the row, and the row was stored
+  // again under its text once a second row arrived. Each message must have one key, whatever the list holds.
+  test(`one message in an id-bearing list wrapper is kept once (${root})`, async ({ page }) => {
+    await page.goto(url('?seed=1'))
+    const first = await zoomAdapter.readChat(page, { seenKeys: [] })
+    expect(first.messages.map((m) => m.text)).toEqual(['Message number 0'])
+    await drive(page, 'addMessage', { sender: 'Student 1', time: '8:11 PM', text: 'second' })
+    const second = await zoomAdapter.readChat(page, first.cursor)
+    expect(second.messages.map((m) => m.text)).toEqual(['second'])
+    const swept = await zoomAdapter.sweepChat(page)
+    expect(swept.map((m) => m.text)).toEqual(['Message number 0', 'second'])
+    expect(new Set(swept.map((m) => m.key)).size).toBe(2)
+  })
+
   test(`sweep recovers every item of a virtualised list (${root})`, async ({ page }) => {
     await page.goto(url('?seed=60'))
     expect(await inClient(page, '.chat-item-container').count()).toBeLessThan(60)

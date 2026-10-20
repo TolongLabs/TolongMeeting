@@ -149,6 +149,30 @@ test('a sweep adds the rows the polls missed, with no duplicates', async ({ page
   expect(errors()).toEqual([])
 })
 
+// Six messages arrive one frame apart, and the list moves down to each new one before the next arrives. The 4-row list
+// shows each of them only for a moment, so a parse that waits 250 ms sees just the last window. The sweep is 10 minutes
+// away, so every row has to be captured as it renders.
+test('a burst that scrolls past each new row keeps all six without a sweep', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  const c = await startChatCapture(page, zoomAdapter, file, async () => {}, { pollMs: 200, sweepMs: 600_000, emit })
+  await expect.poll(async () => (await keys()).length).toBe(4)
+  await page.evaluate(async () => {
+    const fixture = (window as unknown as { __fixture: { addMessage(m: object): void; scrollTop(y: number): void } })
+      .__fixture
+    for (let i = 1; i <= 6; i++) {
+      fixture.addMessage({ sender: 'Student Burst', time: `8:5${i} PM`, text: `burst ${i}` })
+      fixture.scrollTop(80 * i)
+      await new Promise((resolve) => setTimeout(resolve, 16))
+    }
+  })
+  await expect.poll(async () => (await keys()).length, { timeout: 5_000 }).toBe(10)
+  await c.stop()
+  const burst = (await rows()).filter((m) => m.sender === 'Student Burst').map((m) => m.text)
+  expect(burst).toEqual(['burst 1', 'burst 2', 'burst 3', 'burst 4', 'burst 5', 'burst 6'])
+  expect(new Set(await keys()).size).toBe(10)
+  expect(errors()).toEqual([])
+})
+
 test('a thrown read is reported and capture carries on', async ({ page }) => {
   await page.goto('/zoom-meeting-top.html')
   let reads = 0

@@ -122,18 +122,9 @@ async function chatProbe(cfg: ProbeConfig): Promise<ProbeResult> {
         // as a second copy. The next sweep attributes it.
         if (!sender) continue
 
-        // An id counts only when it belongs to this row: one on an ancestor shared by several rows would merge them.
-        const ancestor = item.closest('[id]')
-        let id = item.id || item.getAttribute('data-id') || ''
-        if (
-          !id &&
-          ancestor &&
-          ancestor !== l &&
-          l.contains(ancestor) &&
-          ancestor.querySelectorAll(cfg.chatItem).length === 1
-        ) {
-          id = ancestor.id
-        }
+        // Only the row's own id counts. An ancestor's id can be the list's wrapper: it holds one row while the list has
+        // one, so a key taken from it would change once a second row arrived and store the row twice.
+        const id = item.id || item.getAttribute('data-id') || ''
         const key = id ? `id:${id}` : `${sender}|${time}|${text.slice(0, 200)}`
         if (keys.has(key)) continue
 
@@ -198,14 +189,23 @@ async function chatProbe(cfg: ProbeConfig): Promise<ProbeResult> {
       return sweepRun
     }
 
-    // Bursts of mutations (a scroll re-renders many rows) are parsed once, 250 ms after the first.
+    // A batch that adds rows is parsed at once: the list can scroll a row out before a delayed parse would see it. Any
+    // other change (text edits, removals) is debounced, 250 ms after the first.
     const scheduleParse = () => {
       parseTimer ??= window.setTimeout(() => {
         parseTimer = null
         parse()
       }, 250)
     }
-    new MutationObserver(scheduleParse).observe(document.body, { childList: true, subtree: true, characterData: true })
+    new MutationObserver((records) => {
+      if (records.some((r) => r.addedNodes.length > 0)) {
+        if (parseTimer !== null) window.clearTimeout(parseTimer)
+        parseTimer = null
+        parse()
+      } else {
+        scheduleParse()
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true })
     window.setInterval(parse, 3000)
     startPinning()
     w.__tmChat = { messages, keys, parse, pin, sweeping: () => sweepRun !== null, sweep }
