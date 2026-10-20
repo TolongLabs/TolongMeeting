@@ -111,6 +111,26 @@ async function waitForWindowManager(display: string, openbox: Started): Promise<
   throw new Error(`openbox did not manage ${display} within ${READY_TIMEOUT_MS / 1000} s`)
 }
 
+// openbox now and then exits with code 1 and no message right after it starts on a fresh Xvfb (seen in the image on
+// CI, about one start in fifty; not reproduced by hand). A second start on the same display works, so a start that
+// exits early is tried up to three times; a window manager that never manages the display still fails at once.
+const OPENBOX_ATTEMPTS = 3
+
+async function startOpenbox(display: string): Promise<Started> {
+  for (let attempt = 1; ; attempt++) {
+    const openbox = await start('openbox', [], { ...process.env, DISPLAY: display })
+    try {
+      await waitForWindowManager(display, openbox)
+      return openbox
+    } catch (error) {
+      const exitedEarly = openbox.child.exitCode !== null
+      await terminate(openbox)
+      if (!exitedEarly || attempt >= OPENBOX_ATTEMPTS) throw error
+      await sleep(200)
+    }
+  }
+}
+
 // DISPLAY belongs to the most recently started live screen; stopping a screen hands it back to the one before it, or
 // to the value it had before the first screen started.
 const live: string[] = []
@@ -146,11 +166,7 @@ export async function startScreen(options: ScreenOptions = {}): Promise<Screen> 
     started.push(xvfb)
     display = await readDisplay(xvfb, xvfb.child.stdio[3] as Readable)
     await waitForDisplay(display, xvfb)
-    if (windowManager === 'openbox') {
-      const openbox = await start('openbox', [], { ...process.env, DISPLAY: display })
-      started.push(openbox)
-      await waitForWindowManager(display, openbox)
-    }
+    if (windowManager === 'openbox') started.push(await startOpenbox(display))
   } catch (error) {
     for (const p of started.reverse()) await terminate(p)
     throw error
