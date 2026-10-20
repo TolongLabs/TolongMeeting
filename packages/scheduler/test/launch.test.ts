@@ -362,7 +362,7 @@ test('a pasted link becomes the job link', async () => {
     kind: 'fixed',
     url: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
   })
-  expect((await f.occurrence()).linkUsed).toBe('https://example.zoom.us/j/00000000000?pwd=PASSCODE')
+  expect((await f.occurrence()).linkUsed).toBe('https://example.zoom.us/j/00000000000')
 })
 
 test("a container that can't be created fails the occurrence, pings and deletes the job files", async () => {

@@ -4,6 +4,7 @@ import {
   formatWhen,
   gateLinkSource,
   profileKey,
+  stripPasscode,
   watchGateFromEnv,
   type SpecEnv,
   type WatchGate
@@ -457,7 +458,10 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
     const entrySnapshot = await buildEntrySnapshot(db, occ.id)
     await db
       .update(occurrences)
-      .set({ entrySnapshot, linkUsed: entrySnapshot.link.kind === 'fixed' ? entrySnapshot.link.url : null })
+      .set({
+        entrySnapshot,
+        linkUsed: entrySnapshot.link.kind === 'fixed' ? stripPasscode(entrySnapshot.link.url) : null
+      })
       .where(eq(occurrences.id, occ.id))
   } catch (e) {
     throw safeDbError(e)
