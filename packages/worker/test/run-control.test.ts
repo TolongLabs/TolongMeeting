@@ -73,7 +73,7 @@ function control(answer: (body: Heartbeat, n: number) => Reply = () => ({})) {
 }
 
 // The server's rule for a worker's state changes (web/lib/control.ts): from `restarting` only `resume:<resume_state>`
-// is taken; elsewhere a worker moves along the machine's edges, but never to a state it does not own.
+// is taken (a state on the in-meeting path stands for it when `resume_state` is on the path too); elsewhere a worker moves along the machine's edges, but never to a state it does not own.
 const CANNOT_ENTER = new Set<OccurrenceState>([
   'deleted',
   'completed',
@@ -84,6 +84,7 @@ const CANNOT_ENTER = new Set<OccurrenceState>([
   'skipped_identity_clash',
   'skipped_pc_offline'
 ])
+const MEETING_PATH: OccurrenceState[] = ['joining', 'in_lobby', 'in_meeting']
 const MOVES_FROM = new Set<OccurrenceState>([...ACTIVE_STATES, 'uploading'])
 
 // A control server that applies each heartbeat's state changes the way the real one does, so a restarted worker that
@@ -92,6 +93,16 @@ function stateful(start: OccurrenceState, resumeState: OccurrenceState) {
   const model = { state: start, illegal: [] as string[] }
   const moveTo = (next: OccurrenceState): void => {
     if (next === model.state) return
+    if (
+      model.state === 'restarting' &&
+      next !== resumeState &&
+      MEETING_PATH.includes(resumeState) &&
+      MEETING_PATH.includes(next)
+    ) {
+      moveTo(resumeState)
+      if (next === model.state) return
+    }
+    if (MEETING_PATH.includes(next) && MEETING_PATH.indexOf(next) < MEETING_PATH.indexOf(model.state)) return
     const trigger = triggerFor(model.state, next)
     const resumes = model.state === 'restarting' && trigger === `resume:${resumeState}`
     const allowed =
@@ -455,6 +466,97 @@ test('a worker replaced while it waits for its resumed state does not join the r
   expect(d.calls).not.toContain('joinRecording')
   expect(c.events().filter((e) => e.type === 'state')).toEqual([])
 }, 10_000)
+
+test('a restart whose lost acknowledgement leaves it behind resume_state still leaves restarting when admitted straight in', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  // The server applied `in_lobby`, but the heartbeat reply was lost: that change is still unsent, so the worker
+  // reports `joining`, and the rejoin is admitted straight in (it never passes through `in_lobby`).
+  const log = [
+    stateEvent(1, 'verifying_accounts'),
+    stateEvent(2, 'watching_for_link'),
+    stateEvent(3, 'joining'),
+    stateEvent(4, 'in_lobby')
+  ]
+  await leftBehind(cfg, log, [log[3]!])
+  const c = stateful('restarting', 'in_lobby')
+  const d = fake({ states: ['in_meeting', 'ended'] })
+  const o = await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'page' })
+  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'joining' })
+  expect(c.states()).not.toContain('in_lobby')
+  expect(c.model.illegal).toEqual([])
+  expect(c.model.state).toBe('transcribing')
+})
+
+// Attempt 1 joined, recorded a segment and was cut short (SIGTERM); the meeting ended while the worker was down.
+async function cutShortAfterJoining(cfg: JobConfig, joinedAt: string | null): Promise<void> {
+  await leftBehind(cfg, [stateEvent(1, 'in_meeting')], [])
+  await mkdir(join(cfg.dataDir, 'recording'), { recursive: true })
+  await writeFile(join(cfg.dataDir, 'recording', 'attempt_1_seg_000.mkv'), 'video')
+  await writeFile(
+    join(cfg.dataDir, 'outcome.json'),
+    JSON.stringify({
+      result: joinedAt === null ? 'failed' : 'completed',
+      endedBy: 'terminated',
+      reason: 'terminated',
+      joinedAt,
+      endedAt: '2026-10-21T12:30:00.000Z'
+    })
+  )
+}
+
+test('a rejoin that finds the meeting over still hands over the earlier attempt’s recording', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  const joinedAt = '2026-10-21T12:00:04.000Z'
+  await cutShortAfterJoining(cfg, joinedAt)
+  const c = stateful('restarting', 'in_meeting')
+  const d = fake({ joins: [{ kind: 'failed', reason: 'meeting_ended' }], states: 'always_in_meeting' })
+  const o = await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(o).toMatchObject({ result: 'completed', endedBy: 'page', joinedAt })
+  expect(d.calls).toContain('joinRecording')
+  expect(c.states()).toEqual(['leaving', 'uploading', 'transcribing'])
+  expect(c.model.illegal).toEqual([])
+  expect(c.model.state).toBe('transcribing')
+  expect(JSON.parse(await readFile(join(cfg.dataDir, 'outcome.json'), 'utf8'))).toMatchObject({
+    result: 'completed',
+    joinedAt
+  })
+})
+
+test('the same hand-over works when the server resumes at a state behind the worker’s', async () => {
+  const cfg = withControl('http://unused', { attempt: 2 })
+  await cutShortAfterJoining(cfg, '2026-10-21T12:00:04.000Z')
+  const c = stateful('restarting', 'joining')
+  const d = fake({ joins: [{ kind: 'failed', reason: 'meeting_ended' }], states: 'always_in_meeting' })
+  await runOccurrence({ ...cfg, control: { url: c.url, token: '1.token' } }, d)
+  expect(c.seen[0]).toMatchObject({ attempt: 2, state: 'in_meeting' })
+  expect(c.states()).toEqual(['leaving', 'uploading', 'transcribing'])
+  expect(c.model.illegal).toEqual([])
+  expect(c.model.state).toBe('transcribing')
+})
+
+test('a rejoin that finds the meeting over fails when no earlier attempt joined or left a segment', async () => {
+  const never = withControl('http://unused', { attempt: 2 })
+  await cutShortAfterJoining(never, null)
+  const a = stateful('restarting', 'in_meeting')
+  const d = fake({ joins: [{ kind: 'failed', reason: 'meeting_ended' }], states: 'always_in_meeting' })
+  expect(await runOccurrence({ ...never, control: { url: a.url, token: '1.token' } }, d)).toMatchObject({
+    result: 'failed',
+    reason: 'meeting_ended'
+  })
+  expect(a.model.state).toBe('failed')
+
+  const bare = withControl('http://unused', { attempt: 2, dataDir: `${base.dataDir}-bare` })
+  await cutShortAfterJoining(bare, '2026-10-21T12:00:04.000Z')
+  await rm(join(bare.dataDir, 'recording', 'attempt_1_seg_000.mkv'))
+  const b = stateful('restarting', 'in_meeting')
+  const e = fake({ joins: [{ kind: 'failed', reason: 'meeting_ended' }], states: 'always_in_meeting' })
+  expect(await runOccurrence({ ...bare, control: { url: b.url, token: '1.token' } }, e)).toMatchObject({
+    result: 'failed'
+  })
+  expect(b.model.state).toBe('failed')
+  await rm(bare.dataDir, { recursive: true, force: true })
+})
 
 test('a cut-short earlier attempt (SIGTERM) does not end the meeting: the restarted worker joins again', async () => {
   const cfg = withControl('http://unused', { attempt: 2 })

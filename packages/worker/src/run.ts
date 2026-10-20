@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Page } from 'playwright'
 import { AiKeyError } from '@tm/ai'
@@ -242,6 +242,8 @@ class OccurrenceRun {
 
   private inMeeting = false
   private joinedAt: Date | null = null
+  /** When the earlier attempt that was cut short joined (null: it never did); undefined: no such outcome was read. */
+  private earlierJoinedAt: string | null | undefined = undefined
   private region: Rect | null = null
   private participants: number | null = null
   private breakoutShown = false
@@ -347,7 +349,9 @@ class OccurrenceRun {
       throw error
     }
     const outcome = OutcomeSchema.parse(JSON.parse(text))
-    return outcome.endedBy === 'terminated' ? null : outcome
+    if (outcome.endedBy !== 'terminated') return outcome
+    this.earlierJoinedAt = outcome.joinedAt
+    return null
   }
 
   // The meeting is over, so the bot does not join again. The first heartbeat already carries the acknowledged state;
@@ -399,7 +403,7 @@ class OccurrenceRun {
   // Reports each state from the one after the current state up to `target`, on the way a meeting goes. A step the
   // server has no edge for is skipped by `setState`.
   private async walkTo(target: OccurrenceState): Promise<void> {
-    const from = PATH.indexOf(this.state)
+    const from = PATH.indexOf(this.state === 'in_lobby' ? 'joining' : this.state)
     for (const next of PATH.slice(from + 1, PATH.indexOf(target) + 1)) await this.setState(next)
   }
 
@@ -1049,6 +1053,7 @@ class OccurrenceRun {
           this.alerter.alert('join_failed', 'the account is busy')
           return failed('account_busy')
         case 'failed':
+          if (await this.handOverEarlier(result.reason)) return ended('page')
           await this.saveFailure('join')
           this.alerter.alert('join_failed', result.reason)
           return failed(result.reason)
@@ -1073,6 +1078,23 @@ class OccurrenceRun {
         }
       }
     }
+  }
+
+  // A restarted worker whose rejoin finds the meeting over: the segments an earlier attempt recorded are all there is,
+  // and they still go to the pipeline. The run then ends like a meeting that ended on its own (`teardown` walks the
+  // states). False when there is nothing to hand over: the attempt is the first, the earlier one never joined, or no
+  // earlier attempt left a segment.
+  private async handOverEarlier(reason: string): Promise<boolean> {
+    const { attempt, dataDir } = this.cfg
+    if (reason !== 'meeting_ended' || attempt === 1 || this.earlierJoinedAt === null) return false
+    const files = await readdir(join(dataDir, 'recording'))
+    const earlier = files.some((f) => {
+      const n = /^attempt_(\d+)_seg_\d+\.mkv$/.exec(f)?.[1]
+      return n !== undefined && Number(n) < attempt
+    })
+    if (!earlier && !files.includes('meeting.mkv')) return false
+    this.joinedAt ??= new Date(this.earlierJoinedAt ?? this.deps.now())
+    return true
   }
 
   private async entered(): Promise<null> {
@@ -1371,7 +1393,8 @@ class OccurrenceRun {
     // The member's view of the desk goes first, and the desk work that waits for it is released.
     if (this.deskPause) await this.bounded('desk pause', BOUND.deskPause, () => this.deskPause!.close())
     // The recording goes on to the pipeline: leaving, then (the bot out of the meeting) uploading.
-    if (this.handsOver) await this.setState('leaving')
+    // The rejoin that found the meeting over reports `in_meeting` on the way: the earlier attempt was in it.
+    if (this.handsOver) await this.walkTo('leaving')
     if (this.inMeeting) {
       const chat = this.chat
       if (chat) await this.bounded('chat.sweepNow', BOUND.sweep, () => chat.sweepNow())

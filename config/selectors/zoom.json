@@ -26,7 +26,7 @@
     "accountBusy": "already in (another|a) meeting",
     "lobby": "host will let you in soon|waiting room",
     "lobbyDenied": "removed from the waiting room|host has removed you",
-    "ended": "meeting has been ended|this meeting has ended|host has ended this meeting",
+    "ended": "meeting has been ended|this meeting has ended|host has ended this meeting|invalid meeting id|meeting id is not valid",
     "removed": "you have been removed from this meeting",
     "breakout": "breakout room",
     "roleLabel": "\\s*\\((host|co-host)\\)\\s*$",

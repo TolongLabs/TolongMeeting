@@ -615,12 +615,45 @@ describe('worker-reported moves', () => {
 
     test('is refused any other state, and the old attempt is refused outright', async () => {
       const f = await restarted('in_meeting')
-      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'in_lobby', [], { attempt: 2 }))
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'watching_for_link', [], { attempt: 2 }))
       expect(await f.occurrence()).toMatchObject({ state: 'restarting', resumeState: 'in_meeting' })
-      expect(await errorsOf(f)).toEqual([{ reason: 'illegal_transition', from: 'restarting', to: 'in_lobby' }])
+      expect(await errorsOf(f)).toEqual([{ reason: 'illegal_transition', from: 'restarting', to: 'watching_for_link' }])
       const old = await handleHeartbeat(f.deps, 'Bearer 1.abc', beat(f.id, 'in_meeting'))
       expect(old).toMatchObject({ status: 410, body: { commands: ['stop'] } })
       expect(await f.occurrence()).toMatchObject({ state: 'restarting', resumeState: 'in_meeting' })
+    })
+
+    test('a lost acknowledgement: a state behind resume_state on the in-meeting path resumes it', async () => {
+      // resume_state in_lobby; the worker, admitted straight in, reports joining and then in_meeting, never in_lobby.
+      const f = await restarted('in_lobby')
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'joining', [], { attempt: 2 }))
+      expect(await f.occurrence()).toMatchObject({ state: 'in_lobby', resumeState: null })
+      // Its status still says joining until it moves: that echo is not an illegal move.
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'joining', [], { attempt: 2 }))
+      const e = { ...ev(f.id, 'state', { state: 'in_meeting' }), attempt: 2 }
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'in_meeting', [e], { attempt: 2 }))
+      expect(await f.occurrence()).toMatchObject({ state: 'in_meeting', resumeState: null, restarts: 1 })
+      expect(await errorsOf(f)).toEqual([])
+    })
+
+    test('a lost acknowledgement: in_lobby behind in_meeting resumes in_meeting', async () => {
+      const f = await restarted('in_meeting')
+      await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, 'in_lobby', [], { attempt: 2 }))
+      expect(await f.occurrence()).toMatchObject({ state: 'in_meeting', resumeState: null })
+      expect(await errorsOf(f)).toEqual([])
+    })
+
+    test('a lost acknowledgement does not let a worker reach a state after the meeting', async () => {
+      const f = await restarted('in_lobby')
+      for (const to of ['leaving', 'uploading', 'transcribing', 'completed'] as const) {
+        const e = { ...ev(f.id, 'state', { state: to }), attempt: 2 }
+        await handleHeartbeat(f.deps, 'Bearer 2.def', beat(f.id, to, [e], { attempt: 2 }))
+        expect([to, (await f.occurrence()).state]).toEqual([to, 'restarting'])
+      }
+      // The path rule needs both states on it: a resume_state before it takes only itself.
+      const g = await restarted('verifying_accounts')
+      await handleHeartbeat(g.deps, 'Bearer 2.def', beat(g.id, 'joining', [], { attempt: 2 }))
+      expect(await g.occurrence()).toMatchObject({ state: 'restarting', resumeState: 'verifying_accounts' })
     })
   })
 

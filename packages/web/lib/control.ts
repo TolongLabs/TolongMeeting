@@ -96,6 +96,12 @@ const WORKER_CANNOT_ENTER: ReadonlySet<OccurrenceState> = new Set<OccurrenceStat
 ])
 
 /**
+ * The in-meeting path, in order. A restarted worker whose heartbeat was lost reports a state on it that can be behind
+ * the server's `resume_state` (it never saw the acknowledgement); on this path alone that is not a refusal.
+ */
+const MEETING_PATH: readonly OccurrenceState[] = ['joining', 'in_lobby', 'in_meeting']
+
+/**
  * Whether the token belongs to this occurrence's current attempt. A token that doesn't match but names an older attempt
  * than the stored one is a superseded worker (its hash was replaced, so only the attempt prefix can be compared).
  */
@@ -366,6 +372,24 @@ async function applyHeartbeat(tx: Db, deps: HeartbeatDeps, row: OccurrenceRow, h
 
   const moveTo = async (next: OccurrenceState): Promise<void> => {
     if (next === current) return
+    // A restarted worker is back in the meeting flow: when both its state and `resume_state` are on the in-meeting path,
+    // it resumes at `resume_state` first, and what it reported is then judged from there. A worker still can't reach a
+    // state after the meeting this way: the post-meeting states are not on the path.
+    const resumeAt = row.resumeState
+    if (
+      current === 'restarting' &&
+      resumeAt !== null &&
+      next !== resumeAt &&
+      MEETING_PATH.includes(resumeAt) &&
+      MEETING_PATH.includes(next)
+    ) {
+      await moveTo(resumeAt)
+      if (next === current) return
+    }
+    // After a restart, a state behind the server's on the path is a worker that is catching up (or an echo of its first
+    // heartbeat), not an illegal move.
+    if (row.restarts > 0 && MEETING_PATH.includes(next) && MEETING_PATH.indexOf(next) < MEETING_PATH.indexOf(current))
+      return
     const trigger = triggerFor(current, next)
     // A worker may report progress. The server owns restarts, deletion and everything after the upload.
     // The one exception: the restarted attempt reports the state it resumes (`applyTrigger` accepts only `resume_state`).

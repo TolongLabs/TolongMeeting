@@ -34,6 +34,8 @@ test('lobby, sign-in, busy account and missing name are distinct results', async
   expect(await zoomAdapter.join(page, { guestName: 'G' })).toEqual({ kind: 'signin_required', host: 'localhost' })
   await page.goto('/zoom-busy.html')
   expect(await zoomAdapter.join(page, { guestName: 'G' })).toEqual({ kind: 'account_busy' })
+  await page.goto('/zoom-ended.html')
+  expect(await zoomAdapter.join(page, { guestName: 'G' })).toEqual({ kind: 'failed', reason: 'meeting_ended' })
   await page.goto('/zoom-prejoin.html?then=meeting-top')
   expect(await zoomAdapter.join(page, { guestName: null })).toEqual({ kind: 'failed', reason: 'name_required' })
 })

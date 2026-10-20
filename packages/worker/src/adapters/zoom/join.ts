@@ -49,6 +49,7 @@ export async function zoomJoin(
   const signIn = textPattern(texts.signInRequired)
   const busy = textPattern(texts.accountBusy)
   const lobby = textPattern(texts.lobby)
+  const over = textPattern(texts.ended)
   const deadline = Date.now() + (opts.timeoutMs ?? ZOOM_TIMEOUTS.join)
   const guard = navigationGuard('join')
   let promptClicks = 0
@@ -62,6 +63,8 @@ export async function zoomJoin(
     if (signIn.test(text)) return { kind: 'signin_required', host: new URL(page.url()).hostname }
     if (busy.test(text)) return { kind: 'account_busy' }
     if (lobby.test(text)) return { kind: 'lobby' }
+    // A link to a meeting that is over (or was never held) shows a notice instead of the pre-join screen.
+    if (over.test(text)) return { kind: 'failed', reason: 'meeting_ended' }
     if (joinClicked) return null
 
     if (promptClicks < MAX_DEVICE_PROMPT_CLICKS && (await visible(root, sel.continueWithoutDevices))) {
