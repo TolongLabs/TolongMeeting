@@ -1,5 +1,5 @@
 export { loadBundle } from './bundle'
 export { contentDisposition, slugify } from './names'
 export * from './types'
-export * from './store'
+export type * from './store-types'
 export { redact } from './vault'

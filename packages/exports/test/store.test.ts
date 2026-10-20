@@ -4,7 +4,8 @@ import { exports as exportsTable, occurrences, type Db } from '@tm/web/db'
 import { createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
 import { memberExports } from '@tm/web/db/exports'
 import { createScope } from '@tm/web/lib/scope'
-import { runnerStore, type RunnerStore } from '../src'
+import type { RunnerStore } from '../src'
+import { runnerStore } from '../src/store'
 
 let db: Db
 let runner: RunnerStore
@@ -87,6 +88,14 @@ describe('runner store', () => {
       error: 'GitHub said no to Bearer [redacted] and [redacted]'
     })
     await expect(runner.fail(a.id, 'failed', 'again')).rejects.toThrow('not queued or running')
+  })
+
+  test('fail also removes the tokens of the opened connection', async () => {
+    const a = await queue(o1, 'github')
+    await runner.claimNext()
+    await runner.fail(a.id, 'failed', 'GitHub echoed my-odd-token-value in the body', ['my-odd-token-value', 'short'])
+    const [row] = await db.select().from(exportsTable).where(eq(exportsTable.id, a.id))
+    expect(row!.error).toBe('GitHub echoed [redacted] in the body')
   })
 
   test('failInterrupted fails running exports and returns them', async () => {
