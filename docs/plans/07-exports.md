@@ -521,7 +521,7 @@ git commit -m "feat(exports): add markdown zip download"
 - Consumes: `loadBundle`, `fixture` (task 1); `bundleDocument`, `DocBlock` (task 2); `writeDownload`, `testContext` (task 3).
 - Produces: `interface Jpeg { bytes: Uint8Array; width: number; height: number }`; `toJpeg(image: Uint8Array, maxWidth?: number): Promise<Jpeg>` (default 1600); `bundleImages(bundle: ExportBundle): Promise<Map<string, Jpeg>>` keyed by bundle path; `renderPdf(doc: DocBlock[], images: Map<string, Jpeg>, title: string): Promise<Uint8Array>`; `pdfTarget: ExportTarget` (id `'pdf'`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // images.test.ts
@@ -554,21 +554,21 @@ test('pdfTarget writes <exportId>.pdf', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `bun test packages/exports/src/render/images.test.ts packages/exports/src/targets/pdf.test.ts`
 Expected: FAIL with `Cannot find module './images'` and `Cannot find module './pdf'`.
 
-- [ ] **Step 3: Implement `toJpeg`, `bundleImages`, `renderPdf` and `pdfTarget`**
+- [x] **Step 3: Implement `toJpeg`, `bundleImages`, `renderPdf` and `pdfTarget`**
 
 `toJpeg`: sharp, resize to `maxWidth` without enlarging, JPEG quality 85. `renderPdf`: pdfmake on the server with DejaVu Sans from `assets/fonts` (it covers `✓`; glyphs it lacks, such as emoji and CJK, print as blanks without failing); A4, 40 pt margins, body 10 pt with line height 1.3, headings bold at 18, 14 and 12 pt, images scaled to fit 515 pt wide, tables with a bold header row, a `break` puts a page break before the next block, `info.title` is `title`. `pdfTarget` renders `bundleDocument` with `bundleImages` and calls `writeDownload(ctx, 'pdf', bytes)`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `bun test packages/exports/src/render/images.test.ts packages/exports/src/targets/pdf.test.ts`
 Expected: PASS (`0 fail`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/assets packages/exports/src/render/images.ts packages/exports/src/render/images.test.ts packages/exports/src/targets/pdf.ts packages/exports/src/targets/pdf.test.ts
