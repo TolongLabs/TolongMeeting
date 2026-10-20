@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Discord | Login</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #313338;
+        color: #dbdee1;
+      }
+      form {
+        width: 320px;
+        margin: 80px auto;
+      }
+      input,
+      button {
+        display: block;
+        width: 100%;
+        margin: 8px 0;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Mirrors config/selectors/discord.json (loginForm). Starting values, unverified against the live site. -->
+    <form onsubmit="return false">
+      <h1>Welcome back!</h1>
+      <input name="email" type="text" aria-label="Email or Phone Number" />
+      <input name="password" type="password" aria-label="Password" />
+      <button type="submit">Log In</button>
+    </form>
+  </body>
+</html>

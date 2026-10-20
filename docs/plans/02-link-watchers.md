@@ -551,7 +551,7 @@ Reader behaviour:
 
 Fixture `channel.html` uses the markup the selectors above match, and reads `window.__fixture = { channelPath, messages: { id, sender, datetime, text, href? }[] }` from an init script. It renders the newest 25 messages; when the scroller reaches the top it prepends the next 25 older after 100 ms and drops rendered items beyond 50 from the bottom; at the oldest it shows the `channelStart` element. A message from the same sender within 5 minutes of the one before renders without a `username`. `window.__addMessage(m)` appends a message (rendered when the list is at the bottom). `window.__touched` becomes true on any click, key or input event in the composer or on a `[data-action]` button (react, reply, mark as read). `login.html` is Discord's sign-in form with `input[name="email"]`. `serveWatcherFixtures` routes `https://discord.com/**` with `context.route`: `/login` gets `login.html`; `__fixture.channelPath` gets `channel.html`, or a 302 to `/login` when `loginRequired` is set; any other `/channels/...` path gets a 302 to `/channels/@me`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/test/watchers/discord.spec.ts
@@ -705,21 +705,21 @@ test('a signed-out profile and an unreachable channel reject the start', async (
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/discord.spec.ts`
 Expected: FAIL, cannot resolve `../../src/watchers/discord`.
 
-- [ ] **Step 3: Implement `selectors.ts`, `discord.ts`, the fixtures, `serve.ts` and `harness.ts`**
+- [x] **Step 3: Implement `selectors.ts`, `discord.ts`, the fixtures, `serve.ts` and `harness.ts`** (tests live in `packages/worker/test/watchers/` and `test/discord-selectors.test.ts`; `discordSelectors()` is async and cached; specs use `stop.stop()`)
 
 Read each rendered message in one `page.evaluate` call per read, returning plain objects; never `click` or `type` in this reader.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/discord.spec.ts`
 Expected: PASS, `5 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/selectors/discord.json packages/worker/src/watchers packages/worker/test/watchers packages/worker/test/fixtures/discord docs/TRD.md
