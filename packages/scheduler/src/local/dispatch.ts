@@ -1,6 +1,5 @@
 import {
   ACTIVE_STATES,
-  IllegalTransition,
   LOCAL_HEARTBEAT_TIMEOUT_MS,
   LocalRunPayloadSchema,
   meetingUrl,
@@ -10,7 +9,7 @@ import {
   type OccurrenceState
 } from '@tm/core'
 import { pings, type Ping, type WorkerFailureReason } from '@tm/notify'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import { companionJobs, identities, occurrences } from '@tm/web/db'
 import { createCompanionJob, emitCompanionEvent } from '@tm/web/db/companion'
 import { deviceName, isDeviceOnline } from '@tm/web/db/local-runs'
@@ -30,6 +29,8 @@ import type { LaunchDeps } from '../launch'
 export const LOCAL_CLAIM_SECONDS = 120
 /** An occurrence that has not started on the PC this long before its start fails. */
 export const LOCAL_START_DEADLINE_MS = 10 * 60_000
+/** A run offered late still gets this long to start before its start check, so the PC can pull the image and begin. */
+export const LOCAL_START_GRACE_MS = 5 * 60_000
 
 export type LocalDeps = Pick<LaunchDeps, 'db' | 'queue' | 'notifier' | 'env'> & {
   /** The registry reference the PC pulls. Default `TM_WORKER_IMAGE_REF`; unset is an error, never a default. */
@@ -85,7 +86,8 @@ type OccurrenceRow = typeof occurrences.$inferSelect
 /**
  * Fails a local occurrence that is still running or starting: its `local_run` job (if still open) fails with `code`,
  * the occurrence applies `fail` with that reason, and the member gets the worker-failed ping once. `false` when the
- * occurrence had moved on (nothing changes, no ping). The job and the state change commit together.
+ * occurrence had moved on (nothing changes, no ping). The job and the state change commit together; a move the
+ * machine refuses throws and changes neither.
  */
 export async function failLocalOccurrence(
   deps: Pick<LocalDeps, 'db' | 'notifier' | 'env'>,
@@ -105,12 +107,8 @@ export async function failLocalOccurrence(
           inArray(companionJobs.state, ['pending', 'claimed'])
         )
       )
-    try {
-      await applyTrigger(tx, occurrenceId, 'fail', { reason: code })
-    } catch (e) {
-      if (e instanceof IllegalTransition) return null
-      throw e
-    }
+    // An illegal move throws and rolls the job update back: the job and the occurrence change together or not at all.
+    await applyTrigger(tx, occurrenceId, 'fail', { reason: code })
     return current
   })
   if (row === null) return false
@@ -123,6 +121,43 @@ export async function failLocalOccurrence(
     })
   )
   return true
+}
+
+/**
+ * The earlier meeting that keeps a PC busy, or `null`. The PC runs one local meeting at a time, from the offer (`starting`)
+ * to the end of its upload and cut (`transcribing` while the PC still holds the job). Only a meeting that starts before
+ * `occ` (ties by id) counts, so two waiting meetings never wait for each other.
+ */
+export async function localBusyWith(
+  db: LocalDeps['db'],
+  occ: Pick<OccurrenceRow, 'id' | 'memberId' | 'scheduledStart'>,
+  deviceId: string
+): Promise<{ entryName: string } | null> {
+  const openJob = sql`exists (
+    select 1 from ${companionJobs}
+    where ${companionJobs.occurrenceId} = ${occurrences.id} and ${companionJobs.kind} = 'local_run'
+      and ${companionJobs.state} in ('pending', 'claimed')
+  )`
+  const [row] = await db
+    .select({ entryName: occurrences.entryName })
+    .from(occurrences)
+    .innerJoin(identities, eq(identities.id, occurrences.identityId))
+    .where(
+      and(
+        eq(occurrences.memberId, occ.memberId),
+        eq(identities.runLocation, 'local'),
+        eq(identities.localDeviceId, deviceId),
+        ne(occurrences.id, occ.id),
+        or(
+          lt(occurrences.scheduledStart, occ.scheduledStart),
+          and(eq(occurrences.scheduledStart, occ.scheduledStart), lt(occurrences.id, occ.id))
+        ),
+        or(inArray(occurrences.state, [...ACTIVE_STATES]), and(eq(occurrences.state, 'transcribing'), openJob))
+      )
+    )
+    .orderBy(sql`${occurrences.scheduledStart} desc`)
+    .limit(1)
+  return row ?? null
 }
 
 /** The ping and the way out for a PC that cannot take the meeting: `skip_pc_offline`, with the member told once. */
@@ -168,8 +203,9 @@ export async function startLocalRun(
     return 'skipped_pc_offline'
   }
 
-  // `lastHeartbeatAt` starts the clock of the start check; the attempt is the one the PC is told to run.
-  await db.update(occurrences).set({ attempt: 1, lastHeartbeatAt: now }).where(eq(occurrences.id, cfg.occurrenceId))
+  // The attempt is the one the PC is told to run. `lastHeartbeatAt` stays empty until the worker's first heartbeat: a
+  // `starting` occurrence without one has not started, so the PC may still give the job back (`releaseJob`).
+  await db.update(occurrences).set({ attempt: 1 }).where(eq(occurrences.id, cfg.occurrenceId))
   const jobId = await createCompanionJob(db, {
     memberId: cfg.member.id,
     occurrenceId: cfg.occurrenceId,
@@ -184,12 +220,12 @@ export async function startLocalRun(
     { jobId },
     { startAfter: new Date(now.getTime() + LOCAL_CLAIM_SECONDS * 1000), db: inTx }
   )
-  const deadline = new Date(new Date(cfg.entry.start).getTime() - LOCAL_START_DEADLINE_MS)
-  await deps.queue.send(
-    QUEUES.localStartCheck,
-    { jobId },
-    { startAfter: deadline.getTime() > now.getTime() ? deadline : now, db: inTx }
+  // T-10, but a late offer gets `LOCAL_START_GRACE_MS` from now: the PC needs time to start before it can be failed.
+  const deadline = Math.max(
+    new Date(cfg.entry.start).getTime() - LOCAL_START_DEADLINE_MS,
+    now.getTime() + LOCAL_START_GRACE_MS
   )
+  await deps.queue.send(QUEUES.localStartCheck, { jobId }, { startAfter: new Date(deadline), db: inTx })
   return 'offered'
 }
 
@@ -253,11 +289,7 @@ export async function checkLocalClaim(
  * gets the worker-failed ping. The companion then gets 404s and stops retrying. An occurrence that is already running
  * is `running`; one that ended some other way is `stale`.
  */
-export async function checkLocalStart(
-  deps: LocalDeps,
-  jobId: string,
-  _now: Date
-): Promise<'running' | 'failed' | 'stale'> {
+export async function checkLocalStart(deps: LocalDeps, jobId: string): Promise<'running' | 'failed' | 'stale'> {
   const job = await loadJob(deps.db, jobId)
   if (job === null) return 'stale'
   const [occ] = await deps.db.select().from(occurrences).where(eq(occurrences.id, job.occurrenceId))
@@ -275,18 +307,18 @@ export async function handleLocalClaimCheck(deps: LaunchDeps, data: unknown, now
 }
 
 /** The `local-start-check` handler. Returns the outcome for the log. */
-export async function handleLocalStartCheck(deps: LaunchDeps, data: unknown, now: Date): Promise<string> {
+export async function handleLocalStartCheck(deps: LaunchDeps, data: unknown, _now: Date): Promise<string> {
   const { jobId } = JobData.parse(data)
-  return checkLocalStart(deps, jobId, now)
+  return checkLocalStart(deps, jobId)
 }
 
 /**
  * The `local-start-dead` handler: a start check whose retries are spent must not strand the occurrence in `starting`.
  * It does what the check does, without waiting.
  */
-export async function handleLocalStartDead(deps: LaunchDeps, data: unknown, now: Date): Promise<string> {
+export async function handleLocalStartDead(deps: LaunchDeps, data: unknown, _now: Date): Promise<string> {
   const { jobId } = JobData.parse(data)
-  const outcome = await checkLocalStart(deps, jobId, now)
+  const outcome = await checkLocalStart(deps, jobId)
   if (outcome === 'failed') console.error(`local-start-dead: ${jobId}: the start check never succeeded; failed the run`)
   return outcome
 }

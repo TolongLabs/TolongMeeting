@@ -251,7 +251,7 @@ test('a PC that claims but never starts is failed once at T-10 with its last rea
   const [job] = await f.jobRows()
   await claimJob(f.db, f.a1, job!.id, at('13:01'))
   await f.db.update(companionJobs).set({ error: 'docker_unavailable' }).where(eq(companionJobs.id, job!.id))
-  expect(await checkLocalStart(f.deps, job!.id, at('13:50'))).toBe('failed')
+  expect(await checkLocalStart(f.deps, job!.id)).toBe('failed')
   expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'docker_unavailable' })
   expect((await f.jobRows())[0]).toMatchObject({ state: 'failed', error: 'docker_unavailable' })
   expect(f.notifier.sent.map((s) => s.ping.message)).toEqual([
@@ -259,7 +259,7 @@ test('a PC that claims but never starts is failed once at T-10 with its last rea
   ])
   // The companion's next call finds nothing to hold; a repeat says nothing more.
   expect(await listJobsForDevice(f.db, f.a1)).toEqual([])
-  expect(await checkLocalStart(f.deps, job!.id, at('13:51'))).toBe('stale')
+  expect(await checkLocalStart(f.deps, job!.id)).toBe('stale')
   expect(await handleLocalStartDead(f.deps, { jobId: job!.id }, at('13:52'))).toBe('stale')
   expect(f.notifier.sent).toHaveLength(1)
 })
@@ -280,7 +280,7 @@ test('a run that has started is running at T-10', async () => {
   await launchOccurrence(f.deps, f.job, f.tMinus60)
   const [job] = await f.jobRows()
   await f.setState('in_meeting')
-  expect(await checkLocalStart(f.deps, job!.id, at('13:50'))).toBe('running')
+  expect(await checkLocalStart(f.deps, job!.id)).toBe('running')
   expect(f.notifier.sent).toEqual([])
 })
 
@@ -367,4 +367,111 @@ test('a home-route occurrence takes the profile and starts before any worker, th
   expect(await monitorTick(f.deps, at('13:10'))).toEqual({ restarted: [], failed: [], released: [] })
   expect(await f.occurrence()).toMatchObject({ state: 'starting', restarts: 0 })
   expect(f.docker.created).toEqual([])
+})
+
+/** A second meeting of the same identity (so the same PC) that starts at `start`. */
+async function secondMeeting(f: Awaited<ReturnType<typeof fixture>>, name: string, start: Date) {
+  const [entry] = await f.db.select().from(schema.timetableEntries)
+  const [occ] = await f.db
+    .insert(occurrences)
+    .values({
+      memberId: f.memberId,
+      identityId: f.identityId,
+      entryId: entry!.id,
+      entryName: name,
+      entryType: 'lecture',
+      transcription: 'live',
+      scheduledStart: start,
+      scheduledEnd: new Date(start.getTime() + HOUR),
+      deleteAfter: new Date(start.getTime() + 30 * 24 * HOUR)
+    })
+    .returning()
+  const row = () =>
+    f.db
+      .select()
+      .from(occurrences)
+      .where(eq(occurrences.id, occ!.id))
+      .then((r) => r[0]!)
+  return { id: occ!.id, job: { occurrenceId: occ!.id, scheduledStart: start.toISOString() }, row }
+}
+
+const SECOND_START = new Date('2026-10-21T08:00:00.000Z') // 16:00
+
+test('a busy PC defers the next local meeting, then fails it with its own ping when it is due', async () => {
+  const f = await fixture()
+  await launchOccurrence(f.deps, f.job, f.tMinus60)
+  await f.setState('in_meeting', { lastHeartbeatAt: at('14:00') })
+  await f.db
+    .update(deviceTokens)
+    .set({ lastUsedAt: at('15:00') })
+    .where(eq(deviceTokens.id, f.a1.deviceId))
+  const second = await secondMeeting(f, 'Algorithms', SECOND_START)
+
+  // Not due yet: looked at again in 15 seconds, nothing offered, nobody pinged.
+  expect(await launchOccurrence(f.deps, second.job, at('15:00'))).toBe('deferred')
+  expect(await second.row()).toMatchObject({ state: 'scheduled' })
+  expect(f.queue.sent.filter((s) => s.name === QUEUES.launch).map((s) => s.opts?.startAfter?.toISOString())).toEqual([
+    at('15:00:15').toISOString()
+  ])
+  expect(await f.db.select().from(companionJobs).where(eq(companionJobs.occurrenceId, second.id))).toEqual([])
+  expect(f.notifier.sent).toEqual([])
+
+  // Due and the PC is still running the first meeting: failed once, with the busy copy and not "asleep or off".
+  await f.db
+    .update(deviceTokens)
+    .set({ lastUsedAt: at('16:00') })
+    .where(eq(deviceTokens.id, f.a1.deviceId))
+  expect(await launchOccurrence(f.deps, second.job, at('16:00'))).toBe('failed')
+  expect(await second.row()).toMatchObject({ state: 'failed', stateReason: 'pc_busy' })
+  expect(f.notifier.sent.map((s) => s.ping.message)).toEqual([
+    "Your PC is still busy with Data Mining, so the bot won't join Algorithms."
+  ])
+  expect(await launchOccurrence(f.deps, second.job, at('16:00:15'))).toBe('stale')
+  expect(f.notifier.sent).toHaveLength(1)
+  // The first meeting is untouched.
+  expect(await f.occurrence()).toMatchObject({ state: 'in_meeting' })
+})
+
+test('a meeting waits while the earlier one uploads or is cut on the PC, and is offered once the PC is free', async () => {
+  const f = await fixture()
+  await launchOccurrence(f.deps, f.job, f.tMinus60)
+  const [job] = await f.jobRows()
+  await claimJob(f.db, f.a1, job!.id, at('13:01'))
+  await f.db
+    .update(deviceTokens)
+    .set({ lastUsedAt: at('16:00') })
+    .where(eq(deviceTokens.id, f.a1.deviceId))
+  const second = await secondMeeting(f, 'Algorithms', SECOND_START)
+
+  await f.setState('uploading')
+  expect(await launchOccurrence(f.deps, second.job, at('15:50'))).toBe('deferred')
+  // `transcribing` while the PC still holds the job: it is cutting and transcribing the audio.
+  await f.setState('transcribing')
+  expect(await launchOccurrence(f.deps, second.job, at('15:50:15'))).toBe('deferred')
+  // The job is done: the PC is free, and a launch after that goes out.
+  await f.db.update(companionJobs).set({ state: 'done' }).where(eq(companionJobs.id, job!.id))
+  expect(await launchOccurrence(f.deps, second.job, at('15:50:30'))).toBe('launched')
+  expect(await second.row()).toMatchObject({ state: 'starting' })
+  expect(f.notifier.sent).toEqual([])
+})
+
+test('a PC only waits for meetings that start before the one being launched', async () => {
+  const f = await fixture()
+  const second = await secondMeeting(f, 'Algorithms', SECOND_START)
+  // The later meeting is already running; the 14:00 one is not held up by it.
+  await f.db.update(occurrences).set({ state: 'in_meeting' }).where(eq(occurrences.id, second.id))
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+})
+
+test('a late offer gives the PC five minutes before the start check', async () => {
+  const f = await fixture({ seen: at('13:54:30') })
+  expect(await launchOccurrence(f.deps, f.job, at('13:55'))).toBe('launched')
+  const check = f.queue.sent.find((s) => s.name === QUEUES.localStartCheck)!
+  expect(check.opts?.startAfter?.toISOString()).toBe(at('14:00').toISOString())
+  // An early offer keeps T-10.
+  const g = await fixture()
+  await launchOccurrence(g.deps, g.job, g.tMinus60)
+  expect(g.queue.sent.find((s) => s.name === QUEUES.localStartCheck)!.opts?.startAfter?.toISOString()).toBe(
+    at('13:50').toISOString()
+  )
 })

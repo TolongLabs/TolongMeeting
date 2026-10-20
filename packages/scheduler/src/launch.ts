@@ -30,7 +30,7 @@ import {
   removeStaleJobFiles,
   writeJobFiles
 } from './job-files'
-import { startLocalRun } from './local/dispatch'
+import { localBusyWith, startLocalRun } from './local/dispatch'
 import { acquireProfile, releaseProfile } from './locks'
 
 /** At most this many server workers run at once (revised only from spike 6's report). */
@@ -478,6 +478,23 @@ async function decide(deps: LaunchDeps, job: LaunchJob, now: Date, outbox: Outbo
 
   // The profile of a local identity is on its PC: no profile lock, no capacity slot, no container on this machine.
   if (identity.runLocation === 'local') {
+    // The PC runs one meeting at a time: wait for the earlier one, and give up only when this one is due.
+    const busy = identity.localDeviceId === null ? null : await localBusyWith(db, occ, identity.localDeviceId)
+    if (busy !== null) {
+      if (now.getTime() < occ.scheduledStart.getTime()) return requeue(deps, job, now)
+      await launchThen(db, occ.id, 'fail', 'pc_busy')
+      outbox.push(() =>
+        deps.notifier.notify(
+          occ.memberId,
+          pings.pcBusy({
+            entry: occ.entryName,
+            busyWith: busy.entryName,
+            meetingUrl: `${publicUrl}/meetings/${occ.id}`
+          })
+        )
+      )
+      return 'failed'
+    }
     const blocked = await storeSnapshot(deps, occ, identity.runLocation)
     if (blocked !== null) return refuseWatching(deps, occ, blocked, outbox)
     const cfg = await localConfig(deps, occ.id)
@@ -609,10 +626,15 @@ async function defer(
         )
       )
   }
+  return requeue(deps, job, now)
+}
+
+/** Looks again in 15 seconds. */
+async function requeue(deps: LaunchDeps, job: LaunchJob, now: Date): Promise<LaunchResult> {
   await deps.queue.send(
     QUEUES.launch,
     { occurrenceId: job.occurrenceId, scheduledStart: job.scheduledStart },
-    { startAfter: new Date(now.getTime() + DEFER_MS), db: queueDbOf(db) }
+    { startAfter: new Date(now.getTime() + DEFER_MS), db: queueDbOf(deps.db) }
   )
   return 'deferred'
 }
