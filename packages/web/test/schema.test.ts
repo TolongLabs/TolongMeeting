@@ -5,19 +5,24 @@ import { closeDb, getDb, MEMBER_OWNED, pkOf, schema, type Db } from '../db'
 import { migrationsFolder, runMigrations } from '../db/migrate'
 import { createTestDb, dropAllTestDbs, dropTestDb, seedAuthUser, seedMember, testDbUrl } from '../db/testing'
 
-const { aiKeys, artefacts, connections, details, deviceTokens, events, exports, forms, identities, members } = schema
+const { aiKeys, artefacts, companionEvents, companionJobs, connections, details, devicePairings, deviceTokens } = schema
+const { events, exports, forms, homeExitNodes, identities, members } = schema
 const { mentionNames, occurrences, profiles, signinSessions, timetableEntries } = schema
 
 const AUTH_TABLES = ['auth_account', 'auth_session', 'auth_user', 'auth_verification']
 const APP_TABLES = [
   'ai_keys',
   'artefacts',
+  'companion_events',
+  'companion_jobs',
   'connections',
   'details',
+  'device_pairings',
   'device_tokens',
   'events',
   'exports',
   'forms',
+  'home_exit_nodes',
   'identities',
   'members',
   'mention_names',
@@ -598,6 +603,141 @@ describe('keys, connections, devices, sign-in sessions', () => {
       code: CHECK,
       constraint: 'signin_sessions_state_check'
     })
+  })
+})
+
+describe('companion jobs, pairings and run locations', () => {
+  const nobody = '00000000-0000-4000-8000-000000000000'
+  const job = (a: { memberId: string; ids: { occurrences: string } }) => ({
+    memberId: a.memberId,
+    occurrenceId: a.ids.occurrences,
+    kind: 'native_transcription' as const,
+    payload: {}
+  })
+
+  test('a job starts pending with no attempts, and its kind, state and attempts are checked', async () => {
+    const a = await seedMember(db)
+    const [row] = await db.insert(companionJobs).values(job(a)).returning()
+    expect(row).toMatchObject({
+      state: 'pending',
+      attempts: 0,
+      deviceId: null,
+      targetDeviceId: null,
+      leaseUntil: null,
+      pcPingSentAt: null,
+      error: null
+    })
+    expect(await violation(db.insert(companionJobs).values({ ...job(a), kind: 'mine_bitcoin' as never }))).toEqual({
+      code: CHECK,
+      constraint: 'companion_jobs_kind_check'
+    })
+    expect(await violation(db.insert(companionJobs).values({ ...job(a), state: 'lost' as never }))).toEqual({
+      code: CHECK,
+      constraint: 'companion_jobs_state_check'
+    })
+    expect(await violation(db.insert(companionJobs).values({ ...job(a), attempts: -1 }))).toEqual({
+      code: CHECK,
+      constraint: 'companion_jobs_attempts_check'
+    })
+  })
+
+  test('a local run needs a target device', async () => {
+    const a = await seedMember(db)
+    expect(await violation(db.insert(companionJobs).values({ ...job(a), kind: 'local_run' }))).toEqual({
+      code: CHECK,
+      constraint: 'companion_jobs_local_run_target_check'
+    })
+    await db.insert(companionJobs).values({ ...job(a), kind: 'local_run', targetDeviceId: a.ids.deviceTokens })
+  })
+
+  test('a job can only use a device of the same member', async () => {
+    const a = await seedMember(db)
+    const b = await seedMember(db)
+    expect(await violation(db.insert(companionJobs).values({ ...job(a), deviceId: b.ids.deviceTokens }))).toEqual({
+      code: FOREIGN_KEY,
+      constraint: 'companion_jobs_device_id_device_tokens_id_fk'
+    })
+    expect(
+      await violation(db.insert(companionJobs).values({ ...job(a), kind: 'local_run', targetDeviceId: nobody }))
+    ).toEqual({ code: FOREIGN_KEY, constraint: 'companion_jobs_target_device_id_device_tokens_id_fk' })
+  })
+
+  test('deleting a device frees the job it held and deletes the jobs and events aimed at it', async () => {
+    const a = await seedMember(db)
+    const [held] = await db.select().from(companionJobs).where(eq(companionJobs.id, a.ids.companionJobs))
+    expect(held!.deviceId).toBe(a.ids.deviceTokens)
+    const [aimed] = await db
+      .insert(companionJobs)
+      .values({ ...job(a), kind: 'local_run', targetDeviceId: a.ids.deviceTokens })
+      .returning()
+    await db.delete(deviceTokens).where(eq(deviceTokens.id, a.ids.deviceTokens))
+    const [freed] = await db.select().from(companionJobs).where(eq(companionJobs.id, a.ids.companionJobs))
+    expect(freed).toMatchObject({ deviceId: null, memberId: a.memberId })
+    expect(await db.$count(companionJobs, eq(companionJobs.id, aimed!.id))).toBe(0)
+    expect(await db.$count(companionEvents, eq(companionEvents.memberId, a.memberId))).toBe(0)
+  })
+
+  test('deleting an occurrence deletes its jobs', async () => {
+    const a = await seedMember(db)
+    await db.delete(occurrences).where(eq(occurrences.id, a.ids.occurrences))
+    expect(await db.$count(companionJobs, eq(companionJobs.memberId, a.memberId))).toBe(0)
+  })
+
+  test('an event for no device reaches every device, and a device must be the same member', async () => {
+    const a = await seedMember(db)
+    const b = await seedMember(db)
+    const [all] = await db
+      .insert(companionEvents)
+      .values({ memberId: a.memberId, command: { type: 'job_available', jobId: 'x' } })
+      .returning()
+    expect(all).toMatchObject({ deviceId: null })
+    expect(all!.id).toBeGreaterThan(Number(a.ids.companionEvents))
+    expect(
+      await violation(
+        db.insert(companionEvents).values({ memberId: a.memberId, deviceId: b.ids.deviceTokens, command: {} })
+      )
+    ).toEqual({ code: FOREIGN_KEY, constraint: 'companion_events_device_id_device_tokens_id_fk' })
+  })
+
+  test('a pairing code hash is unique, and the pairing is unused until redeemed', async () => {
+    const a = await seedMember(db)
+    const [p] = await db.select().from(devicePairings).where(eq(devicePairings.id, a.ids.devicePairings))
+    expect(p).toMatchObject({ usedAt: null, memberId: a.memberId })
+    expect(
+      await violation(
+        db.insert(devicePairings).values({ memberId: a.memberId, codeHash: p!.codeHash, expiresAt: new Date() })
+      )
+    ).toEqual({ code: UNIQUE, constraint: 'device_pairings_code_hash_unique' })
+  })
+
+  test('an identity binds to its own device only when it runs locally, and losing the device unbinds it', async () => {
+    const a = await seedMember(db)
+    const b = await seedMember(db)
+    const bind = (device: string, runLocation: 'local' | 'server') =>
+      db.update(identities).set({ runLocation, localDeviceId: device }).where(eq(identities.id, a.identityId))
+    expect(await violation(bind(a.ids.deviceTokens, 'server'))).toEqual({
+      code: CHECK,
+      constraint: 'identities_local_device_id_check'
+    })
+    expect(await violation(bind(b.ids.deviceTokens, 'local'))).toEqual({
+      code: FOREIGN_KEY,
+      constraint: 'identities_local_device_id_device_tokens_id_fk'
+    })
+    await bind(a.ids.deviceTokens, 'local')
+    await db.delete(deviceTokens).where(eq(deviceTokens.id, a.ids.deviceTokens))
+    const [after] = await db.select().from(identities).where(eq(identities.id, a.identityId))
+    expect(after).toMatchObject({ runLocation: 'local', localDeviceId: null, memberId: a.memberId })
+  })
+
+  test('a member has at most one home exit node', async () => {
+    const a = await seedMember(db)
+    expect(
+      await violation(
+        db
+          .insert(homeExitNodes)
+          .values({ memberId: a.memberId, nodeId: 'n', hostname: 'h', ipv4: '100.64.0.2', checkedAt: new Date() })
+      )
+    ).toEqual({ code: UNIQUE, constraint: 'home_exit_nodes_pkey' })
   })
 })
 

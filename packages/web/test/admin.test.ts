@@ -6,10 +6,12 @@ import {
   artefacts,
   auth_account,
   auth_user,
+  companionJobs,
   connections,
   deviceTokens,
   details,
   forms,
+  homeExitNodes,
   identities,
   members,
   mentionNames,
@@ -80,7 +82,9 @@ test("admin results hold none of a member's content", async () => {
     'SEEDED-checkpoint',
     'SEEDED-ntfy-topic',
     'SEEDED-ai-key-enc',
-    'SEEDED-device-name'
+    'SEEDED-device-name',
+    'SEEDED-job-payload',
+    'SEEDED-home-hostname'
   ]
   await db.update(details).set({ value: secrets[0]! }).where(eq(details.memberId, a.memberId))
   await db.update(mentionNames).set({ name: secrets[1]! }).where(eq(mentionNames.memberId, a.memberId))
@@ -100,6 +104,11 @@ test("admin results hold none of a member's content", async () => {
   await db.update(members).set({ ntfyTopic: secrets[9]!, ntfyTokenEnc: secrets[9]! }).where(eq(members.id, a.memberId))
   await db.update(aiKeys).set({ dashscopeKeyEnc: secrets[10]! }).where(eq(aiKeys.memberId, a.memberId))
   await db.update(deviceTokens).set({ name: secrets[11]! }).where(eq(deviceTokens.memberId, a.memberId))
+  await db
+    .update(companionJobs)
+    .set({ payload: { entryName: secrets[12]! } })
+    .where(eq(companionJobs.memberId, a.memberId))
+  await db.update(homeExitNodes).set({ hostname: secrets[13]! }).where(eq(homeExitNodes.memberId, a.memberId))
 
   const admin = adminScope(db)
   const listed = JSON.stringify(await admin.listMembers())

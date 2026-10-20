@@ -4,6 +4,8 @@ import { eq, sql, type SQL } from 'drizzle-orm'
 import {
   artefacts,
   closeDb,
+  companionEvents,
+  companionJobs,
   events,
   forms,
   identities,
@@ -45,7 +47,11 @@ const CHANGED: Record<keyof typeof MEMBER_OWNED, Record<string, unknown>> = {
   aiKeys: { testError: 'changed' },
   connections: { tokenEnc: 'changed' },
   deviceTokens: { name: 'Changed' },
-  signinSessions: { upstream: 'changed' }
+  signinSessions: { upstream: 'changed' },
+  devicePairings: { usedAt: new Date('2026-10-21T07:00:00Z') },
+  companionJobs: { error: 'changed' },
+  companionEvents: { command: { type: 'changed' } },
+  homeExitNodes: { hostname: 'changed' }
 }
 
 async function rowById(table: MemberOwnedTable, id: string) {
@@ -103,9 +109,7 @@ describe('isolation between members', () => {
       const own = createScope(db, a.memberId)
       expect(await own.update(table, CHANGED[name], eq(pkOf(table), a.ids[name]))).toBe(1)
       const [row] = await rowById(table, a.ids[name])
-      expect(
-        Object.entries(CHANGED[name]).every(([key, value]) => (row as Record<string, unknown>)[key] === value)
-      ).toBe(true)
+      expect(row).toMatchObject(CHANGED[name])
     })
   }
 })
@@ -315,7 +319,25 @@ describe('child rows follow their parent member in the database', () => {
     },
     'sign-in session -> identity': (w, a) => w.insert(signinSessions, { identityId: a.identityId, mode: 'worker' }),
     'sign-in session -> occurrence': (w, a, b) =>
-      w.insert(signinSessions, { identityId: b.identityId, mode: 'container', occurrenceId: a.ids.occurrences })
+      w.insert(signinSessions, { identityId: b.identityId, mode: 'container', occurrenceId: a.ids.occurrences }),
+    'companion job -> occurrence': async (w, a, b) => {
+      const { id: _, memberId: __, ...job } = await only(companionJobs, b.ids.companionJobs)
+      return w.insert(companionJobs, { ...job, deviceId: null, occurrenceId: a.ids.occurrences })
+    },
+    'companion job -> claiming device': async (w, a, b) => {
+      const { id: _, memberId: __, ...job } = await only(companionJobs, b.ids.companionJobs)
+      return w.insert(companionJobs, { ...job, deviceId: a.ids.deviceTokens })
+    },
+    'companion job -> target device': async (w, a, b) => {
+      const { id: _, memberId: __, ...job } = await only(companionJobs, b.ids.companionJobs)
+      return w.insert(companionJobs, { ...job, kind: 'local_run', targetDeviceId: a.ids.deviceTokens })
+    },
+    'companion event -> device': async (w, a, b) => {
+      const { id: _, memberId: __, ...event } = await only(companionEvents, b.ids.companionEvents)
+      return w.insert(companionEvents, { ...event, deviceId: a.ids.deviceTokens })
+    },
+    'identity moved to a device': (w, a, b) =>
+      w.update(identities, { runLocation: 'local', localDeviceId: a.ids.deviceTokens }, eq(identities.id, b.identityId))
   }
 
   async function only(table: MemberOwnedTable, id: string) {

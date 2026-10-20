@@ -190,6 +190,25 @@ export async function seedMember(db: Db, opts: SeedOptions = {}): Promise<Seeded
       .values({ memberId, identityId, mode: 'container', occurrenceId })
       .returning()
     ids.signinSessions = signin!.id
+    const [pairing] = await db
+      .insert(s.devicePairings)
+      .values({ memberId, codeHash: randomBytes(16).toString('hex'), expiresAt: new Date(start.getTime() + hour) })
+      .returning()
+    ids.devicePairings = pairing!.id
+    const [job] = await db
+      .insert(s.companionJobs)
+      .values({ memberId, occurrenceId, kind: 'native_transcription', payload: { occurrenceId }, deviceId: device!.id })
+      .returning()
+    ids.companionJobs = job!.id
+    const [companionEvent] = await db
+      .insert(s.companionEvents)
+      .values({ memberId, deviceId: device!.id, command: { type: 'job_available', jobId: job!.id } })
+      .returning()
+    ids.companionEvents = String(companionEvent!.id)
+    await db
+      .insert(s.homeExitNodes)
+      .values({ memberId, nodeId: 'seed-node', hostname: 'tm-home-seed', ipv4: '100.64.0.1', checkedAt: start })
+    ids.homeExitNodes = memberId
   }
 
   return { memberId, identityId, ids: ids as Seeded['ids'] }

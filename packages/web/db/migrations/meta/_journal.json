@@ -36,6 +36,13 @@
       "when": 1792463185551,
       "tag": "0004_exports",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792463343770,
+      "tag": "0005_companion_and_run_locations",
+      "breakpoints": true
     }
   ]
 }

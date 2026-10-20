@@ -141,6 +141,12 @@ export const EXPORT_ERROR_CODES = [
 export type ExportErrorCode = (typeof EXPORT_ERROR_CODES)[number]
 export const SIGNIN_MODES = ['worker', 'container'] as const
 export const SIGNIN_STATES = ['starting', 'ready', 'ended'] as const
+// Plan 03 (native transcription) and plan 08 (`local_run`). Plain lists here: the matching core unions come with the
+// companion contracts (`packages/core/src/companion.ts`), and `satisfies` can join them once those land.
+export const COMPANION_JOB_KINDS = ['native_transcription', 'local_run'] as const
+export type CompanionJobKind = (typeof COMPANION_JOB_KINDS)[number]
+export const COMPANION_JOB_STATES = ['pending', 'claimed', 'done', 'failed', 'cancelled'] as const
+export type CompanionJobState = (typeof COMPANION_JOB_STATES)[number]
 
 const completeLists: [
   Covers<RunLocation, typeof RUN_LOCATIONS>,
@@ -221,6 +227,8 @@ export const identities = pgTable(
     memberId: memberId(),
     name: text('name').notNull(),
     runLocation: text('run_location').$type<RunLocation>().notNull().default('server'),
+    // The paired PC that runs this identity when `run_location` is `local`; null otherwise (plan 08).
+    localDeviceId: uuid('local_device_id'),
     zoomGuestName: text('zoom_guest_name').notNull(),
     orgName: text('org_name'),
     orgEmailDomain: text('org_email_domain'),
@@ -229,7 +237,16 @@ export const identities = pgTable(
   (t) => [
     unique('identities_member_id_name_unique').on(t.memberId, t.name),
     unique('identities_id_member_id_unique').on(t.id, t.memberId),
-    check('identities_run_location_check', oneOf(t.runLocation, RUN_LOCATIONS))
+    // Hand-edited to `on delete set null (local_device_id)` in the migration, like occurrences.entry_id.
+    ownedFk(
+      'identities_local_device_id_device_tokens_id_fk',
+      [t.localDeviceId, t.memberId],
+      [deviceTokens.id, deviceTokens.memberId],
+      'set null'
+    ),
+    index('identities_local_device_id_idx').on(t.localDeviceId),
+    check('identities_run_location_check', oneOf(t.runLocation, RUN_LOCATIONS)),
+    check('identities_local_device_id_check', sql`${t.localDeviceId} is null or ${t.runLocation} = 'local'`)
   ]
 )
 
@@ -554,8 +571,120 @@ export const deviceTokens = pgTable(
     lastUsedAt: timestamptz('last_used_at'),
     revokedAt: timestamptz('revoked_at')
   },
-  (t) => [index('device_tokens_member_id_idx').on(t.memberId)]
+  (t) => [
+    unique('device_tokens_id_member_id_unique').on(t.id, t.memberId),
+    index('device_tokens_member_id_idx').on(t.memberId)
+  ]
 )
+
+// Only hashes of the bearer secrets are stored: `device_tokens.token_hash` and `device_pairings.code_hash`.
+export const devicePairings = pgTable(
+  'device_pairings',
+  {
+    id: id(),
+    memberId: memberId(),
+    codeHash: text('code_hash').notNull().unique(),
+    expiresAt: timestamptz('expires_at').notNull(),
+    usedAt: timestamptz('used_at'),
+    createdAt: createdAt()
+  },
+  (t) => [
+    index('device_pairings_member_id_idx').on(t.memberId),
+    index('device_pairings_expires_at_idx').on(t.expiresAt)
+  ]
+)
+
+export const companionJobs = pgTable(
+  'companion_jobs',
+  {
+    id: id(),
+    memberId: memberId(),
+    occurrenceId: uuid('occurrence_id').notNull(),
+    kind: text('kind').$type<CompanionJobKind>().notNull(),
+    state: text('state').$type<CompanionJobState>().notNull().default('pending'),
+    // Parsed with the zod schema of its `kind` on read. Never holds a secret (a local run's job template has no keys).
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    // The PC holding the lease; cleared when the lease lapses, and nulled if the device row goes.
+    deviceId: uuid('device_id'),
+    // The only PC allowed to claim the job; always set for `local_run`.
+    targetDeviceId: uuid('target_device_id'),
+    leaseUntil: timestamptz('lease_until'),
+    pcPingSentAt: timestamptz('pc_ping_sent_at'),
+    error: text('error'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt()
+  },
+  (t) => [
+    ownedFk(
+      'companion_jobs_occurrence_id_occurrences_id_fk',
+      [t.occurrenceId, t.memberId],
+      [occurrences.id, occurrences.memberId]
+    ),
+    // Hand-edited to `on delete set null (device_id)` in the migration, like occurrences.entry_id.
+    ownedFk(
+      'companion_jobs_device_id_device_tokens_id_fk',
+      [t.deviceId, t.memberId],
+      [deviceTokens.id, deviceTokens.memberId],
+      'set null'
+    ),
+    // A job aimed at a device that is deleted has nowhere to go, so it goes too (never `set null`: that would turn a
+    // targeted `local_run` into one any PC may claim).
+    ownedFk(
+      'companion_jobs_target_device_id_device_tokens_id_fk',
+      [t.targetDeviceId, t.memberId],
+      [deviceTokens.id, deviceTokens.memberId]
+    ),
+    // `listJobsForDevice` and `claimJob`: a member's jobs by state.
+    index('companion_jobs_member_id_state_idx').on(t.memberId, t.state),
+    index('companion_jobs_occurrence_id_idx').on(t.occurrenceId),
+    index('companion_jobs_device_id_idx').on(t.deviceId),
+    index('companion_jobs_target_device_id_idx').on(t.targetDeviceId),
+    // `releaseExpiredLeases` scans claimed jobs by lease end.
+    index('companion_jobs_lease_until_idx')
+      .on(t.leaseUntil)
+      .where(sql`${t.state} = 'claimed'`),
+    check('companion_jobs_kind_check', oneOf(t.kind, COMPANION_JOB_KINDS)),
+    check('companion_jobs_state_check', oneOf(t.state, COMPANION_JOB_STATES)),
+    check('companion_jobs_attempts_check', sql`${t.attempts} >= 0`),
+    check('companion_jobs_local_run_target_check', sql`${t.kind} <> 'local_run' or ${t.targetDeviceId} is not null`)
+  ]
+)
+
+// The command stream a PC follows (server-sent events); `emitCompanionEvent` prunes a member's rows older than 24 hours.
+export const companionEvents = pgTable(
+  'companion_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    memberId: memberId(),
+    // Null: for every PC of the member.
+    deviceId: uuid('device_id'),
+    command: jsonb('command').$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt()
+  },
+  (t) => [
+    ownedFk(
+      'companion_events_device_id_device_tokens_id_fk',
+      [t.deviceId, t.memberId],
+      [deviceTokens.id, deviceTokens.memberId]
+    ),
+    // Events after an id for a member, and the 24-hour prune.
+    index('companion_events_member_id_id_idx').on(t.memberId, t.id),
+    index('companion_events_member_id_created_at_idx').on(t.memberId, t.createdAt),
+    index('companion_events_device_id_idx').on(t.deviceId)
+  ]
+)
+
+// The member's home exit node on the tailnet (plan 08). Stored only once a check finds it ready. No auth key is kept.
+export const homeExitNodes = pgTable('home_exit_nodes', {
+  memberId: uuid('member_id')
+    .primaryKey()
+    .references(() => members.id, { onDelete: 'cascade' }),
+  nodeId: text('node_id').notNull(),
+  hostname: text('hostname').notNull(),
+  ipv4: text('ipv4').notNull(),
+  checkedAt: timestamptz('checked_at').notNull()
+})
 
 export const signinSessions = pgTable(
   'signin_sessions',
@@ -610,7 +739,11 @@ export const MEMBER_OWNED = {
   aiKeys,
   connections,
   deviceTokens,
-  signinSessions
+  signinSessions,
+  devicePairings,
+  companionJobs,
+  companionEvents,
+  homeExitNodes
 } as const
 
 /** The single primary-key column of a table (every table in this schema has exactly one). */
