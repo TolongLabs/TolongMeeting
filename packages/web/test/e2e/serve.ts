@@ -1,7 +1,7 @@
 // Starts the website for the page specs: a scratch database, two seeded members with real Better Auth sessions, a
 // production build and `next start`. Stops the site and drops the database on SIGTERM or SIGINT.
 import { createHmac, randomBytes } from 'node:crypto'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -10,6 +10,7 @@ import { schema } from '../../db'
 import { QUEUES } from '../../db/queues'
 import { createTestDb, dropAllTestDbs, seedAuthUser, seedMember, testDbUrl, TEST_MASTER } from '../../db/testing'
 import { createAuth } from '../../lib/auth'
+import { giveLiveMeetingALink, seedMeetings } from './seed-meetings'
 import { STATE_FILE, type E2eState } from './state'
 
 const webRoot = join(import.meta.dir, '..', '..')
@@ -90,7 +91,15 @@ for (const queue of Object.values(QUEUES)) await boss.createQueue(queue)
 await boss.stop({ graceful: false })
 const ntfy = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => Response.json({ token: 'tk_e2e' }) })
 
-const state: E2eState = { cookies: { admin: admin.cookie, member: member.cookie } }
+// The meeting pages read files from the data root, so the seeded meetings get a real one.
+const dataRoot = mkdtempSync(join(tmpdir(), 'tm-web-e2e-data-'))
+const seeded = await seedMeetings({ db, dataRoot, memberId, identityId, entryId: ids.timetableEntries, now })
+const live = await giveLiveMeetingALink(db)
+
+const state: E2eState = {
+  cookies: { admin: admin.cookie, member: member.cookie },
+  meetings: { completed: seeded.completed, live, uploading: seeded.uploading, stuck: seeded.stuck }
+}
 mkdirSync(tmpdir(), { recursive: true })
 writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 })
 
@@ -104,6 +113,7 @@ const env = {
   GITHUB_CLIENT_SECRET: 'e2e-client-secret',
   GITHUB_ORG: 'tolonglabs',
   TM_MASTER_KEY_FILE: keyFile,
+  TM_DATA_ROOT: dataRoot,
   NTFY_URL: `http://127.0.0.1:${ntfy.port}`,
   NTFY_ADMIN_TOKEN: 'e2e-ntfy-admin'
 }
@@ -130,6 +140,7 @@ const site = Bun.spawn(['bun', '--bun', 'next', 'start', '-H', '127.0.0.1', '-p'
 async function cleanup() {
   await ntfy.stop(true)
   rmSync(keyFile, { force: true })
+  rmSync(dataRoot, { recursive: true, force: true })
   rmSync(STATE_FILE, { force: true })
   await dropAllTestDbs()
 }
