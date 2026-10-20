@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { FakeQueue } from '@tm/web/db/testing'
@@ -70,11 +70,12 @@ const DB_URL = 'postgres://tm:s3cret-pass@postgres/tm'
 let root: string
 beforeAll(async () => {
   root = await mkdtemp(`${tmpdir()}/backup-`)
+  await mkdir(`${root}/data`)
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
 
 type Run = (argv: string[], opts?: { env?: Record<string, string>; capture?: boolean }) => Promise<CommandResult>
-const ok = (stdout = ''): CommandResult => ({ code: 0, stdout })
+const ok = (stdout = ''): CommandResult => ({ code: 0, stdout, stderr: '' })
 
 function depsFor(profileRoot: string, run: Run) {
   const base: LaunchDeps = {
@@ -194,7 +195,7 @@ test('a failing step stops the backup, names only the program, never the databas
       calls++
       workDir = argv[2]!.slice('--file='.length).replace(/\/2026-11-17\/db\.dump$/, '')
       await writeFile(argv[2]!.slice('--file='.length), 'dump')
-      return { code: 1, stdout: '' }
+      return { code: 1, stdout: '', stderr: '' }
     }),
     new Date('2026-11-17T19:00:00Z')
   ).then(
@@ -206,4 +207,48 @@ test('a failing step stops the backup, names only the program, never the databas
   await expect(readdir(workDir)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(logs.join('\n')).not.toContain('s3cret')
   expect(String(err?.stack)).not.toContain('s3cret')
+})
+
+/** Runs a backup whose first rclone upload exits 1 with `stderr`; resolves to the error it throws. */
+function failUpload(profileRoot: string, stderr: string): Promise<Error | null> {
+  return mkdir(profileRoot, { recursive: true }).then(() =>
+    runBackup(
+      depsFor(profileRoot, async (argv) => {
+        if (argv[0] === 'pg_dump') await writeFile(argv[2]!.slice('--file='.length), 'dump')
+        return argv[1] === 'copyto' ? { code: 1, stdout: '', stderr } : ok()
+      }),
+      new Date('2026-11-17T19:00:00Z')
+    ).then(
+      () => null,
+      (e: Error) => e
+    )
+  )
+}
+
+test('the log keeps a redacted stderr tail, and the error repeats it only when redaction changed nothing', async () => {
+  const err = await failUpload(
+    `${root}/p4`,
+    [
+      'Failed to copy: postgres://tm:s3cret-pass@postgres/tm',
+      'Authorization: Bearer abc.def-123',
+      'PGPASSWORD=s3cret-pass',
+      'quota exceeded for tm-backup:'
+    ].join('\n')
+  )
+  expect(err?.message).toBe('backup step failed: rclone exited 1')
+  const logPath = `${root}/data/backup-last.log`
+  expect((await stat(logPath)).mode & 0o777).toBe(0o600)
+  const log = await readFile(logPath, 'utf8')
+  expect(log).toContain('== rclone exited 1 ==')
+  expect(log).toContain('quota exceeded for tm-backup:')
+  expect(log).toContain('[redacted]')
+  for (const secret of ['s3cret', 'abc.def', 'postgres://tm']) {
+    expect(log).not.toContain(secret)
+    expect(String(err?.stack)).not.toContain(secret)
+  }
+})
+
+test('a failed step with nothing to redact names its stderr tail in the error', async () => {
+  const err = await failUpload(`${root}/p5`, 'quota exceeded for tm-backup:')
+  expect(err?.message).toBe('backup step failed: rclone exited 1\nquota exceeded for tm-backup:')
 })
