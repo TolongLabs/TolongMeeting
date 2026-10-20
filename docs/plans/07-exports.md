@@ -2119,7 +2119,7 @@ test('GitHub and Notion removal explain the last step and touch only the caller'
 Run: `bun test packages/exports/src/connections/remove.test.ts`
 Expected: FAIL with `Cannot find module './remove'`.
 
-- [ ] **Step 3: Implement `removeConnection`, the route and the page** (`removeConnection` and the three `DELETE` routes are done; the page is deferred behind the Figma gate)
+- [x] **Step 3: Implement `removeConnection`, the route and the page** (`removeConnection`, the three `DELETE` routes and a plain, unstyled page are done; the page is restyled after the Figma step. The page uses server actions for the GitHub form, Remove and the default folder, and the Picker and Notion chooser call the existing routes. Only `/connections` gets a nonce-based Content-Security-Policy, set in `proxy.ts` from `lib/connections-csp.ts`.)
 
 `removeConnection` for Google posts `token=<refreshToken>` form-encoded to `https://oauth2.googleapis.com/revoke` and ignores its result; for every kind it removes only the signed-in member's row. The page shows one card per connection from `GET /api/connections`, with its status ("Connected as <label>", "Reconnect needed" or "Not connected"), its detail, and Remove (`DELETE /api/connections/<kind>`, then the returned message is shown). Card copy:
 
@@ -2147,7 +2147,7 @@ Buttons: Connect Notion; then a list of shared pages and databases to choose fro
 Run: `bun test packages/exports/test/remove.test.ts && bun run typecheck`
 Expected: PASS (`0 fail`); typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/exports/src/connections/remove.ts packages/exports/src/connections/remove.test.ts packages/web
