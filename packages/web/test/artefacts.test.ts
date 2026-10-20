@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -8,7 +9,7 @@ import { createTestDb, dropAllTestDbs, seedMember } from '../db/testing'
 
 let tmp: string
 beforeAll(async () => {
-  tmp = await mkdtemp('/home/user/.cache/tm-tmp/artefacts-')
+  tmp = await mkdtemp(`${tmpdir()}/artefacts-`)
 })
 afterAll(async () => {
   await dropAllTestDbs()

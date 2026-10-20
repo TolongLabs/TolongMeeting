@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
@@ -15,7 +16,7 @@ const HOUR = 3_600_000
 
 let tmp: string
 beforeAll(async () => {
-  tmp = await mkdtemp('/home/user/.cache/tm-tmp/retention-')
+  tmp = await mkdtemp(`${tmpdir()}/retention-`)
 })
 afterAll(async () => {
   await dropAllTestDbs()

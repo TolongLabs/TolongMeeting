@@ -3,6 +3,7 @@
 // Real: Postgres, pg-boss, the Next route functions (called with Request objects), Better Auth sessions, ffmpeg, sharp,
 // the scheduler (launch, monitor, retention) and the pipeline consumer. Fake: Docker (FakeDocker), ntfy (a Bun.serve
 // stub plus a fake admin API), the AI provider (a Bun.serve stub), GitHub (never called) and the key tester.
+import { tmpdir } from 'node:os'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -251,7 +252,7 @@ export async function makeClip(path: string): Promise<void> {
 }
 
 export async function startStack(): Promise<Stack> {
-  const base = await mkdtemp('/home/user/.cache/tm-tmp/e2e-flow-')
+  const base = await mkdtemp(`${tmpdir()}/e2e-flow-`)
   const ntfy = startNtfyStub()
   const ai = startAiStub(GOOD_KEY)
   const env: SpecEnv = {

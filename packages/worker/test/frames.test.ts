@@ -87,7 +87,7 @@ describe.skipIf(!canGrab)('frames from a real Xvfb display', () => {
       expect(gap).toBeGreaterThan(700)
       expect(gap).toBeLessThan(1300)
     }
-    const { width, height, rgb } = await pixels(frames[0]!.png)
+    const { width, height, rgb } = await pixels(frames.at(-1)!.png)
     expect([width, height]).toEqual([1920, 1080])
     const at = (x: number, y: number) => [...rgb.subarray((y * width + x) * 3, (y * width + x) * 3 + 3)]
     // red everywhere that matters, including the stage's right edge; no blue desk pixels anywhere

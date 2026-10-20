@@ -69,7 +69,7 @@ test('a remote path without a trailing separator gets a slash', () => {
 const DB_URL = 'postgres://tm:s3cret-pass@postgres/tm'
 let root: string
 beforeAll(async () => {
-  root = await mkdtemp('/home/user/.cache/tm-tmp/backup-')
+  root = await mkdtemp(`${tmpdir()}/backup-`)
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
 

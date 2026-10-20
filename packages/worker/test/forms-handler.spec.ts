@@ -208,7 +208,7 @@ test('treats a Submit that never confirms as maybe-submitted: one submission, a 
   expect(rec.history.slice(-2).map((h) => h.state)).toEqual(['submitting', 'failed'])
   expect(fx.submissions).toHaveLength(1)
   expect([pings[0].ping.title, pings[0].ping.priority]).toEqual(['Form needs you', 'high'])
-  expect(pings[0].ping.message).toContain('may have been submitted')
+  expect(pings[0].ping.message).toContain("couldn't confirm it went through")
   expect(context.pages()).toHaveLength(1)
 })
 
@@ -340,7 +340,7 @@ test('treats an unexpected exception after Submit as maybe-submitted, with no re
     }
   )
   expect(fx.submissions).toHaveLength(1)
-  expect(pings.map((p) => p.ping.message)).toEqual([expect.stringContaining('may have been submitted')])
+  expect(pings.map((p) => p.ping.message)).toEqual([expect.stringContaining("couldn't confirm it went through")])
   expect(JSON.stringify(events)).not.toContain('Test Student')
 })
 

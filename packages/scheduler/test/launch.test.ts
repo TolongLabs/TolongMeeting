@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
@@ -26,7 +27,7 @@ const HOUR = 3_600_000
 
 let tmp: string
 beforeAll(async () => {
-  tmp = await mkdtemp('/home/user/.cache/tm-tmp/launch-')
+  tmp = await mkdtemp(`${tmpdir()}/launch-`)
 })
 afterEach(stopJobFileWatchers)
 afterAll(async () => {

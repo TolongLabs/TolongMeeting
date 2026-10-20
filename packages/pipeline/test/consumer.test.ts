@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { AiKeyError } from '@tm/ai'
@@ -19,7 +20,7 @@ const START = new Date('2026-10-21T06:00:00Z')
 
 let tmp: string
 beforeAll(async () => {
-  tmp = await mkdtemp('/home/user/.cache/tm-tmp/consumer-')
+  tmp = await mkdtemp(`${tmpdir()}/consumer-`)
 })
 afterAll(async () => {
   await dropAllTestDbs()

@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { expect, test } from 'bun:test'
 import type { JobConfig } from '@tm/core'
 import { buildDetailPool } from '../src/forms/details'
@@ -5,7 +6,7 @@ import { confirmationAnswer, exactLabelMatches, planPage, questionsForModel, ver
 import type { FormPage, FormQuestion, QuestionType } from '../src/forms/types'
 import { testJob } from './forms/job'
 
-const DIR = '/home/user/.cache/tm-tmp/job-test'
+const DIR = `${tmpdir()}/job-test`
 const pool = buildDetailPool(testJob(DIR))
 const value = (key: string) => pool.find((d) => d.key === key)?.value
 

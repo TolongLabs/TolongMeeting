@@ -75,6 +75,10 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The run decodes the QR slide through the WeChat bridge, like the check job's QR tests.
+      TM_WECHAT_PYTHON: ${{ github.workspace }}/spikes/03-qr/.venv/bin/python
+      TM_WECHAT_MODELS_DIR: ${{ github.workspace }}/spikes/03-qr/models
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -84,6 +88,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg xvfb x11-utils
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install the WeChat QR bridge
+        run: |
+          python -m venv spikes/03-qr/.venv
+          spikes/03-qr/.venv/bin/python -m pip install --require-hashes --no-deps --only-binary :all: -r docker/worker/wechat-requirements.txt
+          bash spikes/03-qr/fetch-models.sh
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
       - name: End-to-end run

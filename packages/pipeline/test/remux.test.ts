@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
@@ -5,7 +6,7 @@ import { remuxArgs, remuxRecording } from '../src/remux'
 
 let tmp: string
 beforeAll(async () => {
-  tmp = await mkdtemp('/home/user/.cache/tm-tmp/remux-')
+  tmp = await mkdtemp(`${tmpdir()}/remux-`)
 })
 afterAll(() => rm(tmp, { recursive: true, force: true }))
 

@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import type { OccurrenceState } from '@tm/core'
@@ -30,7 +31,7 @@ const now = new Date('2026-10-21T06:30:00Z')
 
 let tmp: string
 beforeAll(async () => {
-  tmp = await mkdtemp('/home/user/.cache/tm-tmp/monitor-')
+  tmp = await mkdtemp(`${tmpdir()}/monitor-`)
 })
 afterEach(async () => {
   await settleRemuxes()

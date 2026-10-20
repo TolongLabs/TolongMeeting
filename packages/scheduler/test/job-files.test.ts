@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import {
   chmod,
@@ -28,7 +29,7 @@ import {
 
 let root: string
 beforeAll(async () => {
-  root = await mkdtemp('/home/user/.cache/tm-tmp/job-files-')
+  root = await mkdtemp(`${tmpdir()}/job-files-`)
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
 
