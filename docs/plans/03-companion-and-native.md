@@ -362,7 +362,7 @@ git commit -m "feat(web): add companion tables and queries"
 
 **Files:**
 
-- Create: `packages/web/lib/companion/tokens.ts`, `packages/web/app/api/companion/pair/route.ts`, `packages/web/app/api/devices/pairing-code/route.ts`, `packages/web/app/api/devices/[id]/revoke/route.ts`, `packages/web/app/devices/page.tsx` _(Deferred to the Figma gate: `app/devices/page.tsx`, the list, "Pair a PC" button and code display; the routes and `lib/` are built. Also added: `lib/companion/deps.ts` with `pairDeps()` and `ntfyConfigOf`, and `lib/companion/deps.ts` joins the `no-direct-db` allow-list.)_
+- Create: `packages/web/lib/companion/tokens.ts`, `packages/web/app/api/companion/pair/route.ts`, `packages/web/app/api/devices/pairing-code/route.ts`, `packages/web/app/api/devices/[id]/revoke/route.ts`, `packages/web/app/devices/page.tsx` _(`app/devices/page.tsx` is built as a plain, unstyled page (list, "Pair a new PC" button and one-time code display, remove with a second step), restyled after the Figma step; the routes and `lib/` are built. Also added: `lib/companion/deps.ts` with `pairDeps()` and `ntfyConfigOf`, and `lib/companion/deps.ts` joins the `no-direct-db` allow-list.)_
 - Test: `packages/web/test/companion-tokens.test.ts`
 
 **Interfaces:**
