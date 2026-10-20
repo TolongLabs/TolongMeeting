@@ -32,10 +32,12 @@ export {
 export {
   LAUNCH_LOCK,
   SERVER_WORKER_CAP,
+  handleDeadLaunchJob,
   launchOccurrence,
   resumeJobFileWatchers,
   startAttempt,
   stopJobFileWatchers,
+  type LaunchDeadResult,
   type LaunchDeps,
   type LaunchJob,
   type LaunchResult

@@ -4,6 +4,7 @@ import type { Db } from './index'
 export const QUEUES = {
   expand: 'expand',
   launch: 'launch',
+  launchDead: 'launch-dead',
   pipeline: 'pipeline',
   signinStart: 'signin-start',
   deleteOccurrence: 'delete-occurrence',

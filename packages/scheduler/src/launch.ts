@@ -46,6 +46,7 @@ export type LaunchDeps = {
 }
 
 export type LaunchJob = { occurrenceId: string; scheduledStart: string }
+export type LaunchDeadResult = 'failed' | 'deferred' | 'stale'
 export type LaunchResult = 'launched' | 'stale' | 'deferred' | 'skipped_identity_clash' | 'skipped_capacity' | 'failed'
 
 type Outbox = Array<() => Promise<unknown>>
@@ -258,6 +259,37 @@ export async function launchOccurrence(deps: LaunchDeps, job: LaunchJob, now: Da
   // Pings go out after the commit, so a slow ntfy server never holds the launch lock.
   for (const send of outbox) await send()
   return result
+}
+
+/**
+ * Handles a `launch` job whose retries are spent (the `launch-dead` queue; it mirrors `handleDeadPipelineJob`). An
+ * occurrence that is still `scheduled` with the same start is failed with `launch_failed` and its member is pinged once;
+ * anything else is `stale` (a launch got through, or the occurrence moved or went). Before the start the job is put back
+ * for the start time, so the member isn't told off early while the next hourly pass could still change the occurrence.
+ * The ping goes first, as in `pipeline-dead`: a ping that throws leaves the occurrence scheduled and the queue runs this
+ * again.
+ */
+export async function handleDeadLaunchJob(deps: LaunchDeps, job: LaunchJob, now: Date): Promise<LaunchDeadResult> {
+  const { db } = deps
+  const [occ] = await db.select().from(occurrences).where(eq(occurrences.id, job.occurrenceId))
+  if (!occ || occ.state !== 'scheduled' || occ.scheduledStart.toISOString() !== job.scheduledStart) {
+    console.warn(
+      `launch-dead: ${job.occurrenceId}: dropped; the occurrence is ${occ ? occ.state : 'gone'} or has moved`
+    )
+    return 'stale'
+  }
+  if (now.getTime() < occ.scheduledStart.getTime()) {
+    await deps.queue.send(QUEUES.launchDead, job, { startAfter: occ.scheduledStart })
+    return 'deferred'
+  }
+  console.error(`launch-dead: ${job.occurrenceId}: the launch job never succeeded; its retries are spent`)
+  await failedPing(deps, occ, "it couldn't start")
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${LAUNCH_LOCK})`)
+    const [current] = await tx.select().from(occurrences).where(eq(occurrences.id, occ.id)).for('update')
+    if (current?.state === 'scheduled') await launchThen(tx, occ.id, 'fail', 'launch_failed')
+  })
+  return 'failed'
 }
 
 /** Applies `launch` and then `trigger`, so the occurrence leaves `scheduled` and the move is recorded as an event. */

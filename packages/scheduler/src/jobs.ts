@@ -5,7 +5,8 @@ import type { PgBoss, QueueOptions, ScheduleOptions, WorkOptions } from 'pg-boss
 import { PIPELINE_DEAD_QUEUE, PIPELINE_QUEUE } from '../../pipeline/src/consumer-main'
 
 /** The handler keys of `JobHandlers`. Each has a queue in `QUEUES` and a row in `JOBS`. */
-export type JobKey = 'expand' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck'
+export type JobKey =
+  'expand' | 'launchDead' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck'
 
 /** One job's work. `data` is the job body (`{}` for a scheduled job); `signal` aborts when the job expires. */
 export type JobHandler = (data: unknown, signal: AbortSignal) => Promise<void>
@@ -16,7 +17,10 @@ type JobSpec = {
   queue: string
   /** pg-boss queue settings. Every job on the queue inherits them. All are set, so no default decides anything. */
   queueOptions: Required<Pick<QueueOptions, 'expireInSeconds' | 'retentionSeconds' | 'deleteAfterSeconds'>> &
-    Pick<QueueOptions, 'retryLimit' | 'retryDelay' | 'retryBackoff' | 'retryDelayMax'>
+    Pick<QueueOptions, 'retryLimit' | 'retryDelay' | 'retryBackoff' | 'retryDelayMax'> & {
+      /** Where a job goes when its retries are spent. */
+      deadLetter?: string
+    }
   /** How the one worker of the queue polls. */
   pollingIntervalSeconds: number
   /** A recurring job, in UTC. `missed: 'once'` sends one job for a slot that came due while the scheduler was down. */
@@ -47,8 +51,23 @@ export const JOBS: Record<JobKey, JobSpec> = {
     pollingIntervalSeconds: 5,
     cron: '0 * * * *'
   },
+  // Where a `launch` job goes when its retries are spent. It comes before `launch` because `launch` names it, and its
+  // handler fails an occurrence that is still `scheduled` after its start (`handleDeadLaunchJob`). The same budget as
+  // `pipeline-dead`: a ping that throws (ntfy down) is tried again for about an hour.
+  launchDead: {
+    queue: QUEUES.launchDead,
+    queueOptions: {
+      expireInSeconds: 5 * MINUTE,
+      retentionSeconds: 7 * DAY,
+      deleteAfterSeconds: DAY,
+      retryLimit: 20,
+      retryDelay: 180,
+      retryBackoff: false
+    },
+    pollingIntervalSeconds: 5
+  },
   // Sent at T-60 minutes (or 15 s after a deferral). A Docker failure is handled inside the handler; a throw is a
-  // Postgres error, which a short backoff retry usually clears. A job that waited past the meeting is `launch_missed`.
+  // Postgres error, which a short backoff retry usually clears. A job that waited past the meeting is `launch_missed`; one whose retries run out is dead-lettered.
   launch: {
     queueOptions: {
       expireInSeconds: 10 * MINUTE,
@@ -57,7 +76,8 @@ export const JOBS: Record<JobKey, JobSpec> = {
       retryLimit: 3,
       retryDelay: 5,
       retryBackoff: true,
-      retryDelayMax: MINUTE
+      retryDelayMax: MINUTE,
+      deadLetter: QUEUES.launchDead
     },
     queue: QUEUES.launch,
     pollingIntervalSeconds: 2

@@ -98,6 +98,7 @@ test(
           'delete-occurrence',
           'expand',
           'launch',
+          'launch-dead',
           'org-check',
           'pipeline',
           'pipeline-dead',
@@ -189,6 +190,27 @@ test(
       } finally {
         await consumer.stop({ graceful: false, close: true })
       }
+    }),
+  60_000
+)
+
+test(
+  'a launch job whose retries are spent reaches the launch-dead handler with its body',
+  () =>
+    withBoss(async (boss) => {
+      const seen: { key: JobKey; data: unknown }[] = []
+      const handlers = recordingHandlers(seen)
+      handlers.launch = async () => {
+        throw new Error('the launch keeps failing')
+      }
+      await registerJobs(boss, handlers)
+      expect(await boss.getQueue(QUEUES.launch)).toMatchObject({ deadLetter: QUEUES.launchDead })
+      // No retry, so the first failure is the last: the table's own retry delays would take half a minute.
+      await boss.updateQueue(QUEUES.launch, { retryLimit: 0 })
+      const body = { occurrenceId: 'o1', scheduledStart: 's' }
+      await boss.send(QUEUES.launch, body)
+      await until(() => seen.some((s) => s.key === 'launchDead'), 30_000)
+      expect(seen.find((s) => s.key === 'launchDead')?.data).toEqual(body)
     }),
   60_000
 )

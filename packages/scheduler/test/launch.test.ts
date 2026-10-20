@@ -14,6 +14,7 @@ import {
   DockerError,
   FakeDocker,
   dockerClient,
+  handleDeadLaunchJob,
   launchOccurrence,
   monitorTick,
   resumeJobFileWatchers,
@@ -277,6 +278,36 @@ test('a job that runs after the meeting is over fails the occurrence instead of 
   expect(f.docker.created).toEqual([])
   expect((await f.eventsOf()).length).toBe(2)
   expect(f.notifier.sent[0]!.ping.message).toContain("it couldn't start")
+})
+
+describe('a launch job whose retries are spent', () => {
+  test('fails a scheduled occurrence that is past its start, pings once and then drops the repeat', async () => {
+    const f = await launchFixture()
+    const late = new Date('2026-10-21T06:05:00Z')
+    expect(await handleDeadLaunchJob(f.deps, f.job, late)).toBe('failed')
+    expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'launch_failed' })
+    expect(f.notifier.sent).toHaveLength(1)
+    expect(f.notifier.sent[0]!.ping.message).toContain("it couldn't start")
+    expect(await handleDeadLaunchJob(f.deps, f.job, late)).toBe('stale')
+    expect(f.notifier.sent).toHaveLength(1)
+  })
+
+  test('waits for the start before it fails anything', async () => {
+    const f = await launchFixture()
+    expect(await handleDeadLaunchJob(f.deps, f.job, f.tMinus60)).toBe('deferred')
+    expect(await f.occurrence()).toMatchObject({ state: 'scheduled' })
+    expect(f.notifier.sent).toEqual([])
+    expect(f.queue.sent).toEqual([{ name: QUEUES.launchDead, data: f.job, opts: { startAfter: new Date(START) } }])
+  })
+
+  test('leaves an occurrence that has moved on, or moved, alone', async () => {
+    const f = await launchFixture()
+    expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('launched')
+    expect(await handleDeadLaunchJob(f.deps, f.job, new Date('2026-10-21T06:05:00Z'))).toBe('stale')
+    expect(await f.occurrence()).toMatchObject({ state: 'starting' })
+    expect(await handleDeadLaunchJob(f.deps, { ...f.job, occurrenceId: randomUUID() }, new Date(START))).toBe('stale')
+    expect(f.notifier.sent).toEqual([])
+  })
 })
 
 test('the later of two clashing occurrences is skipped with a ping', async () => {

@@ -15,7 +15,13 @@ import { assertRoot, parseOrigin } from './container-spec'
 import { dockerClient } from './docker'
 import { WORKER_UID } from './job-files'
 import { createQueues, jobKeyOfQueue, registerJobs, startLoop, type JobHandlers, type JobKey } from './jobs'
-import { launchOccurrence, resumeJobFileWatchers, stopJobFileWatchers, type LaunchDeps } from './launch'
+import {
+  handleDeadLaunchJob,
+  launchOccurrence,
+  resumeJobFileWatchers,
+  stopJobFileWatchers,
+  type LaunchDeps
+} from './launch'
 import { monitorTick, settleRemuxes } from './monitor'
 import { runOrgCheck } from './org-check'
 import { deleteOccurrenceData, retentionTick } from './retention'
@@ -153,6 +159,10 @@ export function buildHandlers(deps: LaunchDeps, env: SchedulerEnv, now: () => Da
     launch: async (data) => {
       const job = LaunchData.parse(data)
       console.log(`launch: ${job.occurrenceId}: ${await launchOccurrence(deps, job, now())}`)
+    },
+    launchDead: async (data) => {
+      const job = LaunchData.parse(data)
+      console.log(`launch-dead: ${job.occurrenceId}: ${await handleDeadLaunchJob(deps, job, now())}`)
     },
     signinStart: async (data) => {
       const { sessionId } = SigninData.parse(data)
