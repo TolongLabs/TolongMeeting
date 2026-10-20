@@ -770,7 +770,7 @@ The milestone plans were written in parallel against this page. Each marks the s
 - **04 Teams and 05 Meet**:
   - selector maps `teams.json` and `meet.json` with `TeamsSelectorsSchema` and `MeetSelectorsSchema`;
   - adapters `teamsAdapter`, `meetAdapter`, `TEAMS_TIMEOUTS`, `MEET_TIMEOUTS`, and `teamsChatReader`;
-  - core `normaliseTeamsChatUrl`;
+  - core `teams-link.ts` (`normaliseTeamsLink`, `normaliseTeamsChatUrl`: https only, exact hosts `teams.microsoft.com` and `teams.live.com`, no userinfo or port, any `\p{Cc}` refused, Safe Links and Google wrappers peeled with `unwrapLink`, the launcher page and the `/_#/` and `/v2/?meetingjoin=true#/` shells followed on the same origin only; `/l/meetup-join/<thread>/<n>` keeps `context`, `/meet/<digits>` keeps `p`, `/l/chat/<thread>/conversations` for chats) and `meeting-link.ts` (`normaliseMeetingLink`: Zoom, then Teams; Meet joins in plan 05);
   - `AlertKind` values `teams_signin` and `meet_signin`, and new copy for `breakout`;
   - `runOccurrence` calls `ensureLayout` on its 10-second refresh;
   - the monthly smoke test (`SmokeEntry`, `SMOKE_ENTRIES`, `runSmokeEntry`, `zoomSmoke`, `teamsSmoke`, `meetSmoke`, `tm-worker --smoke`, `run-job.sh smoke`, `smoke.crontab`), built by whichever of plans 04 and 05 lands first;

@@ -62,7 +62,7 @@ Names this plan adds to [architecture and contracts](../TRD.md), copied there in
 - **Worker**: `teamsAdapter`, `TEAMS_TIMEOUTS` and the modules under `packages/worker/src/adapters/teams/` (Tasks 1 to 8); `teamsChatReader` (Task 9).
 - **Run and pings** (Task 8): `AlertKind` gains `teams_signin`; new `breakout` copy; `runOccurrence` calls `ensureLayout` on its 10-second refresh, and pings `teams_signin` when a Teams join needs a sign-in.
 - **Smoke test** (Task 11): `SmokeEntry`, `SMOKE_ENTRIES`, `runSmokeEntry`, `zoomSmoke`, `teamsSmoke`, `tm-worker --smoke --job <path>`, `run-job.sh <job> smoke` and `docker/worker/smoke.crontab`.
-- **Core and website**: `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-chat.ts`, used for Teams chats in plan 01c's `ChatLinkSchema` (Task 9); `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote`, the `teams` entries of `CHAT_FIELD_COPY` and `chatAppOptions` in plan 02's `packages/web/lib/link-notices.ts`, and `TeamsPresenceNote` (Task 10).
+- **Core and website**: `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-link.ts`, used for Teams chats in plan 01c's `ChatLinkSchema` (Task 9); `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote`, the `teams` entries of `CHAT_FIELD_COPY` and `chatAppOptions` in plan 02's `packages/web/lib/link-notices.ts`, and `TeamsPresenceNote` (Task 10).
 
 Names used from earlier plans:
 
@@ -196,15 +196,15 @@ git commit -m "feat(worker): add teams selector map"
 
 **Files:**
 
-- Create: `packages/worker/src/adapters/teams/link.ts`
-- Test: `packages/worker/src/adapters/teams/link.test.ts`
+- Create: `packages/core/src/teams-link.ts` (`normaliseTeamsLink`, `normaliseTeamsChatUrl`), `packages/core/src/meeting-link.ts` (`normaliseMeetingLink`); Task 8 adds the worker re-export `packages/worker/src/adapters/teams/link.ts`
+- Test: `packages/core/test/teams-link.test.ts` (done in core per pre-flight TE1; Task 9 reuses `normaliseTeamsChatUrl` from it)
 
 **Interfaces:**
 
 - Consumes: `unwrapLink(url: string): string` from plan 01a (Task 12). Plan 01c's `stripPasscode(url: string): string` in `packages/core/src/passcode.ts` already removes the Teams `p` passcode where links are stored, and 01a's `redact` keeps only host and path of URLs in logs.
-- Produces: `normaliseTeamsLink(url: string): string | null` in `packages/worker/src/adapters/teams/link.ts`, which Task 8 exposes as `teamsAdapter.normaliseLink`.
+- Produces: `normaliseTeamsLink(url: string): string | null` in `packages/core/src/teams-link.ts`, which Task 8 exposes as `teamsAdapter.normaliseLink`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -253,12 +253,12 @@ test.each([
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/worker/src/adapters/teams/link.test.ts`
-Expected: FAIL, module `./link` not found.
+Run: `bun test packages/core/test/teams-link.test.ts`
+Expected: FAIL, module `../src` has no `normaliseTeamsLink`.
 
-- [ ] **Step 3: Implement `normaliseTeamsLink(url: string): string | null` in `packages/worker/src/adapters/teams/link.ts`**
+- [x] **Step 3: Implement `normaliseTeamsLink(url: string): string | null` in `packages/core/src/teams-link.ts`**
 
 Rules, in order:
 
@@ -269,16 +269,16 @@ Rules, in order:
 1.  `/meet/<digits>` returns `https://<host>/meet/<digits>`, plus `?p=<enc(dec(p))>` when `p` is present.
 1.  Anything else, including `/l/chat/` and `/l/channel/` links, returns `null`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/worker/src/adapters/teams/link.test.ts`
+Run: `bun test packages/core/test/teams-link.test.ts`
 Expected: PASS (17 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/worker/src/adapters/teams/link.ts packages/worker/src/adapters/teams/link.test.ts
-git commit -m "feat(worker): normalise teams meeting links"
+git add packages/core/src/teams-link.ts packages/core/src/meeting-link.ts packages/core/test/teams-link.test.ts
+git commit -m "feat(core): teams link rules"
 ```
 
 ### Task 3: Pre-join and join
@@ -1221,7 +1221,7 @@ git commit -m "feat(worker): register the teams adapter"
 
 - Consumes: `TeamsSelectors`, `teamsSelectors()` (Task 1); `parseTeamsMessages`, `toTeamsChatMessages`, `FixtureMessage` (Tasks 4 and 6); `teamsClicks` (Task 3); `adapterFor` with Teams registered (Task 8), which is how plan 02's loop recognises Teams meeting links; `LinkSource`, `FormCandidate`, `ChatMessage` from `@tm/core`; from plan 02, `ChatSourceReader`, `runChatWatcher`, `WatcherSigninError`, `WatcherChatError`, `resetWatcherEnv` (Task 3), `serveWatcherFixtures` and `watchHarness` (Task 4), `watcherFor` (Task 6) and its Teams refusal in `ChatLinkSchema` (Task 7).
 - Produces:
-  - `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-chat.ts` (adds to contracts): `https://<host>/l/chat/<enc(dec(thread))>/conversations` for a chat or group-chat link on `teams.microsoft.com` or `teams.live.com`, unwrapping one Safe Links level; `null` for anything else.
+  - `normaliseTeamsChatUrl(url: string): string | null` in `packages/core/src/teams-link.ts` (adds to contracts): `https://<host>/l/chat/<enc(dec(thread))>/conversations` for a chat or group-chat link on `teams.microsoft.com` or `teams.live.com`, unwrapping one Safe Links level; `null` for anything else.
   - `teamsChatReader(chatUrl: string, sel: TeamsSelectors): ChatSourceReader` and `startWatcher(desk: Page, src: LinkSource, onLink: (c: FormCandidate | { meetingUrl: string }) => void): Promise<Stopper>` in `packages/worker/src/watchers/teams.ts`; `watcherFor('teams')` returns this `startWatcher`.
   - `TeamsChatFixture { chatUrl: string; launcher?: boolean; loginRequired?: boolean; scroll?: 'top' | 'bottom'; messages: FixtureMessage[] }`, accepted as `serveWatcherFixtures(context, { teams })`.
 
