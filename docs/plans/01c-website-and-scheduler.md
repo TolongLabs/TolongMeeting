@@ -1447,7 +1447,7 @@ Run: `bun test packages/web/test/timetable.test.ts`
 
 Expected: FAIL with `Cannot find module './timetable'`.
 
-- [ ] **Step 3: Implement the schema, the actions, the queue helper and the pages**
+- [x] **Step 3: Implement the schema, the actions, the queue helper and the pages**
 
 The list page shows each entry with its next occurrence (`formatWhen`), its identity and a pause toggle; the edit page is one form over `EntryInputSchema`.
 
