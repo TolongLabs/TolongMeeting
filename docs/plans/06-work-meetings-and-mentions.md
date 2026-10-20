@@ -783,7 +783,7 @@ test('the take-over copy warns before it acts', () => {
 Run: `bun test packages/web/lib/meeting-control.test.ts packages/web/lib/meeting.test.ts packages/web/lib/control.test.ts`
 Expected: FAIL with `Cannot find module './meeting-control'`.
 
-- [ ] **Step 3: Implement the library functions, the actions, the route, the two pages and the panel, and add the button to the meeting page**
+- [x] **Step 3: Implement the library functions, the actions, the route, the two pages and the panel, and add the button to the meeting page**
 
 Server actions get the scope from `scopeForAuthUser` for the signed-in user, as 01c's meeting actions do; Next.js checks their origin, and nothing acts on a `GET`.
 
@@ -792,7 +792,7 @@ Server actions get the scope from `scopeForAuthUser` for the signed-in user, as 
 Run: `bun test packages/web && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web docs/TRD.md
