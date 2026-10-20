@@ -15,8 +15,8 @@
     "@tm/pipeline": "workspace:*",
     "@tm/web": "workspace:*",
     "drizzle-orm": "0.45.4",
-    "pg-boss": "^12.38.0",
+    "pg-boss": "12.38.0",
     "sharp": "0.35.5",
-    "zod": "^4.6.7"
+    "zod": "4.6.7"
   }
 }

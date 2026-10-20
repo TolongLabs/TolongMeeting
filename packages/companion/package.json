@@ -42,10 +42,10 @@
   },
   "dependencies": {
     "@tm/core": "workspace:*",
-    "zod": "^4.6.7"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "24.19.2",
     "electron": "44.5.1",
     "electron-builder": "26.17.0"
   }
