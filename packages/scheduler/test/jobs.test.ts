@@ -265,9 +265,7 @@ test('plan 03 and 08 stubs have no schedule and fail loudly, naming their task, 
   const stubs = {
     localClaimCheck: 'plan 08 T2',
     localStartCheck: 'plan 08 T2',
-    localStartDead: 'plan 08 T2',
-    homeRouteRecheck: 'plan 08 T12',
-    homeRouteDead: 'plan 08 T12'
+    localStartDead: 'plan 08 T2'
   } as const
   const handlers = buildHandlers({} as LaunchDeps, {} as SchedulerEnv)
   for (const [key, task] of Object.entries(stubs) as [keyof typeof stubs, string][]) {
@@ -277,12 +275,24 @@ test('plan 03 and 08 stubs have no schedule and fail loudly, naming their task, 
     expect((error as Error).message).toContain('not implemented yet')
     expect((error as Error).message).toContain(task)
   }
+  // Plan 08 T12's home route jobs are real now: a recheck queues the next one with `startAfter`, so they have no cron.
+  expect(JOBS.homeRouteRecheck.cron).toBeUndefined()
+  expect(JOBS.homeRouteDead.cron).toBeUndefined()
   expect(KEYS.filter((key) => JOBS[key].cron !== undefined).sort()).toEqual([
     'backup',
     'expand',
     'orgCheck',
     'retention'
   ])
+})
+
+test('the home route handlers reject a job body without an occurrence id', async () => {
+  const handlers = buildHandlers({} as LaunchDeps, {} as SchedulerEnv)
+  for (const key of ['homeRouteRecheck', 'homeRouteDead'] as const) {
+    const error = await handlers[key]({}, new AbortController().signal).catch((e: Error) => e)
+    expect(error, key).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toContain('not implemented yet')
+  }
 })
 
 test('queue names map to their handlers, and pipeline queues have none here', () => {

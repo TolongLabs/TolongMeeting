@@ -1647,29 +1647,25 @@ git commit -m "feat(web): enrol a home exit node"
 
 **Files:**
 
-- Create: `packages/scheduler/src/home-route/check.ts`
-- Modify: plan 01c's T-60 start handler (`server_via_home` calls `startViaHome`); register the `home-route-recheck` queue; `packages/notify/src/messages.ts` (the "Home connection offline" ping)
-- Test: `packages/scheduler/src/home-route/check.test.ts`
+- Create: `packages/scheduler/src/home-route/types.ts` (`HomeDeps`, `HomeRouteUnavailable`); replace the P0-Q stub `packages/scheduler/src/home-route/check.ts` (the queues, the `main.ts` handler wiring, `jobs.ts` rows and the ping `pings.homeConnectionOffline` already exist; the recheck chains itself with `startAfter`, so no cron and no `launch.ts` edit)
+- Test: `packages/scheduler/test/home-route-check.test.ts` (`test/`, with a fake Tailscale `fetch`)
 
 **Interfaces:**
 
-- Consumes: `checkHomeRoute`, `TailscaleApi` (Task 11); `LocalDeps` (Task 2); `shortTime` (Task 1); `launchViaHome` and `HomeRouteUnavailable` (Task 13, injected).
+- Consumes: `checkHomeRoute`, `TailscaleApi` (Task 11); `shortTime` (Task 1); `launchViaHome` (Task 13, injected; `HomeRouteUnavailable` lives in `home-route/types.ts` and Task 13 throws it).
 - Produces (adds to contracts): pg-boss queue `home-route-recheck`; and:
 
 ```ts
-export interface HomeDeps extends LocalDeps {
+export interface HomeDeps extends Pick<LaunchDeps, 'db' | 'queue' | 'notifier' | 'master' | 'env'> {
   api: TailscaleApi
   launchViaHome(cfg: JobConfig, exitNodeIp: string): Promise<void>
 }
-export function startViaHome(
-  db: Db,
-  cfg: JobConfig,
-  deps: HomeDeps,
-  now?: Date
-): Promise<'launched' | 'waiting' | 'failed'>
+export function startViaHomeWith(home: HomeDeps, cfg: JobConfig, now: Date): Promise<'launched' | 'waiting' | 'failed'>
+// The P0-Q stub signature, which T2's launch hook calls; it builds `HomeDeps` from `deps` and `process.env`.
+export function startViaHome(deps: LaunchDeps, cfg: JobConfig, now: Date): Promise<'launched' | 'waiting' | 'failed'>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('a ready exit node launches the worker through it', async () => {
@@ -1715,24 +1711,24 @@ test('a tunnel that does not come up counts as offline', async () => {
 
 `deps({ status, ipv4, launchThrows? })` fakes `checkHomeRoute` through the injected API and records `pings`, `failed`, `scheduled` and `launched`; `cfgHome` is the "Data Mining" entry for an identity of member A set to `server_via_home`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/scheduler/src/home-route/check.test.ts`
+Run: `bun test packages/scheduler/test/home-route-check.test.ts`
 Expected: FAIL with "Cannot find module './check'"
 
-- [ ] **Step 3: Implement `startViaHome` and the hooks**
+- [x] **Step 3: Implement `startViaHome` and the hooks**
 
-The ping goes out once per occurrence (recorded as an `alert` event with `{ kind: 'home_route_offline' }`; no ping when one exists). Reason phrases: `offline` "isn't online", `not_exit_node` "isn't sharing its connection", `not_enrolled` "isn't set up". From T-10 on, `deps.fail(occurrenceId, 'home_exit_node_offline')`, which also sends plan 01c's worker-failed ping. The `home-route-recheck` handler rebuilds the `JobConfig` with `buildJobConfig` and calls `startViaHome` again.
+The ping goes out once per occurrence (recorded as an `alert` event with `{ kind: 'home_route_offline' }`; no ping when one exists). Reason phrases: `offline` "isn't online", `not_exit_node` "isn't sharing its connection", `not_enrolled` "isn't set up". From T-10 on the occurrence fails with `home_exit_node_offline` (`applyTrigger` `fail`, profile released, plan 01c's worker-failed ping). A Tailscale API error is logged by name and HTTP status only, sends no ping, queues another look, and from T-10 fails the occurrence with `launch_failed`. `handleHomeRouteDead` queues a fresh recheck before T-10 and fails the occurrence from T-10. The `home-route-recheck` handler rebuilds the `JobConfig` with `buildJobConfig` and calls `startViaHome` again.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/scheduler/src/home-route/check.test.ts`
-Expected: PASS (4 tests)
+Run: `bun test packages/scheduler/test/home-route-check.test.ts`
+Expected: PASS (11 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/scheduler/src packages/notify/src/messages.ts
+git add packages/scheduler/src/home-route packages/scheduler/test/home-route-check.test.ts
 git commit -m "feat(scheduler): check the home route at T-60"
 ```
 
