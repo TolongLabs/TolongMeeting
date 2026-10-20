@@ -1387,7 +1387,7 @@ export class SigninController {
 
 - Route (adds to contracts): `POST /api/identities/<id>/open-signin` (member session) answers `{ opened: true, pcName }` or `{ opened: false, reason: 'pc_offline' | 'not_local' }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // signin.test.ts
@@ -1452,16 +1452,16 @@ test('open-signin explains an offline PC or a server identity', async () => {
 Run: `bun test packages/companion/src/local/signin.test.ts packages/web/app/api/identities/open-signin.test.ts`
 Expected: FAIL with "Cannot find module './signin'" and a missing route
 
-- [ ] **Step 3: Implement the controller, the window, the route and the entrypoint change**
+- [ ] **Step 3: Implement the controller, the window, the route and the entrypoint change** _(Non-UI part done: `signin.ts` and the route; the tests live in `packages/companion/test/local-signin.test.ts` and `packages/web/test/open-signin.test.ts`. Per R9 there is no entrypoint, `vnc.pass` or fourth `-e` change. The window, tray items and Accounts button wait for the Figma gate.)_
 
 The sign-in container is `run -d --name tm-signin-<identityId> --label tm.identity=<identityId> --shm-size=2g --network container:tm-net-signin-<identityId>`, the profile volume, checkpoints and a short-lived `/run/tm` (with `profile.key` and `vnc.pass`), the three path variables plus `TM_VNC_PASSWORD_FILE`, then `tm-worker --signin`. Its holder is `holderArgs({ scope: 'signin-<identityId>', allowTcp: [] })`. The VNC password is 24 random base64url characters per session, held in memory for `vncUrl`. The window (`signin.html`, toolbar with a single `Done` button) is a `BrowserWindow` with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`; `will-navigate` and `setWindowOpenHandler` refuse any URL that fails `isAllowedSigninUrl`. It opens only on a tray click or an `open_signin` event, both started by the member. During a run, `noVncPort` is the host port Docker published for the run's holder. The Accounts page shows "Opened on <PC name>" or "Your PC <PC name> is offline".
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/companion/src/local/signin.test.ts packages/web/app/api/identities/open-signin.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src packages/web/app docker/worker/entrypoint.sh
