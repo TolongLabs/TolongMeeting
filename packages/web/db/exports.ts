@@ -24,6 +24,9 @@ const UNIQUE_VIOLATION = '23505'
 const ACTIVE_INDEX = 'exports_one_active_idx'
 
 export const ALREADY_RUNNING_MESSAGE = 'This export is already running.'
+export const NOT_READY_MESSAGE = 'This meeting has no finished summary to export.'
+/** The most exports `listForOccurrence` returns. */
+export const MAX_LISTED_EXPORTS = 50
 
 /** A stored `exports` row as the `ExportRow` the rest of the app uses (without `startedAt`). */
 export function toExportRow(r: typeof exportsTable.$inferSelect): ExportRow {
@@ -55,7 +58,10 @@ export function memberExports(scope: MemberScope): MemberExports {
     async create(occurrenceId, target): Promise<CreateExportResult> {
       if (!UUID.test(occurrenceId)) return { ok: false, code: 'not_found', message: 'Meeting not found.' }
       const [occurrence] = await scope.select(occurrences, eq(occurrences.id, occurrenceId))
-      if (!occurrence) return { ok: false, code: 'not_found', message: 'Meeting not found.' }
+      // A deleted meeting is gone for the member. Only a finished one has a summary to export.
+      if (!occurrence || occurrence.state === 'deleted')
+        return { ok: false, code: 'not_found', message: 'Meeting not found.' }
+      if (occurrence.state !== 'completed') return { ok: false, code: 'not_ready', message: NOT_READY_MESSAGE }
       try {
         return { ok: true, row: toExportRow(await scope.insert(exportsTable, { occurrenceId, target })) }
       } catch (e) {
@@ -73,7 +79,11 @@ export function memberExports(scope: MemberScope): MemberExports {
     async listForOccurrence(occurrenceId) {
       if (!UUID.test(occurrenceId)) return []
       const rows = await scope.select(exportsTable, eq(exportsTable.occurrenceId, occurrenceId))
-      return rows.map(toExportRow).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      // `MemberScope.select` takes no order or limit, so the newest are picked here; the list is short (one active export per target).
+      return rows
+        .map(toExportRow)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1))
+        .slice(0, MAX_LISTED_EXPORTS)
     }
   }
 }
@@ -143,9 +153,12 @@ function openConnection(
   return { ...settings, ...secret } as Connection
 }
 
-function summarise(kind: ConnectionKind, status: 'ok' | 'reconnect_needed', raw: unknown): ConnectionSummary {
+/** The summary of one stored connection, or null when its settings no longer match their schema. */
+function summarise(kind: ConnectionKind, status: 'ok' | 'reconnect_needed', raw: unknown): ConnectionSummary | null {
   if (kind === 'github') {
-    const s = GitHubSettings.parse(raw)
+    const parsed = GitHubSettings.safeParse(raw)
+    if (!parsed.success) return null
+    const s = parsed.data
     return {
       kind,
       status,
@@ -155,17 +168,20 @@ function summarise(kind: ConnectionKind, status: 'ok' | 'reconnect_needed', raw:
     }
   }
   if (kind === 'google') {
-    const s = GoogleSettings.parse(raw)
-    return { kind, status, ready: true, label: s.account, detail: s.folderName }
+    const parsed = GoogleSettings.safeParse(raw)
+    if (!parsed.success) return null
+    return { kind, status, ready: true, label: parsed.data.account, detail: parsed.data.folderName }
   }
-  const s = NotionSettings.parse(raw)
+  const parsed = NotionSettings.safeParse(raw)
+  if (!parsed.success) return null
+  const s = parsed.data
   return { kind, status, ready: s.parent !== null, label: s.workspace, detail: s.parent?.name ?? 'No page chosen yet' }
 }
 
 /**
  * The member's connections. `master` seals each connection's tokens with `sealColumn` (bound to the member and to
  * `connections.token`); the sealed JSON carries `kind`, which is checked when it is opened, because the AAD has no kind.
- * A token is never in a summary, a log line or an error message.
+ * A token is never in a summary, a log line or an error message. `summaries` skips a row whose settings fail their schema.
  */
 export function memberConnections(scope: MemberScope, master: Buffer): MemberConnections {
   const forKind = (kind: ConnectionKind) => eq(connections.kind, kind)
@@ -178,7 +194,14 @@ export function memberConnections(scope: MemberScope, master: Buffer): MemberCon
 
     async summaries() {
       const rows = await scope.select(connections)
-      return rows.sort((a, b) => a.kind.localeCompare(b.kind)).map((r) => summarise(r.kind, r.status, r.settings))
+      const out: ConnectionSummary[] = []
+      for (const row of rows.sort((a, b) => a.kind.localeCompare(b.kind))) {
+        const summary = summarise(row.kind, row.status, row.settings)
+        // The page lists what it can. A row that no longer parses is skipped and logged by id only (no settings, no token).
+        if (summary === null) console.error(`connection ${row.id} has settings that do not match their schema`)
+        else out.push(summary)
+      }
+      return out
     },
 
     async save(c) {

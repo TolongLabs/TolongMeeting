@@ -30,15 +30,20 @@ export interface ExportRow {
 
 /** What `create` answers when it does not queue an export. The message is safe to show to the member. */
 export type CreateExportRefusal =
-  { ok: false; code: 'already_running'; message: string } | { ok: false; code: 'not_found'; message: string }
+  | { ok: false; code: 'already_running'; message: string }
+  | { ok: false; code: 'not_found'; message: string }
+  | { ok: false; code: 'not_ready'; message: string }
 export type CreateExportResult = { ok: true; row: ExportRow } | CreateExportRefusal
 
 /** The member-facing export operations, bound to one member by a `MemberScope` (`memberExportStores`). */
 export interface MemberExports {
-  /** Queues an export. The partial unique index allows one queued or running export per occurrence and target. */
+  /**
+   * Queues an export. `not_found` for a meeting that is not the member's or is deleted, `not_ready` unless it is
+   * `completed`. The partial unique index allows one queued or running export per occurrence and target.
+   */
   create(occurrenceId: string, target: ExportTargetId): Promise<CreateExportResult>
   get(id: string): Promise<ExportRow | null>
-  /** Newest first. */
+  /** Newest first, at most 50. */
   listForOccurrence(occurrenceId: string): Promise<ExportRow[]>
 }
 

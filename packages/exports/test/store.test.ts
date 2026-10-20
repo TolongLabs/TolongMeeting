@@ -19,6 +19,7 @@ beforeAll(async () => {
   const seeded = await seedMember(db)
   m1 = seeded.memberId
   o1 = seeded.ids.occurrences
+  await db.update(occurrences).set({ state: 'completed' }).where(eq(occurrences.id, o1))
   // A second occurrence, in state 'deleted'.
   const [first] = await db.select().from(occurrences).where(eq(occurrences.id, o1))
   const { id: _id, ...rest } = first!

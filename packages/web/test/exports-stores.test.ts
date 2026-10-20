@@ -25,6 +25,8 @@ beforeAll(async () => {
   m1 = a.memberId
   m2 = b.memberId
   o1 = a.ids.occurrences
+  // Only a finished meeting can be exported.
+  await db.update(occurrences).set({ state: 'completed' }).where(eq(occurrences.id, o1))
   s1 = forMember(m1)
   s2 = forMember(m2)
 })
@@ -79,12 +81,57 @@ describe('exports', () => {
     expect((await s1.exports.listForOccurrence(o1)).map((r) => r.id)).toEqual([pdf.row.id, zip.row.id])
   })
 
+  test('a deleted meeting is not found and an unfinished one is not ready', async () => {
+    const [first] = await db.select().from(occurrences).where(eq(occurrences.id, o1))
+    const { id: _id, ...rest } = first!
+    const spare = async (state: 'deleted' | 'scheduled' | 'transcribing', hour: number) => {
+      const [row] = await db
+        .insert(occurrences)
+        .values({
+          ...rest,
+          state,
+          scheduledStart: new Date(`2026-11-0${hour}T06:00:00Z`),
+          scheduledEnd: new Date(`2026-11-0${hour}T08:00:00Z`)
+        })
+        .returning()
+      return row!.id
+    }
+    expect(await s1.exports.create(await spare('deleted', 1), 'zip')).toMatchObject({ ok: false, code: 'not_found' })
+    for (const [state, hour] of [
+      ['scheduled', 2],
+      ['transcribing', 3]
+    ] as const)
+      expect(await s1.exports.create(await spare(state, hour), 'zip')).toEqual({
+        ok: false,
+        code: 'not_ready',
+        message: 'This meeting has no finished summary to export.'
+      })
+    expect(await db.$count(exportsTable)).toBe(0)
+  })
+
+  test('listForOccurrence returns the newest 50', async () => {
+    const base = Date.parse('2026-10-20T00:00:00Z')
+    await db.insert(exportsTable).values(
+      Array.from({ length: 60 }, (_, i) => ({
+        occurrenceId: o1,
+        memberId: m1,
+        target: 'zip' as const,
+        status: 'succeeded' as const,
+        createdAt: new Date(base + i * 1000)
+      }))
+    )
+    const list = await s1.exports.listForOccurrence(o1)
+    expect(list).toHaveLength(50)
+    expect(list[0]!.createdAt.getTime()).toBe(base + 59_000)
+    expect(list[49]!.createdAt.getTime()).toBe(base + 10_000)
+  })
+
   test('occurrences resolve only for their owner, with the data directory', async () => {
     expect(await s2.occurrences.get(o1)).toBeNull()
     expect(await s1.occurrences.get(o1)).toMatchObject({
       id: o1,
       memberId: m1,
-      state: 'scheduled',
+      state: 'completed',
       dataDir: `/data/occurrences/${o1}`
     })
     expect(await s1.occurrences.get('nope')).toBeNull()
@@ -184,6 +231,36 @@ describe('connections', () => {
     const wrongColumn = sealColumn(master, m2, 'members.ntfy_token', JSON.stringify({ kind: 'github', token: 'x' }))
     await db.update(connections).set({ tokenEnc: wrongColumn }).where(eq(connections.memberId, m2))
     await expect(s2.connections.get('github')).rejects.toThrow()
+  })
+
+  test('summaries skips a row whose settings fail their schema and logs only its id', async () => {
+    await s1.connections.save(GITHUB)
+    await s1.connections.save({
+      kind: 'google',
+      refreshToken: '1//0gREFRESH',
+      account: 'me@example.com',
+      folderId: 'f1',
+      folderName: 'Tolong Meeting',
+      folderIsDefault: true
+    })
+    await db
+      .update(connections)
+      .set({ settings: { owner: 'LEAKY-OWNER' } })
+      .where(eq(connections.kind, 'github'))
+    const [bad] = await db.select().from(connections).where(eq(connections.kind, 'github'))
+    const logged: string[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void logged.push(args.join(' '))
+    try {
+      expect(await s1.connections.summaries()).toEqual([
+        { kind: 'google', status: 'ok', ready: true, label: 'me@example.com', detail: 'Tolong Meeting' }
+      ])
+    } finally {
+      console.error = original
+    }
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain(bad!.id)
+    expect(logged[0]).not.toContain('LEAKY-OWNER')
   })
 
   test('a failed read does not put the token in the error', async () => {
