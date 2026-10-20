@@ -12,7 +12,14 @@ import { emitCompanionEvent } from '../db/companion'
 import { seedCompanionFixture } from '../db/companion.fixtures'
 import { createTestDb, dropAllTestDbs } from '../db/testing'
 import { withDevice } from '../lib/companion/scope'
-import { companionEventStream, formatSse, handleEventsRequest, MAX_QUEUED_BYTES } from '../lib/companion/sse'
+import {
+  companionEventStream,
+  formatSse,
+  handleEventsRequest,
+  hasStreamSlot,
+  MAX_QUEUED_BYTES,
+  MAX_STREAM_LIFETIME_MS
+} from '../lib/companion/sse'
 import { newDeviceToken } from '../lib/companion/tokens'
 
 let db: Db
@@ -28,6 +35,8 @@ const FAST = { pollMs: 10, keepAliveMs: 150, recheckMs: 40 }
 beforeAll(async () => {
   db = await createTestDb()
   fx = await seedCompanionFixture(db)
+  // Paired an hour ago, so the events the tests emit are theirs to see.
+  await db.update(deviceTokens).set({ createdAt: new Date(Date.now() - 3_600_000) })
   for (const key of ['a1', 'a2', 'b1'] as const) {
     const { token, hash } = newDeviceToken()
     await db.update(deviceTokens).set({ tokenHash: hash }).where(eq(deviceTokens.id, fx[key].deviceId))
@@ -165,6 +174,7 @@ describe('the event stream under Bun.serve', () => {
     await db.update(deviceTokens).set({ revokedAt: new Date() }).where(eq(deviceTokens.id, fx.a2.deviceId))
     const { ended } = await reading
     expect(ended).toBe(true)
+    expect(hasStreamSlot(fx.a2.deviceId)).toBe(false)
     const again = await connect(token)
     expect(again.status).toBe(401)
     expect(await again.json()).toEqual({ error: 'device_revoked_or_unknown' })
@@ -177,6 +187,25 @@ describe('the event stream under Bun.serve', () => {
     const second = await connect(tokens.a1)
     expect((await reading).ended).toBe(true)
     await second.body!.cancel()
+  })
+
+  test('a newly paired device gets none of the earlier events, with no header and with Last-Event-ID: 0', async () => {
+    const stale = await emitCompanionEvent(db, fx.a1.memberId, { type: 'open_signin', identityId: 'i1' })
+    const staleOwn = await emitCompanionEvent(db, fx.a1.memberId, job(40), fx.a1.deviceId)
+    await Bun.sleep(5)
+    const { token, hash } = newDeviceToken()
+    await db.insert(deviceTokens).values({ memberId: fx.a1.memberId, name: 'NEW-PC', tokenHash: hash })
+    await Bun.sleep(5)
+    const fresh = await emitCompanionEvent(db, fx.a1.memberId, job(41))
+    for (const lastEventId of [undefined, 0]) {
+      const res = await connect(token, lastEventId)
+      const { text } = await readUntil(res, (t) => t.includes(`id: ${fresh}\n`))
+      expect(text).toContain(`id: ${fresh}\n`)
+      expect(text).not.toContain(`id: ${stale}\n`)
+      expect(text).not.toContain(`id: ${staleOwn}\n`)
+      expect(text).not.toContain('open_signin')
+      await res.body!.cancel()
+    }
   })
 
   test('a bad Last-Event-ID is a fixed 400 and a missing token a 401', async () => {
@@ -231,9 +260,8 @@ describe('the real companion client against the route', () => {
         { id: b, command: { type: 'local_identities_changed' } }
       ])
       const c = await emitCompanionEvent(db, fx.b1.memberId, job(31))
-      await waitFor(() => got.length === 3)
+      await waitFor(() => got.length === 3 && state.get().lastEventId === c)
       expect(got[2]).toEqual({ id: c, command: job(31) })
-      expect(state.get().lastEventId).toBe(c)
       expect(errors).toEqual([])
 
       await db.update(deviceTokens).set({ revokedAt: new Date() }).where(eq(deviceTokens.id, fx.b1.deviceId))
@@ -247,6 +275,52 @@ describe('the real companion client against the route', () => {
 })
 
 describe('companionEventStream', () => {
+  const quiet = { listEvents: async (): Promise<CompanionEvent[]> => [], touch: async () => true }
+
+  test('a healthy stream ends after its maximum lifetime, and the end is reported once', async () => {
+    let now = 1_000_000
+    let ends = 0
+    const stream = companionEventStream(quiet, 0, new AbortController().signal, {
+      pollMs: 5,
+      keepAliveMs: Number.MAX_SAFE_INTEGER,
+      recheckMs: Number.MAX_SAFE_INTEGER,
+      clock: () => now,
+      onEnd: () => void ends++
+    })
+    const text = new Response(stream).text()
+    await Bun.sleep(40)
+    expect(ends).toBe(0) // still open just before the limit
+    now += MAX_STREAM_LIFETIME_MS - 1
+    await Bun.sleep(40)
+    expect(ends).toBe(0)
+    now += 1
+    expect(await text).toBe(': open\n\n')
+    expect(ends).toBe(1)
+  })
+
+  test('the end is reported when the client cancels and when the database fails', async () => {
+    let ends = 0
+    const cancelled = companionEventStream(quiet, 0, new AbortController().signal, {
+      pollMs: 5,
+      onEnd: () => void ends++
+    })
+    await cancelled.getReader().cancel()
+    expect(ends).toBe(1)
+    const failing = companionEventStream(
+      {
+        listEvents: async () => {
+          throw new Error('boom')
+        },
+        touch: async () => true
+      },
+      0,
+      new AbortController().signal,
+      { pollMs: 5, onEnd: () => void ends++ }
+    )
+    await expect(new Response(failing).text()).rejects.toThrow('boom')
+    expect(ends).toBe(2)
+  })
+
   test('stops feeding a client that does not read, so the queue stays bounded', async () => {
     let calls = 0
     let next = 1

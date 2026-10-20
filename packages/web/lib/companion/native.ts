@@ -9,7 +9,7 @@ import {
   NATIVE_UPLOAD_MAX_FILE_BYTES,
   WhisperJsonSchema
 } from '@tm/core'
-import { completeJob, getClaimedJob } from '../../db/companion'
+import { completeJob } from '../../db/companion'
 import { QUEUES, queueDbOf, type Queue } from '../../db/queues'
 import { applyTrigger } from '../../db/transitions'
 import { notFound, openOccurrenceFile, serveFile } from '../files'
@@ -313,9 +313,9 @@ export async function handleTranscriptRequest(
   const made: string[] = []
   try {
     await deps.db.transaction(async (tx) => {
-      // Re-checked in the transaction: the lease may have lapsed while the body arrived.
-      if ((await getClaimedJob(tx, scope.device, jobId)) === null || !(await completeJob(tx, jobId)))
-        throw new Refusal('gone')
+      // Re-checked in the transaction: the lease may have lapsed while the body arrived. The same `UPDATE` requires
+      // that this device holds the job with a live lease.
+      if (!(await completeJob(tx, scope.device, jobId))) throw new Refusal('gone')
       try {
         await applyTrigger(tx, job.occurrenceId, 'transcript_ready')
       } catch (e) {

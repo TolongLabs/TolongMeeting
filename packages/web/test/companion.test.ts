@@ -71,6 +71,8 @@ let f: Awaited<ReturnType<typeof seedCompanionFixture>>
 beforeEach(async () => {
   db = await createTestDb()
   f = await seedCompanionFixture(db)
+  // The fixture devices were paired a day before `t0`, so the events the tests emit at `t0` are theirs to see.
+  await db.update(deviceTokens).set({ createdAt: plus(-86_400_000) })
 }, 60_000)
 
 const nativeJob = (targetDeviceId?: string) =>
@@ -231,6 +233,26 @@ describe('creating jobs', () => {
 })
 
 describe('leases', () => {
+  test("releasing for a member leaves another member's lapsed leases alone", async () => {
+    const mine = await nativeJob()
+    const [theirs] = await db
+      .insert(companionJobs)
+      .values({
+        memberId: f.b1.memberId,
+        occurrenceId: f.occB,
+        kind: 'native_transcription',
+        payload: native(f.occB),
+        state: 'claimed',
+        deviceId: f.b1.deviceId,
+        leaseUntil: t0
+      })
+      .returning({ id: companionJobs.id })
+    await claimJob(db, f.a1, mine, plus(-JOB_LEASE_MS - 1000))
+    expect(await releaseExpiredLeases(db, plus(1000), f.a1.memberId)).toEqual([mine])
+    expect((await getJob(db, theirs!.id))?.state).toBe('claimed')
+    expect(await releaseExpiredLeases(db, plus(1000))).toEqual([theirs!.id])
+  })
+
   test('a lease lapses 5 minutes after the last progress', async () => {
     const id = await nativeJob()
     await claimJob(db, f.a1, id, t0)
@@ -268,28 +290,61 @@ describe('leases', () => {
 describe('finishing', () => {
   test('a failed attempt is retried once, then the job fails', async () => {
     const id = await nativeJob()
-    expect(await failJobAttempt(db, id, 'exit 1')).toBe('retry')
+    await claimJob(db, f.a1, id, t0)
+    expect(await failJobAttempt(db, f.a1, id, 'exit 1', plus(1000))).toBe('retry')
     expect((await getJob(db, id))?.state).toBe('pending')
-    expect(await failJobAttempt(db, id, 'exit 1')).toBe('failed')
+    await claimJob(db, f.a1, id, plus(2000))
+    expect(await failJobAttempt(db, f.a1, id, 'exit 1', plus(3000))).toBe('failed')
     expect(await getJob(db, id)).toMatchObject({ state: 'failed', attempts: 2 })
-    await expect(failJobAttempt(db, id, 'again')).rejects.toThrow('not active')
+    await expect(failJobAttempt(db, f.a1, id, 'again', plus(4000))).rejects.toThrow('does not hold')
   })
 
   test('a failed attempt on a held job releases the holder', async () => {
     const id = await nativeJob()
     await claimJob(db, f.a1, id, t0)
-    expect(await failJobAttempt(db, id, 'exit 1')).toBe('retry')
-    expect(await getClaimedJob(db, f.a1, id, t0)).toBeNull()
-    expect(await claimJob(db, f.a2, id, t0)).toMatchObject({ state: 'claimed', attempts: 1 })
+    expect(await failJobAttempt(db, f.a1, id, 'exit 1', plus(1000))).toBe('retry')
+    expect(await getClaimedJob(db, f.a1, id, plus(1000))).toBeNull()
+    expect(await claimJob(db, f.a2, id, plus(1000))).toMatchObject({ state: 'claimed', attempts: 1 })
+  })
+
+  test('only the holder with a live lease fails an attempt', async () => {
+    const id = await nativeJob()
+    await expect(failJobAttempt(db, f.a1, id, 'x', t0)).rejects.toThrow('does not hold') // pending: not held
+    await claimJob(db, f.a1, id, t0)
+    for (const device of [f.a2, f.b1]) {
+      await expect(failJobAttempt(db, device, id, 'x', plus(1000))).rejects.toThrow('does not hold')
+    }
+    await expect(failJobAttempt(db, f.a1, id, 'x', plus(JOB_LEASE_MS + 1))).rejects.toThrow('does not hold')
+    expect(await getJob(db, id)).toMatchObject({ state: 'claimed', attempts: 0 })
   })
 
   test('completing counts once', async () => {
     const id = await nativeJob()
-    expect(await completeJob(db, id)).toBe(false) // pending: not held
+    expect(await completeJob(db, f.a1, id, t0)).toBe(false) // pending: not held
     await claimJob(db, f.a1, id, t0)
-    expect(await completeJob(db, id)).toBe(true)
-    expect(await completeJob(db, id)).toBe(false)
+    expect(await completeJob(db, f.a1, id, plus(1000))).toBe(true)
+    expect(await completeJob(db, f.a1, id, plus(1000))).toBe(false)
     expect((await getJob(db, id))?.state).toBe('done')
+  })
+
+  test('only the holder with a live lease completes a job', async () => {
+    const id = await nativeJob()
+    await claimJob(db, f.a1, id, t0)
+    for (const device of [f.a2, f.b1]) expect(await completeJob(db, device, id, plus(1000))).toBe(false)
+    expect(await completeJob(db, f.a1, id, plus(JOB_LEASE_MS + 1))).toBe(false) // lapsed, not yet released
+    expect((await getJob(db, id))?.state).toBe('claimed')
+  })
+
+  test('a lapsed and reclaimed job cannot be completed or failed by the old holder', async () => {
+    const id = await nativeJob()
+    await claimJob(db, f.a1, id, t0)
+    const later = plus(JOB_LEASE_MS + 1000)
+    await releaseExpiredLeases(db, later)
+    expect(await claimJob(db, f.a2, id, later)).toMatchObject({ state: 'claimed' })
+    expect(await completeJob(db, f.a1, id, plus(JOB_LEASE_MS + 2000))).toBe(false)
+    await expect(failJobAttempt(db, f.a1, id, 'late', plus(JOB_LEASE_MS + 2000))).rejects.toThrow('does not hold')
+    expect(await getJob(db, id)).toMatchObject({ state: 'claimed', attempts: 0 })
+    expect(await completeJob(db, f.a2, id, plus(JOB_LEASE_MS + 3000))).toBe(true)
   })
 
   test('the PC ping is marked sent only once', async () => {
@@ -312,6 +367,36 @@ describe('events', () => {
     expect((await listCompanionEvents(db, f.a1, 0)).map((e) => e.id)).toEqual([fresh])
     expect(await listCompanionEvents(db, f.b1, 0)).toEqual([])
     expect(old).toBeLessThan(fresh)
+  })
+
+  test('a device sees only events created while it was paired, whatever cursor it sends', async () => {
+    const before = await emitCompanionEvent(db, f.a1.memberId, { type: 'open_signin', identityId: 'i1' }, undefined, t0)
+    const [late] = await db
+      .insert(deviceTokens)
+      .values({ memberId: f.a1.memberId, name: 'NEW-PC', tokenHash: 'late-device', createdAt: plus(60_000) })
+      .returning({ id: deviceTokens.id })
+    const device = { deviceId: late!.id, memberId: f.a1.memberId }
+    const during = await emitCompanionEvent(
+      db,
+      f.a1.memberId,
+      { type: 'local_identities_changed' },
+      undefined,
+      plus(61_000)
+    )
+    expect((await listCompanionEvents(db, device, 0)).map((e) => e.id)).toEqual([during])
+    expect((await listCompanionEvents(db, device, before - 1)).map((e) => e.id)).toEqual([during])
+    // The device that was already paired still sees both.
+    expect((await listCompanionEvents(db, f.a1, 0)).map((e) => e.id)).toEqual([before, during])
+  })
+
+  test('a revoked device sees nothing created after its revoke', async () => {
+    const during = await emitCompanionEvent(db, f.a1.memberId, { type: 'local_identities_changed' }, undefined, t0)
+    await db
+      .update(deviceTokens)
+      .set({ revokedAt: plus(1000) })
+      .where(eq(deviceTokens.id, f.a1.deviceId))
+    await emitCompanionEvent(db, f.a1.memberId, { type: 'local_identities_changed' }, undefined, plus(2000))
+    expect((await listCompanionEvents(db, f.a1, 0)).map((e) => e.id)).toEqual([during])
   })
 
   test("pruning one member's events leaves another member's alone", async () => {

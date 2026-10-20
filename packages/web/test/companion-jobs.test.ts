@@ -2,11 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { JOB_LEASE_MS, type NativeJobPayload } from '@tm/core'
-import { eq } from 'drizzle-orm'
+import { DEVICE_ONLINE_WINDOW_MS, JOB_LEASE_MS, type NativeJobPayload } from '@tm/core'
+import { eq, sql } from 'drizzle-orm'
 import { artefacts, companionJobs, deviceTokens, events, occurrences, type Db } from '../db'
 import { claimJob, createCompanionJob } from '../db/companion'
-import { seedCompanionFixture } from '../db/companion.fixtures'
+import { localRunPayload, seedCompanionFixture } from '../db/companion.fixtures'
 import { createTestDb, dropAllTestDbs } from '../db/testing'
 import {
   handleClaimRequest,
@@ -14,7 +14,7 @@ import {
   handleProgressRequest,
   MAX_PROGRESS_BODY_BYTES
 } from '../lib/companion/jobs'
-import { withDevice } from '../lib/companion/scope'
+import { createDeviceScope, withDevice } from '../lib/companion/scope'
 import { handleSummariesRequest, handleSummaryRequest } from '../lib/companion/summaries'
 import { newDeviceToken } from '../lib/companion/tokens'
 
@@ -83,6 +83,19 @@ describe('GET jobs', () => {
     expect((await res.json()).jobs).toContainEqual(expect.objectContaining({ id, state: 'pending' }))
   })
 
+  test("does not release another member's lapsed leases", async () => {
+    const mine = await pendingJob(fx.a1.memberId, fx.occA)
+    const theirs = await pendingJob(fx.b1.memberId, fx.occB)
+    const long = new Date(Date.now() - 2 * JOB_LEASE_MS)
+    await claimJob(db, fx.a1, mine, long)
+    await claimJob(db, fx.b1, theirs, long)
+    const res = await LIST(authed('/api/companion/jobs', tokens.b1), {})
+    expect(res.status).toBe(200)
+    const stateOfJob = async (id: string) => (await db.select().from(companionJobs).where(eq(companionJobs.id, id)))[0]!
+    expect((await stateOfJob(theirs)).state).toBe('pending')
+    expect((await stateOfJob(mine)).state).toBe('claimed')
+  })
+
   test('answers 401 with the fixed body without a device token', async () => {
     const res = await LIST(new Request(`${ORIGIN}/api/companion/jobs`), {})
     expect(res.status).toBe(401)
@@ -130,6 +143,65 @@ describe('claim', () => {
     await db.update(occurrences).set({ state: 'transcribing' }).where(eq(occurrences.id, fx.occA))
     expect((await CLAIM(authed(`/api/companion/jobs/${id}/claim`, tokens.a1, 'POST'), { id })).status).toBe(200)
     expect(await stateOf(fx.occA)).toBe('transcribing')
+  })
+
+  test('a failed pc_claimed leaves the job unclaimed and the occurrence waiting', async () => {
+    const id = await pendingJob(fx.a1.memberId, fx.occA)
+    await db.update(occurrences).set({ state: 'waiting_for_pc' }).where(eq(occurrences.id, fx.occA))
+    // The state change writes an `events` row; refuse it, so the move fails after the job was claimed.
+    await db.execute(sql`create function tm_refuse_event() returns trigger language plpgsql as $$
+      begin raise exception 'refused for the test'; end $$`)
+    await db.execute(
+      sql`create trigger tm_refuse_event before insert on events for each row execute function tm_refuse_event()`
+    )
+    try {
+      await expect(CLAIM(authed(`/api/companion/jobs/${id}/claim`, tokens.a1, 'POST'), { id })).rejects.toThrow()
+    } finally {
+      await db.execute(sql`drop trigger tm_refuse_event on events`)
+      await db.execute(sql`drop function tm_refuse_event()`)
+    }
+    const [row] = await db.select().from(companionJobs).where(eq(companionJobs.id, id))
+    expect(row).toMatchObject({ state: 'pending', deviceId: null, leaseUntil: null })
+    expect(await stateOf(fx.occA)).toBe('waiting_for_pc')
+    // Without the failure the same claim succeeds.
+    expect((await CLAIM(authed(`/api/companion/jobs/${id}/claim`, tokens.a1, 'POST'), { id })).status).toBe(200)
+    expect(await stateOf(fx.occA)).toBe('transcribing')
+  })
+
+  test('a local_run is claimable by its target device only, and while that device is online', async () => {
+    const id = await createCompanionJob(db, {
+      memberId: fx.a1.memberId,
+      occurrenceId: fx.occA,
+      kind: 'local_run',
+      payload: localRunPayload(fx.occA),
+      targetDeviceId: fx.a1.deviceId
+    })
+    const path = `/api/companion/jobs/${id}/claim`
+    // Another device of the member, and another member's device, do not see it.
+    for (const token of [tokens.a2, tokens.b1]) {
+      const res = await CLAIM(authed(path, token, 'POST'), { id })
+      expect([res.status, await res.json()]).toEqual([404, { error: 'not_found' }])
+    }
+    // The route's authentication marks the calling device as seen, so the target is online when it asks.
+    const ok = await CLAIM(authed(path, tokens.a1, 'POST'), { id })
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toMatchObject({ id, kind: 'local_run', state: 'claimed' })
+  })
+
+  test('a local_run whose target was last seen outside the online window is a conflict', async () => {
+    const id = await createCompanionJob(db, {
+      memberId: fx.a1.memberId,
+      occurrenceId: fx.occA,
+      kind: 'local_run',
+      payload: localRunPayload(fx.occA),
+      targetDeviceId: fx.a2.deviceId
+    })
+    // Through the scope with a later clock: the same guard the route reaches, after its sign-in marks the device seen.
+    const scope = createDeviceScope(db, fx.a2)
+    const seenAt = new Date()
+    await db.update(deviceTokens).set({ lastUsedAt: seenAt }).where(eq(deviceTokens.id, fx.a2.deviceId))
+    expect(await scope.claimJob(id, new Date(seenAt.getTime() + DEVICE_ONLINE_WINDOW_MS + 1000))).toBe('conflict')
+    expect(await scope.claimJob(id, new Date(seenAt.getTime() + 1000))).toMatchObject({ kind: 'local_run' })
   })
 
   test('two devices claiming at once: exactly one wins', async () => {

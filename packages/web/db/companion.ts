@@ -28,9 +28,9 @@ const EVENT_KEEP_MS = 24 * 3_600_000
  * Companion tables hold only ids, states and job payloads: never a device token or a pairing code (those are stored
  * as hashes in `device_tokens` and `device_pairings`, by plan 03 task 3). A failed query is mapped by `safeDbError`.
  *
- * Every function that takes a `DeviceAuth` acts for that device's member only. `getJob`, `completeJob`,
- * `failJobAttempt`, `markPcPingSent` and `releaseExpiredLeases` take no device: server-side callers (the scheduler
- * and the routes, after they authorised the device with `getClaimedJob`) use them.
+ * Every function that takes a `DeviceAuth` acts for that device's member only. `getJob`, `markPcPingSent` and
+ * `releaseExpiredLeases` take no device: server-side callers (the scheduler and the routes) use them. `completeJob` and
+ * `failJobAttempt` take the device and check in their own `UPDATE` that it holds the job with a live lease.
  */
 async function guarded<T>(run: () => Promise<T>): Promise<T> {
   try {
@@ -121,8 +121,19 @@ export async function emitCompanionEvent(
   )
 }
 
-/** The device's events after `afterId`, oldest first: those for every device of its member and those for it alone. */
+/**
+ * The device's events after `afterId`, oldest first: those for every device of its member and those for it alone. An
+ * event is visible only from the moment the device was paired (`device_tokens.created_at`) until it was revoked, so a
+ * newly paired PC never replays what was said before it existed (a stale `open_signin`, say). The bounds are part of
+ * the query, so they hold whatever cursor the caller sends.
+ */
 export async function listCompanionEvents(db: Db, device: DeviceAuth, afterId: number): Promise<CompanionEvent[]> {
+  const whileDeviceLived = sql`exists (
+    select 1 from device_tokens d
+    where d.id = ${device.deviceId} and d.member_id = ${device.memberId}
+      and ${companionEvents.createdAt} >= d.created_at
+      and (d.revoked_at is null or ${companionEvents.createdAt} <= d.revoked_at)
+  )`
   const rows = await guarded(() =>
     db
       .select({ id: companionEvents.id, command: companionEvents.command })
@@ -131,7 +142,8 @@ export async function listCompanionEvents(db: Db, device: DeviceAuth, afterId: n
         and(
           eq(companionEvents.memberId, device.memberId),
           gt(companionEvents.id, afterId),
-          or(isNull(companionEvents.deviceId), eq(companionEvents.deviceId, device.deviceId))
+          or(isNull(companionEvents.deviceId), eq(companionEvents.deviceId, device.deviceId)),
+          whileDeviceLived
         )
       )
       .orderBy(asc(companionEvents.id))
@@ -292,17 +304,23 @@ export async function renewLease(db: Db, device: DeviceAuth, jobId: string, now:
 }
 
 /**
- * Returns claimed `native_transcription` jobs whose lease ended before `now` to `pending` and returns their ids.
- * A `local_run` is never released here (R13): its PC may be offline for a while and the run goes on; the monitor ends
- * it after `LOCAL_HEARTBEAT_TIMEOUT_MS`.
+ * Returns claimed `native_transcription` jobs whose lease ended before `now` to `pending` and returns their ids: those
+ * of every member, or only of `memberId` when it is given (a device request passes its own member). A `local_run` is
+ * never released here (R13): its PC may be offline for a while and the run goes on; the monitor ends it after
+ * `LOCAL_HEARTBEAT_TIMEOUT_MS`.
  */
-export async function releaseExpiredLeases(db: Db, now: Date = new Date()): Promise<string[]> {
+export async function releaseExpiredLeases(db: Db, now: Date = new Date(), memberId?: string): Promise<string[]> {
   const rows = await guarded(() =>
     db
       .update(companionJobs)
       .set({ state: 'pending', deviceId: null, leaseUntil: null, updatedAt: now })
       .where(
-        and(eq(companionJobs.state, 'claimed'), ne(companionJobs.kind, 'local_run'), lt(companionJobs.leaseUntil, now))
+        and(
+          eq(companionJobs.state, 'claimed'),
+          ne(companionJobs.kind, 'local_run'),
+          lt(companionJobs.leaseUntil, now),
+          memberId === undefined ? undefined : eq(companionJobs.memberId, memberId)
+        )
       )
       .returning({ id: companionJobs.id })
   )
@@ -320,15 +338,7 @@ export async function getClaimedJob(
     db
       .select(jobColumns)
       .from(companionJobs)
-      .where(
-        and(
-          eq(companionJobs.id, jobId),
-          eq(companionJobs.memberId, device.memberId),
-          eq(companionJobs.deviceId, device.deviceId),
-          eq(companionJobs.state, 'claimed'),
-          or(eq(companionJobs.kind, 'local_run'), gt(companionJobs.leaseUntil, now))
-        )
-      )
+      .where(heldBy(device, jobId, now))
   )
   return row ? toJob(row) : null
 }
@@ -339,23 +349,45 @@ export async function getJob(db: Db, jobId: string): Promise<(CompanionJob & { m
   return row ? { ...toJob(row), memberId: row.memberId } : null
 }
 
-/** Marks a `claimed` job `done`. Returns `false` (and changes nothing) if it was not `claimed`, so a repeat is a no-op. */
-export async function completeJob(db: Db, jobId: string): Promise<boolean> {
+/** The job rows this device holds right now: claimed by it, for its member, with a live lease (a `local_run` has none to lapse). */
+function heldBy(device: DeviceAuth, jobId: string, now: Date) {
+  return and(
+    eq(companionJobs.id, jobId),
+    eq(companionJobs.memberId, device.memberId),
+    eq(companionJobs.deviceId, device.deviceId),
+    eq(companionJobs.state, 'claimed'),
+    or(eq(companionJobs.kind, 'local_run'), gt(companionJobs.leaseUntil, now))
+  )
+}
+
+/**
+ * Marks a `claimed` job `done`, in one guarded `UPDATE`: only the device that holds it, with a lease that has not
+ * lapsed, can. Returns `false` (and changes nothing) otherwise, so a repeat, a device that lost the job and a holder whose
+ * lease lapsed are all no-ops.
+ */
+export async function completeJob(db: Db, device: DeviceAuth, jobId: string, now: Date = new Date()): Promise<boolean> {
   const rows = await guarded(() =>
     db
       .update(companionJobs)
-      .set({ state: 'done', leaseUntil: null, updatedAt: new Date() })
-      .where(and(eq(companionJobs.id, jobId), eq(companionJobs.state, 'claimed')))
+      .set({ state: 'done', leaseUntil: null, updatedAt: now })
+      .where(heldBy(device, jobId, now))
       .returning({ id: companionJobs.id })
   )
   return rows.length === 1
 }
 
 /**
- * Counts a failed attempt of an active (`pending` or `claimed`) job in one statement. Under `NATIVE_MAX_ATTEMPTS` the
- * job returns to `pending` for another try; at the limit it becomes `failed`. `error` is a short reason for the member.
+ * Counts a failed attempt of a job the device holds (see `completeJob`) in one statement. Under `NATIVE_MAX_ATTEMPTS`
+ * the job returns to `pending` for another try; at the limit it becomes `failed`. `error` is a short reason for the
+ * member.
  */
-export async function failJobAttempt(db: Db, jobId: string, error: string): Promise<'retry' | 'failed'> {
+export async function failJobAttempt(
+  db: Db,
+  device: DeviceAuth,
+  jobId: string,
+  error: string,
+  now: Date = new Date()
+): Promise<'retry' | 'failed'> {
   const exhausted = sql`${companionJobs.attempts} + 1 >= ${NATIVE_MAX_ATTEMPTS}`
   const [row] = await guarded(() =>
     db
@@ -366,12 +398,12 @@ export async function failJobAttempt(db: Db, jobId: string, error: string): Prom
         deviceId: null,
         leaseUntil: null,
         error,
-        updatedAt: new Date()
+        updatedAt: now
       })
-      .where(and(eq(companionJobs.id, jobId), inArray(companionJobs.state, ['pending', 'claimed'])))
+      .where(heldBy(device, jobId, now))
       .returning({ state: companionJobs.state })
   )
-  if (!row) throw new Error('The job is not active.')
+  if (!row) throw new Error('The device does not hold the job.')
   return row.state === 'failed' ? 'failed' : 'retry'
 }
 

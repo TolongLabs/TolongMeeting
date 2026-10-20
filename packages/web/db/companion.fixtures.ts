@@ -1,6 +1,6 @@
 // Test fixture for the companion tables. Import from tests only, never from app code.
 import { randomBytes } from 'node:crypto'
-import type { DeviceAuth } from '@tm/core'
+import type { DeviceAuth, LocalRunPayload } from '@tm/core'
 import { deviceTokens, occurrences, timetableEntries, type Db } from './index'
 import { seedMember } from './testing'
 
@@ -69,3 +69,37 @@ export async function seedCompanionFixture(db: Db): Promise<{
     occB: await seedOccurrence(db, b.memberId, b.identityId)
   }
 }
+
+/** A valid `local_run` job payload for an occurrence. */
+export const localRunPayload = (occurrenceId: string): LocalRunPayload => ({
+  occurrenceId,
+  identityId: 'i1',
+  identityName: 'Alice',
+  image: 'ghcr.io/org/worker:1',
+  job: {
+    occurrenceId,
+    attempt: 1,
+    entry: {
+      name: 'Data Mining',
+      type: 'lecture',
+      start: '2026-10-21T14:00:00+08:00',
+      end: '2026-10-21T16:00:00+08:00',
+      timeZone: 'Asia/Kuala_Lumpur',
+      link: { kind: 'paste' },
+      trustedSenders: [],
+      transcription: 'live',
+      formDetails: {},
+      attendanceKeywords: []
+    },
+    identity: { id: 'i1', name: 'Alice', zoomGuestName: 'Alice', formProviders: ['google'], organisation: null },
+    member: { id: 'm1', displayName: 'Alice', mentionNames: [] },
+    ai: {
+      baseUrl: 'https://ai.example/v1',
+      asrUrl: 'wss://ai.example/asr',
+      models: { summary: 'a', vision: 'b', formMatch: 'c', asr: 'd' }
+    },
+    ntfy: { url: 'https://ntfy.example', topic: 't' },
+    dataDir: '/data/occ_1',
+    profileDir: '/profiles/i1'
+  }
+})

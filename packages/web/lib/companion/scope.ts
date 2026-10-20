@@ -36,7 +36,7 @@ export interface DeviceScope {
   renewLease(jobId: string, now?: Date): Promise<boolean>
   /** The job this device holds, else `null`. */
   getClaimedJob(jobId: string, now?: Date): Promise<CompanionJob | null>
-  /** Returns jobs whose lease lapsed to `pending` (any member's: it is housekeeping, and the answer carries nothing). */
+  /** Returns this member's jobs whose lease lapsed to `pending`. It never touches another member's jobs. */
   releaseLapsedLeases(now?: Date): Promise<void>
   /** The member's finished summaries after `after`, oldest first (see `listSummaries`). */
   listSummaries(after: Date): Promise<SummaryListItem[]>
@@ -65,7 +65,7 @@ export function createDeviceScope(db: Db, device: DeviceAuth): DeviceScope {
     listSummaries: (after: Date) => listSummaries(db, known.memberId, after),
     readSummary: (occurrenceId: string) => readSummary(db, known.memberId, occurrenceId),
     releaseLapsedLeases: async (now?: Date) => {
-      await releaseExpiredLeases(db, now)
+      await releaseExpiredLeases(db, now, known.memberId)
     },
     touch: (now?: Date) => touchDevice(db, known, now)
   })
