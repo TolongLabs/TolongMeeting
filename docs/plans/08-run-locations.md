@@ -1236,7 +1236,7 @@ export function finishLocalRun(
 ): Promise<void> // retryMs default 60000
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the upload set skips the FLAC, and segments once meeting.mkv exists', async () => {
@@ -1333,21 +1333,21 @@ test('a crashed run uploads what exists, reports worker_crashed and cleans up, w
 
 `occWith(paths)` and `occWithSized(path, bytes)` build an occurrence folder; `uploadApi({ offset })` answers `uploadOffset` with `offset` and records each chunk's `Content-Range`; `afterFixture` returns fakes that append to `log`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/local/after.test.ts`
 Expected: FAIL with "Cannot find module './upload'"
 
-- [ ] **Step 3: Implement `upload.ts`, `after.ts`, the API methods and the resume on start**
+- [x] **Step 3: Implement `upload.ts`, `after.ts`, the API methods and the resume on start**
 
 `uploadSet` returns every file under the occurrence folder that matches Task 3's patterns, except `transcript/native/*` (sent after transcription) and, when `recording/meeting.mkv` exists, the attempt segments. `finishLocalRun`: `report('uploading')`, upload the set; in native mode with a recording, `report('transcribing')`, extract the FLAC (`docker.run(flacArgs(...))`), run whisper exactly as plan 03's runner does (outputs copied to `transcript/native/audio.txt|srt|json`), upload those three, delete `audio.flac`; then `complete`. With outcome `crashed` it uploads the set, then calls `api.fail(jobId, 'worker_crashed')` instead of transcribing and completing, so the meeting page keeps the partial recording and chat. Retry any failed request every `retryMs`; delete the occurrence folder only after `complete` (or that `fail`) succeeds. Whisper gets two tries, as in plan 03; after the second failure the companion calls `api.fail(jobId, 'native_transcription_failed')` and deletes the folder, since the recording is already on the server. `report(state)` sends `api.heartbeat(jobId, { occurrenceId, attempt: <last attempt>, state, recording: false, participants: null, events: [] })` directly, so it also works after the relay has closed or the companion has restarted.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/local/after.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src

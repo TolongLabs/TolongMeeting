@@ -8,9 +8,14 @@ import {
   NATIVE_UPLOAD_FIELDS,
   NATIVE_UPLOAD_MAX_FILE_BYTES,
   OccurrenceIdSchema,
+  HeartbeatReplySchema,
+  HeartbeatSchema,
   PreflightReportSchema,
   SummaryListItemSchema,
+  UPLOAD_CHUNK_MAX_BYTES,
   type CompanionJob,
+  type Heartbeat,
+  type HeartbeatReply,
   type LocalIdentitiesResponse,
   type PreflightReport,
   type SummaryListItem
@@ -23,6 +28,7 @@ import { z } from 'zod'
 
 const JSON_TIMEOUT_MS = 30_000
 const UPLOAD_TIMEOUT_MS = 30 * 60_000
+const CHUNK_TIMEOUT_MS = 5 * 60_000
 const MAX_JSON_BYTES = 4 * 1024 * 1024
 const MAX_SUMMARY_BYTES = 2 * 1024 * 1024
 const MAX_ERROR_BODY_BYTES = 1024
@@ -79,10 +85,23 @@ const SummariesAnswer = z.strictObject({ summaries: z.array(SummaryListItemSchem
 const RevokedBody = z.strictObject({ error: z.literal('device_revoked_or_unknown') })
 const ContentRange = /^bytes (\d{1,16})-(\d{1,16})\/(\d{1,16})$/
 const UnsatisfiedRange = /^bytes \*\/(\d{1,16})$/
+const UploadOffsetHeader = /^\d{1,16}$/
+const FILE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const MAX_MISSING = 16
+const CompleteRefused = z.strictObject({ missing: z.array(z.string().min(1).max(200)).max(MAX_MISSING) })
 
 function id(value: string): string {
   if (!OccurrenceIdSchema.safeParse(value).success) throw new TypeError('not a valid id')
   return value
+}
+
+/** A relative POSIX path as URL path segments. A dot segment, an empty one or an odd character is refused. */
+function filePath(relPath: string): string {
+  const parts = relPath.split('/')
+  if (parts.length > 4 || !parts.every((p) => p !== '.' && p !== '..' && FILE_SEGMENT.test(p))) {
+    throw new TypeError('not a valid file path')
+  }
+  return parts.map(encodeURIComponent).join('/')
 }
 
 /** The body as text, cut off at `max` bytes. A larger or non-UTF-8 body is an `InvalidResponseError`. */
@@ -279,6 +298,65 @@ export class CompanionApi {
     )
   }
 
+  /**
+   * How many bytes of `relPath` the website already holds for this local run (`HEAD`, header `Upload-Offset`).
+   * A path the website does not accept, or a job this PC does not hold, is a `CompanionApiError` (404).
+   */
+  async uploadOffset(jobId: string, relPath: string): Promise<number> {
+    const res = await this.call('HEAD', `/api/companion/jobs/${id(jobId)}/files/${filePath(relPath)}`, {
+      expect: [200, 204]
+    })
+    await discard(res)
+    return offsetOf(res)
+  }
+
+  /**
+   * Sends bytes `start` to `start + bytes.length - 1` of a file of `total` bytes (`PUT`, `Content-Range`). The website
+   * takes a chunk only at its own offset: when it holds more or less than `start` it answers 409 with its offset, and
+   * this returns `{ accepted: false, offset }` so the caller continues from there.
+   */
+  async uploadChunk(
+    jobId: string,
+    relPath: string,
+    start: number,
+    total: number,
+    bytes: Uint8Array
+  ): Promise<{ accepted: true } | { accepted: false; offset: number }> {
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(total) || start < 0) throw new RangeError('bad range')
+    if (bytes.byteLength < 1 || bytes.byteLength > UPLOAD_CHUNK_MAX_BYTES || start + bytes.byteLength > total) {
+      throw new RangeError('bad chunk size')
+    }
+    const res = await this.call('PUT', `/api/companion/jobs/${id(jobId)}/files/${filePath(relPath)}`, {
+      expect: [204, 409],
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-range': `bytes ${start}-${start + bytes.byteLength - 1}/${total}`
+      },
+      body: new Blob([bytes as BlobPart]),
+      timeoutMs: CHUNK_TIMEOUT_MS
+    })
+    await discard(res)
+    return res.status === 204 ? { accepted: true } : { accepted: false, offset: offsetOf(res) }
+  }
+
+  /** Says the upload is whole. `missing` lists the files the website still needs (400). */
+  async complete(jobId: string): Promise<{ ok: true } | { ok: false; missing: string[] }> {
+    const res = await this.call('POST', `/api/companion/jobs/${id(jobId)}/complete`, { expect: [204, 400] })
+    if (res.status === 204) return { ok: true }
+    return { ok: false, missing: (await readJson(res, CompleteRefused, MAX_ERROR_BODY_BYTES * 4)).missing }
+  }
+
+  /** A heartbeat for the local run, sent by the PC itself (after the relay has closed, or after a restart). */
+  async heartbeat(jobId: string, hb: Heartbeat): Promise<HeartbeatReply> {
+    const body = JSON.stringify(HeartbeatSchema.parse(hb))
+    const res = await this.call('POST', `/api/companion/jobs/${id(jobId)}/heartbeat`, {
+      expect: [200],
+      body,
+      headers: { 'content-type': 'application/json' }
+    })
+    return readJson(res, HeartbeatReplySchema)
+  }
+
   /** Summaries ready after `after` (an ISO 8601 time). */
   async summaries(after: string): Promise<SummaryListItem[]> {
     const parsed = z.iso.datetime({ offset: true }).safeParse(after)
@@ -304,7 +382,7 @@ export class CompanionApi {
   }
 
   private async call(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'HEAD' | 'PUT',
     path: string,
     o: {
       expect: number[]
@@ -351,6 +429,13 @@ export class CompanionApi {
     this.onRevoked()
     throw new DeviceRevokedError()
   }
+}
+
+/** The `Upload-Offset` header: a plain non-negative integer. */
+function offsetOf(res: Response): number {
+  const raw = res.headers.get('upload-offset') ?? ''
+  if (!UploadOffsetHeader.test(raw) || !Number.isSafeInteger(Number(raw))) throw new InvalidResponseError()
+  return Number(raw)
 }
 
 async function sizeOf(file: string): Promise<number> {
