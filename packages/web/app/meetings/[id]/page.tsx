@@ -10,7 +10,7 @@ import { PageHeader } from '../../../components/PageHeader'
 import { RelativeTime } from '../../../components/RelativeTime'
 import { SubmitButton } from '../../../components/SubmitButton'
 import { STATE_LABELS } from '../../../lib/labels'
-import { meetingData, type FormView, type MeetingView } from '../../../lib/meeting'
+import { meetingData, PASTE_STATES, type FormView, type MeetingView } from '../../../lib/meeting'
 import {
   clock,
   eventDetail,
@@ -22,6 +22,7 @@ import {
 } from '../../../lib/meeting-labels'
 import { requireMember } from '../../../lib/session'
 import { deleteNowAction, rerunSummaryAction } from './actions'
+import { PasteLinkForm } from './paste-link-form'
 import { SeekButton } from './seek-button'
 import './meeting.css'
 
@@ -31,12 +32,15 @@ export const metadata: Metadata = { title: 'Meeting' }
 const NOTICES: Record<string, string> = {
   rerun: 'The summary is being written again. Reload this page in a few minutes.',
   delete_queued: 'Deleting this meeting.',
-  delete_later: 'Deleting as soon as processing finishes.'
+  delete_later: 'Deleting as soon as processing finishes.',
+  link_saved: 'The meeting link was saved.'
 }
 const ERRORS: Record<string, string> = {
   rerun_nothing: 'This meeting has nothing to run again.',
   delete_blocked: 'Make the bot leave before deleting this meeting.',
-  missing: 'This meeting does not exist.'
+  missing: 'This meeting does not exist.',
+  link_bad: 'Paste a link that starts with https://.',
+  link_too_late: 'A link can only be pasted before the bot joins.'
 }
 
 /** One sentence for a state that needs the member's attention, with an optional place to fix it. */
@@ -47,6 +51,11 @@ const STATE_NOTES: Partial<
     kind: 'warn',
     text: 'The bot is waiting for you to sign in to an account.',
     link: ['/accounts', 'Sign in again']
+  },
+  watching_for_link: {
+    kind: 'warn',
+    text: 'Waiting for a meeting link.',
+    link: ['#paste-link', 'Paste one now']
   },
   no_link: {
     kind: 'warn',
@@ -177,29 +186,36 @@ function Transcript({ view }: { view: MeetingView }) {
             : 'There is no transcript for this meeting.'}
         </p>
       ) : (
-        <div className="transcript">
-          {transcript.map((line, i) => (
-            <p key={i} className={line.note ? 'note' : undefined}>
-              {line.seconds !== null &&
-                (videoUrl !== null && !line.note ? (
-                  <SeekButton seconds={line.seconds} label={clock(line.seconds)} />
-                ) : (
-                  <>{clock(line.seconds)} </>
-                ))}
-              {line.note && <strong>Note: </strong>}
-              {splitHeard(line.text).map((part, j) =>
-                'heard' in part ? (
-                  <span key={j} className="heard">
-                    {' '}
-                    (as heard: “{part.heard}”)
-                  </span>
-                ) : (
-                  <span key={j}>{part.text}</span>
-                )
-              )}
-            </p>
-          ))}
-        </div>
+        <>
+          <p>
+            <a href="#slides">Skip transcript</a>
+          </p>
+          <ol className="transcript list">
+            {transcript.map((line, i) => (
+              <li key={i} className={line.note ? 'note' : undefined}>
+                <p>
+                  {line.seconds !== null &&
+                    (videoUrl !== null && !line.note ? (
+                      <SeekButton seconds={line.seconds} label={clock(line.seconds)} />
+                    ) : (
+                      <>{clock(line.seconds)} </>
+                    ))}
+                  {line.note && <strong>Note: </strong>}
+                  {splitHeard(line.text).map((part, j) =>
+                    'heard' in part ? (
+                      <span key={j} className="heard">
+                        {' '}
+                        (as heard: “{part.heard}”)
+                      </span>
+                    ) : (
+                      <span key={j}>{part.text}</span>
+                    )
+                  )}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </>
       )}
     </section>
   )
@@ -219,11 +235,13 @@ export default async function MeetingPage({
   const view = await meetingData(scope, id)
   if (view === null) notFound()
   const { timeZone } = await scope.me()
-  const { occurrence, summaryMd, forms, slides, chatMd, events } = view
+  const { occurrence, summaryMd, forms, slides, slidesNote, chatMd, events } = view
   const { notice, error } = await searchParams
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
   const noticeText = Object.hasOwn(NOTICES, first(notice) ?? '') ? NOTICES[first(notice)!] : undefined
   const errorText = Object.hasOwn(ERRORS, first(error) ?? '') ? ERRORS[first(error)!] : undefined
+  const fieldError =
+    first(error) === 'link_bad' ? ERRORS.link_bad : first(error) === 'link_too_late' ? ERRORS.link_too_late : undefined
 
   const { state, stateReason } = occurrence
   if (state === 'deleted') {
@@ -290,6 +308,10 @@ export default async function MeetingPage({
         </section>
       )}
 
+      {PASTE_STATES.includes(state) && (
+        <PasteLinkForm id={occurrence.id} currentLink={occurrence.joinedLink} error={fieldError} />
+      )}
+
       <Attendance forms={forms} timeZone={timeZone} lecture={occurrence.entryType === 'lecture'} />
 
       <section aria-labelledby="summary">
@@ -321,9 +343,10 @@ export default async function MeetingPage({
 
       <section aria-labelledby="slides">
         <h2 id="slides">Slides</h2>
-        {slides.length === 0 ? (
+        {slidesNote !== null && <Notice>{slidesNote}</Notice>}
+        {slides.length === 0 && slidesNote === null ? (
           <p>No slides were read for this meeting.</p>
-        ) : (
+        ) : slides.length > 0 ? (
           <ol className="list">
             {slides.map((slide) => (
               <li key={slide.n} className="slide">
@@ -333,7 +356,7 @@ export default async function MeetingPage({
               </li>
             ))}
           </ol>
-        )}
+        ) : null}
       </section>
 
       <section aria-labelledby="chat">

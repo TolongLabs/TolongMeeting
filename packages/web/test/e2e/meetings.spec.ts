@@ -60,6 +60,12 @@ test.describe('a completed meeting', () => {
     await expect(forms.getByRole('img', { name: 'Screenshot 1 of 2 of this form' })).toBeVisible()
 
     const transcript = page.locator('section[aria-labelledby="transcript"]')
+    const skipTranscript = transcript.getByRole('link', { name: 'Skip transcript' })
+    await expect(skipTranscript).toBeVisible()
+    await expect(skipTranscript).toHaveAttribute('href', '#slides')
+    const listItems = transcript.locator('ol.transcript > li')
+    await expect(listItems).toHaveCount(3)
+    await expect(listItems.first().getByRole('button', { name: 'Play the video from 00:00:05' })).toBeVisible()
     await expect(transcript).toContainText('Today we cover Mergesort')
     await expect(transcript).toContainText('(as heard: “merge sword”)')
     await expect(transcript).toContainText('Note: Recording gap of 2 minutes.')
@@ -68,6 +74,16 @@ test.describe('a completed meeting', () => {
       'src',
       `/api/meetings/${meetings().completed}/files/recording/meeting.mp4`
     )
+
+    // SeekButton handles play() promise rejection (AbortError/NotAllowedError) without error
+    await page.evaluate(() => {
+      const v = document.getElementById('meeting-video') as HTMLVideoElement
+      if (v) {
+        v.play = () =>
+          Promise.reject(new DOMException('The play() request was interrupted by a new load request.', 'AbortError'))
+      }
+    })
+    await transcript.getByRole('button', { name: 'Play the video from 00:00:05' }).click()
 
     const slides = page.locator('section[aria-labelledby="slides"]')
     await expect(slides.getByRole('heading', { level: 3, name: 'Slide 1: Merge sort' })).toBeVisible()
@@ -222,6 +238,111 @@ test.describe('a completed meeting', () => {
     )
     await expect(zip).toHaveAccessibleDescription('Exporting.')
   })
+
+  test('an expired session when exporting shows session ended message', async ({ page }) => {
+    await connectionsAre(page, [])
+    const id = meetings().completed
+    await page.route(`**/api/meetings/${id}/exports`, async (route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({ status: 401, body: 'Unauthorized' })
+      } else {
+        await route.fulfill({ json: { exports: [] } })
+      }
+    })
+    await page.goto(`/meetings/${id}`)
+    const zip = page.getByRole('button', { name: 'Download Markdown (.zip)' })
+    await hydrated(zip)
+    await zip.click()
+    await expect(page.getByText('Your session has ended. Reload the page and sign in again.')).toBeVisible()
+  })
+
+  test('export status changes are announced in an aria-live region', async ({ page }) => {
+    const id = meetings().completed
+    let pollCount = 0
+    await connectionsAre(page, [])
+    await page.route(`**/api/meetings/${id}/exports`, (route) => {
+      if (route.request().method() === 'GET') {
+        pollCount++
+        if (pollCount === 1) {
+          route.fulfill({
+            json: {
+              exports: [
+                {
+                  id: 'ex1',
+                  target: 'zip',
+                  label: 'Markdown zip',
+                  status: 'running',
+                  createdAt: new Date().toISOString(),
+                  finishedAt: null,
+                  replaced: false,
+                  url: null,
+                  downloadUrl: null,
+                  note: null,
+                  error: null
+                }
+              ]
+            }
+          })
+        } else {
+          route.fulfill({
+            json: {
+              exports: [
+                {
+                  id: 'ex1',
+                  target: 'zip',
+                  label: 'Markdown zip',
+                  status: 'succeeded',
+                  createdAt: new Date().toISOString(),
+                  finishedAt: new Date().toISOString(),
+                  replaced: false,
+                  url: null,
+                  downloadUrl: '/api/exports/ex1/file',
+                  note: null,
+                  error: null
+                }
+              ]
+            }
+          })
+        }
+      } else {
+        route.continue()
+      }
+    })
+    await page.goto(`/meetings/${id}`)
+    const liveRegion = page.locator('div[aria-live="polite"]')
+    await expect(liveRegion).toContainText('Markdown zip export finished.')
+  })
+
+  test('polling is capped after 15 minutes of running with a note', async ({ page }) => {
+    const id = meetings().completed
+    await connectionsAre(page, [])
+    const sixteenMinutesAgo = new Date(Date.now() - 16 * 60 * 1000).toISOString()
+    await page.route(`**/api/meetings/${id}/exports`, (route) => {
+      route.fulfill({
+        json: {
+          exports: [
+            {
+              id: 'ex-old',
+              target: 'zip',
+              label: 'Markdown zip',
+              status: 'running',
+              createdAt: sixteenMinutesAgo,
+              finishedAt: null,
+              replaced: false,
+              url: null,
+              downloadUrl: null,
+              note: null,
+              error: null
+            }
+          ]
+        }
+      })
+    })
+    await page.goto(`/meetings/${id}`)
+    await expect(
+      page.getByText('An export has been running for 15 minutes. Polling has stopped. Reload the page to check again.')
+    ).toBeVisible()
+  })
 })
 
 test.describe('a meeting that is not finished', () => {
@@ -264,8 +385,25 @@ test.describe('a meeting that is not finished', () => {
     const button = page.getByRole('button', { name: 'Make the bot leave' })
     await hydrated(button)
     await button.click()
-    await expect(page.getByRole('status')).toContainText('Waiting for the bot to leave…')
+    const status = page.getByRole('status')
+    await expect(status).toContainText('Waiting for the bot to leave…')
+    await expect(status).toBeFocused()
     await expectNoAxeViolations(page)
+  })
+
+  test('the leave page retries a failed poll before giving up', async ({ page }) => {
+    let polls = 0
+    await page.route(`**/api/meetings/${meetings().live}/state`, (route) => {
+      polls++
+      if (polls === 1) route.fulfill({ status: 500, body: 'Error' })
+      else route.fulfill({ json: { state: 'left_by_member' } })
+    })
+    await page.goto(`/meetings/${meetings().live}/leave`)
+    const button = page.getByRole('button', { name: 'Make the bot leave' })
+    await hydrated(button)
+    await button.click()
+    await expect(page.getByText('The bot has left the meeting.')).toBeVisible()
+    expect(polls).toBeGreaterThanOrEqual(2)
   })
 
   test('the take-over page warns first and then waits for the bot', async ({ page }) => {
@@ -365,5 +503,64 @@ test.describe('who may see a meeting', () => {
   test('a visitor who is signed out is sent to sign in', async ({ page }) => {
     await page.goto(`/meetings/${meetings().completed}`)
     await expect(page).toHaveURL(/\/sign-in$/)
+  })
+})
+
+test.describe('pasting a meeting link', () => {
+  test.beforeEach(async ({ page }) => {
+    await signInAs(page, 'admin')
+  })
+
+  test('a completed or running meeting does not show the paste form', async ({ page }) => {
+    await page.goto(`/meetings/${meetings().completed}`)
+    await expect(page.getByRole('heading', { level: 2, name: 'Meeting link' })).toHaveCount(0)
+
+    await page.goto(`/meetings/${meetings().live}`)
+    await expect(page.getByRole('heading', { level: 2, name: 'Meeting link' })).toHaveCount(0)
+  })
+
+  test('a scheduled meeting offers the paste form, validates the link, and masks secrets', async ({ page }) => {
+    await page.goto('/')
+    const nextSection = page.locator('section[aria-labelledby="next"]')
+    const meetingLink = nextSection.getByRole('link').first()
+    const href = await meetingLink.getAttribute('href')
+    expect(href).toMatch(/\/meetings\/[0-9a-f-]{36}/)
+
+    await page.goto(href!)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    const formSection = page.locator('section[aria-labelledby="paste-link-heading"]')
+    await expect(formSection.getByRole('heading', { level: 2, name: 'Meeting link' })).toBeVisible()
+
+    const linkInput = page.getByRole('textbox', { name: 'Meeting link' })
+    await expect(linkInput).toBeVisible()
+    await expect(
+      page.getByText('A Zoom, Teams or Meet link that starts with https://. Paste the whole link.')
+    ).toBeVisible()
+
+    // Submit invalid URL
+    await linkInput.fill('http://example.zoom.us/j/12345678901')
+    await page.getByRole('button', { name: 'Save link' }).click()
+
+    await expect(page).toHaveURL(/\?error=link_bad$/)
+    await expect(page.getByRole('main').getByRole('alert')).toContainText('Paste a link that starts with https://.')
+    await expect(linkInput).toHaveAttribute('aria-invalid', 'true')
+    await expect(page.locator('#meeting-link-error')).toHaveText('Error: Paste a link that starts with https://.')
+
+    // Submit valid link with passcode
+    const secretPass = 'SUPERSECRETPASS'
+    const zoomId = '98765432100'
+    await linkInput.fill(`https://example.zoom.us/j/${zoomId}?pwd=${secretPass}`)
+    await page.getByRole('button', { name: 'Save link' }).click()
+
+    await expect(page).toHaveURL(/\?notice=link_saved$/)
+    await expect(page.getByText('The meeting link was saved.')).toBeVisible()
+    await expect(formSection).toContainText(`Current link: example.zoom.us, meeting ${zoomId}.`)
+
+    // Verify secret is NEVER echoed in the HTML
+    const content = await page.content()
+    expect(content).not.toContain(secretPass)
+    await expect(linkInput).toHaveValue('')
+
+    await expectNoAxeViolations(page)
   })
 })

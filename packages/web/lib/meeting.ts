@@ -62,10 +62,13 @@ export function parseTranscript(md: string): TranscriptLine[] {
   return out
 }
 
+const SLIDE_FILE_PATTERN = /^slides\/[^/\p{Cc}]+\.(png|jpg|jpeg|webp)$/u
+const isValidSlideFile = (file: string): boolean => !file.includes('..') && SLIDE_FILE_PATTERN.test(file)
+
 const SlidesJson = z.array(
   z.object({
     n: z.number().int(),
-    file: z.string().min(1),
+    file: z.string().refine(isValidSlideFile),
     atMs: z.number(),
     title: z.string(),
     text: z.string(),
@@ -74,6 +77,7 @@ const SlidesJson = z.array(
 )
 
 export const SLIDE_UNREADABLE = 'The text of this slide could not be read.'
+export const SLIDES_MALFORMED = 'The slides for this meeting could not be read.'
 
 export interface SlideView {
   n: number
@@ -118,6 +122,7 @@ export interface MeetingView {
   forms: FormView[]
   transcript: TranscriptLine[]
   slides: SlideView[]
+  slidesNote: string | null
   chatMd: string | null
   events: { at: string; type: EventType; data: Record<string, unknown> }[]
   videoUrl: string | null
@@ -289,7 +294,7 @@ export async function meetingData(scope: MemberScope, occurrenceId: string): Pro
       actualEnd: row.actualEnd?.toISOString() ?? null,
       participants: row.participants,
       recording: row.recording,
-      joinedLink: maskedJoinedLink(row.linkUsed)
+      joinedLink: maskedJoinedLink(row.linkUsed ?? row.pastedLink)
     },
     summaryMd: await textOf('summary'),
     forms: formRows.map((f) => ({
@@ -305,16 +310,29 @@ export async function meetingData(scope: MemberScope, occurrenceId: string): Pro
         .map((a) => fileUrl(occurrenceId, a.path))
     })),
     transcript: transcriptMd === null ? [] : parseTranscript(transcriptMd),
-    slides:
-      slidesJson === null
-        ? []
-        : SlidesJson.parse(JSON.parse(slidesJson)).map((s) => ({
-            n: s.n,
-            imageUrl: fileUrl(occurrenceId, s.file),
-            title: s.title,
-            text: s.failed === true ? SLIDE_UNREADABLE : s.text,
-            failed: s.failed === true
-          })),
+    slides: (() => {
+      if (slidesJson === null) return []
+      try {
+        return SlidesJson.parse(JSON.parse(slidesJson)).map((s) => ({
+          n: s.n,
+          imageUrl: fileUrl(occurrenceId, s.file),
+          title: s.title,
+          text: s.failed === true ? SLIDE_UNREADABLE : s.text,
+          failed: s.failed === true
+        }))
+      } catch {
+        return []
+      }
+    })(),
+    slidesNote: (() => {
+      if (slidesJson === null) return null
+      try {
+        SlidesJson.parse(JSON.parse(slidesJson))
+        return null
+      } catch {
+        return SLIDES_MALFORMED
+      }
+    })(),
     chatMd: await textOf('chat'),
     events: eventRows.map((e) => ({
       at: e.at.toISOString(),
@@ -329,7 +347,7 @@ export async function meetingData(scope: MemberScope, occurrenceId: string): Pro
 // `lib/action-results.ts` gives: every export of a 'use server' file is a public endpoint, and these take a scope.
 
 const ACTIVE = [...ACTIVE_STATES]
-const PASTE_STATES: OccurrenceState[] = [
+export const PASTE_STATES: OccurrenceState[] = [
   'scheduled',
   'starting',
   'verifying_accounts',

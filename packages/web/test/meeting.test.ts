@@ -17,6 +17,7 @@ import {
   meetingData,
   parseTranscript,
   pasteLink,
+  PASTE_STATES,
   requestDeleteNow,
   rerunPipeline,
   SLIDE_UNREADABLE
@@ -173,6 +174,7 @@ test('the page data reads the files, and a failed slide is shown as unreadable, 
   expect(v.chatMd).toBe('# Chat\n')
   expect(v.transcript).toEqual([{ seconds: 65, text: 'Hello.' }])
   expect(v.videoUrl).toBe(`/api/meetings/${occurrenceId}/files/recording/meeting.mp4`)
+  expect(v.slidesNote).toBeNull()
   expect(v.slides).toEqual([
     {
       n: 1,
@@ -189,6 +191,47 @@ test('the page data reads the files, and a failed slide is shown as unreadable, 
       failed: true
     }
   ])
+})
+
+test('malformed slides.json or unsafe slide file paths fallback to empty slides with a fixed note', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  const path = join(process.env.TM_DATA_ROOT!, 'occurrences', occurrenceId, 'slides/slides.json')
+
+  // Bad JSON
+  await writeFile(path, 'not valid json')
+  let v = (await meetingData(scope, occurrenceId))!
+  expect(v.slides).toEqual([])
+  expect(v.slidesNote).toBe('The slides for this meeting could not be read.')
+
+  // Schema mismatch: object instead of array
+  await writeFile(path, JSON.stringify({ not: 'an array' }))
+  v = (await meetingData(scope, occurrenceId))!
+  expect(v.slides).toEqual([])
+  expect(v.slidesNote).toBe('The slides for this meeting could not be read.')
+
+  // Unsafe file path: contains '..'
+  await writeFile(path, JSON.stringify([{ n: 1, file: 'slides/../secret.png', atMs: 1000, title: 'T', text: 'X' }]))
+  v = (await meetingData(scope, occurrenceId))!
+  expect(v.slides).toEqual([])
+  expect(v.slidesNote).toBe('The slides for this meeting could not be read.')
+
+  // Unsafe file path: slash beyond prefix
+  await writeFile(path, JSON.stringify([{ n: 1, file: 'slides/sub/image.png', atMs: 1000, title: 'T', text: 'X' }]))
+  v = (await meetingData(scope, occurrenceId))!
+  expect(v.slides).toEqual([])
+  expect(v.slidesNote).toBe('The slides for this meeting could not be read.')
+
+  // Unsafe file path: control characters
+  await writeFile(path, JSON.stringify([{ n: 1, file: 'slides/img\x00.png', atMs: 1000, title: 'T', text: 'X' }]))
+  v = (await meetingData(scope, occurrenceId))!
+  expect(v.slides).toEqual([])
+  expect(v.slidesNote).toBe('The slides for this meeting could not be read.')
+
+  // Disallowed extension
+  await writeFile(path, JSON.stringify([{ n: 1, file: 'slides/image.gif', atMs: 1000, title: 'T', text: 'X' }]))
+  v = (await meetingData(scope, occurrenceId))!
+  expect(v.slides).toEqual([])
+  expect(v.slidesNote).toBe('The slides for this meeting could not be read.')
 })
 
 test('a meeting with no files yet has empty parts, not errors', async () => {
@@ -381,6 +424,31 @@ test('a link can be pasted before the bot joins, only as https, and is never ech
   }
   await pasteLink(scope, occurrenceId, ' https://example.zoom.us/j/22222222222 ')
   expect((await stateOf(scope, occurrenceId)).pastedLink).toBe('https://example.zoom.us/j/22222222222')
+})
+
+test('pasting a link is allowed across all PASTE_STATES and refused in other states', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  for (const state of PASTE_STATES) {
+    await scope.update(occurrences, { state }, eq(occurrences.id, occurrenceId))
+    await pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/12345')
+    expect((await stateOf(scope, occurrenceId)).pastedLink).toBe('https://example.zoom.us/j/12345')
+  }
+  for (const state of ['joining', 'in_meeting', 'completed', 'no_link'] as const) {
+    await scope.update(occurrences, { state }, eq(occurrences.id, occurrenceId))
+    await expect(pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/12345')).rejects.toThrow(InUseError)
+  }
+})
+
+test('meetingData shows masked joinedLink from pastedLink when linkUsed is null', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await scope.update(
+    occurrences,
+    { linkUsed: null, pastedLink: 'https://example.zoom.us/j/55555555555?pwd=SECRET' },
+    eq(occurrences.id, occurrenceId)
+  )
+  const v = (await meetingData(scope, occurrenceId))!
+  expect(v.occurrence.joinedLink).toEqual({ host: 'example.zoom.us', meetingId: '55555555555' })
+  expect(JSON.stringify(v)).not.toContain('SECRET')
 })
 
 test("a member's actions cannot touch another member's meeting", async () => {

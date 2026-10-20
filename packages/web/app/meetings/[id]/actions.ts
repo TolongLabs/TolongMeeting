@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { InputError, InUseError } from '../../../lib/identities'
-import { requestDeleteNow, rerunPipeline } from '../../../lib/meeting'
+import { pasteLink, requestDeleteNow, rerunPipeline } from '../../../lib/meeting'
 import { getQueue } from '../../../lib/queue'
 import { requireMember } from '../../../lib/session'
 
@@ -44,6 +44,23 @@ export async function deleteNowAction(form: FormData): Promise<void> {
     if (e instanceof InUseError) outcome = { error: 'delete_blocked' }
     else if (e instanceof InputError) outcome = { error: 'missing' }
     else throw e
+  }
+  back(id, outcome)
+}
+
+/** Stores a link pasted by the member before the bot joins. */
+export async function pasteLinkAction(form: FormData): Promise<void> {
+  const scope = await requireMember()
+  const id = form.get('id')
+  const link = form.get('link')
+  let outcome: Outcome = { notice: 'link_saved' }
+  try {
+    await pasteLink(scope, String(id), typeof link === 'string' ? link : '')
+  } catch (e) {
+    if (e instanceof InUseError) outcome = { error: 'link_too_late' }
+    else if (e instanceof InputError) {
+      outcome = { error: e.message === 'Paste a link that starts with https://.' ? 'link_bad' : 'missing' }
+    } else throw e
   }
   back(id, outcome)
 }
