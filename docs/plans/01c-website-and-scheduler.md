@@ -729,7 +729,7 @@ Run: `bun test packages/web/lib/authorise.test.ts packages/scheduler/src/org-che
 
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-Note: `app/sign-in/page.tsx` is not built here; it waits for the Figma gate (the user approves the design first). The tests live in `packages/web/test/` and `packages/scheduler/test/`.
+Note: `app/sign-in/page.tsx` is built as a plain, unstyled page (the user chose to build the pages now and restyle them after the Figma step). The tests live in `packages/web/test/` and `packages/scheduler/test/`.
 
 - [x] **Step 5: Commit**
 
