@@ -1,12 +1,14 @@
 // Test helpers: a real Postgres database per call and a seeded member. Import from tests only, never from app code.
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { symmetricEncrypt } from 'better-auth/crypto'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { MEMBER_OWNED, schema, type Db } from './index'
 import { authSecret } from '../lib/auth-secret'
-import { runMigrations } from './migrate'
+import { migrationsFolder, runMigrations } from './migrate'
 import { sealColumn } from './secrets'
 import type { Queue, QueueName } from './queues'
 import { hashEventData } from './transitions'
@@ -18,10 +20,21 @@ interface TestDbHandle {
 
 const created = new Map<Db, TestDbHandle>()
 
+/** At most this many `drop database` statements run at once. */
+const DROP_CONCURRENCY = 4
+/** A leaked database is swept only when it is older than this (ms), so a run that just started is never touched. */
+const SWEEP_MIN_AGE = 10 * 60_000
+
 function adminUrl(): URL {
   const url = process.env.TEST_DATABASE_URL
   if (!url) throw new Error('TEST_DATABASE_URL is not set (see COMMON.md: the shared tm-test-pg Postgres)')
   return new URL(url)
+}
+
+function urlFor(name: string): string {
+  const url = adminUrl()
+  url.pathname = `/${name}`
+  return url.toString()
 }
 
 async function onAdmin<T>(run: (pool: Pool) => Promise<T>): Promise<T> {
@@ -33,20 +46,143 @@ async function onAdmin<T>(run: (pool: Pool) => Promise<T>): Promise<T> {
   }
 }
 
+/** Runs `task` over `items`, at most `limit` at a time; every item is tried, then the first failure (if any) is thrown. */
+async function inPool<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  const queue = [...items]
+  const errors: unknown[] = []
+  const worker = async () => {
+    for (let item = queue.shift(); item !== undefined; item = queue.shift()) {
+      try {
+        await task(item)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  if (errors.length > 0)
+    throw new AggregateError(errors, `${errors.length} of ${items.length} failed: ${String(errors[0])}`)
+}
+
+const dropSql = (name: string) => `drop database if exists "${name}" with (force)`
+
 /**
- * A fresh, uniquely named database on `TEST_DATABASE_URL` with every migration applied. Drop it with `dropTestDb`
- * (or `dropAllTestDbs` in `afterAll`): nothing drops it for you, and the Postgres is shared.
+ * Drops the `tm_web_*` and `tm_tpl_*` databases that a dead run left behind: the pid in the name has no `/proc/<pid>`
+ * and the creation time (base36, next in the name) is older than ten minutes. Only on Linux with `/proc`; a pid that
+ * is alive, even if reused, is left alone.
+ */
+async function sweepLeaked(): Promise<void> {
+  if (process.platform !== 'linux' || !existsSync('/proc/self')) return
+  const names = await onAdmin(async (admin) => {
+    const { rows } = await admin.query<{ datname: string }>(
+      `select datname from pg_database where datname like 'tm\\_web\\_%' or datname like 'tm\\_tpl\\_%'`
+    )
+    return rows.map((r) => r.datname)
+  })
+  const stale = names.filter((name) => {
+    const [, , pid, made] = name.split('_')
+    const at = parseInt(made ?? '', 36)
+    return (
+      /^\d+$/.test(pid ?? '') && Number.isFinite(at) && !existsSync(`/proc/${pid}`) && Date.now() - at > SWEEP_MIN_AGE
+    )
+  })
+  if (stale.length === 0) return
+  let failed = 0
+  await onAdmin((admin) =>
+    inPool(stale, DROP_CONCURRENCY, async (name) => {
+      try {
+        await admin.query(dropSql(name))
+      } catch {
+        failed++
+      }
+    })
+  )
+  console.log(`[testing] swept ${stale.length - failed} leaked test databases${failed ? `, ${failed} failed` : ''}`)
+}
+
+/** A short hash of the migration files, so a template made from other migrations is never reused. */
+function migrationsHash(): string {
+  const hash = createHash('sha256')
+  const files = [
+    ...readdirSync(migrationsFolder)
+      .filter((f) => f.endsWith('.sql'))
+      .sort()
+      .map((f) => join(migrationsFolder, f)),
+    join(migrationsFolder, 'meta', '_journal.json')
+  ]
+  for (const file of files) hash.update(file.slice(migrationsFolder.length)).update(readFileSync(file))
+  return hash.digest('hex').slice(0, 10)
+}
+
+interface Template {
+  name: string
+  /** Resolves when the sweep of leaked databases is done. */
+  sweep: Promise<void>
+}
+
+let template: Promise<Template> | undefined
+/** Copies from the template run one at a time: Postgres refuses to copy a template that has other connections. */
+let copyQueue: Promise<unknown> = Promise.resolve()
+
+async function makeTemplate(): Promise<Template> {
+  // The sweep runs beside the migrations, so the first test does not wait for it.
+  const sweep = sweepLeaked().catch((error) =>
+    console.warn(`[testing] sweep of leaked test databases failed: ${error}`)
+  )
+  const name = `tm_tpl_${process.pid}_${Date.now().toString(36)}_${migrationsHash()}`
+  try {
+    await onAdmin((admin) => admin.query(`create database "${name}"`))
+    // The migration lock holds one connection and the migrator uses another, so the pool needs two.
+    const pool = new Pool({ connectionString: urlFor(name), max: 2 })
+    try {
+      await runMigrations(drizzle(pool, { schema }))
+    } finally {
+      // The template may have no connection while it is copied.
+      await pool.end()
+    }
+  } catch (error) {
+    await onAdmin((admin) => admin.query(dropSql(name)))
+    throw error
+  }
+  return { name, sweep }
+}
+
+/**
+ * `create database ... template`, retried while the template's last backend is still shutting down (55006). The
+ * `file_copy` strategy checkpoints on create but makes the drop cheap; the default `wal_log` leaves dirty buffers that
+ * make every later `drop database` wait for a slow checkpoint.
+ */
+async function copyTemplate(name: string, from: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await onAdmin((admin) => admin.query(`create database "${name}" template "${from}" strategy file_copy`))
+      return
+    } catch (error) {
+      if ((error as { code?: string }).code !== '55006' || attempt >= 100) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+}
+
+/**
+ * A fresh, uniquely named database on `TEST_DATABASE_URL` with every migration applied. Each process migrates one
+ * template database once (`tm_tpl_<pid>_...`) and copies it for every call, which is much faster than migrating each
+ * time. Drop it with `dropTestDb` (or `dropAllTestDbs` in `afterAll`, which also drops the template): nothing drops it
+ * for you, and the Postgres is shared.
  */
 export async function createTestDb(): Promise<Db> {
-  const base = adminUrl()
   const name = `tm_web_${process.pid}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`
-  await onAdmin((admin) => admin.query(`create database "${name}"`))
-  const url = new URL(base)
-  url.pathname = `/${name}`
-  const pool = new Pool({ connectionString: url.toString() })
+  const pending = (template ??= makeTemplate())
+  const tpl = await pending.catch((error) => {
+    if (template === pending) template = undefined
+    throw error
+  })
+  const copy = copyQueue.then(() => copyTemplate(name, tpl.name))
+  copyQueue = copy.catch(() => undefined)
+  await copy
+  const pool = new Pool({ connectionString: urlFor(name) })
   const db: Db = drizzle(pool, { schema })
   created.set(db, { name, pool })
-  await runMigrations(db)
   return db
 }
 
@@ -54,9 +190,7 @@ export async function createTestDb(): Promise<Db> {
 export function testDbUrl(db: Db): string {
   const handle = created.get(db)
   if (!handle) throw new Error('Not a database made by createTestDb')
-  const url = new URL(adminUrl())
-  url.pathname = `/${handle.name}`
-  return url.toString()
+  return urlFor(handle.name)
 }
 
 /** Closes the connections of a database made by `createTestDb` and drops it. */
@@ -65,11 +199,30 @@ export async function dropTestDb(db: Db): Promise<void> {
   if (!handle) throw new Error('Not a database made by createTestDb')
   created.delete(db)
   await handle.pool.end()
-  await onAdmin((admin) => admin.query(`drop database if exists "${handle.name}" with (force)`))
+  await onAdmin((admin) => admin.query(dropSql(handle.name)))
 }
 
+/** Drops every database `createTestDb` made in this process, four at a time, then the template. */
 export async function dropAllTestDbs(): Promise<void> {
-  for (const db of [...created.keys()]) await dropTestDb(db)
+  const tpl = template
+  template = undefined
+  const handles = [...created.values()]
+  created.clear()
+  await Promise.all(handles.map((h) => h.pool.end()))
+  await onAdmin(async (admin) => {
+    const drop = (name: string) => admin.query(dropSql(name)).then(() => undefined)
+    // The template goes even when a database failed to drop.
+    const dropped = await inPool(handles, DROP_CONCURRENCY, (h) => drop(h.name)).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    const made = await tpl?.catch(() => undefined) // a template that failed to build already dropped itself
+    if (made) {
+      await made.sweep
+      await drop(made.name)
+    }
+    if (dropped) throw dropped
+  })
 }
 
 export interface Seeded {
