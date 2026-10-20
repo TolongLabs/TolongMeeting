@@ -469,3 +469,50 @@ test('a row that is not JSON fails the start with a fixed message and no row tex
   ])
   expect(JSON.stringify(events)).not.toContain('Student A')
 })
+
+test('a roster read that keeps failing delivers the messages and reports one error a minute', async ({ page }) => {
+  await page.goto('/zoom-meeting-top.html')
+  let clock = 1_000_000
+  let n = 0
+  const failing: PlatformAdapter = {
+    ...zoomAdapter,
+    readChat: async (_p, cursor) => {
+      n += 1
+      const key = `k${n}`
+      const message: ChatMessage = {
+        key,
+        sender: 'Lecturer',
+        senderRole: 'unknown',
+        time: '10:00',
+        seenAt: '2026-10-21T10:00:00.000Z',
+        text: `https://forms.gle/${key}`,
+        links: [`https://forms.gle/${key}`],
+        replyTo: null
+      }
+      return {
+        messages: [message],
+        cursor,
+        rosterError: Object.assign(new Error('roster is empty'), { code: 'EROSTER' })
+      }
+    },
+    sweepChat: async () => []
+  }
+  const delivered: string[] = []
+  const c = await startChatCapture(
+    page,
+    failing,
+    file,
+    async (m) => {
+      delivered.push(m.key)
+    },
+    { pollMs: 100, emit, now: () => clock }
+  )
+  await expect.poll(() => delivered.length, { timeout: 5_000 }).toBeGreaterThanOrEqual(3)
+  expect(errors()).toEqual([{ where: 'chat', step: 'roster', code: 'EROSTER', message: 'roster read failed' }])
+  clock += 61_000
+  const before = delivered.length
+  await expect.poll(() => delivered.length, { timeout: 5_000 }).toBeGreaterThan(before)
+  await c.stop()
+  expect(errors().map((e) => e.step)).toEqual(['roster', 'roster'])
+  expect(JSON.stringify(events)).not.toContain('forms.gle')
+})

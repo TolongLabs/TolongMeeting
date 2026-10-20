@@ -1,4 +1,4 @@
-import { expect } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { readTeamsChat, sweepTeamsChat } from '../../src/adapters/teams/chat'
 import { readTeamsRoles } from '../../src/adapters/teams/roles'
 import { teamsState } from '../../src/adapters/teams/page-state'
@@ -197,4 +197,75 @@ test('a roster pane that never shows is a fault too', async ({ page }) => {
   await page.goto(JOIN)
   await expect(readTeamsRoles(page, sel, 600)).rejects.toThrow()
   expect(teamsState(page).roles).toBeNull()
+})
+
+const linkFrom = (id: string, sender: string, text = 'https://forms.gle/TESTFORM'): FixtureMessage => ({
+  id,
+  sender,
+  time: '10:05',
+  datetime: new Date().toISOString(),
+  text
+})
+const addLinkFrom = (page: Page, message: FixtureMessage) => page.evaluate((m) => window.__addMessage(m), message)
+
+test('a student who takes the lecturer name after the last roster read is not the host', async ({ page }) => {
+  await serveTeams(page, { ...base, roster: [{ name: 'Lecturer', role: 'Organizer' }, { name: 'Student' }] })
+  await page.goto(JOIN)
+  teamsState(page).joinedAt = Date.now()
+  // The map is cached with the real lecturer as host.
+  expect((await readTeamsRoles(page, sel)).get('lecturer')).toBe('host')
+  const clicks = (await teamsClicks(page)).length
+  // The student joins with the same name, then posts a link.
+  await page.evaluate(() => window.__addRoster({ name: 'Lecturer' }))
+  await addLinkFrom(page, linkFrom('i1', 'Lecturer'))
+  const { messages, rosterError } = await readTeamsChat(page, sel, { seenKeys: [] })
+  expect(rosterError).toBeUndefined()
+  expect(messages.map((m) => m.senderRole)).toEqual(['unknown'])
+  expect((await teamsClicks(page)).slice(clicks)).toEqual(['People', 'Chat'])
+})
+
+test('a batch of link messages reads the roster once; messages without a link keep the cached map', async ({
+  page
+}) => {
+  await serveTeams(page, { ...base, roster: [{ name: 'Lecturer', role: 'Organizer' }, { name: 'Student' }] })
+  await page.goto(JOIN)
+  teamsState(page).joinedAt = Date.now()
+  await readTeamsRoles(page, sel)
+  const clicks = (await teamsClicks(page)).length
+  await addLinkFrom(page, linkFrom('a1', 'Lecturer'))
+  await addLinkFrom(page, linkFrom('a2', 'Student', 'https://forms.gle/OTHER'))
+  await addLinkFrom(page, linkFrom('a3', 'Lecturer', 'see you later'))
+  const { messages, cursor } = await readTeamsChat(page, sel, { seenKeys: [] })
+  expect(messages.map((m) => [m.key, m.senderRole])).toEqual([
+    ['a1', 'host'],
+    ['a2', 'participant'],
+    ['a3', 'host']
+  ])
+  expect((await teamsClicks(page)).slice(clicks)).toEqual(['People', 'Chat'])
+  // No link, no read.
+  await addLinkFrom(page, linkFrom('a4', 'Lecturer', 'no link here'))
+  const quiet = await readTeamsChat(page, sel, cursor)
+  expect(quiet.messages.find((m) => m.key === 'a4')?.senderRole).toBe('host')
+  expect((await teamsClicks(page)).slice(clicks)).toEqual(['People', 'Chat'])
+})
+
+test('a roster read that throws still returns the batch, with the link message unknown and the error reported', async ({
+  page
+}) => {
+  await serveTeams(page, { ...base, roster: [] })
+  await page.goto(JOIN)
+  teamsState(page).joinedAt = Date.now()
+  teamsState(page).roles = new Map([
+    ['lecturer', 'host'],
+    ['student', 'participant']
+  ])
+  await addLinkFrom(page, linkFrom('e1', 'Lecturer'))
+  await addLinkFrom(page, linkFrom('e2', 'Student', 'no link here'))
+  const read = await readTeamsChat(page, sel, { seenKeys: [] })
+  expect(read.messages.map((m) => [m.key, m.senderRole])).toEqual([
+    ['e1', 'unknown'],
+    ['e2', 'participant']
+  ])
+  expect(read.cursor.seenKeys).toEqual(['e1', 'e2'])
+  expect(String(read.rosterError)).toMatch(/roster pane is empty/)
 })

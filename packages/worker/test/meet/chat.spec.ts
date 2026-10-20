@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
 import { readMeetChat, sweepMeetChat } from '../../src/adapters/meet/chat'
+import { meetState } from '../../src/adapters/meet/page-state'
+import { readMeetRoles } from '../../src/adapters/meet/roles'
 import { meetSelectors } from '../../src/adapters/meet/selectors'
 import { meetClicks, serveMeet, test } from './serve'
 
@@ -185,4 +187,68 @@ test('a sweep stops at its time cap, says so without chat text, and leaves the l
     .locator(sel.selectors.chatScroller)
     .evaluate((el) => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 2)
   expect(atBottom).toBe(true)
+})
+
+const linkFrom = (id: string, sender: string, text = 'https://forms.gle/TESTFORM') => ({
+  id,
+  sender,
+  time: '10:05 AM',
+  text
+})
+
+test('a student who takes the host name after the last People read is not the host', async ({ page }) => {
+  await serveMeet(page, { ...base, people: [{ name: 'Lecturer', label: 'Meeting host' }, { name: 'Student' }] })
+  await page.goto(MEET)
+  expect((await readMeetChat(page, sel, { seenKeys: [] })).messages).toEqual([])
+  await readMeetRoles(page, sel)
+  expect(meetState(page).roles?.get('lecturer')).toBe('host')
+  const clicks = (await meetClicks(page)).length
+  await addPerson(page, { name: 'Lecturer' })
+  await addMessages(page, [linkFrom('i1', 'Lecturer')])
+  const { messages, rosterError } = await readMeetChat(page, sel, { seenKeys: [] })
+  expect(rosterError).toBeUndefined()
+  expect(messages.map((m) => m.senderRole)).toEqual(['unknown'])
+  expect((await meetClicks(page)).slice(clicks)).toEqual(['People', 'Chat with everyone'])
+})
+
+test('a batch of link messages reads People once; messages without a link keep the cached map', async ({ page }) => {
+  await serveMeet(page, { ...base, people: [{ name: 'Lecturer', label: 'Meeting host' }, { name: 'Student' }] })
+  await page.goto(MEET)
+  await readMeetRoles(page, sel)
+  const clicks = (await meetClicks(page)).length
+  await addMessages(page, [
+    linkFrom('a1', 'Lecturer'),
+    linkFrom('a2', 'Student', 'https://forms.gle/OTHER'),
+    linkFrom('a3', 'Lecturer', 'see you later')
+  ])
+  const { messages, cursor } = await readMeetChat(page, sel, { seenKeys: [] })
+  expect(messages.map((m) => [m.key, m.senderRole])).toEqual([
+    ['a1', 'host'],
+    ['a2', 'participant'],
+    ['a3', 'host']
+  ])
+  expect((await meetClicks(page)).slice(clicks)).toEqual(['People', 'Chat with everyone'])
+  await addMessages(page, [linkFrom('a4', 'Lecturer', 'no link here')])
+  const quiet = await readMeetChat(page, sel, cursor)
+  expect(quiet.messages.map((m) => [m.key, m.senderRole])).toEqual([['a4', 'host']])
+  expect((await meetClicks(page)).slice(clicks)).toEqual(['People', 'Chat with everyone'])
+})
+
+test('a People read that throws still returns the batch, with the link message unknown and the error reported', async ({
+  page
+}) => {
+  await serveMeet(page, { ...base, omit: [sel.selectors.peopleButton], messages: [] })
+  await page.goto(MEET)
+  meetState(page).roles = new Map([
+    ['lecturer', 'host'],
+    ['student', 'participant']
+  ])
+  await addMessages(page, [linkFrom('e1', 'Lecturer'), linkFrom('e2', 'Student', 'no link here')])
+  const read = await readMeetChat(page, sel, { seenKeys: [] })
+  expect(read.messages.map((m) => [m.key, m.senderRole])).toEqual([
+    ['e1', 'unknown'],
+    ['e2', 'participant']
+  ])
+  expect(read.cursor.seenKeys).toEqual(['e1', 'e2'])
+  expect(read.rosterError).toBeInstanceOf(Error)
 })

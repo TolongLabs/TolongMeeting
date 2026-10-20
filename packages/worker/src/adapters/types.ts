@@ -27,7 +27,12 @@ export interface PlatformAdapter {
   ensureLayout(page: Page): Promise<void>
   waitUntilAdmitted(page: Page, deadline: Date): Promise<AdmissionResult>
   assertDevicesOff(page: Page): Promise<void> // throws DevicesOnError
-  readChat(page: Page, cursor: ChatCursor): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>
+  // `rosterError`: the roster read made for a link message failed. The batch is still returned, with those messages
+  // `unknown`; the caller reports the failure.
+  readChat(
+    page: Page,
+    cursor: ChatCursor
+  ): Promise<{ messages: ChatMessage[]; cursor: ChatCursor; rosterError?: unknown }>
   sweepChat(page: Page): Promise<ChatMessage[]>
   sharedScreenRegion(page: Page): Promise<Rect | null> // in stage coordinates
   participantCount(page: Page): Promise<number | null>

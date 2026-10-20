@@ -17,6 +17,8 @@ export interface ChatCaptureOptions {
   append?: (file: string, data: string) => Promise<void>
   // Receives the error events of a failed step. Without it, the event goes to stderr.
   emit?: (type: EventType, data: Record<string, unknown>) => Promise<void>
+  // The clock for the once-a-minute limit on roster errors; tests set it.
+  now?: () => number
   // Called once per row already in the file, in file order, before the first poll. A restart re-offers those rows here.
   onReplay?: (m: ChatMessage) => Promise<void> | void
 }
@@ -30,7 +32,7 @@ export interface AppendHandle {
   close(): Promise<void>
 }
 
-type Step = 'read' | 'sweep' | 'append' | 'deliver' | 'replay' | 'load'
+type Step = 'read' | 'sweep' | 'append' | 'deliver' | 'replay' | 'load' | 'roster'
 
 const POLL_MS = 3_000
 const SWEEP_MS = 600_000
@@ -38,7 +40,14 @@ const UNREADABLE_ROW = 'chat.jsonl has a row that is not valid JSON'
 const DELIVERY_FAILED = 'delivery failed'
 const DELIVERY_ABANDONED = 'delivery abandoned'
 // Event messages are fixed text plus a code: an error's own message can carry chat text.
-const FAILED_MESSAGE = { read: 'read failed', sweep: 'sweep failed', append: 'append failed' } as const
+const FAILED_MESSAGE = {
+  read: 'read failed',
+  sweep: 'sweep failed',
+  append: 'append failed',
+  roster: 'roster read failed'
+} as const
+// A roster read that keeps failing is reported this often at most.
+const ROSTER_ERROR_EVERY_MS = 60_000
 // Attempts per delivery: the first, and two retries on later ticks. Then the row is skipped.
 const MAX_ATTEMPTS = 3
 
@@ -154,6 +163,7 @@ export async function startChatCapture(
   const sweepMs = opts.sweepMs ?? SWEEP_MS
   const append = opts.append ?? appendDurably
   const emit = opts.emit ?? stderrEmit
+  const now = opts.now ?? Date.now
   const onReplay = opts.onReplay
 
   await mkdir(dirname(file), { recursive: true })
@@ -256,8 +266,18 @@ export async function startChatCapture(
     await record(messages, tried)
   }
 
+  // The roster read behind a link message failed: the poll still returns its batch, and the failure is reported once a
+  // minute at most, so a roster that stays broken cannot flood the log.
+  let rosterReportedAt = Number.NEGATIVE_INFINITY
   const poll = (): Promise<void> =>
-    tick('read', async () => (await adapter.readChat(page, { seenKeys: [...seen] })).messages)
+    tick('read', async () => {
+      const read = await adapter.readChat(page, { seenKeys: [...seen] })
+      if (read.rosterError !== undefined && now() - rosterReportedAt >= ROSTER_ERROR_EVERY_MS) {
+        rosterReportedAt = now()
+        await report('roster', read.rosterError, FAILED_MESSAGE.roster)
+      }
+      return read.messages
+    })
   const sweep = (): Promise<void> => tick('sweep', () => adapter.sweepChat(page))
 
   const pollTimer = setInterval(() => {

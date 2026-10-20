@@ -22,23 +22,30 @@ export function meetMessageKey(raw: RawMeetMessage): string {
 const roleKey = (sender: string) => sender.trim().toLowerCase()
 
 // Roles come from `ctx.roles` (the People panel) and nowhere else: what a message says about its sender is never read.
-// A sender missing from the map, or no map yet, is `unknown`.
+// A sender missing from the map, or no map yet, is `unknown`. `linkRoles`, when given, is the map for a message that
+// carries a link (the People panel as read for this batch, or null when that read failed); left out, `roles` serves.
 export function toMeetChatMessages(
   raw: RawMeetMessage[],
-  ctx: { roles: Map<string, SenderRole> | null; seenAt: string }
+  ctx: { roles: Map<string, SenderRole> | null; linkRoles?: Map<string, SenderRole> | null; seenAt: string }
 ): ChatMessage[] {
-  return raw.map((m) => ({
-    key: meetMessageKey(m),
-    sender: m.sender,
-    senderRole: ctx.roles?.get(roleKey(m.sender)) ?? 'unknown',
-    time: m.time,
-    seenAt: ctx.seenAt,
-    text: m.text,
-    links: [...new Set([...m.hrefs.filter((href) => /^https?:/i.test(href)), ...extractLinks(m.text)])],
-    // Meet chat has no threads.
-    replyTo: null
-  }))
+  return raw.map((m) => {
+    const links = [...new Set([...m.hrefs.filter((href) => /^https?:/i.test(href)), ...extractLinks(m.text)])]
+    const roles = links.length > 0 && ctx.linkRoles !== undefined ? ctx.linkRoles : ctx.roles
+    return {
+      key: meetMessageKey(m),
+      sender: m.sender,
+      senderRole: roles?.get(roleKey(m.sender)) ?? 'unknown',
+      time: m.time,
+      seenAt: ctx.seenAt,
+      text: m.text,
+      links,
+      // Meet chat has no threads.
+      replyTo: null
+    }
+  })
 }
+
+const hasLink = (m: RawMeetMessage) => m.hrefs.length > 0 || extractLinks(m.text).length > 0
 
 const parse = (page: Page, sel: MeetSelectors) => page.evaluate(parseMeetMessages, sel)
 
@@ -53,12 +60,16 @@ async function pinToBottom(page: Page, scroller: string): Promise<void> {
 
 // The messages whose keys the cursor has not seen, and a cursor that has seen them too. The caller adopts the cursor
 // only after writing the messages (CHAT-03). With the chat panel closed it returns nothing and the same cursor: the
-// layout pass reopens chat.
+// layout pass reopens chat. A batch with a new message that carries a link makes one People panel read, whatever the
+// cached map says about its sender: a student can join or rename to the host's name after the last read. Only the link
+// messages take their role from that read; the others keep the cached map. If the read fails, the link messages are
+// `unknown`, the batch is still returned and `rosterError` holds the failure for the caller to report.
 export async function readMeetChat(
   page: Page,
   sel: MeetSelectors,
   cursor: ChatCursor
-): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }> {
+): Promise<{ messages: ChatMessage[]; cursor: ChatCursor; rosterError?: unknown }> {
+  let rosterError: unknown
   const read = () =>
     withPanel(page, async () => {
       const scroller = sel.selectors.chatScroller
@@ -69,21 +80,24 @@ export async function readMeetChat(
         return (await parse(page, sel)).filter((m) => !seen.has(meetMessageKey(m)))
       }
       let raw = await fresh()
-      const roles = () => meetState(page).roles
-      // A host who joined late, or a sender who changed role: the People panel is read once, and only for a link, the
-      // one thing that makes the sender's role matter.
-      const needsRoles = (m: RawMeetMessage) =>
-        (m.hrefs.length > 0 || extractLinks(m.text).length > 0) && !roles()?.has(roleKey(m.sender))
-      if (raw.some(needsRoles)) {
-        await readRolesNow(page, sel)
-        raw = await fresh()
+      // The People panel is read once per batch, and only for a link, the one thing that makes the sender's role matter.
+      let linkRoles: Map<string, SenderRole> | null | undefined
+      if (raw.some(hasLink)) {
+        linkRoles = await readRolesNow(page, sel).catch((error: unknown) => {
+          // Reported through `rosterError`, not thrown: one failed read must not hold back the batch.
+          rosterError = error
+          return null
+        })
+        // After a failed read People may be left open, so the batch read before it is kept.
+        if (linkRoles) raw = await fresh()
       }
-      return toMeetChatMessages(raw, { roles: roles(), seenAt: new Date().toISOString() })
+      return toMeetChatMessages(raw, { roles: meetState(page).roles, linkRoles, seenAt: new Date().toISOString() })
     })
   // A page that navigates under the read yields nothing this time; the cursor stays where it was.
   const messages = await navigationGuard('readChat', 'meet').run(read)
   if (!messages || messages.length === 0) return { messages: [], cursor }
-  return { messages, cursor: { seenKeys: [...cursor.seenKeys, ...messages.map((m) => m.key)] } }
+  const next = { seenKeys: [...cursor.seenKeys, ...messages.map((m) => m.key)] }
+  return rosterError === undefined ? { messages, cursor: next } : { messages, cursor: next, rosterError }
 }
 
 // Reads the People panel, then scrolls the whole chat list top to bottom so every row renders once, and returns every
