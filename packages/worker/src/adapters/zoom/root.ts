@@ -64,7 +64,8 @@ export interface NavigationGuard {
 }
 
 // One guard per call site (one poll loop). The log holds the step name and the matched pattern only, never page text.
-export function navigationGuard(stepName: string): NavigationGuard {
+// `platform` only prefixes the log line (the Teams adapter shares this guard).
+export function navigationGuard(stepName: string, platform = 'zoom'): NavigationGuard {
   let streak = 0
   let lastRace: string | null = null
   return {
@@ -82,7 +83,7 @@ export function navigationGuard(stepName: string): NavigationGuard {
         streak += 1
         if (streak > MAX_CONSECUTIVE_RACES) throw error
         lastRace = error.message.split('\n')[0]!.slice(0, 200)
-        console.info(`zoom: navigation race in ${stepName} (${race}), ${streak} in a row`)
+        console.info(`${platform}: navigation race in ${stepName} (${race}), ${streak} in a row`)
         return undefined
       }
     }

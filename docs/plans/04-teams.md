@@ -302,7 +302,7 @@ git commit -m "feat(core): teams link rules"
   - `joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_000): Promise<JoinResult>` in `packages/worker/src/adapters/teams/join.ts`. It starts on the page the caller has already opened at the normalised link (01a's run sequence) and never navigates itself.
   - Test harness in `packages/worker/test/teams/serve.ts`: `type TeamsScene`, `interface TeamsFixtureConfig`, `serveTeams(page: Page, cfg: TeamsFixtureConfig): Promise<void>` (replaces earlier routes), `setTeamsScene(page: Page, scene: TeamsScene, patch?: Partial<TeamsFixtureConfig>): Promise<void>`, `teamsClicks(page: Page): Promise<string[]>`. Later tasks add fields to `TeamsFixtureConfig` and scenes to `app.html`.
 
-- [ ] **Step 1: Build the fixtures and harness**
+- [x] **Step 1: Build the fixtures and harness**
 
 `app.html` imitates the Teams web client as one page whose scene comes from `window.__cfg` (injected by `serveTeams`) and switches through `window.__scene(scene, patch)`. Every element uses the attribute values in `teams.json`. It must contain:
 
@@ -319,7 +319,7 @@ git commit -m "feat(core): teams link rules"
 
 `signin.html` shows a Microsoft sign-in form (an `input[name='loginfmt']`), or, when the URL has `blocked=1`, the text "You can't get there from here" with "AADSTS53000". `serveTeams` routes `https://teams.microsoft.com/**` and `https://teams.live.com/**` to `app.html` with `<script>window.__cfg = ...</script>` prepended, and `https://login.microsoftonline.com/**` to `signin.html`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -426,12 +426,12 @@ test('an unrecognised page times out', async ({ page }) => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/join.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/teams/join`.
 
-- [ ] **Step 4: Implement `teamsState`, `teamsTextSignal` and `joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
+- [x] **Step 4: Implement `teamsState`, `teamsTextSignal` and `joinTeams(page: Page, sel: TeamsSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
 
 Every 500 ms until `timeoutMs`, classify the page and act on the first rule that matches (text checks through `teamsTextSignal`):
 
@@ -446,12 +446,12 @@ Every 500 ms until `timeoutMs`, classify the page and act on the first rule that
 
 At the deadline return `{ kind: 'failed', reason: 'prejoin_timeout' }`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/teams/join.spec.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/teams packages/worker/test/teams packages/worker/src/adapters/teams/page-state.ts packages/worker/src/adapters/teams/text.ts packages/worker/src/adapters/teams/join.ts
