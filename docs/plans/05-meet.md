@@ -1220,7 +1220,7 @@ Manual verification on real Meet meetings, mapped to the PRD's [acceptance tests
 
 - [ ] **Step 1: Selector check**
 
-Run `docker/worker/run-job.sh <meet-smoke-job> smoke` (Task 9) on the server against the standing Meet test meeting, and make sure `docker/worker/smoke.crontab` has its Meet line. Pass: exit code 0, no missing keys, and Meet never shows "You can't join this video call". If it does show it, stop the milestone, record it in spike 2's `REPORT.md`, and revisit the Chrome settings there. Where a selector or text differs, correct `meet.json`, the fixtures and the tests in one commit, then rerun the suites of Tasks 1 to 9.
+Run `docker/worker/run-job.sh <meet-smoke-job> smoke` (Task 9) on the server against the standing Meet test meeting, and make sure `docker/worker/smoke.crontab` has its Meet line. Pass: exit code 0, no missing keys, and Meet never shows "You can't join this video call". If it does show it, stop the milestone, record it in spike 2's `REPORT.md`, and revisit the Chrome settings there. Where a selector or text differs, correct `meet.json`, the fixtures and the tests in one commit, then rerun the suites of Tasks 1 to 9. Also check one assumption the tests rest on: Meet's chat list is not virtualised, so a burst of messages is still in the DOM when it is read (the burst test in `test/meet/chat.spec.ts` shows no more than that). If the live list drops rows that scroll out of view, add a virtualised fixture mode and an in-page observer like Teams' `teamsChatProbe`.
 
 - [ ] **Step 2: Joining and admission**
 

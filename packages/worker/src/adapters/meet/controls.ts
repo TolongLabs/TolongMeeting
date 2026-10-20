@@ -12,9 +12,11 @@ const AUDIO_TIMEOUT_MS = 10_000
 const CONFIRM_TIMEOUT_MS = 2_000
 const LEAVE_TIMEOUT_MS = 15_000
 
-// Throws DevicesOnError when the microphone or camera might be live: a control whose "off" form is not on screen is
-// reported by its aria-label, a missing control by name. Fails closed: a permission-denied button without the muted
-// attribute counts as missing until the live client shows what it looks like (plan 05 P5-12). Clicks nothing.
+// Throws DevicesOnError when the microphone or camera might be live: every visible control matching the toggle selector
+// must also match its "off" selector. One live toggle fails the check even when another element (a participant's muted
+// tile, say) reads off. A control that is not on screen is reported by name, a live one by its aria-label. Fails
+// closed: a permission-denied button without the muted attribute matches no toggle and counts as missing until the live
+// client shows what it looks like (plan 05 P5-12). Clicks nothing.
 export async function assertMeetDevicesOff(page: Page, sel: MeetSelectors): Promise<void> {
   const { selectors } = sel
   const live = await settled(navigationGuard('devicesOff', 'meet'), async () => {
@@ -23,10 +25,15 @@ export async function assertMeetDevicesOff(page: Page, sel: MeetSelectors): Prom
       ['microphone', selectors.micToggle, selectors.micOff],
       ['camera', selectors.cameraToggle, selectors.cameraOff]
     ] as const) {
-      if (await shown(page, off).isVisible()) continue
-      const button = shown(page, control)
-      if (!(await button.isVisible())) labels.push(`${name} control not found`)
-      else labels.push((await button.getAttribute('aria-label', { timeout: STEP_TIMEOUT_MS })) ?? name)
+      const toggles = await page
+        .locator(control)
+        .filter({ visible: true })
+        .evaluateAll(
+          (els, offCss) => els.map((el) => ({ off: el.matches(offCss), label: el.getAttribute('aria-label') })),
+          off
+        )
+      if (toggles.length === 0) labels.push(`${name} control not found`)
+      for (const toggle of toggles) if (!toggle.off) labels.push(toggle.label ?? name)
     }
     return labels
   })

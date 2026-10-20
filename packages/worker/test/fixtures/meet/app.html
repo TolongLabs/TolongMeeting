@@ -88,6 +88,9 @@
           people: [],
           peopleCount: null,
           share: null,
+          tiles: [],
+          mutedDecoy: false,
+          otherDialog: false,
           omit: []
         }
         const cfg = Object.assign({}, DEFAULTS, window.__cfg)
@@ -198,7 +201,9 @@
             'div',
             { role: 'complementary' },
             el('button', { 'aria-label': 'Close', 'data-set': 'sidePanel=closed' }, 'x'),
-            body
+            body,
+            // A decoy: the worker never sends anything.
+            cfg.sidePanel === 'chat' ? el('button', { 'aria-label': 'Send a message' }, 'Send') : null
           )
         }
 
@@ -215,7 +220,16 @@
             el('button', { 'aria-label': 'More options' }, 'More')
           )
           return [
-            el('main', {}, el('p', {}, 'Meeting fixture')),
+            el(
+              'main',
+              {},
+              el('p', {}, 'Meeting fixture'),
+              ...cfg.tiles.map((name) => el('div', { class: 'tile' }, name)),
+              // A decoy: a participant's muted-microphone indicator, which matches the microphone selectors.
+              cfg.mutedDecoy
+                ? el('div', { role: 'button', 'data-is-muted': 'true', 'aria-label': 'Ali microphone' }, 'Ali')
+                : null
+            ),
             toolbar,
             ...Array.from({ length: cfg.audioElements }, () => el('audio')),
             sidePanel(),
@@ -248,6 +262,7 @@
               { role: 'dialog' },
               el('p', {}, 'Do people see and hear you?'),
               el('button', {}, 'Use microphone and camera'),
+              el('button', {}, 'Allow microphone and camera'),
               el('button', { 'data-goto': 'prejoin' }, 'Continue without microphone and camera')
             )
           ],

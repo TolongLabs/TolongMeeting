@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import {
   assertMeetDevicesOff,
   connectMeetOutputAudio,
@@ -8,7 +8,7 @@ import {
 import { meetSelectors } from '../../src/adapters/meet/selectors'
 import { meetMeetingState } from '../../src/adapters/meet/state'
 import { DevicesOnError } from '../../src/adapters/types'
-import { meetClicks, serveMeet } from './serve'
+import { meetClicks, serveMeet, test } from './serve'
 
 // Runs against test/fixtures/meet/app.html, an imitation of the Meet web client that has NOT been checked against the
 // real one (plan 05 task 10).
@@ -45,6 +45,20 @@ test('devices off passes; either device on, or a missing control, throws', async
   expect(await meetClicks(page)).toEqual([])
 })
 
+test('a live toggle fails the check even when another element reads muted', async ({ page }) => {
+  await serveMeet(page, { scene: 'meeting', mic: 'on', camera: 'off', mutedDecoy: true })
+  await page.goto(MEET)
+  // The decoy alone would have passed the old "any off element" check.
+  await expect(page.locator(sel.selectors.micOff)).toHaveCount(1)
+  const error = await rejection(assertMeetDevicesOff(page, sel))
+  expect(error).toBeInstanceOf(DevicesOnError)
+  expect((error as DevicesOnError).labels).toEqual(['Turn off microphone'])
+  await serveMeet(page, { scene: 'meeting', mic: 'off', camera: 'off', mutedDecoy: true })
+  await page.goto(MEET)
+  await assertMeetDevicesOff(page, sel)
+  expect(await meetClicks(page)).toEqual([])
+})
+
 test('a permission-denied device button is not read as off', async ({ page }) => {
   await serveMeet(page, { scene: 'meeting', mic: 'denied', camera: 'off' })
   await page.goto(MEET)
@@ -71,7 +85,10 @@ test('clicks only allowlisted buttons inside notices, never the breakout prompt 
       { role: 'dialog', text: 'Unmute to speak', button: 'Got it' },
       { role: 'dialog', text: 'The host started a screen share', button: 'Got it' },
       { role: 'dialog', text: 'You can start your video now', button: 'Got it' },
-      { role: 'dialog', text: 'The host asks for your consent to record you', button: 'OK' }
+      { role: 'dialog', text: 'The host asks for your consent to record you', button: 'OK' },
+      { role: 'dialog', text: 'Turn on your camera to continue', button: 'Got it' },
+      { role: 'dialog', text: 'Please turn on the microphone', button: 'OK' },
+      { role: 'alert', text: 'Meet needs access to your microphone', button: 'Allow' }
     ]
   })
   await page.goto(MEET)

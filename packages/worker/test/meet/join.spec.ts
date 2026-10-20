@@ -1,23 +1,19 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { joinMeet } from '../../src/adapters/meet/join'
 import { meetSelectors } from '../../src/adapters/meet/selectors'
-import { meetClicks, serveMeet } from './serve'
+import { meetClicks, meetForbiddenClicks, serveMeet, test } from './serve'
 
 // Runs against test/fixtures/meet/app.html, an imitation of the Meet web client that has NOT been checked against the
 // real one: Meet's real anonymous pre-join, automation-block and "Switch here" wording are unverified (plan 05 task 10).
 const MEET = 'https://meet.google.com/abc-defg-hij'
 const sel = await meetSelectors()
 
-// Clicks on controls the join must never touch (join.js keeps the log).
-const forbiddenClicks = (page: Page) =>
-  page.evaluate(() => (window as unknown as { __forbidden: string[] }).__forbidden)
-
 test('turns devices off, then joins now', async ({ page }) => {
   await serveMeet(page, { scene: 'prejoin', mic: 'on', camera: 'on', joinAs: 'join-now' })
   await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({ kind: 'in_meeting' })
   expect(await meetClicks(page)).toEqual(['Turn off microphone', 'Turn off camera', 'Join now'])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
 })
 
 test('asks to join when the organisation does not trust the member', async ({ page }) => {
@@ -25,7 +21,7 @@ test('asks to join when the organisation does not trust the member', async ({ pa
   await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({ kind: 'lobby' })
   expect(await meetClicks(page)).toEqual(['Ask to join'])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
 })
 
 test('passes the device dialog without granting anything', async ({ page }) => {
@@ -33,7 +29,7 @@ test('passes the device dialog without granting anything', async ({ page }) => {
   await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({ kind: 'in_meeting' })
   expect(await meetClicks(page)).toEqual(['Continue without microphone and camera', 'Join now'])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
 })
 
 test('joins here too, never switching the member out of the call', async ({ page }) => {
@@ -41,7 +37,7 @@ test('joins here too, never switching the member out of the call', async ({ page
   await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({ kind: 'in_meeting' })
   expect(await meetClicks(page)).toEqual(['Join here too'])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
 })
 
 test('an anonymous pre-join means the session expired: no guest knock', async ({ page }) => {

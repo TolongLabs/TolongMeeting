@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { meetSelectors } from '../../src/adapters/meet/selectors'
 import { meetMeetingState, waitMeetAdmitted } from '../../src/adapters/meet/state'
-import { meetClicks, serveMeet, setMeetScene } from './serve'
+import { meetClicks, serveMeet, setMeetScene, test } from './serve'
 
 // Runs against test/fixtures/meet/app.html, an imitation of the Meet web client that has NOT been checked against the
 // real one (plan 05 task 10).
@@ -74,6 +74,19 @@ test('with Leave showing, end text outside a dialog is not an end', async ({ pag
 test('a breakout prompt reads as breakout_prompt and is not touched', async ({ page }) => {
   await serveMeet(page, { scene: 'meeting', mic: 'off', camera: 'off', breakout: true })
   await page.goto(MEET)
+  expect(await meetMeetingState(page, sel)).toBe('breakout_prompt')
+  expect(await meetClicks(page)).toEqual([])
+})
+
+test('breakout words on a participant tile are not a prompt while Leave shows', async ({ page }) => {
+  await serveMeet(page, { scene: 'meeting', mic: 'off', camera: 'off', tiles: ['Breakout room helper (Ali)'] })
+  await page.goto(MEET)
+  await expect(page.getByText('Breakout room helper (Ali)')).toBeVisible()
+  expect(await meetMeetingState(page, sel)).toBe('in_meeting')
+  // The same words in a dialog still are one; without Leave they count wherever they are.
+  await setMeetScene(page, 'meeting', { breakout: true })
+  expect(await meetMeetingState(page, sel)).toBe('breakout_prompt')
+  await setMeetScene(page, 'meeting', { breakout: false, omit: [sel.selectors.leaveButton] })
   expect(await meetMeetingState(page, sel)).toBe('breakout_prompt')
   expect(await meetClicks(page)).toEqual([])
 })

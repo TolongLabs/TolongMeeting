@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import type { Page, Route } from '@playwright/test'
+import { expect, test as base, type Page, type Route } from '@playwright/test'
 import type { Rect } from '../../src/adapters/types'
 
 // A stand-in for the Meet web client on https://meet.google.com/** and for Google sign-in on accounts.google.com, by
@@ -60,6 +60,9 @@ export interface MeetFixtureConfig {
   audioElements?: number // <audio> elements in the meeting scene; default 2
   chatScroll?: 'top' | 'bottom' // where the chat list starts; it stays put when messages arrive
   people?: readonly { name: string; label?: string }[]
+  tiles?: readonly string[] // names on participant tiles in the meeting scene
+  mutedDecoy?: boolean // a participant's muted-microphone indicator that matches the microphone selectors
+  otherDialog?: boolean // a second dialog with its own Close button, ahead of Adjust view (layout.js)
   peopleCount?: number | null // badge inside the People button (layout.js)
   share?: { box: Rect; width: number; height: number } | null // a screen share (layout.js)
   omit?: readonly string[] // selectors whose elements the fixture leaves out
@@ -125,3 +128,19 @@ export async function setMeetScene(
 export async function meetClicks(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __clicks: string[] }).__clicks)
 }
+
+/** Labels of the clicks the worker must never make (join.js keeps the one list). Empty on a page that is not the fixture. */
+export async function meetForbiddenClicks(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __forbidden?: string[] }).__forbidden ?? [])
+}
+
+/** `test` for every Meet spec: when a test ends, the forbidden-click log must be empty (a page the test closed has none). */
+export const test = base.extend<{ noForbiddenClicks: undefined }>({
+  noForbiddenClicks: [
+    async ({ page }, use) => {
+      await use(undefined)
+      if (!page.isClosed()) expect(await meetForbiddenClicks(page)).toEqual([])
+    },
+    { auto: true }
+  ]
+})

@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { meetTextSignal } from '../../src/adapters/meet/text'
 import type { MeetSelectors } from '../../src/adapters/meet/selectors'
-import { meetClicks, serveMeet, setMeetScene, type MeetScene } from './serve'
+import { meetClicks, serveMeet, setMeetScene, type MeetScene, test } from './serve'
 
 // Smoke for the fixture skeleton (05-F0): the stand-in pages load through the routes. The behaviour of each scene is
 // the job of the task specs (join, state, controls, chat, layout).

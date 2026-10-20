@@ -1,8 +1,8 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { ensureMeetLayout, meetParticipantCount, meetSharedScreenRegion } from '../../src/adapters/meet/layout'
 import { meetSelectors } from '../../src/adapters/meet/selectors'
 import { readMeetRoles } from '../../src/adapters/meet/roles'
-import { meetClicks, serveMeet, setMeetScene } from './serve'
+import { meetClicks, meetForbiddenClicks, serveMeet, setMeetScene, test } from './serve'
 
 // Runs against test/fixtures/meet/app.html, an imitation of the Meet web client that has NOT been checked against the
 // real one (plan 05 task 10 checks it live).
@@ -14,10 +14,6 @@ const share = {
   width: 1440,
   height: 1080
 }
-
-// Clicks on controls the layout must never touch (join.js creates the log; layout.js adds its own names).
-const forbiddenClicks = (page: Page) =>
-  page.evaluate(() => (window as unknown as { __forbidden: string[] }).__forbidden)
 
 // The fixture's video gets its size from the canvas stream a moment after the page loads.
 const shareReady = (page: Page) =>
@@ -34,7 +30,7 @@ test('reads the participant count from the badge with chat left open', async ({ 
   expect(await meetParticipantCount(page, sel)).toBe(57)
   await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
   expect(await meetClicks(page)).toEqual([])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
   await setMeetScene(page, 'meeting', { peopleCount: null })
   expect(await meetParticipantCount(page, sel)).toBeNull()
 })
@@ -45,7 +41,7 @@ test('reopens chat when the people list took the panel', async ({ page }) => {
   await ensureMeetLayout(page, sel)
   await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
   expect(await meetClicks(page)).toEqual(['Chat with everyone'])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
 })
 
 test('turns captions off and spotlights a share once', async ({ page }) => {
@@ -59,9 +55,20 @@ test('turns captions off and spotlights a share once', async ({ page }) => {
   await ensureMeetLayout(page, sel)
   await ensureMeetLayout(page, sel)
   expect(await meetClicks(page)).toEqual(['Turn off captions', 'More options', 'Adjust view', 'Spotlight', 'Close'])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
   await expect(page.locator(sel.selectors.captionsRegion)).toHaveCount(0)
   await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
+})
+
+test("Close is the Adjust view dialog's own, not another dialog's", async ({ page }) => {
+  await serveMeet(page, { ...base, sidePanel: 'chat', share, otherDialog: true })
+  await page.goto(MEET)
+  await shareReady(page)
+  await ensureMeetLayout(page, sel)
+  expect(await meetClicks(page)).toEqual(['More options', 'Adjust view', 'Spotlight', 'Close'])
+  expect(await meetForbiddenClicks(page)).toEqual([])
+  await expect(page.getByText('Meeting details')).toBeVisible()
+  await expect(page.getByText('Spotlight')).toHaveCount(0)
 })
 
 test('a layout change queued behind a role read leaves both intact', async ({ page }) => {
@@ -88,7 +95,7 @@ test('a layout change queued behind a role read leaves both intact', async ({ pa
     'Spotlight',
     'Close'
   ])
-  expect(await forbiddenClicks(page)).toEqual([])
+  expect(await meetForbiddenClicks(page)).toEqual([])
   await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
 })
 

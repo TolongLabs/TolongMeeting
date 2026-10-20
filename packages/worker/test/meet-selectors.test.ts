@@ -1,16 +1,18 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { meetSelectors } from '../src/adapters/meet/selectors'
 
 const SHIPPED = resolve(import.meta.dir, '../../../config/selectors')
 
+const made: string[] = []
 const originalDir = process.env.TM_SELECTORS_DIR
 beforeAll(() => {
   process.env.TM_SELECTORS_DIR = SHIPPED
 })
-afterAll(() => {
+afterAll(async () => {
+  for (const dir of made.splice(0)) await rm(dir, { recursive: true, force: true })
   if (originalDir === undefined) delete process.env.TM_SELECTORS_DIR
   else process.env.TM_SELECTORS_DIR = originalDir
 })
@@ -22,6 +24,7 @@ async function mapDir(edit: (map: RawMap) => void): Promise<string> {
   const map: RawMap = JSON.parse(await readFile(join(SHIPPED, 'meet.json'), 'utf8'))
   edit(map)
   const dir = await mkdtemp(join(tmpdir(), 'meet-sel-'))
+  made.push(dir)
   await writeFile(join(dir, 'meet.json'), JSON.stringify(map))
   return dir
 }

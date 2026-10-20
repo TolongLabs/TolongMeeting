@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { readMeetChat, sweepMeetChat } from '../../src/adapters/meet/chat'
 import { meetSelectors } from '../../src/adapters/meet/selectors'
-import { meetClicks, serveMeet } from './serve'
+import { meetClicks, serveMeet, test } from './serve'
 
 // Runs against test/fixtures/meet/app.html, an imitation of the Meet web client that has NOT been checked against the
 // real one (plan 05 task 10).
@@ -129,7 +129,10 @@ test('a row whose sender cannot be read is left out and not marked seen', async 
   expect((await sweepMeetChat(page, sel)).map((m) => m.key)).toEqual(['n2'])
 })
 
-test('a burst into a short list is captured whole, in order, once', async ({ page }) => {
+// ASSUMPTION (plan 05 task 10): Meet's chat list is not virtualised, so every row of a burst is still in the DOM when
+// the read parses it. This fixture list is not virtualised either, so the test shows no more than that. Should the real
+// list drop rows that scroll out of view, Meet needs what Teams has: a virtualised fixture and an in-page observer.
+test('25 messages added at once to a non-virtualised list are read whole, in order, once', async ({ page }) => {
   await serveMeet(page, { ...base, messages: msgs(3) })
   await page.goto(MEET)
   const first = await readMeetChat(page, sel, { seenKeys: [] })

@@ -1,12 +1,11 @@
 // Meet fixture behaviour for plan 05 task 7 (layout). Stub from the skeleton (05-F0): app.html loads this file after its
 // core and renders once all task scripts are in. Add this task's dynamic behaviour here and nowhere else, through
 // window.__meet (cfg, render, scene, onClick, onRender; see app.html). Here: the captions toggle, the More options menu,
-// Adjust view, the share video and the People badge. Decoy controls (Raise hand, React) sit in the toolbar so a test can
-// see that the worker never clicks them; their clicks land in window.__forbidden, which join.js creates first.
+// Adjust view, the share video and the People badge. Decoy controls (Raise hand, React, Present now) sit in the toolbar,
+// and a second dialog with its own Close button (otherDialog) precedes the Adjust view dialog, so a test can see that the
+// worker never clicks them; their clicks land in window.__forbidden, which join.js creates and owns the list of.
 ;(function () {
   const meet = window.__meet
-  const forbidden = (window.__forbidden ??= [])
-  const NEVER = ['Raise hand', 'React', 'Turn on captions']
   let captionsOff = false
   let menuOpen = false
   let dialogOpen = false
@@ -48,6 +47,16 @@
     return node
   }
 
+  // A dialog that is not Adjust view, with a Close button of its own: it comes first in the page.
+  function otherDialog() {
+    const node = document.createElement('div')
+    node.setAttribute('role', 'dialog')
+    const heading = document.createElement('p')
+    heading.textContent = 'Meeting details'
+    node.append(heading, button('Close', { 'data-decoy': '' }))
+    return node
+  }
+
   // A share is a video whose stream is a canvas of the configured size, so videoWidth and videoHeight are real. The holder
   // ignores the pointer so it never covers the toolbar.
   function share(box, width, height) {
@@ -68,7 +77,8 @@
   }
 
   meet.onClick((event, label, control) => {
-    if (NEVER.includes(label)) forbidden.push(label)
+    // The other dialog's Close is a decoy: only the Adjust view dialog's own Close may be clicked.
+    if (control.hasAttribute('data-decoy')) window.__forbidden.push(`${label} (other dialog)`)
     const inToolbar = control.closest("[role='toolbar']") !== null
     if (label === 'More options' && inToolbar) menuOpen = true
     else if (label === 'Adjust view' && menuOpen) [menuOpen, dialogOpen] = [false, true]
@@ -86,7 +96,7 @@
       return
     }
     const toolbar = root.querySelector("[role='toolbar']")
-    toolbar.append(button('Raise hand'), button('React'))
+    toolbar.append(button('Raise hand'), button('React'), button('Present now'))
     if (meet.cfg.captions !== null) toolbar.append(button(captionsOff ? 'Turn on captions' : 'Turn off captions'))
     if (captionsOff) root.querySelector("[aria-label='Captions']")?.remove()
     if (meet.cfg.peopleCount !== null) {
@@ -97,6 +107,7 @@
     }
     if (meet.cfg.share) root.append(share(meet.cfg.share.box, meet.cfg.share.width, meet.cfg.share.height))
     if (menuOpen) root.append(menu())
+    if (meet.cfg.otherDialog) root.append(otherDialog())
     if (dialogOpen) root.append(dialog())
   })
 

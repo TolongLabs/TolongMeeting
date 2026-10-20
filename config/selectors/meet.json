@@ -46,6 +46,8 @@
     "noticeDanger": [
       { "name": "join", "source": "\\bjoin\\b" },
       { "name": "start video", "source": "start (my |your )?video" },
+      { "name": "turn on camera", "source": "turn on (my |your |the )?camera" },
+      { "name": "turn on microphone", "source": "turn on (my |your |the )?(microphone|mic)\\b" },
       { "name": "allow", "source": "\\ballow\\b" },
       { "name": "unmute", "source": "\\bunmute\\b" },
       { "name": "share", "source": "\\bshare\\b" },
