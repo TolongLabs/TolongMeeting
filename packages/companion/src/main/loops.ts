@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import type { CompanionJob } from '@tm/core'
 import { CompanionApi, DeviceRevokedError, type CompanionApiOptions } from '../api'
 import { reconnectDelayMs } from '../backoff'
 import { handleRevoked } from '../pairing'
@@ -13,6 +14,9 @@ import { showSummaryNotification, syncSummaries, type SummarySyncDeps } from '..
 import { NativeRunner, type NativeRunnerDeps } from '../jobs/native-runner'
 import { startJobPoller, type JobPollerDeps } from '../jobs/poller'
 import { nodeSpawn, type SpawnLike } from '../jobs/whisper'
+import type { DockerLike } from '../local/docker'
+import { resumeLocalRuns } from '../local/resume'
+import { localAfter } from '../local/run'
 import type { ShellPort } from './ports'
 
 /** Something that runs until it is stopped. The runner's `stop` waits for its job to let go. */
@@ -20,13 +24,16 @@ interface Stoppable {
   stop(): void | Promise<void>
 }
 
+/** What the loops use of the native runner. */
+type NativeRunnerLike = Stoppable & Pick<NativeRunner, 'busy' | 'offer' | 'pause' | 'resume'>
+
 /** The loops and helpers this module wires. Tests replace them with fakes; the app uses the real ones. */
 export interface LoopImpl {
   makeApi(o: CompanionApiOptions): CompanionApi
   startNtfy(d: NtfySubscriberDeps): Stoppable
   startStream(d: CommandStreamDeps): Stoppable
   startPoller(d: JobPollerDeps): Stoppable & { trigger(): void }
-  makeRunner(d: NativeRunnerDeps): Stoppable & { busy: boolean; offer: NativeRunner['offer'] }
+  makeRunner(d: NativeRunnerDeps): NativeRunnerLike
   sync(d: SummarySyncDeps): Promise<string[]>
 }
 
@@ -55,6 +62,18 @@ export interface LoopsDeps {
   /** Reports a crash or a failure. Never gets a token or a transcript. Default: `console.error`. */
   onError?(error: Error): void
   spawn?: SpawnLike
+  /**
+   * Local runs (plan 08). When set, the first poll after a start finishes the local meetings a restart cut off
+   * (`resumeLocalRuns`). Nothing of this runs before the PC is paired.
+   */
+  local?: {
+    docker: DockerLike
+    /** The data root: the folder that holds `occurrences/`. */
+    dataDir: string
+    /** Wait between tries of a failed upload request. Default 60000. */
+    retryMs?: number
+    chunkBytes?: number
+  }
   impl?: Partial<LoopImpl>
   /** Test seam: the wait before restarting a loop that crashed on start, by attempt. Default `reconnectDelayMs`. */
   restartDelayMs?: (attempt: number) => number
@@ -74,7 +93,11 @@ export class Loops {
   private api: CompanionApi | null = null
   private ntfy: Stoppable | null = null
   private stream: Stoppable | null = null
-  private runner: (Stoppable & { busy: boolean; offer: NativeRunner['offer'] }) | null = null
+  private runner: NativeRunnerLike | null = null
+  /** Aborted when the loops stop (quit or unpair): an upload in progress ends and its files stay. */
+  private halt = new AbortController()
+  private resumed = false
+  private resuming: Promise<void> | null = null
   private poller: (Stoppable & { trigger(): void }) | null = null
   private readonly restarts = new Map<LoopName, ReturnType<typeof setTimeout>>()
   private readonly attempts = new Map<LoopName, number>()
@@ -100,6 +123,9 @@ export class Loops {
     this.running = true
     this.revokedOnce = false
     this.stopping = null
+    this.halt = new AbortController()
+    this.resumed = false
+    this.resuming = null
     this.api = this.impl.makeApi({
       serverUrl: this.d.settings.serverUrl,
       token: () => this.d.secrets.get('deviceToken'),
@@ -125,6 +151,7 @@ export class Loops {
   /** Stops every loop in reverse order and waits until the runner has let go of its job and the PC may sleep. */
   stop(): Promise<void> {
     this.running = false
+    this.halt.abort()
     this.stopping ??= this.stopAll()
     return this.stopping
   }
@@ -237,12 +264,51 @@ export class Loops {
       if (runner === null) throw new Error('the native runner is not ready')
       this.poller = this.impl.startPoller({
         api,
-        onJobs: (jobs) => runner.offer(jobs),
+        onJobs: (jobs) => {
+          this.resumeLocal(api, runner, jobs)
+          runner.offer(jobs)
+        },
         busy: () => runner.busy,
         onError,
         onRevoked: () => this.revoked()
       })
     }
+  }
+
+  /**
+   * Once per start, with the first jobs list that works: finishes the local meetings a restart cut off. It runs beside
+   * the poller, so a long upload never blocks the job list. It takes the native runner first (ASR-02).
+   */
+  private resumeLocal(api: CompanionApi, runner: NativeRunnerLike, jobs: CompanionJob[]): void {
+    const local = this.d.local
+    if (local === undefined || this.resumed || this.resuming !== null || !this.running) return
+    const signal = this.halt.signal
+    const after = localAfter({
+      api,
+      docker: local.docker,
+      settings: () => this.d.settings,
+      spawn: this.d.spawn ?? nodeSpawn,
+      retryMs: local.retryMs,
+      chunkBytes: local.chunkBytes,
+      signal
+    })
+    this.resuming = resumeLocalRuns({
+      jobs,
+      docker: local.docker,
+      dataDir: local.dataDir,
+      after,
+      keepAwake: this.d.keepAwake,
+      native: runner,
+      signal,
+      onError: (_job, e) => this.fail('a local meeting could not be sent', e)
+    })
+      .then((done) => {
+        this.resumed = done
+      })
+      .catch((e: unknown) => this.fail('the local meetings could not be resumed', e))
+      .finally(() => {
+        this.resuming = null
+      })
   }
 
   /** Shows a ntfy message. A click or button opens its link only if it is still an https link. */
@@ -279,5 +345,6 @@ export class Loops {
       }
     }
     await runnerDone
+    await this.resuming
   }
 }

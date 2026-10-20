@@ -1,5 +1,4 @@
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { CompanionJob, ControlCommand, LocalSecrets, NtfyConfig } from '@tm/core'
 import { CompanionApiError, type CompanionApi } from '../api'
 import { writeFileAtomic } from '../atomic'
@@ -18,6 +17,7 @@ import {
   workerArgs,
   workerName
 } from './containers'
+import { finishLocalRun, localReporter, type AfterApi, type AfterDeps } from './after'
 import type { DockerLike } from './docker'
 import { removeAfterFirstHeartbeat, writeEphemeral, type Ephemeral } from './ephemeral'
 import { preflight } from './preflight'
@@ -48,6 +48,26 @@ const HOST_PREFIX = 'tm-net-'
 
 export type LocalOutcome = 'ended' | 'crashed'
 
+/** What `localAfter` needs; `report` is made per job. */
+export type LocalAfterDeps = Omit<AfterDeps, 'report' | 'api'> & { api: AfterApi }
+
+/**
+ * The runner's `after` hook: send the finished run to the website, transcribe it when it is a native meeting, and
+ * delete the local copy (`finishLocalRun`). `dataDir` is the data root (the folder that holds `occurrences/`). A stop
+ * through `signal` (the app is quitting or unpaired) ends it quietly and leaves the files for the next start.
+ */
+export function localAfter(d: LocalAfterDeps): LocalRunnerDeps['after'] {
+  return async (job, dataDir, outcome) => {
+    if (job.kind !== 'local_run') throw new Error('Not a local run job')
+    try {
+      await finishLocalRun({ ...d, report: localReporter(d.api, job, dataDir) }, job, dataDir, outcome)
+    } catch (e) {
+      if (d.signal?.aborted && e instanceof DOMException && e.name === 'AbortError') return
+      throw e
+    }
+  }
+}
+
 /** What a local run asks of the website. `CompanionApi` gains `secrets` with the local-run endpoints (08 Task 3). */
 export type LocalRunApi = Pick<CompanionApi, 'claim' | 'preflight' | 'fail'> & {
   secrets(jobId: string): Promise<LocalSecrets>
@@ -64,6 +84,7 @@ export interface LocalRunnerDeps {
   ntfy: () => Promise<NtfyConfig>
   /** Starts the loopback relay for one run (`startRelay` over `serverHeartbeatApi`). */
   relay: (o: { jobId: string; occurrenceId: string }) => Promise<Relay>
+  /** Gets the data root (`paths.data`); the run's files are in `<dataDir>/occurrences/<occurrenceId>`. */
   after: (job: CompanionJob, dataDir: string, outcome: LocalOutcome) => Promise<void>
   /** Retry wait while Docker is not ready. Default 30000. */
   preflightRetryMs?: number
@@ -284,8 +305,7 @@ export class LocalRunner {
     if (relay !== null) await step(() => relay.close())
     await step(() => a.eph?.remove())
     if (st.completed) {
-      const dataDir = join(this.d.paths.data, 'occurrences', job.payload.occurrenceId)
-      await step(() => this.d.after(job, dataDir, st.lastCode === 0 ? 'ended' : 'crashed'))
+      await step(() => this.d.after(job, this.d.paths.data, st.lastCode === 0 ? 'ended' : 'crashed'))
     }
     if (failure !== null) {
       await step(() => api.fail(job.id, 'The PC could not run the meeting'))

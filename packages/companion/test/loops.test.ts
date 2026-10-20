@@ -83,6 +83,8 @@ async function rig(opts: { paired?: boolean; ntfyThrows?: number; runnerStopMs?:
       return {
         busy: true,
         offer: (jobs) => void offered.push(jobs),
+        pause: async () => {},
+        resume: () => {},
         stop: async () => {
           log.push('runner.stop')
           await sleep(opts.runnerStopMs ?? 0)

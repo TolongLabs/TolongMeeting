@@ -1,7 +1,9 @@
 import { app, Notification, powerSaveBlocker, safeStorage, session, shell } from 'electron'
 import { APP_USER_MODEL_ID } from '../app-id'
 import { KeepAwake } from '../keep-awake'
-import { jobsDir, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
+import { dockerCli } from '../local/docker'
+import { nodeSpawn } from '../jobs/whisper'
+import { jobsDir, localDataDir, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
 import { SecretStore } from '../secrets'
 import { loadSettings } from '../settings'
 import { StateStore } from '../state'
@@ -76,6 +78,8 @@ async function main(): Promise<void> {
     keepAwake: new KeepAwake(powerSaveBlocker),
     shell: ports.shell,
     jobsDir: jobsDir(paths),
+    // On each start, finish the local meetings a restart cut off (after pairing only, inside `loops.start`).
+    local: { docker: dockerCli(nodeSpawn), dataDir: localDataDir(paths) },
     openPairing: () => console.error('This PC was unpaired. Pair it again (the pairing window is not built yet).'),
     openSettings: () => console.error('Set the whisper folder in settings (the settings window is not built yet).')
   })

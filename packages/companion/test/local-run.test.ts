@@ -589,7 +589,7 @@ describe('a local run', () => {
       'resume native'
     ])
     expect(w.ephGone).toEqual([true])
-    expect(w.afterCalls).toEqual([{ dataDir: join(w.paths.data, 'occurrences', OCC), outcome: 'ended' }])
+    expect(w.afterCalls).toEqual([{ dataDir: w.paths.data, outcome: 'ended' }])
     expect(w.jobsSeen[0]).toMatchObject({
       attempt: 1,
       ai: { apiKey: 'sk-secret-ai-key' },

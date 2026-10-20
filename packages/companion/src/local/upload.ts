@@ -150,7 +150,8 @@ export type UploadApi = Pick<CompanionApi, 'uploadOffset' | 'uploadChunk'>
 /**
  * Sends one file in chunks of `UPLOAD_CHUNK_MAX_BYTES`, starting at the offset the website reports. A chunk is sent
  * only at that offset: when the website answers 409 with a different offset this continues from it (a few times),
- * and an offset past the end of the local file stops with an `UploadError`. A call after a crash or a lost
+ * and an offset past the end of the local file stops with an `UploadError`. An aborted `signal` stops it between chunks
+ * with an `AbortError`. A call after a crash or a lost
  * connection therefore resumes; it does not start again. An empty file sends nothing.
  */
 export async function uploadFile(
@@ -158,7 +159,8 @@ export async function uploadFile(
   jobId: string,
   occDir: string,
   relPath: string,
-  chunkBytes: number = UPLOAD_CHUNK_MAX_BYTES
+  chunkBytes: number = UPLOAD_CHUNK_MAX_BYTES,
+  signal?: AbortSignal
 ): Promise<void> {
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > UPLOAD_CHUNK_MAX_BYTES) {
     throw new RangeError('bad chunk size')
@@ -169,6 +171,7 @@ export async function uploadFile(
     if (offset > size) throw new UploadError('server_ahead', 'The website holds more of a file than this PC has')
     let conflicts = 0
     while (offset < size) {
+      signal?.throwIfAborted()
       if ((await handle.stat()).size !== size)
         throw new UploadError('changed', 'A file changed while it was being uploaded')
       const bytes = await readExactly(handle, offset, Math.min(chunkBytes, size - offset))

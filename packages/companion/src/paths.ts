@@ -32,3 +32,5 @@ export const stateFile = (p: CompanionPaths): string => join(p.userData, 'state.
 export const secretsFile = (p: CompanionPaths): string => join(p.userData, 'secrets.json')
 /** Scratch space for job files. */
 export const jobsDir = (p: CompanionPaths): string => join(p.localData, 'jobs')
+/** Where local runs keep their files: `<dataDir>/occurrences/<occurrenceId>` (`localPaths(...).data` on Windows). */
+export const localDataDir = (p: CompanionPaths): string => join(p.localData, 'data')

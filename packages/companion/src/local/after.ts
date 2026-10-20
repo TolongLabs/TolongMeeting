@@ -26,7 +26,7 @@ export interface AfterDeps {
   report(state: 'uploading' | 'transcribing'): Promise<void>
   /** Wait between tries of a failed request. Default 60000. */
   retryMs?: number
-  /** Stops the waiting (the app is quitting). The data stays for the next start. */
+  /** Stops the work (the app is quitting or unpaired): the next step throws an `AbortError`. The data stays for the next start. */
   signal?: AbortSignal
   /** Chunk size for uploads. Default `UPLOAD_CHUNK_MAX_BYTES`. */
   chunkBytes?: number
@@ -179,6 +179,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /** Runs `step` until it works. A failure that may pass waits `retryMs` and goes again; any other failure is thrown. */
 async function persist<T>(d: AfterDeps, step: () => Promise<T>): Promise<T> {
   for (;;) {
+    d.signal?.throwIfAborted()
     try {
       return await step()
     } catch (e) {
@@ -296,7 +297,7 @@ async function transcribeOnce(d: AfterDeps, job: LocalJob, dataDir: string, occD
 }
 
 async function sendFiles(d: AfterDeps, job: LocalJob, occDir: string, files: string[]): Promise<void> {
-  for (const rel of files) await persist(d, () => uploadFile(d.api, job.id, occDir, rel, d.chunkBytes))
+  for (const rel of files) await persist(d, () => uploadFile(d.api, job.id, occDir, rel, d.chunkBytes, d.signal))
 }
 
 /**
