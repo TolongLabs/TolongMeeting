@@ -23,5 +23,6 @@
   "SyncDisabled": true,
   "MetricsReportingEnabled": false,
   "PromotionalTabsEnabled": false,
-  "ExternalProtocolDialogShowAlwaysOpenCheckbox": false
+  "ExternalProtocolDialogShowAlwaysOpenCheckbox": false,
+  "CommandLineFlagSecurityWarningsEnabled": false
 }
