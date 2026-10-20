@@ -273,7 +273,7 @@ git commit -m "feat(worker): normalise meet links"
   - `joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_000): Promise<JoinResult>` in `packages/worker/src/adapters/meet/join.ts`. It starts on the page the caller has already opened at the normalised link (01a's run sequence) and never navigates itself.
   - Test harness in `packages/worker/test/meet/serve.ts`: `type MeetScene`, `interface MeetFixtureConfig`, `serveMeet(page: Page, cfg: MeetFixtureConfig): Promise<void>` (replaces earlier routes), `setMeetScene(page: Page, scene: MeetScene, patch?: Partial<MeetFixtureConfig>): Promise<void>`, `meetClicks(page: Page): Promise<string[]>`. Later tasks add fields and scenes.
 
-- [ ] **Step 1: Build the fixtures and harness**
+- [x] **Step 1: Build the fixtures and harness**
 
 `app.html` imitates the Meet web client as one page whose scene comes from `window.__cfg` and switches through `window.__scene(scene, patch)`, using the attribute values in `meet.json`. It must contain:
 
@@ -289,7 +289,7 @@ git commit -m "feat(worker): normalise meet links"
 
 `signin.html` shows a Google sign-in form (`input[type='email']`). `serveMeet` routes `https://meet.google.com/**` to `app.html` with `<script>window.__cfg = ...</script>` prepended, and `https://accounts.google.com/**` to `signin.html`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -395,18 +395,19 @@ test('an invalid code fails; an unrecognised page times out', async ({ page }) =
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/join.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/join`.
 
-- [ ] **Step 4: Implement `meetState`, `meetTextSignal` and `joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
+- [x] **Step 4: Implement `meetState`, `meetTextSignal` and `joinMeet(page: Page, sel: MeetSelectors, timeoutMs = 90_000): Promise<JoinResult>`**
 
 Every 500 ms until `timeoutMs`, act on the first rule that matches (text checks through `meetTextSignal`):
 
 1.  Page host in `signInHosts`: `{ kind: 'signin_required', host }`.
 1.  `texts.blocked`: `{ kind: 'failed', reason: 'meet_blocked' }`.
 1.  `texts.invalidLink`: `{ kind: 'failed', reason: 'invalid_link' }`.
+1.  `texts.ended` or `texts.endScreen`: `{ kind: 'failed', reason: 'meeting_ended' }` (a rejoin after the call ended or the member left; tested with the `ended` and `left` scenes).
 1.  A visible button whose text matches `texts.permissionContinue`: click it.
 1.  `prejoinNameInput` visible: `{ kind: 'signin_required', host: 'meet.google.com' }`, without typing.
 1.  A visible button whose whole text equals an entry of `joinButtons` (taking the earliest entry present): click `micToggle` if `micOff` doesn't match, then `cameraToggle` if `cameraOff` doesn't match; re-read both and return `{ kind: 'failed', reason: 'device_toggle_stuck' }` if either is still on; then click that join button once.
@@ -415,12 +416,12 @@ Every 500 ms until `timeoutMs`, act on the first rule that matches (text checks 
 
 At the deadline return `{ kind: 'failed', reason: 'prejoin_timeout' }`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/join.spec.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/page-state.ts packages/worker/src/adapters/meet/text.ts packages/worker/src/adapters/meet/join.ts
