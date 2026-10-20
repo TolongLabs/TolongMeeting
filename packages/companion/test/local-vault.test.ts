@@ -45,7 +45,7 @@ function fakeDocker(init: {
     imagePresent: async () => true,
     pull: async () => true,
     run: async (args) => {
-      checkRunArgs(args)
+      checkRunArgs(args, 'ghcr.io/tl/', [dir])
       log.runs.push(args)
       const mount = args.find((a) => a.endsWith(':/run/tm:ro'))!
       const folder = mount.slice(0, -':/run/tm:ro'.length)

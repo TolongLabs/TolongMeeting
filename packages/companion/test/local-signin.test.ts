@@ -43,7 +43,7 @@ describe('signinArgs', () => {
   const args = signinArgs({ identityId: ID, image: REF, mounts })
 
   test('passes the same run-argument check as every other PC container', () => {
-    checkRunArgs(args)
+    checkRunArgs(args, 'ghcr.io/tl/', ['/pc'])
     expect(flagValues(args, '--cap-drop')).toEqual(['ALL'])
     expect(flagValues(args, '--security-opt')).toEqual(['no-new-privileges'])
     expect(flagValues(args, '--pids-limit')).toEqual(['2048'])
@@ -235,7 +235,7 @@ async function rig(opts: Opts = {}) {
     imagePresent: async () => true,
     pull: async () => true,
     async run(args) {
-      checkRunArgs(args)
+      checkRunArgs(args, 'ghcr.io/tl/', [tmp, '/pc'])
       argv.push(args)
       const name = nameOf(args)
       log.push(`run ${name}`)

@@ -108,7 +108,7 @@ describe('container argument lists', () => {
   const holder = holderArgs({ scope: OCC, identityId: ID, image: REF, allowTcp: ['host.docker.internal:41234'] })
 
   test('the worker passes paths, never secrets, takes the --job mode and joins the holder', () => {
-    checkRunArgs(worker)
+    checkRunArgs(worker, 'ghcr.io/tl/', ['/pc'])
     expect(worker).toEqual(
       expect.arrayContaining([
         '--name',
@@ -153,7 +153,7 @@ describe('container argument lists', () => {
   })
 
   test('the holder owns the rules, the host name and noVNC on 127.0.0.1 only', () => {
-    checkRunArgs(holder)
+    checkRunArgs(holder, 'ghcr.io/tl/', ['/pc'])
     expect(holder).toEqual(
       expect.arrayContaining([
         '--name',
@@ -341,7 +341,7 @@ function build(opts: Opts = {}) {
     imagePresent: async () => true,
     pull: async () => true,
     async run(args) {
-      checkRunArgs(args) // the real allow-list judges every list
+      checkRunArgs(args, 'ghcr.io/tl/', [tmp, '/pc']) // the real allow-list judges every list
       argv.push(args)
       const name = nameOf(args)
       log.push(`run ${name}`)

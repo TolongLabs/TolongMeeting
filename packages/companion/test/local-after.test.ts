@@ -11,16 +11,18 @@ import {
   flacArgs,
   IncompleteUploadError,
   localReporter,
+  occurrenceDir,
   resumeOutcome,
   type AfterDeps,
   type LocalJob
 } from '../src/local/after'
-import { checkRunArgs, DockerError, type DockerLike } from '../src/local/docker'
+import { checkRunArgs, DockerError, UnsafeDockerInput, type DockerLike } from '../src/local/docker'
 import type { SpawnLike } from '../src/jobs/whisper'
 import { defaultSettings } from '../src/settings'
 import { fakeServer, type FakeServer } from './fake-upload-server'
 
 const REF = 'ghcr.io/tl/tolongmeeting-worker:1.0.0'
+const PREFIX = 'ghcr.io/tl/'
 const OCC = '11111111-1111-4111-8111-111111111111'
 
 const roots: string[] = []
@@ -123,26 +125,40 @@ beforeAll(async () => {
 })
 
 describe('flacArgs', () => {
-  const o = { image: REF, dataDir: '/home/u/data', occurrenceId: 'o1' }
+  const o = { image: REF, imagePrefix: PREFIX, dataDir: '/home/u/data', occurrenceId: 'o1' }
+  const occ = occurrenceDir('/home/u/data', 'o1')
 
   test('is a docker run that the app allows: offline, no capabilities, ffmpeg as the entrypoint', () => {
     const args = flacArgs(o)
-    expect(() => checkRunArgs(args)).not.toThrow()
-    expect(args.slice(0, 2)).toEqual(['run', '--rm'])
+    expect(() => checkRunArgs(args, PREFIX, ['/home/u/data'])).not.toThrow()
+    expect(args.slice(0, 2)).toEqual(['run', '-d'])
+    expect(args).not.toContain('--rm')
     expect(args).toContain('none')
     expect(args.slice(args.indexOf('--entrypoint'), args.indexOf('--entrypoint') + 3)).toEqual([
       '--entrypoint',
       'ffmpeg',
       REF
     ])
-    expect(args[args.indexOf('-v') + 1]).toBe('/home/u/data:/tm/data')
-    expect(args.at(-1)).toBe('/tm/data/occurrences/o1/audio.flac')
+    expect(args.at(-1)).toBe('/tm/data/audio.flac')
     expect(args).not.toContain('-y')
   })
 
+  test('mounts only that occurrence folder, never the data root', () => {
+    const args = flacArgs(o)
+    expect(args.filter((a, i) => args[i - 1] === '-v')).toEqual([`${occ}:/tm/data`])
+    expect(args.join(' ')).not.toContain('/home/u/data:')
+    expect(() => checkRunArgs(args, PREFIX, [occ])).not.toThrow()
+  })
+
+  test('refuses an image outside the prefix, on a / boundary (R15)', () => {
+    expect(() => flacArgs({ ...o, image: 'ghcr.io/tl-evil/worker:1' })).toThrow(UnsafeDockerInput)
+    expect(() => flacArgs({ ...o, image: 'ghcr.io/evil/worker:1' })).toThrow(UnsafeDockerInput)
+    expect(() => flacArgs({ ...o, imagePrefix: 'ghcr.io/tl' })).not.toThrow()
+  })
+
   test('uses the same ffmpeg flags as the website (pipeline flacArgs)', () => {
-    const input = '/tm/data/occurrences/o1/recording/meeting.mkv'
-    const output = '/tm/data/occurrences/o1/audio.flac'
+    const input = '/tm/data/recording/meeting.mkv'
+    const output = '/tm/data/audio.flac'
     const mine = ffmpegFlacArgs(input, output)
     const theirs = serverFlacArgs(input, output)
     // The website's `tool` puts these three in front of every ffmpeg call; the rest is `flacArgs` itself.
@@ -168,6 +184,8 @@ interface Rig {
   dataDir: string
   occ: string
   log: string[]
+  /** The docker calls the cut made, in order. */
+  calls: string[]
   whisperRuns: () => number
   dockerRuns: () => number
 }
@@ -181,7 +199,8 @@ async function rig(
   o: {
     files?: [string, string | Buffer][]
     whisper?: 'ok' | 'fail'
-    docker?: 'ok' | 'fail'
+    docker?: 'ok' | 'fail' | 'hang'
+    flacTimeoutMs?: number
     retryMs?: number
     signal?: AbortSignal
     chunkBytes?: number
@@ -205,30 +224,32 @@ async function rig(
   settings.whisper.cwd = dataDir
   settings.whisper.command = 'fake-whisper {audio} {model} {outDir}'
 
+  const calls: string[] = []
+  let cut: Promise<number> = Promise.resolve(0)
   const run = async (args: string[]): Promise<string> => {
-    checkRunArgs(args)
+    checkRunArgs(args, PREFIX, [dataDir])
     docker++
+    calls.push('run')
     server.log.push('docker flac')
     if (o.docker === 'fail') throw new DockerError('run', 'exit', 1)
-    // Run the real ffmpeg on the host files the container would see.
+    // Run the real ffmpeg on the host files the container would see: the occurrence folder is /tm/data.
     const image = args.indexOf(REF)
-    const map = (a: string) => a.replace('/tm/data/', `${dataDir}/`)
-    const code = await ffmpeg(
+    const map = (a: string) => a.replace('/tm/data/', `${occ}/`)
+    cut = ffmpeg(
       args
         .slice(image + 1)
         .slice(4)
         .map(map)
     )
-    if (code !== 0) throw new DockerError('run', 'exit', code)
-    return ''
+    return 'container-id'
   }
   const dockerFake: DockerLike = {
     run,
-    rm: async () => {},
+    rm: async () => void calls.push('rm'),
     info: async () => null,
     imagePresent: async () => true,
     pull: async () => true,
-    wait: async () => 0,
+    wait: async () => (o.docker === 'hang' ? new Promise<number>(() => {}) : cut),
     logs: async () => '',
     stop: async () => {},
     volumeRm: async () => {},
@@ -256,6 +277,8 @@ async function rig(
   const d: AfterDeps = {
     api,
     docker: dockerFake,
+    imagePrefix: PREFIX,
+    flacTimeoutMs: o.flacTimeoutMs,
     settings: () => settings,
     spawn,
     report: localReporter(api, localJob('native'), dataDir),
@@ -263,7 +286,7 @@ async function rig(
     signal: o.signal,
     chunkBytes: o.chunkBytes
   }
-  return { d, server, dataDir, occ, log: server.log, whisperRuns: () => whisper, dockerRuns: () => docker }
+  return { d, server, dataDir, occ, log: server.log, calls, whisperRuns: () => whisper, dockerRuns: () => docker }
 }
 
 describe('finishLocalRun', () => {
@@ -371,6 +394,28 @@ describe('finishLocalRun', () => {
     expect(dockerRuns()).toBe(2)
     expect(log.at(-1)).toBe('fail native_transcription_failed')
     expect(existsSync(occ)).toBe(false)
+  })
+
+  test('the cut runs detached and is waited for, then the container is removed', async () => {
+    const { d, dataDir, calls, server } = await rig()
+    await finishLocalRun(d, localJob('native'), dataDir, 'ended')
+    expect(calls).toEqual(['rm', 'run', 'rm'])
+    expect(server.files.get('transcript/native/audio.json')).toBeDefined()
+  })
+
+  test('a cut that outlives its time limit is removed and fails the job, not left running', async () => {
+    const { d, dataDir, calls, log } = await rig({ docker: 'hang', flacTimeoutMs: 30 })
+    await finishLocalRun(d, localJob('native'), dataDir, 'ended')
+    expect(calls).toEqual(['rm', 'run', 'rm', 'rm', 'run', 'rm'])
+    expect(log.at(-1)).toBe('fail native_transcription_failed')
+  })
+
+  test('stopping the app during the cut removes the container and throws an AbortError', async () => {
+    const stop = new AbortController()
+    const { d, dataDir, calls } = await rig({ docker: 'hang', signal: stop.signal })
+    setTimeout(() => stop.abort(), 30)
+    await expect(finishLocalRun(d, localJob('native'), dataDir, 'ended')).rejects.toMatchObject({ name: 'AbortError' })
+    expect(calls).toEqual(['rm', 'run', 'rm'])
   })
 
   test('a recording without sound fails the cut and the job', async () => {

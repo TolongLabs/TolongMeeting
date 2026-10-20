@@ -70,6 +70,8 @@ export interface LoopsDeps {
     docker: DockerLike
     /** The data root: the folder that holds `occurrences/`. */
     dataDir: string
+    /** Only a worker image under this repository cuts the audio (the app's `TM_WORKER_IMAGE_PREFIX`). */
+    imagePrefix: string
     /** Wait between tries of a failed upload request. Default 60000. */
     retryMs?: number
     chunkBytes?: number
@@ -286,6 +288,7 @@ export class Loops {
     const after = localAfter({
       api,
       docker: local.docker,
+      imagePrefix: local.imagePrefix,
       settings: () => this.d.settings,
       spawn: this.d.spawn ?? nodeSpawn,
       retryMs: local.retryMs,

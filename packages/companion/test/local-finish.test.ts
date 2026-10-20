@@ -118,7 +118,7 @@ async function world(): Promise<World> {
     imagePresent: async () => true,
     pull: async () => true,
     run: async (args) => {
-      checkRunArgs(args)
+      checkRunArgs(args, 'ghcr.io/tl/', [base])
       return call('run', '')
     },
     wait: async () => 0,

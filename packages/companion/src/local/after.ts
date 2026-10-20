@@ -5,7 +5,7 @@ import { CompanionApiError, type CompanionApi } from '../api'
 import { isMissing, writeFileAtomic } from '../atomic'
 import { collectOutputs, buildWhisperArgv, runWhisper, whisperTimeoutMs, type SpawnLike } from '../jobs/whisper'
 import type { Settings } from '../settings'
-import { DockerError, type DockerLike } from './docker'
+import { DockerError, imageRefOk, UnsafeDockerInput, type DockerLike } from './docker'
 import { uploadFile, uploadSet, type UploadApi } from './upload'
 
 // After a local meeting: send what the run wrote to the website, cut the audio and transcribe it on this PC when the
@@ -21,6 +21,8 @@ export type AfterApi = UploadApi & Pick<CompanionApi, 'complete' | 'fail' | 'hea
 export interface AfterDeps {
   api: AfterApi
   docker: DockerLike
+  /** Only a worker image under this repository cuts the audio (the app's `TM_WORKER_IMAGE_PREFIX`). */
+  imagePrefix: string
   settings: () => Settings
   spawn: SpawnLike
   report(state: 'uploading' | 'transcribing'): Promise<void>
@@ -30,6 +32,8 @@ export interface AfterDeps {
   signal?: AbortSignal
   /** Chunk size for uploads. Default `UPLOAD_CHUNK_MAX_BYTES`. */
   chunkBytes?: number
+  /** How long the FLAC cut may take, in ms. Default `flacTimeoutMs(meeting length)`. */
+  flacTimeoutMs?: number
 }
 
 /** The website still lacks files after `complete`. The local data stays. */
@@ -79,14 +83,16 @@ export function ffmpegFlacArgs(input: string, output: string): string[] {
 export const flacContainerName = (occurrenceId: string): string => `tm-flac-${occurrenceId}`
 
 /**
- * The `docker run` arguments that cut the FLAC with the worker image, offline: no network, no capabilities, the data
- * folder as the only mount, `ffmpeg` in place of the image's entrypoint. They pass `checkRunArgs` as they are.
+ * The `docker run` arguments that cut the FLAC with the worker image, offline: no network, no capabilities, only this
+ * occurrence's own folder mounted (as `/tm/data`), `ffmpeg` in place of the image's entrypoint. Detached: the caller
+ * waits for it with `docker.wait`, for as long as the recording needs. They pass `checkRunArgs` as they are. An image
+ * outside `imagePrefix` is refused here, before any list exists.
  */
-export function flacArgs(o: { image: string; dataDir: string; occurrenceId: string }): string[] {
-  const occ = `/tm/data/occurrences/${o.occurrenceId}`
+export function flacArgs(o: { image: string; imagePrefix: string; dataDir: string; occurrenceId: string }): string[] {
+  if (!imageRefOk(o.image, o.imagePrefix)) throw new UnsafeDockerInput('an image reference')
   return [
     'run',
-    '--rm',
+    '-d',
     '--name',
     flacContainerName(o.occurrenceId),
     '--network',
@@ -102,12 +108,17 @@ export function flacArgs(o: { image: string; dataDir: string; occurrenceId: stri
     '--pull',
     'never',
     '-v',
-    `${o.dataDir}:/tm/data`,
+    `${occurrenceDir(o.dataDir, o.occurrenceId)}:/tm/data`,
     '--entrypoint',
     'ffmpeg',
     o.image,
-    ...ffmpegFlacArgs(`${occ}/recording/meeting.mkv`, `${occ}/audio.flac`)
+    ...ffmpegFlacArgs('/tm/data/recording/meeting.mkv', '/tm/data/audio.flac')
   ]
+}
+
+/** How long the FLAC cut may take: the audio encodes far faster than it plays, so the meeting's length plus 10 minutes, at most 6 hours. */
+export function flacTimeoutMs(durationSec: number): number {
+  return Math.min(6 * 3_600_000, 600_000 + durationSec * 1000)
 }
 
 /** `<dataDir>/occurrences/<occurrenceId>`. */
@@ -246,6 +257,47 @@ function durationSec(job: LocalJob): number {
 }
 
 /**
+ * Cuts the FLAC in a detached container and waits for it up to `flacTimeoutMs`. True when ffmpeg exited 0. A container
+ * that outlives the limit or the stop signal is removed (`rm --force` kills it) whatever happens.
+ */
+async function cutFlac(d: AfterDeps, job: LocalJob, dataDir: string): Promise<boolean> {
+  const name = flacContainerName(job.payload.occurrenceId)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  try {
+    await d.docker.rm(name)
+    await d.docker.run(
+      flacArgs({
+        image: job.payload.image,
+        imagePrefix: d.imagePrefix,
+        dataDir,
+        occurrenceId: job.payload.occurrenceId
+      })
+    )
+    const exited = d.docker.wait(name)
+    exited.catch(() => {}) // a wait that fails after the race is over is not news
+    const limit = new Promise<'timeout'>(
+      (resolve) => (timer = setTimeout(() => resolve('timeout'), d.flacTimeoutMs ?? flacTimeoutMs(durationSec(job))))
+    )
+    const stopped = new Promise<'stopped'>((resolve) => {
+      onAbort = () => resolve('stopped')
+      if (d.signal?.aborted) onAbort()
+      else d.signal?.addEventListener('abort', onAbort, { once: true })
+    })
+    const result = await Promise.race([exited, limit, stopped])
+    if (result === 'stopped') throw new DOMException('The audio cut was stopped', 'AbortError')
+    return result === 0
+  } catch (e) {
+    if (e instanceof DockerError) return false
+    throw e
+  } finally {
+    clearTimeout(timer)
+    if (onAbort) d.signal?.removeEventListener('abort', onAbort)
+    await d.docker.rm(name)
+  }
+}
+
+/**
  * One try at the native transcript: cut the FLAC in a container, run the member's transcriber, and keep the three
  * outputs in `transcript/native`. Returns false when this try failed in a way another try may fix. The FLAC and the
  * transcriber's scratch folder are removed whatever happens.
@@ -260,14 +312,7 @@ async function transcribeOnce(d: AfterDeps, job: LocalJob, dataDir: string, occD
     for (const stale of (await readdir(occDir)).filter((n) => n.startsWith('.whisper-'))) {
       await rm(join(occDir, stale), { recursive: true, force: true })
     }
-    await d.docker.rm(flacContainerName(job.payload.occurrenceId))
-    try {
-      await d.docker.run(flacArgs({ image: job.payload.image, dataDir, occurrenceId: job.payload.occurrenceId }))
-    } catch (e) {
-      if (e instanceof DockerError) return false
-      throw e
-    }
-    if (!(await isRegular(flac))) return false
+    if (!(await cutFlac(d, job, dataDir)) || !(await isRegular(flac))) return false
 
     scratch = await mkdtemp(join(occDir, '.whisper-'))
     const argv = buildWhisperArgv(whisper.command, { audio: flac, model: whisper.model, outDir: scratch })

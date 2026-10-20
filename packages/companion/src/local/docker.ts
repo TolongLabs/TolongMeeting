@@ -1,4 +1,5 @@
-import { tmpdir } from 'node:os'
+import { statSync } from 'node:fs'
+import { delimiter, dirname, isAbsolute, join, win32 } from 'node:path'
 import type { SpawnLike } from '../jobs/whisper'
 
 // The only code that starts `docker` on the member's PC. Every call is an argv array through `SpawnLike` (no shell,
@@ -59,14 +60,21 @@ const IMAGE_BY_DIGEST = new RegExp(`^${HOST}/${PATH}@sha256:[0-9a-f]{64}$`)
 const IMAGE_BY_TAG = new RegExp(`^${HOST}/${PATH}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 const IMAGE_MAX = 300
 
+/** The prefix with a `/` at its end, so `ghcr.io/tolonglabs` never matches `ghcr.io/tolonglabs-evil/x`. */
+export function imagePrefixBoundary(prefix: string): string {
+  const bounded = prefix.endsWith('/') ? prefix : `${prefix}/`
+  if (!/^[a-z0-9][a-z0-9._:/-]*\/$/.test(bounded)) throw new TypeError('The image prefix is not a repository path')
+  return bounded
+}
+
 /**
  * `registry/name@sha256:<64 hex>` or `registry/name:<exact tag>`, nothing else: the registry is explicit (a dot, a port
  * or `localhost`), and the text starts with a letter or digit, so it can never be read as a flag. With `prefix`, the
- * reference must also start with it (the repository the app was built to trust).
+ * reference must also start with it, on a `/` boundary (the repository the app was built to trust).
  */
 export function imageRefOk(ref: string, prefix?: string): boolean {
   if (ref.length > IMAGE_MAX || !(IMAGE_BY_DIGEST.test(ref) || IMAGE_BY_TAG.test(ref))) return false
-  return prefix === undefined || ref.startsWith(prefix)
+  return prefix === undefined || ref.startsWith(imagePrefixBoundary(prefix))
 }
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -101,15 +109,36 @@ function size(value: string, max: number, what: string): void {
   if (!m || Number(m[1]) * BYTES[m[2] as 'm' | 'g'] > max) throw new UnsafeDockerInput(what)
 }
 
-function hostPathOk(src: string): boolean {
-  const control = /[\p{Cc},"*?<>|]/u.test(src)
-  const windows = /^[A-Za-z]:\\[^:]+$/.test(src)
-  const posix = /^\/[^:]+$/.test(src)
-  if (control || !(windows || posix)) return false
-  return !src.split(/[\\/]/).some((part) => part === '..' || part === '.') && !/docker\.sock|\.pipe/i.test(src)
+/**
+ * A plain absolute host path in one comparable form: forward slashes, no repeated slashes, lower case (a Windows path
+ * has no case), the drive letter kept. `null` for a UNC or device path (`\\host\share`, `\\?\`, `\\.\pipe`), a relative
+ * path, a `.` or `..` part, a part that Windows would read as another name (a trailing dot or space), a stream (`:`),
+ * a control character or a character docker reads as a mount option.
+ */
+export function normalizeHostPath(src: string): string | null {
+  if (/[\p{Cc},"*?<>|]/u.test(src)) return null
+  const flat = src.replaceAll('\\', '/')
+  if (flat.startsWith('//')) return null
+  const drive = /^([A-Za-z]):(\/.*)$/.exec(flat)
+  const rest = drive ? drive[2]! : flat
+  if (!drive && !flat.startsWith('/')) return null
+  if (rest.includes(':')) return null
+  const parts = rest.split('/').filter((part) => part !== '')
+  if (parts.some((part) => part === '.' || part === '..' || /[. ]$/.test(part))) return null
+  if (/docker\.sock|\.pipe/i.test(flat)) return null
+  return `${drive ? `${drive[1]!.toLowerCase()}:` : ''}/${parts.join('/')}`.toLowerCase()
 }
 
-function volume(value: string): void {
+function normalizedRoots(allowedRoots: readonly string[]): string[] {
+  const roots = allowedRoots.map((root) => normalizeHostPath(root))
+  // A root of `/` or `C:\` would allow every path on the drive.
+  if (roots.length === 0 || roots.some((r) => r === null || /^(?:[a-z]:)?\/$/.test(r))) {
+    throw new TypeError('allowedRoots must be absolute folders below the drive root')
+  }
+  return roots as string[]
+}
+
+function volume(value: string, roots: readonly string[]): void {
   let spec = value
   const readOnly = spec.endsWith(':ro')
   if (readOnly) spec = spec.slice(0, -3)
@@ -117,13 +146,18 @@ function volume(value: string): void {
   const src = spec.slice(0, cut)
   const dest = spec.slice(cut + 1)
   if (cut < 1 || !CONTAINER_PATH.test(dest)) throw new UnsafeDockerInput('a mount')
-  if (!(RESOURCE.test(src) || hostPathOk(src))) throw new UnsafeDockerInput('a mount')
+  if (!RESOURCE.test(src)) {
+    const path = normalizeHostPath(src)
+    if (path === null || !roots.some((root) => path === root || path.startsWith(`${root}/`))) {
+      throw new UnsafeDockerInput('a mount')
+    }
+  }
   if (READ_ONLY_PATHS.has(dest) && !readOnly) throw new UnsafeDockerInput('a writable mount')
 }
 
-type Rule = { value: false } | { value: true; once?: boolean; check: (v: string) => void }
+type Rule = { value: false } | { value: true; once?: boolean; check: (v: string, roots: readonly string[]) => void }
 const flag: Rule = { value: false }
-const rule = (check: (v: string) => void, once = true): Rule => ({ value: true, once, check })
+const rule = (check: Extract<Rule, { value: true }>['check'], once = true): Rule => ({ value: true, once, check })
 const exactly =
   (...allowed: string[]) =>
   (v: string) => {
@@ -145,11 +179,8 @@ const RULES: Record<string, Rule> = {
     }
   }, false),
   '--hostname': rule(matching(/^tm-[A-Za-z0-9_-]{1,20}$/, 'a host name')),
-  '--network': rule((v) => {
-    if (v === 'none') return
-    const joined = v.startsWith('container:') ? v.slice('container:'.length) : null
-    if (joined !== null ? !RESOURCE.test(joined) : !NETWORK.test(v)) throw new UnsafeDockerInput('a network')
-  }),
+  // No network, the app's own network (the holder), or the namespace of a holder `tm-net-*`. Never the default bridge.
+  '--network': rule(matching(/^(?:none|tm-local|container:tm-net-[A-Za-z0-9_-]{1,80})$/, 'a network')),
   '--cap-drop': rule(exactly('ALL'), false),
   '--cap-add': rule(exactly('NET_ADMIN'), false),
   '--security-opt': rule(exactly('no-new-privileges', 'no-new-privileges=true', 'no-new-privileges:true'), false),
@@ -168,7 +199,7 @@ const RULES: Record<string, Rule> = {
   '--entrypoint': rule(matching(/^[a-z][a-z0-9._-]{0,60}$/, 'an entrypoint')),
   '--pull': rule(exactly('never')),
   '-p': rule(matching(/^127\.0\.0\.1::[0-9]{1,5}$/, 'a published port'), false),
-  '-v': rule(volume, false),
+  '-v': rule((v, roots) => volume(v, roots), false),
   '-e': rule((v) => {
     const eq = v.indexOf('=')
     if (eq < 1 || !/^TM_[A-Z0-9_]{1,60}$/.test(v.slice(0, eq)) || v.length - eq > MAX_ENV_VALUE) {
@@ -187,14 +218,24 @@ const ALIASES: Record<string, string> = {
   '-u': '--user'
 }
 
+/** The holder: root with `NET_ADMIN`, running the egress script, on the app's own network. */
+const HOLDER_ENTRYPOINT = 'deny-private.sh'
+/** The FLAC cut: the image's ffmpeg, with no network at all. */
+const FLAC_ENTRYPOINT = 'ffmpeg'
+
 /**
  * Checks a whole `docker run` argument list. Only the flags in `RULES` pass, each with a value of the expected shape;
- * there is no `--privileged`, no `--mount`, no host network or PID namespace, no device, no mount of anything but the
- * app's own paths, and the hardening is required: `--cap-drop ALL`, `--security-opt no-new-privileges`, `--name` and
- * a `--pids-limit`. After the image come the container's own words, which docker never reads as flags. Throws an
- * `UnsafeDockerInput` that names the kind of problem and no value.
+ * there is no `--privileged`, no `--mount`, no host network or PID namespace, no device, and no bind mount outside
+ * `allowedRoots` (the app's own folder, compared without case after `\` and `/` are unified; a UNC or device path
+ * never passes). The image must start with `imagePrefix` on a `/` boundary. The hardening is required: `--cap-drop
+ * ALL`, `--security-opt no-new-privileges`, `--name`, a `--pids-limit`, and a `--network` of `none`, `tm-local` or
+ * `container:tm-net-*`. `--cap-add NET_ADMIN`, root and an entrypoint other than the image's own are allowed only as
+ * the holder (all three, `deny-private.sh`, on `tm-local`), except `--entrypoint ffmpeg` on `--network none`. A run
+ * that joins a holder's network adds no capability. After the image come the container's own words, which docker never
+ * reads as flags. Throws an `UnsafeDockerInput` that names the kind of problem and no value.
  */
-export function checkRunArgs(args: string[], imagePrefix?: string): void {
+export function checkRunArgs(args: string[], imagePrefix: string, allowedRoots: readonly string[]): void {
+  const roots = normalizedRoots(allowedRoots)
   if (args[0] !== 'run') throw new UnsafeDockerInput('anything but a run command')
   if (args.some((a) => typeof a !== 'string' || a.includes('\0'))) throw new UnsafeDockerInput('a bad argument')
   const seen = new Map<string, string[]>()
@@ -214,7 +255,7 @@ export function checkRunArgs(args: string[], imagePrefix?: string): void {
     const value = eq === -1 ? args[++i] : token.slice(eq + 1)
     if (value === undefined) throw new UnsafeDockerInput('a flag without a value')
     if (r.once && seen.has(name)) throw new UnsafeDockerInput('a repeated flag')
-    r.check(value)
+    r.check(value, roots)
     seen.set(name, [...(seen.get(name) ?? []), value])
   }
   const image = args[i]
@@ -230,6 +271,25 @@ export function checkRunArgs(args: string[], imagePrefix?: string): void {
   need('--cap-drop', (v) => v.includes('ALL'))
   need('--security-opt', (v) => v.length > 0)
   need('--pids-limit', (v) => v.length === 1)
+  need('--network', (v) => v.length === 1)
+
+  const network = seen.get('--network')![0]!
+  const capAdd = seen.get('--cap-add') ?? []
+  const user = seen.get('--user')?.[0]
+  const entrypoint = seen.get('--entrypoint')?.[0]
+  const root = user !== undefined && user.split(':').some((id) => Number(id) === 0)
+  const holder =
+    capAdd.length === 1 &&
+    capAdd[0] === 'NET_ADMIN' &&
+    root &&
+    entrypoint === HOLDER_ENTRYPOINT &&
+    network === 'tm-local'
+  const flac = entrypoint === FLAC_ENTRYPOINT && network === 'none' && capAdd.length === 0 && !root
+  if ((capAdd.length > 0 || root || entrypoint === HOLDER_ENTRYPOINT) && !holder) {
+    throw new UnsafeDockerInput('privileges outside the network holder')
+  }
+  if (entrypoint !== undefined && !holder && !flac) throw new UnsafeDockerInput('an entrypoint')
+  if (network.startsWith('container:') && capAdd.length > 0) throw new UnsafeDockerInput('a capability')
 }
 
 // --- The CLI driver ---
@@ -242,20 +302,66 @@ const INTEGER = /^[0-9]{1,16}$/
 const LOGS_TAIL_LINES = 100
 
 export interface DockerCliOptions {
-  /** Refuse any image outside this repository prefix (the app's `TM_WORKER_IMAGE_PREFIX`). */
-  imagePrefix?: string
-  /** Where docker starts; the default is the temp folder. */
+  /** Refuse any image outside this repository (the app's `TM_WORKER_IMAGE_PREFIX`), matched on a `/` boundary. */
+  imagePrefix: string
+  /** The only host folders a `run` may bind: the app's `%LOCALAPPDATA%\\TolongMeeting` tree (`localPaths(...).root`). */
+  allowedRoots: readonly string[]
+  /** The absolute path of the docker program. Default: the first `docker` found on PATH (`findDocker`), looked up once. */
+  dockerPath?: string
+  /**
+   * Where docker starts. It must be a folder this user cannot write to, since Windows looks for programs in the
+   * current folder. Default: the folder of the docker program, else the folder of the app itself.
+   */
   cwd?: string
 }
 
-export function dockerCli(spawn: SpawnLike, options: DockerCliOptions = {}): DockerLike {
-  const cwd = options.cwd ?? tmpdir()
-  const prefix = options.imagePrefix
+/**
+ * The absolute path of the first `docker` (`docker.exe` on Windows) in the folders of `PATH`, or `null`. A relative or
+ * empty `PATH` entry is skipped, so the current folder is never searched.
+ */
+export function findDocker(
+  env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  isFile: (p: string) => boolean = (p) => {
+    try {
+      return statSync(p).isFile()
+    } catch (e) {
+      if (e instanceof Error && 'code' in e && ['ENOENT', 'ENOTDIR', 'EACCES'].includes(String(e.code))) return false
+      throw e
+    }
+  }
+): string | null {
+  const win = platform === 'win32'
+  const path = (win ? (env.Path ?? env.PATH) : env.PATH) ?? ''
+  const dockerIn = win
+    ? (dir: string) => `${dir.replace(/[\\/]+$/, '')}\\docker.exe`
+    : (dir: string) => join(dir, 'docker')
+  for (const dir of path.split(win ? ';' : delimiter)) {
+    const clean = dir.replace(/^"|"$/g, '')
+    if (clean === '' || !(win ? /^[A-Za-z]:[\\/]/.test(clean) : isAbsolute(clean))) continue
+    const candidate = dockerIn(clean)
+    if (isFile(candidate)) return candidate
+  }
+  return null
+}
+
+export function dockerCli(spawn: SpawnLike, options: DockerCliOptions): DockerLike {
+  const prefix = imagePrefixBoundary(options.imagePrefix)
+  const roots = options.allowedRoots
+  normalizedRoots(roots) // a bad root fails here, at start, not at the first run
+  const docker = options.dockerPath ?? findDocker() ?? 'docker'
+  if (docker !== 'docker' && !isAbsolute(docker) && !/^[A-Za-z]:[\\/]/.test(docker)) {
+    throw new TypeError('dockerPath must be an absolute path')
+  }
+  const windowsPath = /^[A-Za-z]:[\\/]/.test(docker)
+  const cwd =
+    options.cwd ??
+    (docker === 'docker' ? dirname(process.execPath) : (windowsPath ? win32 : { dirname }).dirname(docker))
 
   async function exec(op: string, args: string[], timeoutMs: number | null): Promise<{ code: number; out: string }> {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const proc = spawn('docker', args, { cwd, shell: false, windowsHide: true })
+      const proc = spawn(docker, args, { cwd, shell: false, windowsHide: true })
       const timedOut =
         timeoutMs === null
           ? []
@@ -322,7 +428,7 @@ export function dockerCli(spawn: SpawnLike, options: DockerCliOptions = {}): Doc
     },
 
     async run(args) {
-      checkRunArgs(args, prefix)
+      checkRunArgs(args, prefix, roots)
       return (await ok('run', args, SHORT_MS)).trim()
     },
 
