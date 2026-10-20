@@ -40,6 +40,7 @@ import {
   type Db
 } from '../db'
 import { getClaimedJob } from '../db/companion'
+import { safeDbError } from '../db/errors'
 import type { Notifier } from '../db/notifier'
 import { QUEUES, queueDbOf, type Queue } from '../db/queues'
 import { applyTrigger, hashEventData } from '../db/transitions'
@@ -251,14 +252,19 @@ export async function handleHeartbeat(
   const parsed = HeartbeatSchema.safeParse(body)
   if (!parsed.success) return badRequest()
 
-  return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(occurrences).where(eq(occurrences.id, first!.id)).for('update')
-    const again = verdict(row, token, tokenAttempt)
-    if (again === 'denied') return unauthorized()
-    if (again === 'superseded') return superseded()
-    if (parsed.data.attempt !== row!.attempt) return badRequest()
-    return { status: 200, body: await applyHeartbeat(tx, deps, row!, parsed.data, false) } as const
-  })
+  try {
+    return await db.transaction(async (tx) => {
+      const [row] = await tx.select().from(occurrences).where(eq(occurrences.id, first!.id)).for('update')
+      const again = verdict(row, token, tokenAttempt)
+      if (again === 'denied') return unauthorized()
+      if (again === 'superseded') return superseded()
+      if (parsed.data.attempt !== row!.attempt) return badRequest()
+      return { status: 200, body: await applyHeartbeat(tx, deps, row!, parsed.data, false) } as const
+    })
+  } catch (e) {
+    // The writes carry event data and links: the SQL text and its parameters must not reach a log.
+    throw safeDbError(e)
+  }
 }
 
 // --- A heartbeat through the member's PC ------------------------------------------------------------------------
@@ -304,7 +310,7 @@ export async function handleDeviceHeartbeat(
   if (hb.occurrenceId !== first.occurrenceId) return notFound()
 
   const outbox: { memberId: string; ping: Ping }[] = []
-  const result = await db.transaction(async (tx): Promise<DeviceHeartbeatResult> => {
+  const apply = async (tx: Db): Promise<DeviceHeartbeatResult> => {
     let [row] = await tx.select().from(occurrences).where(eq(occurrences.id, first.occurrenceId)).for('update')
     // The lease is checked again under the row lock: a release or a failure may have come in meanwhile.
     const held = await getClaimedJob(tx, device, jobId, now)
@@ -335,6 +341,10 @@ export async function handleDeviceHeartbeat(
     }
     if (hb.attempt !== row!.attempt) return badRequest()
     return { status: 200, body: await applyHeartbeat(tx, deps, row!, hb, true) }
+  }
+  // The writes carry event data and links: the SQL text and its parameters must not reach a log.
+  const result = await db.transaction(apply).catch((e: unknown) => {
+    throw safeDbError(e)
   })
   for (const { memberId, ping } of outbox) await deps.notifier.notify(memberId, ping)
   return result
