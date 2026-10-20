@@ -280,6 +280,16 @@ export const pings = {
     }
   },
 
+  // The PC was still running an earlier meeting when this one was due. `busyWith` is that meeting's name.
+  pcBusy(p: { entry: string; busyWith: string; meetingUrl: string }): Ping {
+    return {
+      title: `PC busy: ${p.entry}`,
+      message: `Your PC is still busy with ${p.busyWith}, so the bot won't join ${p.entry}.`,
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: p.meetingUrl }]
+    }
+  },
+
   // `runsOn` is where the account is set to run (for example "My PC"); `account` is the account's name.
   pcNotPaired(p: { entry: string; when: string; runsOn: string; account: string; meetingUrl: string }): Ping {
     return {

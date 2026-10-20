@@ -492,6 +492,15 @@ test('watching-off copy for the home-only and switched-off gates', () => {
 const LOCAL_MEETING = 'https://tm.example/meetings/o1'
 const OPEN_MEETING = [{ label: 'Open meeting page', url: LOCAL_MEETING }]
 
+test('PC ping: busy with an earlier meeting', () => {
+  expect(pings.pcBusy({ entry: 'Algorithms', busyWith: 'Data Mining', meetingUrl: LOCAL_MEETING })).toEqual({
+    title: 'PC busy: Algorithms',
+    message: "Your PC is still busy with Data Mining, so the bot won't join Algorithms.",
+    priority: 'high',
+    actions: OPEN_MEETING
+  })
+})
+
 test('PC pings: offline and not paired', () => {
   expect(
     pings.pcOffline({ entry: 'Data Mining', when: '14:00', pcName: 'DESKTOP-ABC', meetingUrl: LOCAL_MEETING })
