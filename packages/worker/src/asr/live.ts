@@ -1,6 +1,6 @@
 import { mkdir, readFile, truncate } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { AiKeyError, AsrDisconnected, AsrProtocolError, openAsrStream, type AiConfig } from '@tm/ai'
+import { AiKeyError, AsrDisconnected, AsrProtocolError, openAsrStream, type AiConfig, type AsrResult } from '@tm/ai'
 import type { AudioSource } from '../audio/source'
 import { appendDurably, createDurably } from '../chat/capture'
 
@@ -18,6 +18,10 @@ export interface LiveAsrOptions {
   // Audio capture faults are NOT passed here: the audio source owns those alerts. Without it, the message goes to
   // stderr.
   onError?: (e: Error) => void
+  // Called once with each result (recording-relative offsets), as it arrives and before its line is written, so a
+  // failed write cannot hide it. It is never called after stop() has returned, and a throw from it is logged to
+  // stderr by name and otherwise ignored: it cannot reach the speech path.
+  onResult?: (r: AsrResult) => void
   open?: typeof openAsrStream
 }
 
@@ -103,6 +107,13 @@ export async function startLiveAsr(
   }
 
   stream.onResult((r) => {
+    if (opts.onResult !== undefined && !stopped) {
+      try {
+        opts.onResult({ startMs: r.startMs + baseMs, endMs: r.endMs + baseMs, text: r.text })
+      } catch (e) {
+        console.error(`live transcription: the onResult handler threw (${e instanceof Error ? e.name : 'unknown'})`)
+      }
+    }
     const line = `${JSON.stringify({ startMs: r.startMs + baseMs, endMs: r.endMs + baseMs, text: r.text })}\n`
     // This task never rejects: a failed append is counted, and report() swallows what the handler throws.
     writes = writes.then(async () => {

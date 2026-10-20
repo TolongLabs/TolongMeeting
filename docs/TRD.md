@@ -782,7 +782,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - website: `TEAMS_PRESENCE_NOTE`, `showsTeamsPresenceNote`, `TeamsPresenceNote`, and Teams entries in `CHAT_FIELD_COPY` and `chatAppOptions`.
 - **06 work meetings and mentions**:
   - summary: `normaliseName` (core), `WorkInventorySchema`, `buildWorkInventory` (fenced sections Slides, Host chat, Other chat, Transcript; vetted like the lecture inventory, and a model string opening with "Attendance" or "Do next" is dropped), `pickDoNext`, `renderWorkSummary`, a widened `chooseDue`; `runPipeline` uses them for `work` entries, with the meeting page `${TM_PUBLIC_URL}/meetings/<occurrenceId>` as the Details line when the variable is set (a non-https value throws);
-  - mentions: the mention matcher and watcher, `LiveAsrOptions.onResult`, `pings.nameMentioned`;
+  - mentions: the mention matcher (`compileNames`, `findMention`, `transcriptWindow`), the watcher (`startMentionWatch`, `MENTION_DEBOUNCE_MS` = 120 s of stream offset; every matching result is emitted as a `mention` event whose data is the offset `atMs` only, never text; a failed ping is logged as `mention ping failed (<error name>)` and never reaches the speech path), `LiveAsrOptions.onResult` (called once per result, recording-relative, before its line is written; a throw is logged by name and ignored), `pings.nameMentioned` (the transcript is cut by the core `scrubMeetingDetails`, so spoken passcodes and join links never show in the ping);
   - leave and take-over: `leaveMeeting`, `Heartbeat.linkUsed`, `StateEventData.command`, the leave and take-over `siteLinks`, `takeOver`, and their pages and state route.
 - **07 exports**:
   - `packages/exports` with `ExportTarget` and its types;

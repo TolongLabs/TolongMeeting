@@ -3,7 +3,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerWebSocket } from 'bun'
-import { AiKeyError, AsrDisconnected, AsrProtocolError, openAsrStream, type AiConfig, type AsrStream } from '@tm/ai'
+import {
+  AiKeyError,
+  AsrDisconnected,
+  AsrProtocolError,
+  openAsrStream,
+  type AiConfig,
+  type AsrResult,
+  type AsrStream
+} from '@tm/ai'
 import { startLiveAsr } from '../src/asr/live'
 import type { AudioSource } from '../src/audio/source'
 
@@ -489,4 +497,32 @@ test('a line a crash left half written is cut off before new results are appende
     { startMs: 0, endMs: 1000, text: 'kept' },
     { startMs: 5100, endMs: 5900, text: 'after restart' }
   ])
+})
+
+test('onResult receives each recording-relative result once, and a throw from it cannot stop the writes', async () => {
+  const log = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const out = join(dir, 'live.jsonl')
+    const audio = fakeAudio()
+    const seen: AsrResult[] = []
+    const live = await startLiveAsr(audio, asr.cfg, out, {
+      baseMs: 4000,
+      onResult: (x) => {
+        seen.push(x)
+        throw new Error('handler bug')
+      }
+    })
+    audio.push(SECOND)
+    await until(() => asr.appendedBytes() === 32_000)
+    asr.emit({ type: 'input_audio_buffer.speech_started', audio_start_ms: 500 })
+    asr.emit({ type: 'input_audio_buffer.speech_stopped', audio_end_ms: 2500 })
+    asr.emit({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'selamat petang semua' })
+    await until(async () => (await linesOf(out)).length === 1)
+    await live.stop()
+    expect(seen).toEqual([{ startMs: 4500, endMs: 6500, text: 'selamat petang semua' }])
+    expect(await linesOf(out)).toEqual([{ startMs: 4500, endMs: 6500, text: 'selamat petang semua' }])
+    expect(log).toHaveBeenCalledWith('live transcription: the onResult handler threw (Error)')
+  } finally {
+    log.mockRestore()
+  }
 })
