@@ -1,10 +1,12 @@
 import type { SummaryListItem } from '@tm/core'
 import { and, asc, eq, gt, gte, lt, type SQL } from 'drizzle-orm'
 import { posix } from 'node:path'
+import { z } from 'zod'
 import { artefacts, occurrences } from '../../db/schema'
 import { openMemberFile } from '../files'
 import { MAX_ARTEFACT_BYTES } from '../meeting'
 import { createScope } from '../scope'
+import type { DeviceScope } from './scope'
 
 /** The database (or a transaction) the device-side reads run on. The caller opens it; this module does not. */
 type Db = Parameters<typeof createScope>[0]
@@ -91,4 +93,24 @@ export async function readSummary(
   } finally {
     await file.handle.close()
   }
+}
+
+const NO_STORE = { 'cache-control': 'no-store' }
+const fixed = (error: string, status: number) => Response.json({ error }, { status, headers: NO_STORE })
+const AfterSchema = z.iso.datetime({ offset: true })
+
+/** `GET /api/companion/summaries?after=<ISO 8601>`: the member's summaries ready after that time. */
+export async function handleSummariesRequest(request: Request, scope: DeviceScope): Promise<Response> {
+  const after = AfterSchema.safeParse(new URL(request.url).searchParams.get('after'))
+  if (!after.success) return fixed('invalid_after', 400)
+  return Response.json({ summaries: await scope.listSummaries(new Date(after.data)) }, { headers: NO_STORE })
+}
+
+/** `GET /api/companion/summaries/<occurrenceId>`: the Markdown text, or a fixed 404. */
+export async function handleSummaryRequest(scope: DeviceScope, occurrenceId: string): Promise<Response> {
+  const summary = await scope.readSummary(occurrenceId)
+  if (summary === null) return fixed('not_found', 404)
+  return new Response(summary.text, {
+    headers: { ...NO_STORE, 'content-type': 'text/markdown; charset=utf-8', 'x-content-type-options': 'nosniff' }
+  })
 }

@@ -312,7 +312,7 @@ function clientKey(request: Request): string {
 }
 
 /** The body as text, or `null` when it is longer than `max` bytes. The stream is cut off at the cap. */
-async function readCapped(request: Request, max: number): Promise<string | null> {
+export async function readCapped(request: Request, max: number): Promise<string | null> {
   const declared = Number(request.headers.get('content-length') ?? 0)
   if (!request.body || declared > max) return request.body ? null : ''
   const reader = request.body.getReader()
