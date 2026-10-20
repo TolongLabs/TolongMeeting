@@ -20,13 +20,28 @@
  */
 
 // Fix: falls back to the whole page when there is no <main>.
-const scope = document.querySelector('main') || document;
-const hostPath = s => s.replace(/https?:\/\/\S+/g, u => { try { const x = new URL(u); return '<' + x.host + x.pathname.replace(/\/$/, '') + '>'; } catch (e) { return '<link>'; } });
-[...scope.querySelectorAll('a[href]')].map(a => {
-  let u; try { u = new URL(a.href); } catch (e) { return null; }
-  // Fix: only http and https links. A mailto: link would have returned an email address as its path.
-  if (!/^https?:$/.test(u.protocol)) return null;
-  // Fix: URLs in the link text are reduced too, so a link whose text is its own full URL does not
-  // return the query string that way.
-  return hostPath(a.textContent.trim()).slice(0, 50) + ' -> ' + u.host + u.pathname;
-}).filter(Boolean)
+const scope = document.querySelector('main') || document
+const hostPath = (s) =>
+  s.replace(/https?:\/\/\S+/g, (u) => {
+    try {
+      const x = new URL(u)
+      return '<' + x.host + x.pathname.replace(/\/$/, '') + '>'
+    } catch (e) {
+      return '<link>'
+    }
+  })
+;[...scope.querySelectorAll('a[href]')]
+  .map((a) => {
+    let u
+    try {
+      u = new URL(a.href)
+    } catch (e) {
+      return null
+    }
+    // Fix: only http and https links. A mailto: link would have returned an email address as its path.
+    if (!/^https?:$/.test(u.protocol)) return null
+    // Fix: URLs in the link text are reduced too, so a link whose text is its own full URL does not
+    // return the query string that way.
+    return hostPath(a.textContent.trim()).slice(0, 50) + ' -> ' + u.host + u.pathname
+  })
+  .filter(Boolean)

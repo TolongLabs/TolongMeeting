@@ -121,121 +121,126 @@ Test helpers that a test calls but no Interfaces block lists are local builders 
 - Produces (adds to contracts), `src/types.ts`:
 
 ```ts
-export type ExportTargetId = "zip" | "pdf" | "github" | "gdocs" | "notion";
-export type ExportStatus = "queued" | "running" | "succeeded" | "failed";
-export type ConnectionKind = "github" | "google" | "notion";
+export type ExportTargetId = 'zip' | 'pdf' | 'github' | 'gdocs' | 'notion'
+export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type ConnectionKind = 'github' | 'google' | 'notion'
 export const TARGET_LABEL: Record<ExportTargetId, string> = {
-  zip: "Markdown zip",
-  pdf: "PDF",
-  github: "GitHub",
-  gdocs: "Google Docs",
-  notion: "Notion",
-};
-export const TARGET_CONNECTION: Record<ExportTargetId, ConnectionKind | null> =
-  { zip: null, pdf: null, github: "github", gdocs: "google", notion: "notion" };
+  zip: 'Markdown zip',
+  pdf: 'PDF',
+  github: 'GitHub',
+  gdocs: 'Google Docs',
+  notion: 'Notion'
+}
+export const TARGET_CONNECTION: Record<ExportTargetId, ConnectionKind | null> = {
+  zip: null,
+  pdf: null,
+  github: 'github',
+  gdocs: 'google',
+  notion: 'notion'
+}
 
 export interface BundleFile {
-  path: string;
-  bytes: Uint8Array;
+  path: string
+  bytes: Uint8Array
 } // relative to the bundle root, e.g. "slides/01.webp"
 export interface ExportBundle {
-  title: string; // summary file name without ".md": "YYYY-MM-DD HHmm <entry name>"
-  dirName: string; // slugify(title): folder name in zips and repositories
-  summaryFile: string; // `${title}.md`
-  files: BundleFile[]; // summary, transcript.md, slides.md, chat.md, slides/NN.webp; only those that exist
+  title: string // summary file name without ".md": "YYYY-MM-DD HHmm <entry name>"
+  dirName: string // slugify(title): folder name in zips and repositories
+  summaryFile: string // `${title}.md`
+  files: BundleFile[] // summary, transcript.md, slides.md, chat.md, slides/NN.webp; only those that exist
 }
 
 export interface GitHubConnection {
-  kind: "github";
-  token: string;
-  owner: string;
-  repo: string;
-  branch: string;
-  folder: string;
+  kind: 'github'
+  token: string
+  owner: string
+  repo: string
+  branch: string
+  folder: string
 }
 export interface GoogleConnection {
-  kind: "google";
-  refreshToken: string;
-  account: string;
-  folderId: string;
-  folderName: string;
-  folderIsDefault: boolean;
+  kind: 'google'
+  refreshToken: string
+  account: string
+  folderId: string
+  folderName: string
+  folderIsDefault: boolean
 }
 export interface NotionParent {
-  type: "page_id" | "data_source_id";
-  id: string;
-  name: string;
-  titleProperty: string;
+  type: 'page_id' | 'data_source_id'
+  id: string
+  name: string
+  titleProperty: string
 }
 export interface NotionConnection {
-  kind: "notion";
-  accessToken: string;
-  refreshToken: string | null;
-  workspace: string;
-  parent: NotionParent | null;
+  kind: 'notion'
+  accessToken: string
+  refreshToken: string | null
+  workspace: string
+  parent: NotionParent | null
 }
-export type Connection = GitHubConnection | GoogleConnection | NotionConnection;
+export type Connection = GitHubConnection | GoogleConnection | NotionConnection
 export interface ConnectionSummary {
-  kind: ConnectionKind;
-  status: "ok" | "reconnect_needed";
-  ready: boolean;
-  label: string;
-  detail: string;
+  kind: ConnectionKind
+  status: 'ok' | 'reconnect_needed'
+  ready: boolean
+  label: string
+  detail: string
 }
 export interface OAuthClient {
-  clientId: string;
-  clientSecret: string;
-  redirectUri: string;
+  clientId: string
+  clientSecret: string
+  redirectUri: string
 }
 
 export interface ExportContext {
-  exportId: string;
-  memberId: string;
-  outDir: string; // `${occurrence dir}/exports`
-  connection: Connection | null;
-  saveConnection(c: Connection): Promise<void>; // rotated tokens, recreated default folder
-  http: typeof fetch;
-  sleep(ms: number): Promise<void>;
+  exportId: string
+  memberId: string
+  outDir: string // `${occurrence dir}/exports`
+  connection: Connection | null
+  saveConnection(c: Connection): Promise<void> // rotated tokens, recreated default folder
+  http: typeof fetch
+  sleep(ms: number): Promise<void>
 }
 export interface ExportResult {
-  url: string | null;
-  filePath: string | null;
-  note: string | null;
+  url: string | null
+  filePath: string | null
+  note: string | null
 }
 export interface ExportTarget {
-  readonly id: ExportTargetId;
-  run(bundle: ExportBundle, ctx: ExportContext): Promise<ExportResult>;
+  readonly id: ExportTargetId
+  run(bundle: ExportBundle, ctx: ExportContext): Promise<ExportResult>
 }
 
 export type ExportErrorCode =
-  | "not_connected"
-  | "reconnect_needed"
-  | "invalid_settings"
-  | "not_found"
-  | "already_running"
-  | "not_ready"
-  | "meeting_deleted"
-  | "rate_limited"
-  | "interrupted"
-  | "failed";
+  | 'not_connected'
+  | 'reconnect_needed'
+  | 'invalid_settings'
+  | 'not_found'
+  | 'already_running'
+  | 'not_ready'
+  | 'meeting_deleted'
+  | 'rate_limited'
+  | 'interrupted'
+  | 'failed'
 export class ExportError extends Error {
   // message is shown to the member as it is
   constructor(
     readonly code: ExportErrorCode,
-    message: string,
+    message: string
   ) {
-    super(message);
+    super(message)
   }
 }
 
 export interface OccurrenceInfo {
-  id: string;
-  memberId: string;
-  state: OccurrenceState;
-  dataDir: string;
+  id: string
+  memberId: string
+  state: OccurrenceState
+  dataDir: string
 }
 export interface OccurrenceLookup {
-  get(memberId: string, occurrenceId: string): Promise<OccurrenceInfo | null>;
+  get(memberId: string, occurrenceId: string): Promise<OccurrenceInfo | null>
 } // null unless the member owns it
 ```
 
@@ -255,72 +260,60 @@ export interface OccurrenceLookup {
 
 ```ts
 // names.test.ts
-test("slugify", () => {
-  expect(slugify("2026-10-20 1400 Data Mining: Week 3 / Lab?")).toBe(
-    "2026-10-20-1400-data-mining-week-3-lab",
-  );
-  expect(slugify("2026-10-20 0900 Pengurusan Café")).toBe(
-    "2026-10-20-0900-pengurusan-cafe",
-  );
-  expect(slugify("???")).toBe("meeting");
-  const long = slugify("2026-10-20 0900 " + "Kursus Lanjutan ".repeat(10));
-  expect(long.length).toBeLessThanOrEqual(80);
-  expect(long.endsWith("-")).toBe(false);
-});
-test("contentDisposition", () => {
-  expect(contentDisposition("2026-10-20 1400 Pengurusan Café.zip")).toBe(
-    `attachment; filename="2026-10-20 1400 Pengurusan Caf_.zip"; filename*=UTF-8''2026-10-20%201400%20Pengurusan%20Caf%C3%A9.zip`,
-  );
-  expect(contentDisposition('a "b".pdf')).toBe(
-    `attachment; filename="a _b_.pdf"; filename*=UTF-8''a%20%22b%22.pdf`,
-  );
-});
+test('slugify', () => {
+  expect(slugify('2026-10-20 1400 Data Mining: Week 3 / Lab?')).toBe('2026-10-20-1400-data-mining-week-3-lab')
+  expect(slugify('2026-10-20 0900 Pengurusan Café')).toBe('2026-10-20-0900-pengurusan-cafe')
+  expect(slugify('???')).toBe('meeting')
+  const long = slugify('2026-10-20 0900 ' + 'Kursus Lanjutan '.repeat(10))
+  expect(long.length).toBeLessThanOrEqual(80)
+  expect(long.endsWith('-')).toBe(false)
+})
+test('contentDisposition', () => {
+  expect(contentDisposition('2026-10-20 1400 Pengurusan Café.zip')).toBe(
+    `attachment; filename="2026-10-20 1400 Pengurusan Caf_.zip"; filename*=UTF-8''2026-10-20%201400%20Pengurusan%20Caf%C3%A9.zip`
+  )
+  expect(contentDisposition('a "b".pdf')).toBe(`attachment; filename="a _b_.pdf"; filename*=UTF-8''a%20%22b%22.pdf`)
+})
 
 // bundle.test.ts
-test("loads the set in order", async () => {
-  const b = await loadBundle(fixture);
-  expect(b.title).toBe("2026-10-20 1400 Data Mining");
-  expect(b.summaryFile).toBe("2026-10-20 1400 Data Mining.md");
-  expect(b.dirName).toBe("2026-10-20-1400-data-mining");
+test('loads the set in order', async () => {
+  const b = await loadBundle(fixture)
+  expect(b.title).toBe('2026-10-20 1400 Data Mining')
+  expect(b.summaryFile).toBe('2026-10-20 1400 Data Mining.md')
+  expect(b.dirName).toBe('2026-10-20-1400-data-mining')
   expect(b.files.map((f) => f.path)).toEqual([
-    "2026-10-20 1400 Data Mining.md",
-    "transcript.md",
-    "slides.md",
-    "chat.md",
-    "slides/01.webp",
-    "slides/02.webp",
-  ]);
-});
-test("skips missing optional files", async () => {
-  const dir = await copyFixture();
-  await rm(join(dir, "out/chat.md"));
-  await rm(join(dir, "slides"), { recursive: true });
+    '2026-10-20 1400 Data Mining.md',
+    'transcript.md',
+    'slides.md',
+    'chat.md',
+    'slides/01.webp',
+    'slides/02.webp'
+  ])
+})
+test('skips missing optional files', async () => {
+  const dir = await copyFixture()
+  await rm(join(dir, 'out/chat.md'))
+  await rm(join(dir, 'slides'), { recursive: true })
   expect((await loadBundle(dir)).files.map((f) => f.path)).toEqual([
-    "2026-10-20 1400 Data Mining.md",
-    "transcript.md",
-    "slides.md",
-  ]);
-});
-test("no summary is not_ready", async () => {
-  const dir = await copyFixture();
-  await rm(join(dir, "out/2026-10-20 1400 Data Mining.md"));
+    '2026-10-20 1400 Data Mining.md',
+    'transcript.md',
+    'slides.md'
+  ])
+})
+test('no summary is not_ready', async () => {
+  const dir = await copyFixture()
+  await rm(join(dir, 'out/2026-10-20 1400 Data Mining.md'))
   await expect(loadBundle(dir)).rejects.toMatchObject({
-    code: "not_ready",
-    message: "This meeting has no summary yet.",
-  });
-});
-test("the newest summary wins", async () => {
-  const dir = await copyFixture();
-  await writeFile(join(dir, "out/2026-10-20 1400 Data Mining Renamed.md"), "x");
-  await utimes(
-    join(dir, "out/2026-10-20 1400 Data Mining.md"),
-    new Date("2026-10-20"),
-    new Date("2026-10-20"),
-  );
-  expect((await loadBundle(dir)).title).toBe(
-    "2026-10-20 1400 Data Mining Renamed",
-  );
-});
+    code: 'not_ready',
+    message: 'This meeting has no summary yet.'
+  })
+})
+test('the newest summary wins', async () => {
+  const dir = await copyFixture()
+  await writeFile(join(dir, 'out/2026-10-20 1400 Data Mining Renamed.md'), 'x')
+  await utimes(join(dir, 'out/2026-10-20 1400 Data Mining.md'), new Date('2026-10-20'), new Date('2026-10-20'))
+  expect((await loadBundle(dir)).title).toBe('2026-10-20 1400 Data Mining Renamed')
+})
 ```
 
 - [ ] **Step 3: Run them to see them fail**
@@ -358,80 +351,73 @@ git commit -m "feat(exports): add bundle loader and types"
 
 ```ts
 export interface Run {
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
-  code?: boolean;
-  href?: string;
+  text: string
+  bold?: boolean
+  italic?: boolean
+  code?: boolean
+  href?: string
 }
 export type DocBlock =
-  | { kind: "heading"; level: 1 | 2 | 3; runs: Run[] }
-  | { kind: "paragraph"; runs: Run[] }
-  | { kind: "list"; ordered: boolean; items: Run[][] }
-  | { kind: "table"; header: Run[][]; rows: Run[][][] }
-  | { kind: "image"; path: string; alt: string } // bundle-relative, e.g. "slides/01.webp"
-  | { kind: "code"; text: string }
-  | { kind: "rule" }
-  | { kind: "break" }; // between the files of a bundle
-export function parseMarkdown(md: string): DocBlock[];
-export function bundleDocument(bundle: ExportBundle): DocBlock[];
+  | { kind: 'heading'; level: 1 | 2 | 3; runs: Run[] }
+  | { kind: 'paragraph'; runs: Run[] }
+  | { kind: 'list'; ordered: boolean; items: Run[][] }
+  | { kind: 'table'; header: Run[][]; rows: Run[][][] }
+  | { kind: 'image'; path: string; alt: string } // bundle-relative, e.g. "slides/01.webp"
+  | { kind: 'code'; text: string }
+  | { kind: 'rule' }
+  | { kind: 'break' } // between the files of a bundle
+export function parseMarkdown(md: string): DocBlock[]
+export function bundleDocument(bundle: ExportBundle): DocBlock[]
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("drops the contents list and anchor links", () => {
-  expect(
-    parseMarkdown(
-      "# T\n\nContents:\n\n1.  [A](#a)\n1.  [B](#b)\n\n## A\n\nSee [B](#b).",
-    ),
-  ).toEqual([
-    { kind: "heading", level: 1, runs: [{ text: "T" }] },
-    { kind: "heading", level: 2, runs: [{ text: "A" }] },
-    { kind: "paragraph", runs: [{ text: "See B." }] },
-  ]);
-});
-test("keeps bold speaker labels, web links and images", () => {
-  expect(parseMarkdown("**[00:00:05] Lecturer:** Hello")[0]).toEqual({
-    kind: "paragraph",
-    runs: [{ text: "[00:00:05] Lecturer:", bold: true }, { text: " Hello" }],
-  });
-  expect(parseMarkdown("[form](https://example.com/x)")[0]).toEqual({
-    kind: "paragraph",
-    runs: [{ text: "form", href: "https://example.com/x" }],
-  });
-  expect(parseMarkdown("![Slide 01: Welcome](slides/01.webp)")[0]).toEqual({
-    kind: "image",
-    path: "slides/01.webp",
-    alt: "Slide 01: Welcome",
-  });
-});
-test("clamps deep headings and parses tables", () => {
-  expect(parseMarkdown("#### Deep")[0]).toMatchObject({
-    kind: "heading",
-    level: 3,
-  });
-  expect(parseMarkdown("| a | b |\n| - | - |\n| 1 | 2 |")[0]).toEqual({
-    kind: "table",
-    header: [[{ text: "a" }], [{ text: "b" }]],
-    rows: [[[{ text: "1" }], [{ text: "2" }]]],
-  });
-});
-test("bundle order is summary, transcript, slides, chat", async () => {
-  const doc = bundleDocument(await loadBundle(fixture));
+test('drops the contents list and anchor links', () => {
+  expect(parseMarkdown('# T\n\nContents:\n\n1.  [A](#a)\n1.  [B](#b)\n\n## A\n\nSee [B](#b).')).toEqual([
+    { kind: 'heading', level: 1, runs: [{ text: 'T' }] },
+    { kind: 'heading', level: 2, runs: [{ text: 'A' }] },
+    { kind: 'paragraph', runs: [{ text: 'See B.' }] }
+  ])
+})
+test('keeps bold speaker labels, web links and images', () => {
+  expect(parseMarkdown('**[00:00:05] Lecturer:** Hello')[0]).toEqual({
+    kind: 'paragraph',
+    runs: [{ text: '[00:00:05] Lecturer:', bold: true }, { text: ' Hello' }]
+  })
+  expect(parseMarkdown('[form](https://example.com/x)')[0]).toEqual({
+    kind: 'paragraph',
+    runs: [{ text: 'form', href: 'https://example.com/x' }]
+  })
+  expect(parseMarkdown('![Slide 01: Welcome](slides/01.webp)')[0]).toEqual({
+    kind: 'image',
+    path: 'slides/01.webp',
+    alt: 'Slide 01: Welcome'
+  })
+})
+test('clamps deep headings and parses tables', () => {
+  expect(parseMarkdown('#### Deep')[0]).toMatchObject({
+    kind: 'heading',
+    level: 3
+  })
+  expect(parseMarkdown('| a | b |\n| - | - |\n| 1 | 2 |')[0]).toEqual({
+    kind: 'table',
+    header: [[{ text: 'a' }], [{ text: 'b' }]],
+    rows: [[[{ text: '1' }], [{ text: '2' }]]]
+  })
+})
+test('bundle order is summary, transcript, slides, chat', async () => {
+  const doc = bundleDocument(await loadBundle(fixture))
   expect(doc[0]).toEqual({
-    kind: "paragraph",
-    runs: [
-      { text: "Data Mining, Week 3 (Tuesday 20 October 2026, 14:00 to 16:00)" },
-    ],
-  });
-  expect(doc.filter((b) => b.kind === "break")).toHaveLength(3);
-  expect(
-    doc
-      .filter((b) => b.kind === "image")
-      .map((b) => (b as { path: string }).path),
-  ).toEqual(["slides/01.webp", "slides/02.webp"]);
-});
+    kind: 'paragraph',
+    runs: [{ text: 'Data Mining, Week 3 (Tuesday 20 October 2026, 14:00 to 16:00)' }]
+  })
+  expect(doc.filter((b) => b.kind === 'break')).toHaveLength(3)
+  expect(doc.filter((b) => b.kind === 'image').map((b) => (b as { path: string }).path)).toEqual([
+    'slides/01.webp',
+    'slides/02.webp'
+  ])
+})
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -470,38 +456,36 @@ git commit -m "feat(exports): add markdown document model"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("zip holds the set under one folder", async () => {
-  const entries = unzipSync(zipBundle(await loadBundle(fixture)));
+test('zip holds the set under one folder', async () => {
+  const entries = unzipSync(zipBundle(await loadBundle(fixture)))
   expect(Object.keys(entries)).toEqual([
-    "2026-10-20-1400-data-mining/2026-10-20 1400 Data Mining.md",
-    "2026-10-20-1400-data-mining/transcript.md",
-    "2026-10-20-1400-data-mining/slides.md",
-    "2026-10-20-1400-data-mining/chat.md",
-    "2026-10-20-1400-data-mining/slides/01.webp",
-    "2026-10-20-1400-data-mining/slides/02.webp",
-  ]);
-  expect(entries["2026-10-20-1400-data-mining/slides/01.webp"]).toEqual(
-    new Uint8Array(await readFile(join(fixture, "slides/01.webp"))),
-  );
-});
-test("zipTarget writes <exportId>.zip in outDir", async () => {
-  const ctx = testContext({ exportId: "exp-1" });
-  const r = await zipTarget.run(await loadBundle(fixture), ctx);
+    '2026-10-20-1400-data-mining/2026-10-20 1400 Data Mining.md',
+    '2026-10-20-1400-data-mining/transcript.md',
+    '2026-10-20-1400-data-mining/slides.md',
+    '2026-10-20-1400-data-mining/chat.md',
+    '2026-10-20-1400-data-mining/slides/01.webp',
+    '2026-10-20-1400-data-mining/slides/02.webp'
+  ])
+  expect(entries['2026-10-20-1400-data-mining/slides/01.webp']).toEqual(
+    new Uint8Array(await readFile(join(fixture, 'slides/01.webp')))
+  )
+})
+test('zipTarget writes <exportId>.zip in outDir', async () => {
+  const ctx = testContext({ exportId: 'exp-1' })
+  const r = await zipTarget.run(await loadBundle(fixture), ctx)
   expect(r).toEqual({
     url: null,
-    filePath: join(ctx.outDir, "exp-1.zip"),
-    note: null,
-  });
-  expect((await stat(r.filePath!)).size).toBeGreaterThan(0);
-});
-test("a deleted meeting directory is never recreated", async () => {
-  const ctx = testContext();
-  await rm(dirname(ctx.outDir), { recursive: true });
-  await expect(
-    writeDownload(ctx, "zip", new Uint8Array([1])),
-  ).rejects.toMatchObject({ code: "meeting_deleted" });
-  expect(existsSync(dirname(ctx.outDir))).toBe(false);
-});
+    filePath: join(ctx.outDir, 'exp-1.zip'),
+    note: null
+  })
+  expect((await stat(r.filePath!)).size).toBeGreaterThan(0)
+})
+test('a deleted meeting directory is never recreated', async () => {
+  const ctx = testContext()
+  await rm(dirname(ctx.outDir), { recursive: true })
+  await expect(writeDownload(ctx, 'zip', new Uint8Array([1]))).rejects.toMatchObject({ code: 'meeting_deleted' })
+  expect(existsSync(dirname(ctx.outDir))).toBe(false)
+})
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -541,49 +525,33 @@ git commit -m "feat(exports): add markdown zip download"
 
 ```ts
 // images.test.ts
-test("toJpeg keeps small images and shrinks large ones", async () => {
-  const small = await toJpeg(
-    new Uint8Array(await readFile(join(fixture, "slides/01.webp"))),
-  );
-  expect([small.bytes[0], small.bytes[1], small.width, small.height]).toEqual([
-    0xff, 0xd8, 64, 36,
-  ]);
+test('toJpeg keeps small images and shrinks large ones', async () => {
+  const small = await toJpeg(new Uint8Array(await readFile(join(fixture, 'slides/01.webp'))))
+  expect([small.bytes[0], small.bytes[1], small.width, small.height]).toEqual([0xff, 0xd8, 64, 36])
   const big = await sharp({
-    create: { width: 3200, height: 1800, channels: 3, background: "#fff" },
+    create: { width: 3200, height: 1800, channels: 3, background: '#fff' }
   })
     .webp()
-    .toBuffer();
-  expect(await toJpeg(big)).toMatchObject({ width: 1600, height: 900 });
-});
+    .toBuffer()
+  expect(await toJpeg(big)).toMatchObject({ width: 1600, height: 900 })
+})
 
 // pdf.test.ts
-test("the PDF holds every section, slides and symbols", async () => {
-  const b = await loadBundle(fixture);
-  const pdf = await renderPdf(
-    bundleDocument(b),
-    await bundleImages(b),
-    b.title,
-  );
-  expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe("%PDF-");
+test('the PDF holds every section, slides and symbols', async () => {
+  const b = await loadBundle(fixture)
+  const pdf = await renderPdf(bundleDocument(b), await bundleImages(b), b.title)
+  expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe('%PDF-')
   const { totalPages, text } = await extractText(await getDocumentProxy(pdf), {
-    mergePages: true,
-  });
-  expect(totalPages).toBeGreaterThanOrEqual(4);
-  for (const s of [
-    "Do next: Submit lab 2",
-    "✓",
-    "Slide 01: Welcome",
-    "Good afternoon, everyone.",
-    "see you next week",
-  ])
-    expect(text).toContain(s);
-});
-test("pdfTarget writes <exportId>.pdf", async () => {
-  const ctx = testContext({ exportId: "exp-2" });
-  expect((await pdfTarget.run(await loadBundle(fixture), ctx)).filePath).toBe(
-    join(ctx.outDir, "exp-2.pdf"),
-  );
-});
+    mergePages: true
+  })
+  expect(totalPages).toBeGreaterThanOrEqual(4)
+  for (const s of ['Do next: Submit lab 2', '✓', 'Slide 01: Welcome', 'Good afternoon, everyone.', 'see you next week'])
+    expect(text).toContain(s)
+})
+test('pdfTarget writes <exportId>.pdf', async () => {
+  const ctx = testContext({ exportId: 'exp-2' })
+  expect((await pdfTarget.run(await loadBundle(fixture), ctx)).filePath).toBe(join(ctx.outDir, 'exp-2.pdf'))
+})
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -622,76 +590,59 @@ git commit -m "feat(exports): add pdf download"
 
 ```ts
 // vault.ts
-export function readMasterKey(file: string): Buffer; // 32 bytes from base64, else throws
-export function sealSecret(
-  plain: string,
-  memberId: string,
-  kind: ConnectionKind,
-  masterKey: Buffer,
-): string;
-export function openSecret(
-  sealed: string,
-  memberId: string,
-  kind: ConnectionKind,
-  masterKey: Buffer,
-): string;
-export function redact(text: string, secrets: string[]): string;
+export function readMasterKey(file: string): Buffer // 32 bytes from base64, else throws
+export function sealSecret(plain: string, memberId: string, kind: ConnectionKind, masterKey: Buffer): string
+export function openSecret(sealed: string, memberId: string, kind: ConnectionKind, masterKey: Buffer): string
+export function redact(text: string, secrets: string[]): string
 
 // store.ts
 export interface ExportRow {
-  id: string;
-  occurrenceId: string;
-  memberId: string;
-  target: ExportTargetId;
-  status: ExportStatus;
-  title: string | null;
-  url: string | null;
-  filePath: string | null;
-  note: string | null;
-  errorCode: ExportErrorCode | null;
-  error: string | null;
-  createdAt: Date;
-  finishedAt: Date | null;
+  id: string
+  occurrenceId: string
+  memberId: string
+  target: ExportTargetId
+  status: ExportStatus
+  title: string | null
+  url: string | null
+  filePath: string | null
+  note: string | null
+  errorCode: ExportErrorCode | null
+  error: string | null
+  createdAt: Date
+  finishedAt: Date | null
 }
 export interface ExportStore {
-  create(
-    memberId: string,
-    occurrenceId: string,
-    target: ExportTargetId,
-  ): Promise<ExportRow>; // throws ExportError('already_running')
-  claimNext(): Promise<ExportRow | null>; // oldest queued -> running
-  succeed(id: string, title: string, r: ExportResult): Promise<void>;
-  fail(id: string, code: ExportErrorCode, message: string): Promise<void>;
-  failInterrupted(): Promise<ExportRow[]>; // running -> failed 'interrupted'; returns them
-  get(memberId: string, id: string): Promise<ExportRow | null>;
-  listForOccurrence(
-    memberId: string,
-    occurrenceId: string,
-  ): Promise<ExportRow[]>; // newest first
-  purgeDeleted(): Promise<number>; // rows whose occurrence is in state 'deleted'
+  create(memberId: string, occurrenceId: string, target: ExportTargetId): Promise<ExportRow> // throws ExportError('already_running')
+  claimNext(): Promise<ExportRow | null> // oldest queued -> running
+  succeed(id: string, title: string, r: ExportResult): Promise<void>
+  fail(id: string, code: ExportErrorCode, message: string): Promise<void>
+  failInterrupted(): Promise<ExportRow[]> // running -> failed 'interrupted'; returns them
+  get(memberId: string, id: string): Promise<ExportRow | null>
+  listForOccurrence(memberId: string, occurrenceId: string): Promise<ExportRow[]> // newest first
+  purgeDeleted(): Promise<number> // rows whose occurrence is in state 'deleted'
 }
 export interface ConnectionStore {
   get(
     memberId: string,
-    kind: ConnectionKind,
+    kind: ConnectionKind
   ): Promise<{
-    connection: Connection;
-    status: "ok" | "reconnect_needed";
-  } | null>;
-  summaries(memberId: string): Promise<ConnectionSummary[]>;
-  save(memberId: string, c: Connection): Promise<void>; // upsert; status back to 'ok'
-  markReconnect(memberId: string, kind: ConnectionKind): Promise<void>;
-  remove(memberId: string, kind: ConnectionKind): Promise<void>;
+    connection: Connection
+    status: 'ok' | 'reconnect_needed'
+  } | null>
+  summaries(memberId: string): Promise<ConnectionSummary[]>
+  save(memberId: string, c: Connection): Promise<void> // upsert; status back to 'ok'
+  markReconnect(memberId: string, kind: ConnectionKind): Promise<void>
+  remove(memberId: string, kind: ConnectionKind): Promise<void>
 }
 export function createStores(
   db: Db,
   masterKey: Buffer,
-  dataRoot: string,
+  dataRoot: string
 ): {
-  exports: ExportStore;
-  connections: ConnectionStore;
-  occurrences: OccurrenceLookup;
-};
+  exports: ExportStore
+  connections: ConnectionStore
+  occurrences: OccurrenceLookup
+}
 ```
 
 Schema (`exports-schema.ts`, Drizzle; id types follow 01c's `members.id` and `occurrences.id`):
@@ -719,110 +670,95 @@ exports      id uuid pk default gen_random_uuid()
 
 ```ts
 // vault.test.ts
-const key = randomBytes(32);
-test("seals per member and kind", () => {
-  const s = sealSecret("github_pat_TESTTOKEN123", "m1", "github", key);
-  expect(s.startsWith("v1.")).toBe(true);
-  expect(s).not.toContain("TESTTOKEN");
-  expect(openSecret(s, "m1", "github", key)).toBe("github_pat_TESTTOKEN123");
-  expect(() => openSecret(s, "m2", "github", key)).toThrow();
-  expect(() => openSecret(s, "m1", "notion", key)).toThrow();
-  expect(() =>
-    openSecret(
-      s.slice(0, -2) + (s.endsWith("AA") ? "BB" : "AA"),
-      "m1",
-      "github",
-      key,
-    ),
-  ).toThrow();
-});
-test("readMasterKey wants 32 bytes", async () => {
-  const f = join(await mkdtemp(join(tmpdir(), "k")), "key");
-  await writeFile(f, randomBytes(16).toString("base64"));
-  expect(() => readMasterKey(f)).toThrow(
-    "TM_MASTER_KEY_FILE must hold 32 bytes in base64",
-  );
-});
-test("redact", () => {
-  expect(redact("bad token github_pat_abc123 and ya29.a0Bx-y", [])).toBe(
-    "bad token [redacted] and [redacted]",
-  );
-  expect(redact("refresh 1//0gAbC-d failed", [])).toBe(
-    "refresh [redacted] failed",
-  );
-  expect(redact("key s3cretvalue!", ["s3cretvalue!"])).toBe("key [redacted]");
-});
+const key = randomBytes(32)
+test('seals per member and kind', () => {
+  const s = sealSecret('github_pat_TESTTOKEN123', 'm1', 'github', key)
+  expect(s.startsWith('v1.')).toBe(true)
+  expect(s).not.toContain('TESTTOKEN')
+  expect(openSecret(s, 'm1', 'github', key)).toBe('github_pat_TESTTOKEN123')
+  expect(() => openSecret(s, 'm2', 'github', key)).toThrow()
+  expect(() => openSecret(s, 'm1', 'notion', key)).toThrow()
+  expect(() => openSecret(s.slice(0, -2) + (s.endsWith('AA') ? 'BB' : 'AA'), 'm1', 'github', key)).toThrow()
+})
+test('readMasterKey wants 32 bytes', async () => {
+  const f = join(await mkdtemp(join(tmpdir(), 'k')), 'key')
+  await writeFile(f, randomBytes(16).toString('base64'))
+  expect(() => readMasterKey(f)).toThrow('TM_MASTER_KEY_FILE must hold 32 bytes in base64')
+})
+test('redact', () => {
+  expect(redact('bad token github_pat_abc123 and ya29.a0Bx-y', [])).toBe('bad token [redacted] and [redacted]')
+  expect(redact('refresh 1//0gAbC-d failed', [])).toBe('refresh [redacted] failed')
+  expect(redact('key s3cretvalue!', ['s3cretvalue!'])).toBe('key [redacted]')
+})
 
 // store.test.ts: Postgres. Seed with 01c's test fixtures members m1, m2 and occurrences
 // o1 (m1, 'completed') and o2 (m1, 'deleted'); s = createStores(db, randomBytes(32), '/data');
 // each test starts with empty exports and connections tables.
-test("one active export per occurrence and target", async () => {
-  const a = await s.exports.create(m1, o1, "zip");
-  await expect(s.exports.create(m1, o1, "zip")).rejects.toMatchObject({
-    code: "already_running",
-  });
-  await s.exports.create(m1, o1, "pdf");
-  await s.exports.succeed(a.id, "2026-10-20 1400 Data Mining", {
+test('one active export per occurrence and target', async () => {
+  const a = await s.exports.create(m1, o1, 'zip')
+  await expect(s.exports.create(m1, o1, 'zip')).rejects.toMatchObject({
+    code: 'already_running'
+  })
+  await s.exports.create(m1, o1, 'pdf')
+  await s.exports.succeed(a.id, '2026-10-20 1400 Data Mining', {
     url: null,
-    filePath: "/x.zip",
-    note: null,
-  });
-  expect((await s.exports.create(m1, o1, "zip")).status).toBe("queued");
-});
-test("claimNext takes the oldest queued", async () => {
-  const a = await s.exports.create(m1, o1, "zip");
-  await s.exports.create(m1, o1, "pdf");
+    filePath: '/x.zip',
+    note: null
+  })
+  expect((await s.exports.create(m1, o1, 'zip')).status).toBe('queued')
+})
+test('claimNext takes the oldest queued', async () => {
+  const a = await s.exports.create(m1, o1, 'zip')
+  await s.exports.create(m1, o1, 'pdf')
   expect(await s.exports.claimNext()).toMatchObject({
     id: a.id,
-    status: "running",
-  });
-});
-test("members see only their own rows", async () => {
-  const a = await s.exports.create(m1, o1, "zip");
-  expect(await s.exports.get(m2, a.id)).toBeNull();
-  expect(await s.exports.listForOccurrence(m2, o1)).toEqual([]);
-  expect(await s.occurrences.get(m2, o1)).toBeNull();
+    status: 'running'
+  })
+})
+test('members see only their own rows', async () => {
+  const a = await s.exports.create(m1, o1, 'zip')
+  expect(await s.exports.get(m2, a.id)).toBeNull()
+  expect(await s.exports.listForOccurrence(m2, o1)).toEqual([])
+  expect(await s.occurrences.get(m2, o1)).toBeNull()
   expect(await s.occurrences.get(m1, o1)).toMatchObject({
-    state: "completed",
-    dataDir: `/data/occurrences/${o1}`,
-  });
-});
-test("secrets are sealed and summaries hold none", async () => {
+    state: 'completed',
+    dataDir: `/data/occurrences/${o1}`
+  })
+})
+test('secrets are sealed and summaries hold none', async () => {
   await s.connections.save(m1, {
-    kind: "github",
-    token: "github_pat_TESTTOKEN123",
-    owner: "acme",
-    repo: "notes",
-    branch: "main",
-    folder: "meetings",
-  });
-  expect(
-    JSON.stringify(await db.execute(sql`select * from connections`)),
-  ).not.toContain("TESTTOKEN");
-  expect((await s.connections.get(m1, "github"))?.connection).toMatchObject({
-    token: "github_pat_TESTTOKEN123",
-  });
+    kind: 'github',
+    token: 'github_pat_TESTTOKEN123',
+    owner: 'acme',
+    repo: 'notes',
+    branch: 'main',
+    folder: 'meetings'
+  })
+  expect(JSON.stringify(await db.execute(sql`select * from connections`))).not.toContain('TESTTOKEN')
+  expect((await s.connections.get(m1, 'github'))?.connection).toMatchObject({
+    token: 'github_pat_TESTTOKEN123'
+  })
   expect(await s.connections.summaries(m1)).toEqual([
     {
-      kind: "github",
-      status: "ok",
+      kind: 'github',
+      status: 'ok',
       ready: true,
-      label: "acme/notes",
-      detail: "branch main, folder meetings",
-    },
-  ]);
-});
-test("failInterrupted and purgeDeleted", async () => {
-  await s.exports.create(m1, o1, "zip");
-  await s.exports.claimNext();
+      label: 'acme/notes',
+      detail: 'branch main, folder meetings'
+    }
+  ])
+})
+test('failInterrupted and purgeDeleted', async () => {
+  await s.exports.create(m1, o1, 'zip')
+  await s.exports.claimNext()
   expect((await s.exports.failInterrupted())[0]).toMatchObject({
-    status: "failed",
-    errorCode: "interrupted",
-    error: "The export was interrupted. Try again.",
-  });
-  await s.exports.create(m1, o2, "zip");
-  expect(await s.exports.purgeDeleted()).toBe(1);
-});
+    status: 'failed',
+    errorCode: 'interrupted',
+    error: 'The export was interrupted. Try again.'
+  })
+  await s.exports.create(m1, o2, 'zip')
+  expect(await s.exports.purgeDeleted()).toBe(1)
+})
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -862,57 +798,48 @@ git commit -m "feat(exports): add token vault and stores"
 ```ts
 // registry.ts
 export function oauthClientFromEnv(
-  kind: "google" | "notion",
-  env?: Record<string, string | undefined>,
-): OAuthClient | null;
+  kind: 'google' | 'notion',
+  env?: Record<string, string | undefined>
+): OAuthClient | null
 // GOOGLE_CLIENT_ID/SECRET or NOTION_CLIENT_ID/SECRET; redirectUri `${TM_PUBLIC_URL}/api/connections/<kind>/callback`; null if either is unset
 export function buildTargets(clients: {
-  google: OAuthClient | null;
-  notion: OAuthClient | null;
-}): Partial<Record<ExportTargetId, ExportTarget>>;
+  google: OAuthClient | null
+  notion: OAuthClient | null
+}): Partial<Record<ExportTargetId, ExportTarget>>
 // runner.ts
 export interface RunnerDeps {
-  exports: ExportStore;
-  connections: ConnectionStore;
-  occurrences: OccurrenceLookup;
-  targets: Partial<Record<ExportTargetId, ExportTarget>>;
-  ping(memberId: string, p: Ping): Promise<void>;
-  publicUrl: string;
-  http: typeof fetch;
-  sleep(ms: number): Promise<void>;
-  log(line: string): void;
+  exports: ExportStore
+  connections: ConnectionStore
+  occurrences: OccurrenceLookup
+  targets: Partial<Record<ExportTargetId, ExportTarget>>
+  ping(memberId: string, p: Ping): Promise<void>
+  publicUrl: string
+  http: typeof fetch
+  sleep(ms: number): Promise<void>
+  log(line: string): void
 }
-export async function runExport(
-  row: ExportRow,
-  deps: RunnerDeps,
-): Promise<void>;
-export async function runLoop(
-  deps: RunnerDeps,
-  signal: AbortSignal,
-  pollMs?: number,
-): Promise<void>; // default 2000
+export async function runExport(row: ExportRow, deps: RunnerDeps): Promise<void>
+export async function runLoop(deps: RunnerDeps, signal: AbortSignal, pollMs?: number): Promise<void> // default 2000
 export function exportPing(
   row: ExportRow,
   title: string | null,
-  outcome:
-    | { ok: true; result: ExportResult }
-    | { ok: false; code: ExportErrorCode; message: string },
-  publicUrl: string,
-): Ping;
+  outcome: { ok: true; result: ExportResult } | { ok: false; code: ExportErrorCode; message: string },
+  publicUrl: string
+): Ping
 // test/memory-stores.ts
 export function memoryStores(seed?: {
-  occurrences?: OccurrenceInfo[];
+  occurrences?: OccurrenceInfo[]
   connections?: {
-    memberId: string;
-    connection: Connection;
-    status?: "ok" | "reconnect_needed";
-  }[];
+    memberId: string
+    connection: Connection
+    status?: 'ok' | 'reconnect_needed'
+  }[]
 }): {
-  exports: ExportStore;
-  connections: ConnectionStore;
-  occurrences: OccurrenceLookup;
-  markedReconnect: ConnectionKind[];
-};
+  exports: ExportStore
+  connections: ConnectionStore
+  occurrences: OccurrenceLookup
+  markedReconnect: ConnectionKind[]
+}
 ```
 
 Ping copy (priority `'default'` for all; `<meeting page>` is `<TM_PUBLIC_URL>/meetings/<occurrenceId>`):
@@ -933,129 +860,108 @@ Failure               title: Export failed
 
 ```ts
 // registry.test.ts
-test("downloads are always there; remote targets need their client", () => {
+test('downloads are always there; remote targets need their client', () => {
+  expect(Object.keys(buildTargets({ google: null, notion: null })).sort()).toEqual(['pdf', 'zip'])
   expect(
-    Object.keys(buildTargets({ google: null, notion: null })).sort(),
-  ).toEqual(["pdf", "zip"]);
-  expect(
-    oauthClientFromEnv("google", {
-      TM_PUBLIC_URL: "https://tm.example",
-      GOOGLE_CLIENT_ID: "a",
-      GOOGLE_CLIENT_SECRET: "b",
-    }),
+    oauthClientFromEnv('google', {
+      TM_PUBLIC_URL: 'https://tm.example',
+      GOOGLE_CLIENT_ID: 'a',
+      GOOGLE_CLIENT_SECRET: 'b'
+    })
   ).toEqual({
-    clientId: "a",
-    clientSecret: "b",
-    redirectUri: "https://tm.example/api/connections/google/callback",
-  });
+    clientId: 'a',
+    clientSecret: 'b',
+    redirectUri: 'https://tm.example/api/connections/google/callback'
+  })
   expect(
-    oauthClientFromEnv("notion", {
-      TM_PUBLIC_URL: "https://tm.example",
-      NOTION_CLIENT_ID: "a",
-    }),
-  ).toBeNull();
-});
+    oauthClientFromEnv('notion', {
+      TM_PUBLIC_URL: 'https://tm.example',
+      NOTION_CLIENT_ID: 'a'
+    })
+  ).toBeNull()
+})
 
 // runner.test.ts: the occurrence o1 (member m1, 'completed') has dataDir = a copy of the task 1 fixture
-test("zip success records the file and pings", async () => {
-  const { deps, pings, stores } = setup(); // memoryStores + targets { zip: zipTarget }
-  const row = await stores.exports.create("m1", "o1", "zip");
-  await runExport(row, deps);
-  expect(await stores.exports.get("m1", row.id)).toMatchObject({
-    status: "succeeded",
-    title: "2026-10-20 1400 Data Mining",
-  });
+test('zip success records the file and pings', async () => {
+  const { deps, pings, stores } = setup() // memoryStores + targets { zip: zipTarget }
+  const row = await stores.exports.create('m1', 'o1', 'zip')
+  await runExport(row, deps)
+  expect(await stores.exports.get('m1', row.id)).toMatchObject({
+    status: 'succeeded',
+    title: '2026-10-20 1400 Data Mining'
+  })
   expect(pings[0]).toEqual({
-    title: "Export finished",
+    title: 'Export finished',
     message: '"2026-10-20 1400 Data Mining" is ready to download.',
-    priority: "default",
-    actions: [
-      { label: "Open meeting page", url: "https://tm.example/meetings/o1" },
-    ],
-  });
-});
-test("a remote target without a connection fails and offers Reconnect", async () => {
+    priority: 'default',
+    actions: [{ label: 'Open meeting page', url: 'https://tm.example/meetings/o1' }]
+  })
+})
+test('a remote target without a connection fails and offers Reconnect', async () => {
   const { deps, pings, stores } = setup({
-    targets: { github: fakeTarget("github") },
-  });
-  const row = await stores.exports.create("m1", "o1", "github");
-  await runExport(row, deps);
-  expect(await stores.exports.get("m1", row.id)).toMatchObject({
-    status: "failed",
-    errorCode: "not_connected",
-    error: "Connect GitHub on the Connections page first.",
-  });
+    targets: { github: fakeTarget('github') }
+  })
+  const row = await stores.exports.create('m1', 'o1', 'github')
+  await runExport(row, deps)
+  expect(await stores.exports.get('m1', row.id)).toMatchObject({
+    status: 'failed',
+    errorCode: 'not_connected',
+    error: 'Connect GitHub on the Connections page first.'
+  })
   expect(pings[0].actions?.[0]).toEqual({
-    label: "Reconnect",
-    url: "https://tm.example/connections",
-  });
-});
-test("reconnect_needed is redacted, flags the connection and never logs the token", async () => {
-  const lines: string[] = [];
+    label: 'Reconnect',
+    url: 'https://tm.example/connections'
+  })
+})
+test('reconnect_needed is redacted, flags the connection and never logs the token', async () => {
+  const lines: string[] = []
   const { deps, stores } = setup({
     log: (l) => lines.push(l),
-    connections: [githubConn("github_pat_abc123")],
+    connections: [githubConn('github_pat_abc123')],
     targets: {
-      github: fakeTarget(
-        "github",
-        new ExportError(
-          "reconnect_needed",
-          "GitHub rejected github_pat_abc123",
-        ),
-      ),
-    },
-  });
-  const row = await stores.exports.create("m1", "o1", "github");
-  await runExport(row, deps);
-  expect((await stores.exports.get("m1", row.id))?.error).toBe(
-    "GitHub rejected [redacted]",
-  );
-  expect(stores.markedReconnect).toEqual(["github"]);
-  expect(lines.join("\n")).not.toContain("github_pat_");
-});
-test("deleted, unfinished and broken meetings", async () => {
+      github: fakeTarget('github', new ExportError('reconnect_needed', 'GitHub rejected github_pat_abc123'))
+    }
+  })
+  const row = await stores.exports.create('m1', 'o1', 'github')
+  await runExport(row, deps)
+  expect((await stores.exports.get('m1', row.id))?.error).toBe('GitHub rejected [redacted]')
+  expect(stores.markedReconnect).toEqual(['github'])
+  expect(lines.join('\n')).not.toContain('github_pat_')
+})
+test('deleted, unfinished and broken meetings', async () => {
   for (const [state, code, error] of [
-    [
-      "deleted",
-      "meeting_deleted",
-      "This meeting has been deleted from TolongMeeting.",
-    ],
-    ["transcribing", "not_ready", "This meeting is still being processed."],
+    ['deleted', 'meeting_deleted', 'This meeting has been deleted from TolongMeeting.'],
+    ['transcribing', 'not_ready', 'This meeting is still being processed.']
   ] as const) {
-    const { deps, stores, ran } = setup({ state });
-    const row = await stores.exports.create("m1", "o1", "zip");
-    await runExport(row, deps);
-    expect(await stores.exports.get("m1", row.id)).toMatchObject({
+    const { deps, stores, ran } = setup({ state })
+    const row = await stores.exports.create('m1', 'o1', 'zip')
+    await runExport(row, deps)
+    expect(await stores.exports.get('m1', row.id)).toMatchObject({
       errorCode: code,
-      error,
-    });
-    expect(ran()).toBe(0);
+      error
+    })
+    expect(ran()).toBe(0)
   }
   const { deps, stores } = setup({
-    targets: { zip: fakeTarget("zip", new Error("boom")) },
-  });
-  const row = await stores.exports.create("m1", "o1", "zip");
-  await runExport(row, deps);
-  expect((await stores.exports.get("m1", row.id))?.error).toBe(
-    "Something went wrong: boom. Try again.",
-  );
-});
-test("runLoop fails interrupted rows, then runs queued ones in order", async () => {
-  const { deps, stores, pings } = setup();
-  const stale = await stores.exports.create("m1", "o1", "pdf");
-  await stores.exports.claimNext();
-  await stores.exports.create("m1", "o1", "zip");
-  const ac = new AbortController();
-  setTimeout(() => ac.abort(), 50);
-  await runLoop(deps, ac.signal, 5);
-  expect(await stores.exports.get("m1", stale.id)).toMatchObject({
-    errorCode: "interrupted",
-  });
-  expect(pings.map((p) => p.title)).toEqual([
-    "Export failed",
-    "Export finished",
-  ]);
-});
+    targets: { zip: fakeTarget('zip', new Error('boom')) }
+  })
+  const row = await stores.exports.create('m1', 'o1', 'zip')
+  await runExport(row, deps)
+  expect((await stores.exports.get('m1', row.id))?.error).toBe('Something went wrong: boom. Try again.')
+})
+test('runLoop fails interrupted rows, then runs queued ones in order', async () => {
+  const { deps, stores, pings } = setup()
+  const stale = await stores.exports.create('m1', 'o1', 'pdf')
+  await stores.exports.claimNext()
+  await stores.exports.create('m1', 'o1', 'zip')
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 50)
+  await runLoop(deps, ac.signal, 5)
+  expect(await stores.exports.get('m1', stale.id)).toMatchObject({
+    errorCode: 'interrupted'
+  })
+  expect(pings.map((p) => p.title)).toEqual(['Export failed', 'Export finished'])
+})
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -1080,7 +986,7 @@ Compose service, using the same image, data volume, master-key secret and networ
 
 ```yaml
 exports:
-  command: ["bun", "run", "packages/exports/src/main.ts"]
+  command: ['bun', 'run', 'packages/exports/src/main.ts']
   environment:
     DATABASE_URL: ${DATABASE_URL}
     TM_PUBLIC_URL: ${TM_PUBLIC_URL}
@@ -1121,53 +1027,42 @@ git commit -m "feat(exports): add export runner service"
 
 ```ts
 export interface ApiDeps {
-  exports: ExportStore;
-  connections: ConnectionStore;
-  occurrences: OccurrenceLookup;
+  exports: ExportStore
+  connections: ConnectionStore
+  occurrences: OccurrenceLookup
 }
 export interface ApiResult {
-  status: number;
-  body: unknown;
+  status: number
+  body: unknown
 }
 export interface ExportView {
-  id: string;
-  target: ExportTargetId;
-  label: string;
-  status: ExportStatus;
-  createdAt: string;
-  finishedAt: string | null;
-  url: string | null;
-  downloadUrl: string | null;
-  note: string | null;
-  error: string | null;
+  id: string
+  target: ExportTargetId
+  label: string
+  status: ExportStatus
+  createdAt: string
+  finishedAt: string | null
+  url: string | null
+  downloadUrl: string | null
+  note: string | null
+  error: string | null
 }
 export async function createExportRequest(
   memberId: string,
   occurrenceId: string,
   body: unknown,
-  deps: ApiDeps,
-): Promise<ApiResult>;
-export async function listExportsRequest(
-  memberId: string,
-  occurrenceId: string,
-  deps: ApiDeps,
-): Promise<ApiResult>; // { exports: ExportView[] }
-export async function exportFileRequest(
-  memberId: string,
-  exportId: string,
-  deps: ApiDeps,
-): Promise<Response>;
-export async function connectionsRequest(
-  memberId: string,
-  deps: ApiDeps,
-): Promise<ApiResult>; // { connections: ConnectionSummary[] }
+  deps: ApiDeps
+): Promise<ApiResult>
+export async function listExportsRequest(memberId: string, occurrenceId: string, deps: ApiDeps): Promise<ApiResult> // { exports: ExportView[] }
+export async function exportFileRequest(memberId: string, exportId: string, deps: ApiDeps): Promise<Response>
+export async function connectionsRequest(memberId: string, deps: ApiDeps): Promise<ApiResult> // { connections: ConnectionSummary[] }
 export function buttonState(
   target: ExportTargetId,
   connections: ConnectionSummary[],
-  rows: ExportView[],
-): { enabled: boolean; hint: string | null };
+  rows: ExportView[]
+): { enabled: boolean; hint: string | null }
 // packages/web/lib/exports.ts
-export function exportDeps(): ApiDeps; // createStores(db, readMasterKey(TM_MASTER_KEY_FILE), TM_DATA_ROOT), built once
+export function exportDeps(): ApiDeps // createStores(db, readMasterKey(TM_MASTER_KEY_FILE), TM_DATA_ROOT), built once
 ```
 
 Routes: `GET` and `POST /api/meetings/[occurrenceId]/exports` (body `{ target }`), `GET /api/exports/[exportId]/file`, `GET /api/connections`. Each handler calls `requireMember(req)`, then the matching function, and returns `Response.json(body, { status })` (the file route returns the `Response` as it is).
@@ -1175,122 +1070,106 @@ Routes: `GET` and `POST /api/meetings/[occurrenceId]/exports` (body `{ target }`
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("creating exports", async () => {
+test('creating exports', async () => {
   const deps = memoryStores({
-    occurrences: [
-      occ("o1", "m1", "completed"),
-      occ("o2", "m1", "deleted"),
-      occ("o3", "m1", "post_processing"),
-    ],
-  });
-  expect(
-    await createExportRequest("m1", "o1", { target: "zip" }, deps),
-  ).toMatchObject({ status: 202, body: { exportId: expect.any(String) } });
-  expect(
-    await createExportRequest("m1", "o1", { target: "zip" }, deps),
-  ).toEqual({
+    occurrences: [occ('o1', 'm1', 'completed'), occ('o2', 'm1', 'deleted'), occ('o3', 'm1', 'post_processing')]
+  })
+  expect(await createExportRequest('m1', 'o1', { target: 'zip' }, deps)).toMatchObject({
+    status: 202,
+    body: { exportId: expect.any(String) }
+  })
+  expect(await createExportRequest('m1', 'o1', { target: 'zip' }, deps)).toEqual({
     status: 409,
     body: {
-      error: "already_running",
-      message: "This export is already running.",
-    },
-  });
-  expect(
-    await createExportRequest("m2", "o1", { target: "pdf" }, deps),
-  ).toEqual({ status: 404, body: { error: "not_found" } });
-  expect(
-    await createExportRequest("m1", "o1", { target: "dropbox" }, deps),
-  ).toEqual({ status: 400, body: { error: "invalid_target" } });
-  expect(
-    await createExportRequest("m1", "o2", { target: "pdf" }, deps),
-  ).toMatchObject({ status: 410, body: { error: "meeting_deleted" } });
-  expect(
-    await createExportRequest("m1", "o3", { target: "pdf" }, deps),
-  ).toMatchObject({ status: 409, body: { error: "not_ready" } });
-  expect(
-    await createExportRequest("m1", "o1", { target: "github" }, deps),
-  ).toEqual({
+      error: 'already_running',
+      message: 'This export is already running.'
+    }
+  })
+  expect(await createExportRequest('m2', 'o1', { target: 'pdf' }, deps)).toEqual({
+    status: 404,
+    body: { error: 'not_found' }
+  })
+  expect(await createExportRequest('m1', 'o1', { target: 'dropbox' }, deps)).toEqual({
+    status: 400,
+    body: { error: 'invalid_target' }
+  })
+  expect(await createExportRequest('m1', 'o2', { target: 'pdf' }, deps)).toMatchObject({
+    status: 410,
+    body: { error: 'meeting_deleted' }
+  })
+  expect(await createExportRequest('m1', 'o3', { target: 'pdf' }, deps)).toMatchObject({
+    status: 409,
+    body: { error: 'not_ready' }
+  })
+  expect(await createExportRequest('m1', 'o1', { target: 'github' }, deps)).toEqual({
     status: 400,
     body: {
-      error: "not_connected",
-      message: "Connect GitHub on the Connections page first.",
-    },
-  });
-});
-test("a Notion connection without a parent is not ready", async () => {
+      error: 'not_connected',
+      message: 'Connect GitHub on the Connections page first.'
+    }
+  })
+})
+test('a Notion connection without a parent is not ready', async () => {
   const deps = memoryStores({
-    occurrences: [occ("o1", "m1", "completed")],
+    occurrences: [occ('o1', 'm1', 'completed')],
     connections: [
       {
-        memberId: "m1",
+        memberId: 'm1',
         connection: {
-          kind: "notion",
-          accessToken: "ntn_x",
+          kind: 'notion',
+          accessToken: 'ntn_x',
           refreshToken: null,
-          workspace: "Notes",
-          parent: null,
-        },
-      },
-    ],
-  });
-  expect(
-    await createExportRequest("m1", "o1", { target: "notion" }, deps),
-  ).toEqual({
+          workspace: 'Notes',
+          parent: null
+        }
+      }
+    ]
+  })
+  expect(await createExportRequest('m1', 'o1', { target: 'notion' }, deps)).toEqual({
     status: 400,
     body: {
-      error: "invalid_settings",
-      message:
-        "Pick a Notion page or database for exports on the Connections page.",
-    },
-  });
-});
-test("lists hide server paths; files go only to their owner", async () => {
-  const deps = await withFinishedZip("m1", "o1"); // succeeded zip row, file on disk, title '2026-10-20 1400 Pengurusan Café'
-  const { body } = await listExportsRequest("m1", "o1", deps);
-  expect(JSON.stringify(body)).not.toContain("filePath");
-  expect((body as { exports: ExportView[] }).exports[0].downloadUrl).toBe(
-    `/api/exports/${deps.zipId}/file`,
-  );
-  const res = await exportFileRequest("m1", deps.zipId, deps);
-  expect(res.headers.get("content-type")).toBe("application/zip");
-  expect(res.headers.get("content-disposition")).toBe(
-    contentDisposition("2026-10-20 1400 Pengurusan Café.zip"),
-  );
-  expect(res.headers.get("cache-control")).toBe("private, no-store");
-  expect((await exportFileRequest("m2", deps.zipId, deps)).status).toBe(404);
-  expect((await listExportsRequest("m2", "o1", deps)).status).toBe(404);
-});
-test("connections list carries no secrets", async () => {
+      error: 'invalid_settings',
+      message: 'Pick a Notion page or database for exports on the Connections page.'
+    }
+  })
+})
+test('lists hide server paths; files go only to their owner', async () => {
+  const deps = await withFinishedZip('m1', 'o1') // succeeded zip row, file on disk, title '2026-10-20 1400 Pengurusan Café'
+  const { body } = await listExportsRequest('m1', 'o1', deps)
+  expect(JSON.stringify(body)).not.toContain('filePath')
+  expect((body as { exports: ExportView[] }).exports[0].downloadUrl).toBe(`/api/exports/${deps.zipId}/file`)
+  const res = await exportFileRequest('m1', deps.zipId, deps)
+  expect(res.headers.get('content-type')).toBe('application/zip')
+  expect(res.headers.get('content-disposition')).toBe(contentDisposition('2026-10-20 1400 Pengurusan Café.zip'))
+  expect(res.headers.get('cache-control')).toBe('private, no-store')
+  expect((await exportFileRequest('m2', deps.zipId, deps)).status).toBe(404)
+  expect((await listExportsRequest('m2', 'o1', deps)).status).toBe(404)
+})
+test('connections list carries no secrets', async () => {
   const deps = memoryStores({
-    connections: [
-      { memberId: "m1", connection: githubConn("github_pat_abc123") },
-    ],
-  });
-  expect(JSON.stringify(await connectionsRequest("m1", deps))).not.toContain(
-    "github_pat_",
-  );
-  expect(await connectionsRequest("m2", deps)).toEqual({
+    connections: [{ memberId: 'm1', connection: githubConn('github_pat_abc123') }]
+  })
+  expect(JSON.stringify(await connectionsRequest('m1', deps))).not.toContain('github_pat_')
+  expect(await connectionsRequest('m2', deps)).toEqual({
     status: 200,
-    body: { connections: [] },
-  });
-});
-test("buttonState", () => {
-  expect(buttonState("zip", [], [])).toEqual({ enabled: true, hint: null });
-  expect(buttonState("github", [], [])).toEqual({
+    body: { connections: [] }
+  })
+})
+test('buttonState', () => {
+  expect(buttonState('zip', [], [])).toEqual({ enabled: true, hint: null })
+  expect(buttonState('github', [], [])).toEqual({
     enabled: false,
-    hint: "Connect GitHub on the Connections page",
-  });
-  expect(
-    buttonState("gdocs", [summary("google", "reconnect_needed")], []),
-  ).toEqual({
+    hint: 'Connect GitHub on the Connections page'
+  })
+  expect(buttonState('gdocs', [summary('google', 'reconnect_needed')], [])).toEqual({
     enabled: false,
-    hint: "Reconnect Google Docs on the Connections page",
-  });
-  expect(buttonState("pdf", [], [view("pdf", "running")])).toEqual({
+    hint: 'Reconnect Google Docs on the Connections page'
+  })
+  expect(buttonState('pdf', [], [view('pdf', 'running')])).toEqual({
     enabled: false,
-    hint: "Exporting",
-  });
-});
+    hint: 'Exporting'
+  })
+})
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -1338,35 +1217,31 @@ git commit -m "feat(web): add export api and meeting panel"
 
 ```ts
 // connections/github.ts
-export function normaliseRepoFolder(input: string): string; // throws ExportError('invalid_settings')
+export function normaliseRepoFolder(input: string): string // throws ExportError('invalid_settings')
 export async function saveGitHubConnection(
   memberId: string,
   body: unknown,
-  deps: { connections: ConnectionStore; http: typeof fetch },
-): Promise<ApiResult>;
+  deps: { connections: ConnectionStore; http: typeof fetch }
+): Promise<ApiResult>
 // targets/github.ts
-export function gitBlobSha(bytes: Uint8Array): string;
-export function commitMessage(verb: "add" | "update", title: string): string;
-export const githubTarget: ExportTarget; // id 'github'
+export function gitBlobSha(bytes: Uint8Array): string
+export function commitMessage(verb: 'add' | 'update', title: string): string
+export const githubTarget: ExportTarget // id 'github'
 // test/fake-fetch.ts
 export interface FakeCall {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  body: string;
+  method: string
+  url: string
+  headers: Record<string, string>
+  body: string
 } // header names lower-case
 export function fakeFetch(
-  routes: [
-    method: string,
-    url: string | RegExp,
-    respond: (req: Request, n: number) => Response | Promise<Response>,
-  ][],
+  routes: [method: string, url: string | RegExp, respond: (req: Request, n: number) => Response | Promise<Response>][]
 ): {
-  fetch: typeof fetch;
-  calls: FakeCall[];
-  call(method: string, url: string | RegExp): FakeCall; // first match; throws if none
-  count(method: string, url: string | RegExp): number;
-};
+  fetch: typeof fetch
+  calls: FakeCall[]
+  call(method: string, url: string | RegExp): FakeCall // first match; throws if none
+  count(method: string, url: string | RegExp): number
+}
 // A string matches a request whose origin + pathname, or pathname alone, equals it; a RegExp is tested on the full URL.
 // `n` counts earlier calls to the same route. An unmatched request throws `unexpected <method> <url>`.
 ```
@@ -1377,165 +1252,132 @@ Route: `PUT /api/connections/github` with `{ owner, repo, branch, folder, token?
 
 ```ts
 // connections/github.test.ts
-test("normaliseRepoFolder", () => {
-  expect(normaliseRepoFolder(" /docs/meetings/ ")).toBe("docs/meetings");
-  expect(normaliseRepoFolder("docs\\meetings//2026")).toBe(
-    "docs/meetings/2026",
-  );
-  expect(normaliseRepoFolder("")).toBe("");
-  for (const bad of ["docs/../x", ".git/hooks", "a/.git"])
-    expect(() => normaliseRepoFolder(bad)).toThrow(
-      'Use a folder path inside the repository, without ".." or ".git".',
-    );
-});
-test("saving checks the token and the repository", async () => {
+test('normaliseRepoFolder', () => {
+  expect(normaliseRepoFolder(' /docs/meetings/ ')).toBe('docs/meetings')
+  expect(normaliseRepoFolder('docs\\meetings//2026')).toBe('docs/meetings/2026')
+  expect(normaliseRepoFolder('')).toBe('')
+  for (const bad of ['docs/../x', '.git/hooks', 'a/.git'])
+    expect(() => normaliseRepoFolder(bad)).toThrow('Use a folder path inside the repository, without ".." or ".git".')
+})
+test('saving checks the token and the repository', async () => {
   const save = (body: object, f = okGitHub()) =>
-    saveGitHubConnection("m1", body, {
+    saveGitHubConnection('m1', body, {
       connections: memoryStores().connections,
-      http: f.fetch,
-    });
+      http: f.fetch
+    })
   const base = {
-    owner: "acme",
-    repo: "notes",
-    branch: "main",
-    folder: "meetings",
-  };
-  expect(await save({ ...base, token: "ghp_classic" })).toEqual({
+    owner: 'acme',
+    repo: 'notes',
+    branch: 'main',
+    folder: 'meetings'
+  }
+  expect(await save({ ...base, token: 'ghp_classic' })).toEqual({
     status: 400,
     body: {
-      error: "invalid_settings",
-      message:
-        "Use a fine-grained token (it starts with github_pat_) limited to this repository.",
-    },
-  });
-  expect(
-    (await save({ ...base, token: "github_pat_x" }, gitHub({ repo: 404 })))
-      .body,
-  ).toMatchObject({
-    message:
-      "This token can't see acme/notes. Give it access to that repository.",
-  });
-  expect(
-    (await save({ ...base, token: "github_pat_x" }, gitHub({ branch: 404 })))
-      .body,
-  ).toMatchObject({ message: "Branch main doesn't exist in acme/notes." });
-  expect(
-    (await save({ ...base, token: "github_pat_x" }, gitHub({ repo: 401 })))
-      .body,
-  ).toMatchObject({ message: "GitHub rejected this token." });
-  expect((await save({ ...base, token: "github_pat_x" })).status).toBe(200);
-});
+      error: 'invalid_settings',
+      message: 'Use a fine-grained token (it starts with github_pat_) limited to this repository.'
+    }
+  })
+  expect((await save({ ...base, token: 'github_pat_x' }, gitHub({ repo: 404 }))).body).toMatchObject({
+    message: "This token can't see acme/notes. Give it access to that repository."
+  })
+  expect((await save({ ...base, token: 'github_pat_x' }, gitHub({ branch: 404 }))).body).toMatchObject({
+    message: "Branch main doesn't exist in acme/notes."
+  })
+  expect((await save({ ...base, token: 'github_pat_x' }, gitHub({ repo: 401 }))).body).toMatchObject({
+    message: 'GitHub rejected this token.'
+  })
+  expect((await save({ ...base, token: 'github_pat_x' })).status).toBe(200)
+})
 
 // targets/github.test.ts: conn = githubConn('github_pat_test'); base path meetings/2026-10-20-1400-data-mining
-test("gitBlobSha and commitMessage", () => {
-  expect(gitBlobSha(new TextEncoder().encode("hello\n"))).toBe(
-    "ce013625030ba8dba906f756967f9e9ca394464a",
-  );
-  expect(commitMessage("add", "2026-10-20 1400 Data Mining")).toBe(
-    "docs: add 2026-10-20 1400 Data Mining",
-  );
-  expect(
-    commitMessage("add", "2026-10-20 1400 Advanced Database Systems Lecture 7"),
-  ).toBe("docs: add 2026-10-20 1400 Advanced Database");
-  expect(
-    commitMessage(
-      "update",
-      "2026-10-20 1400 Advanced Database Systems Lecture 7",
-    ).length,
-  ).toBeLessThanOrEqual(50);
-});
-test("first export commits the whole set, spaced out", async () => {
-  const gh = repoFake({ existing: null }); // contents GET 404; ref, commit, blobs, tree, commit, ref PATCH ok
-  const ctx = testContext({ http: gh.fetch, connection: conn });
-  const r = await githubTarget.run(await loadBundle(fixture), ctx);
-  expect(gh.blobPosts).toBe(2); // the two webp files; Markdown goes inline in the tree
-  expect(gh.tree.base_tree).toBe("TREE0");
+test('gitBlobSha and commitMessage', () => {
+  expect(gitBlobSha(new TextEncoder().encode('hello\n'))).toBe('ce013625030ba8dba906f756967f9e9ca394464a')
+  expect(commitMessage('add', '2026-10-20 1400 Data Mining')).toBe('docs: add 2026-10-20 1400 Data Mining')
+  expect(commitMessage('add', '2026-10-20 1400 Advanced Database Systems Lecture 7')).toBe(
+    'docs: add 2026-10-20 1400 Advanced Database'
+  )
+  expect(commitMessage('update', '2026-10-20 1400 Advanced Database Systems Lecture 7').length).toBeLessThanOrEqual(50)
+})
+test('first export commits the whole set, spaced out', async () => {
+  const gh = repoFake({ existing: null }) // contents GET 404; ref, commit, blobs, tree, commit, ref PATCH ok
+  const ctx = testContext({ http: gh.fetch, connection: conn })
+  const r = await githubTarget.run(await loadBundle(fixture), ctx)
+  expect(gh.blobPosts).toBe(2) // the two webp files; Markdown goes inline in the tree
+  expect(gh.tree.base_tree).toBe('TREE0')
   expect(gh.tree.tree.map((e: { path: string }) => e.path)).toEqual([
-    "meetings/2026-10-20-1400-data-mining/2026-10-20 1400 Data Mining.md",
-    "meetings/2026-10-20-1400-data-mining/transcript.md",
-    "meetings/2026-10-20-1400-data-mining/slides.md",
-    "meetings/2026-10-20-1400-data-mining/chat.md",
-    "meetings/2026-10-20-1400-data-mining/slides/01.webp",
-    "meetings/2026-10-20-1400-data-mining/slides/02.webp",
-  ]);
-  expect(gh.commit.message).toBe("docs: add 2026-10-20 1400 Data Mining");
-  expect(gh.refPatch).toEqual({ sha: "COMMIT1", force: false });
-  expect(r.url).toBe(
-    "https://github.com/acme/notes/tree/main/meetings/2026-10-20-1400-data-mining",
-  );
-  expect(ctx.sleeps).toEqual(Array(gh.writes - 1).fill(800));
-});
-test("re-export sends only changes and deletes stale slides", async () => {
+    'meetings/2026-10-20-1400-data-mining/2026-10-20 1400 Data Mining.md',
+    'meetings/2026-10-20-1400-data-mining/transcript.md',
+    'meetings/2026-10-20-1400-data-mining/slides.md',
+    'meetings/2026-10-20-1400-data-mining/chat.md',
+    'meetings/2026-10-20-1400-data-mining/slides/01.webp',
+    'meetings/2026-10-20-1400-data-mining/slides/02.webp'
+  ])
+  expect(gh.commit.message).toBe('docs: add 2026-10-20 1400 Data Mining')
+  expect(gh.refPatch).toEqual({ sha: 'COMMIT1', force: false })
+  expect(r.url).toBe('https://github.com/acme/notes/tree/main/meetings/2026-10-20-1400-data-mining')
+  expect(ctx.sleeps).toEqual(Array(gh.writes - 1).fill(800))
+})
+test('re-export sends only changes and deletes stale slides', async () => {
   const gh = repoFake({
     existing: sameAsFixtureExcept({
-      "slides.md": "old",
-      "slides/03.webp": "old",
-    }),
-  });
-  await githubTarget.run(
-    await loadBundle(fixture),
-    testContext({ http: gh.fetch, connection: conn }),
-  );
-  expect(gh.blobPosts).toBe(0);
+      'slides.md': 'old',
+      'slides/03.webp': 'old'
+    })
+  })
+  await githubTarget.run(await loadBundle(fixture), testContext({ http: gh.fetch, connection: conn }))
+  expect(gh.blobPosts).toBe(0)
   expect(gh.tree.tree).toEqual([
     {
-      path: "meetings/2026-10-20-1400-data-mining/slides.md",
-      mode: "100644",
-      type: "blob",
-      content: expect.any(String),
+      path: 'meetings/2026-10-20-1400-data-mining/slides.md',
+      mode: '100644',
+      type: 'blob',
+      content: expect.any(String)
     },
     {
-      path: "meetings/2026-10-20-1400-data-mining/slides/03.webp",
-      mode: "100644",
-      type: "blob",
-      sha: null,
-    },
-  ]);
-  expect(gh.commit.message).toBe("docs: update 2026-10-20 1400 Data Mining");
-});
-test("no changes means no commit", async () => {
-  const gh = repoFake({ existing: sameAsFixtureExcept({}) });
+      path: 'meetings/2026-10-20-1400-data-mining/slides/03.webp',
+      mode: '100644',
+      type: 'blob',
+      sha: null
+    }
+  ])
+  expect(gh.commit.message).toBe('docs: update 2026-10-20 1400 Data Mining')
+})
+test('no changes means no commit', async () => {
+  const gh = repoFake({ existing: sameAsFixtureExcept({}) })
   expect(
-    (
-      await githubTarget.run(
-        await loadBundle(fixture),
-        testContext({ http: gh.fetch, connection: conn }),
-      )
-    ).note,
-  ).toBe("No changes since the last export");
-  expect(gh.writes).toBe(0);
-});
-test("a moved branch retries once; a bad token asks to reconnect", async () => {
+    (await githubTarget.run(await loadBundle(fixture), testContext({ http: gh.fetch, connection: conn }))).note
+  ).toBe('No changes since the last export')
+  expect(gh.writes).toBe(0)
+})
+test('a moved branch retries once; a bad token asks to reconnect', async () => {
   expect(
     (
       await githubTarget.run(
         await loadBundle(fixture),
         testContext({
           http: repoFake({ existing: null, refPatch: [422, 200] }).fetch,
-          connection: conn,
-        }),
+          connection: conn
+        })
       )
-    ).url,
-  ).toBeTruthy();
+    ).url
+  ).toBeTruthy()
   await expect(
     githubTarget.run(
       await loadBundle(fixture),
       testContext({
         http: repoFake({ existing: null, refPatch: [422, 422] }).fetch,
-        connection: conn,
-      }),
-    ),
+        connection: conn
+      })
+    )
   ).rejects.toMatchObject({
-    code: "failed",
-    message: "The branch changed during the export. Try again.",
-  });
+    code: 'failed',
+    message: 'The branch changed during the export. Try again.'
+  })
   await expect(
-    githubTarget.run(
-      await loadBundle(fixture),
-      testContext({ http: repoFake({ ref: 401 }).fetch, connection: conn }),
-    ),
-  ).rejects.toMatchObject({ code: "reconnect_needed" });
-});
+    githubTarget.run(await loadBundle(fixture), testContext({ http: repoFake({ ref: 401 }).fetch, connection: conn }))
+  ).rejects.toMatchObject({ code: 'reconnect_needed' })
+})
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -1582,22 +1424,16 @@ git commit -m "feat(exports): add github target"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("the Word file holds text, headings, page breaks and images", async () => {
-  const b = await loadBundle(fixture);
-  const files = unzipSync(
-    await toDocx(bundleDocument(b), await bundleImages(b), b.title),
-  );
-  const xml = new TextDecoder().decode(files["word/document.xml"]);
-  expect(xml).toContain("Submit lab 2 (due 27 October 2026, 23:59)");
-  expect(xml).toContain('<w:pStyle w:val="Heading1"/>');
-  expect(xml.match(/<w:pageBreakBefore\/>/g)).toHaveLength(3);
-  expect(
-    Object.keys(files).filter((k) => k.startsWith("word/media/")),
-  ).toHaveLength(2);
-  expect(new TextDecoder().decode(files["docProps/core.xml"])).toContain(
-    "2026-10-20 1400 Data Mining",
-  );
-});
+test('the Word file holds text, headings, page breaks and images', async () => {
+  const b = await loadBundle(fixture)
+  const files = unzipSync(await toDocx(bundleDocument(b), await bundleImages(b), b.title))
+  const xml = new TextDecoder().decode(files['word/document.xml'])
+  expect(xml).toContain('Submit lab 2 (due 27 October 2026, 23:59)')
+  expect(xml).toContain('<w:pStyle w:val="Heading1"/>')
+  expect(xml.match(/<w:pageBreakBefore\/>/g)).toHaveLength(3)
+  expect(Object.keys(files).filter((k) => k.startsWith('word/media/'))).toHaveLength(2)
+  expect(new TextDecoder().decode(files['docProps/core.xml'])).toContain('2026-10-20 1400 Data Mining')
+})
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -1636,70 +1472,55 @@ git commit -m "feat(exports): add word renderer"
 
 ```ts
 // connections/oauth.ts
-export function pkceChallenge(verifier: string): string;
+export function pkceChallenge(verifier: string): string
 export function newOAuthState(): {
-  state: string;
-  verifier: string;
-  challenge: string;
-};
-export function stateCookie(
-  kind: "google" | "notion",
-  state: string,
-  verifier: string,
-): string; // Set-Cookie value
-export function clearStateCookie(kind: "google" | "notion"): string;
-export function readStateCookie(
-  req: Request,
-  kind: "google" | "notion",
-): { state: string; verifier: string } | null;
+  state: string
+  verifier: string
+  challenge: string
+}
+export function stateCookie(kind: 'google' | 'notion', state: string, verifier: string): string // Set-Cookie value
+export function clearStateCookie(kind: 'google' | 'notion'): string
+export function readStateCookie(req: Request, kind: 'google' | 'notion'): { state: string; verifier: string } | null
 // connections/google.ts
-export const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
-export const DEFAULT_FOLDER_NAME = "TolongMeeting Exports";
-export function googleAuthUrl(o: {
-  client: OAuthClient;
-  state: string;
-  codeChallenge: string;
-}): string;
-export async function googleAccessToken(
-  refreshToken: string,
-  client: OAuthClient,
-  http: typeof fetch,
-): Promise<string>; // invalid_grant -> reconnect_needed
+export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+export const DEFAULT_FOLDER_NAME = 'TolongMeeting Exports'
+export function googleAuthUrl(o: { client: OAuthClient; state: string; codeChallenge: string }): string
+export async function googleAccessToken(refreshToken: string, client: OAuthClient, http: typeof fetch): Promise<string> // invalid_grant -> reconnect_needed
 export async function ensureDefaultFolder(
   accessToken: string,
-  http: typeof fetch,
-): Promise<{ id: string; name: string }>;
+  http: typeof fetch
+): Promise<{ id: string; name: string }>
 export async function completeGoogleConnect(
   memberId: string,
   url: URL,
   cookie: { state: string; verifier: string } | null,
   deps: {
-    connections: ConnectionStore;
-    http: typeof fetch;
-    client: OAuthClient;
-  },
-): Promise<ApiResult>;
+    connections: ConnectionStore
+    http: typeof fetch
+    client: OAuthClient
+  }
+): Promise<ApiResult>
 export async function pickerToken(
   memberId: string,
   deps: {
-    connections: ConnectionStore;
-    http: typeof fetch;
-    client: OAuthClient;
-    apiKey: string;
-    appId: string;
-  },
-): Promise<ApiResult>; // { accessToken, apiKey, appId }
+    connections: ConnectionStore
+    http: typeof fetch
+    client: OAuthClient
+    apiKey: string
+    appId: string
+  }
+): Promise<ApiResult> // { accessToken, apiKey, appId }
 export async function setGoogleFolder(
   memberId: string,
   body: unknown,
   deps: {
-    connections: ConnectionStore;
-    http: typeof fetch;
-    client: OAuthClient;
-  },
-): Promise<ApiResult>; // { folderId } or { useDefault: true }
+    connections: ConnectionStore
+    http: typeof fetch
+    client: OAuthClient
+  }
+): Promise<ApiResult> // { folderId } or { useDefault: true }
 // targets/gdocs.ts
-export function createGdocsTarget(client: OAuthClient): ExportTarget; // id 'gdocs'
+export function createGdocsTarget(client: OAuthClient): ExportTarget // id 'gdocs'
 ```
 
 Routes: `GET /api/connections/google/start` redirects to `googleAuthUrl` and sets the state cookie; `GET .../callback` runs `completeGoogleConnect`, clears the cookie and redirects to `/connections`; `GET .../picker` returns `pickerToken` with `Cache-Control: no-store`; `PUT .../folder` runs `setGoogleFolder`. `GOOGLE_API_KEY` and `GOOGLE_APP_ID` (the Cloud project number) feed the Picker.
@@ -1708,201 +1529,168 @@ Routes: `GET /api/connections/google/start` redirects to `googleAuthUrl` and set
 
 ```ts
 // oauth.test.ts
-test("PKCE and the state cookie", () => {
-  expect(pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")).toBe(
-    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-  );
-  const c = stateCookie("google", "s1", "v1");
+test('PKCE and the state cookie', () => {
+  expect(pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).toBe(
+    'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
+  )
+  const c = stateCookie('google', 's1', 'v1')
   for (const part of [
-    "tm_oauth_google=s1.v1",
-    "HttpOnly",
-    "Secure",
-    "SameSite=Lax",
-    "Path=/api/connections/google",
-    "Max-Age=600",
+    'tm_oauth_google=s1.v1',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Path=/api/connections/google',
+    'Max-Age=600'
   ])
-    expect(c).toContain(part);
+    expect(c).toContain(part)
   expect(
     readStateCookie(
-      new Request("https://tm.example", {
-        headers: { cookie: "tm_oauth_google=s1.v1" },
+      new Request('https://tm.example', {
+        headers: { cookie: 'tm_oauth_google=s1.v1' }
       }),
-      "google",
-    ),
-  ).toEqual({ state: "s1", verifier: "v1" });
-});
+      'google'
+    )
+  ).toEqual({ state: 's1', verifier: 'v1' })
+})
 
 // google.test.ts
 const client = {
-  clientId: "cid",
-  clientSecret: "cs",
-  redirectUri: "https://tm.example/api/connections/google/callback",
-};
-test("asks for drive.file only, offline", () => {
-  const u = new URL(
-    googleAuthUrl({ client, state: "s1", codeChallenge: "c1" }),
-  );
-  expect(u.origin + u.pathname).toBe(
-    "https://accounts.google.com/o/oauth2/v2/auth",
-  );
-  expect(u.searchParams.get("scope")).toBe(
-    "https://www.googleapis.com/auth/drive.file",
-  );
-  expect(u.searchParams.get("access_type")).toBe("offline");
-  expect(u.searchParams.get("prompt")).toBe("consent");
-  expect(u.searchParams.get("code_challenge_method")).toBe("S256");
-  expect(u.searchParams.get("include_granted_scopes")).toBeNull();
-});
-test("connecting checks state, needs a refresh token and reuses the default folder", async () => {
-  const cb = (q: string) =>
-    new URL(`https://tm.example/api/connections/google/callback?${q}`);
+  clientId: 'cid',
+  clientSecret: 'cs',
+  redirectUri: 'https://tm.example/api/connections/google/callback'
+}
+test('asks for drive.file only, offline', () => {
+  const u = new URL(googleAuthUrl({ client, state: 's1', codeChallenge: 'c1' }))
+  expect(u.origin + u.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
+  expect(u.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/drive.file')
+  expect(u.searchParams.get('access_type')).toBe('offline')
+  expect(u.searchParams.get('prompt')).toBe('consent')
+  expect(u.searchParams.get('code_challenge_method')).toBe('S256')
+  expect(u.searchParams.get('include_granted_scopes')).toBeNull()
+})
+test('connecting checks state, needs a refresh token and reuses the default folder', async () => {
+  const cb = (q: string) => new URL(`https://tm.example/api/connections/google/callback?${q}`)
   const deps = (f: ReturnType<typeof fakeFetch>) => ({
     connections: memoryStores().connections,
     http: f.fetch,
-    client,
-  });
+    client
+  })
   expect(
-    await completeGoogleConnect(
-      "m1",
-      cb("code=c&state=WRONG"),
-      { state: "s1", verifier: "v" },
-      deps(google({})),
-    ),
+    await completeGoogleConnect('m1', cb('code=c&state=WRONG'), { state: 's1', verifier: 'v' }, deps(google({})))
   ).toEqual({
     status: 400,
     body: {
-      error: "invalid_settings",
-      message: "Sign-in expired. Try connecting again.",
-    },
-  });
+      error: 'invalid_settings',
+      message: 'Sign-in expired. Try connecting again.'
+    }
+  })
   expect(
     (
       await completeGoogleConnect(
-        "m1",
-        cb("code=c&state=s1"),
-        { state: "s1", verifier: "v" },
-        deps(google({ refreshToken: null })),
+        'm1',
+        cb('code=c&state=s1'),
+        { state: 's1', verifier: 'v' },
+        deps(google({ refreshToken: null }))
       )
-    ).body,
+    ).body
   ).toMatchObject({
     message:
-      "Google didn't send a refresh token. Remove TolongMeeting from your Google account's third-party access, then connect again.",
-  });
-  const f = google({ existingFolder: "F1" });
-  const d = deps(f);
+      "Google didn't send a refresh token. Remove TolongMeeting from your Google account's third-party access, then connect again."
+  })
+  const f = google({ existingFolder: 'F1' })
+  const d = deps(f)
+  expect((await completeGoogleConnect('m1', cb('code=c&state=s1'), { state: 's1', verifier: 'v' }, d)).status).toBe(200)
+  expect((await d.connections.get('m1', 'google'))?.connection).toMatchObject({
+    account: 'member@example.edu',
+    folderId: 'F1',
+    folderName: 'TolongMeeting Exports',
+    folderIsDefault: true
+  })
   expect(
-    (
-      await completeGoogleConnect(
-        "m1",
-        cb("code=c&state=s1"),
-        { state: "s1", verifier: "v" },
-        d,
-      )
-    ).status,
-  ).toBe(200);
-  expect((await d.connections.get("m1", "google"))?.connection).toMatchObject({
-    account: "member@example.edu",
-    folderId: "F1",
-    folderName: "TolongMeeting Exports",
-    folderIsDefault: true,
-  });
-  expect(
-    f.calls.some(
-      (c) =>
-        c.method === "POST" &&
-        c.url.startsWith("https://www.googleapis.com/drive/v3/files"),
-    ),
-  ).toBe(false);
-});
-test("a picked folder must be a live folder", async () => {
+    f.calls.some((c) => c.method === 'POST' && c.url.startsWith('https://www.googleapis.com/drive/v3/files'))
+  ).toBe(false)
+})
+test('a picked folder must be a live folder', async () => {
   const connections = memoryStores({
-    connections: [{ memberId: "m1", connection: googleConn("F1", true) }],
-  }).connections;
+    connections: [{ memberId: 'm1', connection: googleConn('F1', true) }]
+  }).connections
   const pick = (id: string, file: object) =>
-    setGoogleFolder(
-      "m1",
-      { folderId: id },
-      { connections, client, http: google({ file }).fetch },
-    );
+    setGoogleFolder('m1', { folderId: id }, { connections, client, http: google({ file }).fetch })
   expect(
-    await pick("DOC1", {
-      id: "DOC1",
-      name: "Notes",
-      mimeType: "application/vnd.google-apps.document",
-      trashed: false,
-    }),
+    await pick('DOC1', {
+      id: 'DOC1',
+      name: 'Notes',
+      mimeType: 'application/vnd.google-apps.document',
+      trashed: false
+    })
   ).toEqual({
     status: 400,
-    body: { error: "invalid_settings", message: "Pick a folder, not a file." },
-  });
+    body: { error: 'invalid_settings', message: 'Pick a folder, not a file.' }
+  })
   expect(
     (
-      await pick("F9", {
-        id: "F9",
-        name: "Lectures",
-        mimeType: "application/vnd.google-apps.folder",
-        trashed: false,
+      await pick('F9', {
+        id: 'F9',
+        name: 'Lectures',
+        mimeType: 'application/vnd.google-apps.folder',
+        trashed: false
       })
-    ).status,
-  ).toBe(200);
-  expect((await connections.get("m1", "google"))?.connection).toMatchObject({
-    folderId: "F9",
-    folderName: "Lectures",
-    folderIsDefault: false,
-  });
-});
+    ).status
+  ).toBe(200)
+  expect((await connections.get('m1', 'google'))?.connection).toMatchObject({
+    folderId: 'F9',
+    folderName: 'Lectures',
+    folderIsDefault: false
+  })
+})
 
 // gdocs.test.ts
-test("uploads one converted document into the folder", async () => {
-  const f = drive({}); // token, folder GET, resumable POST -> Location, PUT -> { id, webViewLink }
+test('uploads one converted document into the folder', async () => {
+  const f = drive({}) // token, folder GET, resumable POST -> Location, PUT -> { id, webViewLink }
   const r = await createGdocsTarget(client).run(
     await loadBundle(fixture),
-    testContext({ http: f.fetch, connection: googleConn("F1", true) }),
-  );
-  expect(JSON.parse(f.call("POST", /upload\/drive\/v3\/files/).body)).toEqual({
-    name: "2026-10-20 1400 Data Mining",
-    mimeType: "application/vnd.google-apps.document",
-    parents: ["F1"],
-  });
+    testContext({ http: f.fetch, connection: googleConn('F1', true) })
+  )
+  expect(JSON.parse(f.call('POST', /upload\/drive\/v3\/files/).body)).toEqual({
+    name: '2026-10-20 1400 Data Mining',
+    mimeType: 'application/vnd.google-apps.document',
+    parents: ['F1']
+  })
   expect(r).toEqual({
-    url: "https://docs.google.com/document/d/D1/edit",
+    url: 'https://docs.google.com/document/d/D1/edit',
     filePath: null,
-    note: null,
-  });
-  expect(f.calls.filter((c) => ["PATCH", "DELETE"].includes(c.method))).toEqual(
-    [],
-  );
-});
-test("gone folders, revoked access and a full Drive", async () => {
+    note: null
+  })
+  expect(f.calls.filter((c) => ['PATCH', 'DELETE'].includes(c.method))).toEqual([])
+})
+test('gone folders, revoked access and a full Drive', async () => {
   const ctx = testContext({
-    http: drive({ folder: "trashed", newFolder: "F2" }).fetch,
-    connection: googleConn("F1", true),
-  });
-  await createGdocsTarget(client).run(await loadBundle(fixture), ctx);
-  expect(ctx.saved[0]).toMatchObject({ folderId: "F2", folderIsDefault: true });
+    http: drive({ folder: 'trashed', newFolder: 'F2' }).fetch,
+    connection: googleConn('F1', true)
+  })
+  await createGdocsTarget(client).run(await loadBundle(fixture), ctx)
+  expect(ctx.saved[0]).toMatchObject({ folderId: 'F2', folderIsDefault: true })
   const run = async (o: object) =>
     createGdocsTarget(client).run(
       await loadBundle(fixture),
       testContext({
         http: drive(o).fetch,
-        connection: googleConn("F1", false),
-      }),
-    );
+        connection: googleConn('F1', false)
+      })
+    )
   await expect(run({ folder: 404 })).rejects.toMatchObject({
-    code: "not_found",
-    message:
-      "The Drive folder you picked for exports is gone. Pick another on the Connections page.",
-  });
-  await expect(run({ token: "invalid_grant" })).rejects.toMatchObject({
-    code: "reconnect_needed",
-    message:
-      "Google access was removed or expired. Connect Google again on the Connections page.",
-  });
-  await expect(run({ upload: "storageQuotaExceeded" })).rejects.toMatchObject({
-    code: "failed",
-    message: "Your Google Drive is full, so the document wasn't created.",
-  });
-});
+    code: 'not_found',
+    message: 'The Drive folder you picked for exports is gone. Pick another on the Connections page.'
+  })
+  await expect(run({ token: 'invalid_grant' })).rejects.toMatchObject({
+    code: 'reconnect_needed',
+    message: 'Google access was removed or expired. Connect Google again on the Connections page.'
+  })
+  await expect(run({ upload: 'storageQuotaExceeded' })).rejects.toMatchObject({
+    code: 'failed',
+    message: "Your Google Drive is full, so the document wasn't created."
+  })
+})
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -1947,78 +1735,69 @@ git commit -m "feat(exports): add google docs target"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("long text is split at 2,000 characters", () => {
-  const [p] = toNotionBlocks(
-    [{ kind: "paragraph", runs: [{ text: "a".repeat(4500) }] }],
-    new Map(),
-  );
-  expect(
-    (p as any).paragraph.rich_text.map((t: any) => t.text.content.length),
-  ).toEqual([2000, 2000, 500]);
-});
-test("more than 100 rich text items make more blocks", () => {
+test('long text is split at 2,000 characters', () => {
+  const [p] = toNotionBlocks([{ kind: 'paragraph', runs: [{ text: 'a'.repeat(4500) }] }], new Map())
+  expect((p as any).paragraph.rich_text.map((t: any) => t.text.content.length)).toEqual([2000, 2000, 500])
+})
+test('more than 100 rich text items make more blocks', () => {
   const runs = Array.from({ length: 250 }, (_, i) => ({
     text: `w${i} `,
-    bold: i % 2 === 0,
-  }));
-  const blocks = toNotionBlocks([{ kind: "paragraph", runs }], new Map());
-  expect(blocks.map((b: any) => b.paragraph.rich_text.length)).toEqual([
-    100, 100, 50,
-  ]);
-});
-test("maps headings, lists, images, tables and breaks", () => {
+    bold: i % 2 === 0
+  }))
+  const blocks = toNotionBlocks([{ kind: 'paragraph', runs }], new Map())
+  expect(blocks.map((b: any) => b.paragraph.rich_text.length)).toEqual([100, 100, 50])
+})
+test('maps headings, lists, images, tables and breaks', () => {
   const blocks = toNotionBlocks(
     [
-      { kind: "heading", level: 2, runs: [{ text: "Slide 01: Welcome" }] },
-      { kind: "image", path: "slides/01.webp", alt: "Slide 01: Welcome" },
+      { kind: 'heading', level: 2, runs: [{ text: 'Slide 01: Welcome' }] },
+      { kind: 'image', path: 'slides/01.webp', alt: 'Slide 01: Welcome' },
       {
-        kind: "list",
+        kind: 'list',
         ordered: true,
-        items: [[{ text: "one" }], [{ text: "two" }]],
+        items: [[{ text: 'one' }], [{ text: 'two' }]]
       },
-      { kind: "table", header: [[{ text: "a" }]], rows: [[[{ text: "1" }]]] },
-      { kind: "break" },
+      { kind: 'table', header: [[{ text: 'a' }]], rows: [[[{ text: '1' }]]] },
+      { kind: 'break' }
     ],
-    new Map([["slides/01.webp", "UP1"]]),
-  );
+    new Map([['slides/01.webp', 'UP1']])
+  )
   expect(blocks.map((b: any) => b.type)).toEqual([
-    "heading_2",
-    "image",
-    "numbered_list_item",
-    "numbered_list_item",
-    "table",
-    "divider",
-  ]);
+    'heading_2',
+    'image',
+    'numbered_list_item',
+    'numbered_list_item',
+    'table',
+    'divider'
+  ])
   expect((blocks[1] as any).image).toEqual({
-    type: "file_upload",
-    file_upload: { id: "UP1" },
+    type: 'file_upload',
+    file_upload: { id: 'UP1' },
     caption: [
       {
-        type: "text",
-        text: { content: "Slide 01: Welcome", link: null },
-        annotations: { bold: false, italic: false, code: false },
-      },
-    ],
-  });
+        type: 'text',
+        text: { content: 'Slide 01: Welcome', link: null },
+        annotations: { bold: false, italic: false, code: false }
+      }
+    ]
+  })
   expect((blocks[4] as any).table).toMatchObject({
     table_width: 1,
-    has_column_header: true,
-  });
-});
-test("chunks by count and size", () => {
+    has_column_header: true
+  })
+})
+test('chunks by count and size', () => {
   expect(
-    chunkBlocks(
-      Array.from({ length: 250 }, () => ({ type: "divider", divider: {} })),
-    ).map((c) => c.length),
-  ).toEqual([100, 100, 50]);
+    chunkBlocks(Array.from({ length: 250 }, () => ({ type: 'divider', divider: {} }))).map((c) => c.length)
+  ).toEqual([100, 100, 50])
   const big = {
-    type: "paragraph",
+    type: 'paragraph',
     paragraph: {
-      rich_text: [{ type: "text", text: { content: "x".repeat(60_000) } }],
-    },
-  };
-  expect(chunkBlocks(Array(10).fill(big)).map((c) => c.length)).toEqual([6, 4]);
-});
+      rich_text: [{ type: 'text', text: { content: 'x'.repeat(60_000) } }]
+    }
+  }
+  expect(chunkBlocks(Array(10).fill(big)).map((c) => c.length)).toEqual([6, 4])
+})
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -2057,48 +1836,41 @@ git commit -m "feat(exports): add notion block renderer"
 
 ```ts
 // connections/notion.ts
-export const NOTION_VERSION = "2026-03-11";
+export const NOTION_VERSION = '2026-03-11'
 export interface NotionClient {
-  request<T>(method: string, path: string, body?: unknown): Promise<T>;
-  upload(
-    filename: string,
-    bytes: Uint8Array,
-    contentType: string,
-  ): Promise<string>; // file upload id
+  request<T>(method: string, path: string, body?: unknown): Promise<T>
+  upload(filename: string, bytes: Uint8Array, contentType: string): Promise<string> // file upload id
 }
 export function createNotionClient(
   conn: NotionConnection,
   deps: {
-    http: typeof fetch;
-    sleep(ms: number): Promise<void>;
-    saveConnection(c: NotionConnection): Promise<void>;
-    client: OAuthClient;
-  },
-): NotionClient;
-export function notionAuthUrl(o: {
-  client: OAuthClient;
-  state: string;
-}): string;
+    http: typeof fetch
+    sleep(ms: number): Promise<void>
+    saveConnection(c: NotionConnection): Promise<void>
+    client: OAuthClient
+  }
+): NotionClient
+export function notionAuthUrl(o: { client: OAuthClient; state: string }): string
 export async function completeNotionConnect(
   memberId: string,
   url: URL,
   cookie: { state: string; verifier: string } | null,
   deps: {
-    connections: ConnectionStore;
-    http: typeof fetch;
-    client: OAuthClient;
-  },
-): Promise<ApiResult>;
+    connections: ConnectionStore
+    http: typeof fetch
+    client: OAuthClient
+  }
+): Promise<ApiResult>
 export async function listNotionParents(
-  client: NotionClient,
-): Promise<{ type: NotionParent["type"]; id: string; name: string }[]>;
+  client: NotionClient
+): Promise<{ type: NotionParent['type']; id: string; name: string }[]>
 export async function resolveNotionParent(
   client: NotionClient,
-  type: NotionParent["type"],
-  id: string,
-): Promise<NotionParent>;
+  type: NotionParent['type'],
+  id: string
+): Promise<NotionParent>
 // targets/notion.ts
-export function createNotionTarget(client: OAuthClient): ExportTarget; // id 'notion'
+export function createNotionTarget(client: OAuthClient): ExportTarget // id 'notion'
 ```
 
 Routes: `GET /api/connections/notion/start` (redirect plus state cookie), `GET .../callback` (then redirect to `/connections`), `GET .../parents` (`{ parents }`), `PUT .../parent` (`{ type, id }`, resolved and saved).
@@ -2108,150 +1880,142 @@ Routes: `GET /api/connections/notion/start` (redirect plus state cookie), `GET .
 ```ts
 // connections/notion.test.ts
 const client = {
-  clientId: "nid",
-  clientSecret: "ns",
-  redirectUri: "https://tm.example/api/connections/notion/callback",
-};
-test("authorize URL", () => {
-  const u = new URL(notionAuthUrl({ client, state: "s1" }));
-  expect(u.origin + u.pathname).toBe(
-    "https://api.notion.com/v1/oauth/authorize",
-  );
+  clientId: 'nid',
+  clientSecret: 'ns',
+  redirectUri: 'https://tm.example/api/connections/notion/callback'
+}
+test('authorize URL', () => {
+  const u = new URL(notionAuthUrl({ client, state: 's1' }))
+  expect(u.origin + u.pathname).toBe('https://api.notion.com/v1/oauth/authorize')
   expect(Object.fromEntries(u.searchParams)).toEqual({
-    client_id: "nid",
-    response_type: "code",
-    owner: "user",
-    redirect_uri: "https://tm.example/api/connections/notion/callback",
-    state: "s1",
-  });
-});
-test("client headers, spacing and rate limits", async () => {
-  const f = notion({ search: [429, 200, 200], retryAfter: "2" });
-  const ctx = { http: f.fetch, sleeps: [] as number[] }; // deps(ctx) records sleeps into ctx.sleeps
-  const c = createNotionClient(notionConn(), { ...deps(ctx), client });
-  await c.request("POST", "/v1/search", {});
-  await c.request("POST", "/v1/search", {});
-  expect(f.calls[0].headers["notion-version"]).toBe("2026-03-11");
-  expect(ctx.sleeps).toEqual([2000, 340]);
-});
-test("a 401 refreshes once and saves the rotated tokens", async () => {
-  const saved: NotionConnection[] = [];
+    client_id: 'nid',
+    response_type: 'code',
+    owner: 'user',
+    redirect_uri: 'https://tm.example/api/connections/notion/callback',
+    state: 's1'
+  })
+})
+test('client headers, spacing and rate limits', async () => {
+  const f = notion({ search: [429, 200, 200], retryAfter: '2' })
+  const ctx = { http: f.fetch, sleeps: [] as number[] } // deps(ctx) records sleeps into ctx.sleeps
+  const c = createNotionClient(notionConn(), { ...deps(ctx), client })
+  await c.request('POST', '/v1/search', {})
+  await c.request('POST', '/v1/search', {})
+  expect(f.calls[0].headers['notion-version']).toBe('2026-03-11')
+  expect(ctx.sleeps).toEqual([2000, 340])
+})
+test('a 401 refreshes once and saves the rotated tokens', async () => {
+  const saved: NotionConnection[] = []
   const f = notion({
     search: [401, 200],
-    refresh: { access_token: "ntn_new", refresh_token: "r2" },
-  });
+    refresh: { access_token: 'ntn_new', refresh_token: 'r2' }
+  })
   await createNotionClient(notionConn(), {
     http: f.fetch,
     sleep: async () => {},
     saveConnection: async (c) => {
-      saved.push(c);
+      saved.push(c)
     },
-    client,
-  }).request("POST", "/v1/search", {});
-  expect(f.call("POST", "/v1/oauth/token").headers.authorization).toBe(
-    `Basic ${btoa("nid:ns")}`,
-  );
+    client
+  }).request('POST', '/v1/search', {})
+  expect(f.call('POST', '/v1/oauth/token').headers.authorization).toBe(`Basic ${btoa('nid:ns')}`)
   expect(saved[0]).toMatchObject({
-    accessToken: "ntn_new",
-    refreshToken: "r2",
-  });
+    accessToken: 'ntn_new',
+    refreshToken: 'r2'
+  })
   await expect(
     createNotionClient(notionConn({ refreshToken: null }), {
       ...deps({ http: notion({ search: [401] }).fetch }),
-      client,
-    }).request("POST", "/v1/search", {}),
+      client
+    }).request('POST', '/v1/search', {})
   ).rejects.toMatchObject({
-    code: "reconnect_needed",
-    message:
-      "Notion access was removed. Connect Notion again on the Connections page.",
-  });
-});
-test("a data source parent resolves its title property", async () => {
+    code: 'reconnect_needed',
+    message: 'Notion access was removed. Connect Notion again on the Connections page.'
+  })
+})
+test('a data source parent resolves its title property', async () => {
   const c = createNotionClient(notionConn(), {
     ...deps({
       http: notion({
-        dataSource: { Name: { type: "title" }, Date: { type: "date" } },
-      }).fetch,
+        dataSource: { Name: { type: 'title' }, Date: { type: 'date' } }
+      }).fetch
     }),
-    client,
-  });
-  expect(await resolveNotionParent(c, "data_source_id", "DS1")).toEqual({
-    type: "data_source_id",
-    id: "DS1",
-    name: "Lecture notes",
-    titleProperty: "Name",
-  });
-});
+    client
+  })
+  expect(await resolveNotionParent(c, 'data_source_id', 'DS1')).toEqual({
+    type: 'data_source_id',
+    id: 'DS1',
+    name: 'Lecture notes',
+    titleProperty: 'Name'
+  })
+})
 
 // targets/notion.test.ts
-test("one page with uploaded slides, appended in chunks", async () => {
-  const f = notion({ page: { id: "P1", url: "https://www.notion.so/P1" } });
+test('one page with uploaded slides, appended in chunks', async () => {
+  const f = notion({ page: { id: 'P1', url: 'https://www.notion.so/P1' } })
   const r = await createNotionTarget(client).run(
     await loadBundle(fixture),
     testContext({
       http: f.fetch,
-      connection: notionConn({ parent: pageParent }),
-    }),
-  );
-  expect(JSON.parse(f.call("POST", "/v1/pages").body)).toEqual({
-    parent: { type: "page_id", page_id: "PARENT" },
+      connection: notionConn({ parent: pageParent })
+    })
+  )
+  expect(JSON.parse(f.call('POST', '/v1/pages').body)).toEqual({
+    parent: { type: 'page_id', page_id: 'PARENT' },
     properties: {
-      title: { title: [{ text: { content: "2026-10-20 1400 Data Mining" } }] },
-    },
-  });
-  expect(f.count("POST", "/v1/file_uploads")).toBe(2);
-  expect(JSON.parse(f.call("POST", "/v1/file_uploads").body)).toEqual({
-    filename: "slide-01.jpg",
-    content_type: "image/jpeg",
-  });
-  expect(f.count("PATCH", "/v1/blocks/P1/children")).toBeGreaterThanOrEqual(1);
+      title: { title: [{ text: { content: '2026-10-20 1400 Data Mining' } }] }
+    }
+  })
+  expect(f.count('POST', '/v1/file_uploads')).toBe(2)
+  expect(JSON.parse(f.call('POST', '/v1/file_uploads').body)).toEqual({
+    filename: 'slide-01.jpg',
+    content_type: 'image/jpeg'
+  })
+  expect(f.count('PATCH', '/v1/blocks/P1/children')).toBeGreaterThanOrEqual(1)
   expect(r).toEqual({
-    url: "https://www.notion.so/P1",
+    url: 'https://www.notion.so/P1',
     filePath: null,
-    note: null,
-  });
-});
-test("a database parent uses its title property", async () => {
-  const f = notion({});
+    note: null
+  })
+})
+test('a database parent uses its title property', async () => {
+  const f = notion({})
   await createNotionTarget(client).run(
     await loadBundle(fixture),
     testContext({
       http: f.fetch,
-      connection: notionConn({ parent: dsParent }),
-    }),
-  );
-  expect(JSON.parse(f.call("POST", "/v1/pages").body)).toMatchObject({
-    parent: { type: "data_source_id", data_source_id: "DS1" },
+      connection: notionConn({ parent: dsParent })
+    })
+  )
+  expect(JSON.parse(f.call('POST', '/v1/pages').body)).toMatchObject({
+    parent: { type: 'data_source_id', data_source_id: 'DS1' },
     properties: {
-      Name: { title: [{ text: { content: "2026-10-20 1400 Data Mining" } }] },
-    },
-  });
-});
-test("failures: no parent, lost parent, half-written page", async () => {
-  const run = async (
-    f: ReturnType<typeof notion>,
-    parent: NotionParent | null = pageParent,
-  ) =>
+      Name: { title: [{ text: { content: '2026-10-20 1400 Data Mining' } }] }
+    }
+  })
+})
+test('failures: no parent, lost parent, half-written page', async () => {
+  const run = async (f: ReturnType<typeof notion>, parent: NotionParent | null = pageParent) =>
     createNotionTarget(client).run(
       await loadBundle(fixture),
-      testContext({ http: f.fetch, connection: notionConn({ parent }) }),
-    );
+      testContext({ http: f.fetch, connection: notionConn({ parent }) })
+    )
   await expect(run(notion({}), null)).rejects.toMatchObject({
-    code: "invalid_settings",
-  });
+    code: 'invalid_settings'
+  })
   await expect(run(notion({ pageCreate: 404 }))).rejects.toMatchObject({
-    code: "not_found",
-    message: `TolongMeeting can't reach the Notion page "Lecture notes" any more. Share it with the TolongLabs integration again, or pick another on the Connections page.`,
-  });
+    code: 'not_found',
+    message: `TolongMeeting can't reach the Notion page "Lecture notes" any more. Share it with the TolongLabs integration again, or pick another on the Connections page.`
+  })
   const f = notion({
-    page: { id: "P1", url: "https://www.notion.so/P1" },
-    append: [400],
-  });
-  await expect(run(f)).rejects.toThrow();
-  expect(JSON.parse(f.call("PATCH", "/v1/pages/P1").body)).toEqual({
-    in_trash: true,
-  });
-});
+    page: { id: 'P1', url: 'https://www.notion.so/P1' },
+    append: [400]
+  })
+  await expect(run(f)).rejects.toThrow()
+  expect(JSON.parse(f.call('PATCH', '/v1/pages/P1').body)).toEqual({
+    in_trash: true
+  })
+})
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -2298,49 +2062,42 @@ git commit -m "feat(exports): add notion target"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("Google removal revokes with the token in the body, even if revoking fails", async () => {
+test('Google removal revokes with the token in the body, even if revoking fails', async () => {
   for (const status of [200, 400]) {
-    const f = fakeFetch([
-      [
-        "POST",
-        "https://oauth2.googleapis.com/revoke",
-        () => new Response("", { status }),
-      ],
-    ]);
+    const f = fakeFetch([['POST', 'https://oauth2.googleapis.com/revoke', () => new Response('', { status })]])
     const deps = {
       connections: memoryStores({
-        connections: [{ memberId: "m1", connection: googleConn("F1", true) }],
+        connections: [{ memberId: 'm1', connection: googleConn('F1', true) }]
       }).connections,
-      http: f.fetch,
-    };
-    expect(await removeConnection("m1", "google", deps)).toEqual({
+      http: f.fetch
+    }
+    expect(await removeConnection('m1', 'google', deps)).toEqual({
       status: 200,
-      body: { message: "Removed, and Google access revoked." },
-    });
-    expect(f.calls[0].url).toBe("https://oauth2.googleapis.com/revoke");
-    expect(f.calls[0].body).toBe("token=1%2F%2Frefresh");
-    expect(await deps.connections.get("m1", "google")).toBeNull();
+      body: { message: 'Removed, and Google access revoked.' }
+    })
+    expect(f.calls[0].url).toBe('https://oauth2.googleapis.com/revoke')
+    expect(f.calls[0].body).toBe('token=1%2F%2Frefresh')
+    expect(await deps.connections.get('m1', 'google')).toBeNull()
   }
-});
-test("GitHub and Notion removal explain the last step and touch only the caller", async () => {
+})
+test('GitHub and Notion removal explain the last step and touch only the caller', async () => {
   const deps = {
     connections: memoryStores({
-      connections: [{ memberId: "m1", connection: githubConn("github_pat_x") }],
+      connections: [{ memberId: 'm1', connection: githubConn('github_pat_x') }]
     }).connections,
-    http: fakeFetch([]).fetch,
-  };
-  expect((await removeConnection("m2", "github", deps)).status).toBe(200);
-  expect(await deps.connections.get("m1", "github")).not.toBeNull();
-  expect((await removeConnection("m1", "github", deps)).body).toEqual({
+    http: fakeFetch([]).fetch
+  }
+  expect((await removeConnection('m2', 'github', deps)).status).toBe(200)
+  expect(await deps.connections.get('m1', 'github')).not.toBeNull()
+  expect((await removeConnection('m1', 'github', deps)).body).toEqual({
     message:
-      "Removed. Also delete the token on GitHub: Settings, Developer settings, Personal access tokens, Fine-grained tokens.",
-  });
-  expect(await deps.connections.get("m1", "github")).toBeNull();
-  expect((await removeConnection("m1", "notion", deps)).body).toEqual({
-    message:
-      "Removed. To end access fully, disconnect TolongLabs in Notion under Settings, Connections.",
-  });
-});
+      'Removed. Also delete the token on GitHub: Settings, Developer settings, Personal access tokens, Fine-grained tokens.'
+  })
+  expect(await deps.connections.get('m1', 'github')).toBeNull()
+  expect((await removeConnection('m1', 'notion', deps)).body).toEqual({
+    message: 'Removed. To end access fully, disconnect TolongLabs in Notion under Settings, Connections.'
+  })
+})
 ```
 
 - [ ] **Step 2: Run it to see it fail**

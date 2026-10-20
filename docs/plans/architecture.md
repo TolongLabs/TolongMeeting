@@ -24,11 +24,11 @@ Contents:
 
 ```text
 TolongMeeting/
-├── package.json              Bun workspaces root ("workspaces": ["packages/*"]); scripts: test, typecheck, format
+├── package.json              Bun workspaces root ("workspaces": ["packages/*"]); scripts: lint, lint:fix, test, typecheck, graph
 ├── bun.lock
-├── tsconfig.base.json        strict, ES2023, moduleResolution "bundler"
-├── .prettierrc               TolongLabs default (Prettier, no overrides)
-├── commitlint.config.js      conventional commits, header 50 characters at most
+├── tsconfig.json             strict, ES2023, moduleResolution "bundler"; packages extend it
+├── .prettierrc.json          TolongLabs default (printWidth 120, single quotes, no semicolons)
+├── commitlint.config.mjs     conventional commits, header 50 characters at most
 ├── .env.example              every variable in "Environment variables", no values
 ├── config/
 │   └── selectors/            zoom.json, teams.json, meet.json (adapter selector maps)
@@ -53,11 +53,12 @@ TolongMeeting/
 ## Tooling and conventions
 
 - **Runtimes**: Bun 1.x for everything except the worker. The worker runs on Node 24, because Playwright officially supports Node; it is still written in TypeScript and built with `bun build --target=node`.
-- **Language**: TypeScript strict everywhere; `bun run typecheck` runs `tsc --noEmit -p` for each package.
+- **Workspace setup**: copied from `TolongLabs/sdp-hack`: `AGENTS.md` (with `CLAUDE.md` and `GEMINI.md` linking to it), `docs/agents/`, `docs/references/`, the skills in `.agents/skills/` and `.claude/skills/`, `.claude/settings.json`, `.codex/hooks.json`, husky hooks, CI and the Graphify graph in `graphify-out/graph.json`. [Project conventions](../references/project-conventions.md) apply to every plan.
+- **Language**: TypeScript strict everywhere; `bun run typecheck` runs `tsc` at the root (scripts and tests) and then each package's `tsc` (its `src`).
 - **Validation**: zod for every config file, API body and JSON produced by a model.
-- **Unit tests**: `bun test`, colocated as `*.test.ts` next to the source. Pure logic (state machines, trust rules, link unwrapping, summary rendering, schedulers) must be unit-tested.
+- **Tests**: `bun test`, in `packages/<package>/test/*.test.ts` and the root `test/` and `e2e/`. Following the project conventions, tests prove behaviour through each package's public entry points the way its callers use it (the worker against fixture pages, the pipeline CLI against an occurrence directory, the website and scheduler against a real Postgres), not private helpers. The behaviour cases each plan lists (state machines, trust rules, link unwrapping, summary rendering, schedulers) are kept, exercised through those entry points.
 - **Browser integration tests**: Playwright Test on Node 24, in `packages/worker/test/`, against static HTML fixtures in `packages/worker/test/fixtures/` that imitate each platform's DOM and the two form providers. Run with `bunx playwright test -c packages/worker/playwright.config.ts`.
-- **Formatting**: Prettier through `bunx prettier`, with husky and lint-staged on commit, as in other TolongLabs repositories. Git hooks need Node 24 on the PATH.
+- **Formatting**: Prettier, `bun run lint` to check and `bun run lint:fix` to fix, with husky and lint-staged on commit, as in other TolongLabs repositories. A change is done when `bun run lint` passes.
 - **Commits**: conventional commits (`feat:`, `fix:`, `test:`, `chore:`, `docs:`), header at most 50 characters, one task per commit or less.
 - **Secrets**: never committed, never logged, never in URL query strings of the app's own API. `.env.example` lists names only.
 - **Pinned versions**: Chrome, Playwright, ffmpeg and Node versions for the worker image live in `docker/worker/versions.env`, set by spike 2 and changed only together with a passing smoke test.
@@ -79,127 +80,121 @@ In milestone 1A there is no server: `bun run tm-worker -- --job job.json` inside
 `packages/core/src/types.ts`. These names are used by every plan.
 
 ```ts
-export type Platform = "zoom" | "teams" | "meet";
-export type EntryType = "lecture" | "work";
-export type TranscriptionMode = "live" | "native";
-export type RunLocation = "server" | "server_via_home" | "local";
-export type SenderRole = "host" | "co_host" | "participant" | "unknown";
+export type Platform = 'zoom' | 'teams' | 'meet'
+export type EntryType = 'lecture' | 'work'
+export type TranscriptionMode = 'live' | 'native'
+export type RunLocation = 'server' | 'server_via_home' | 'local'
+export type SenderRole = 'host' | 'co_host' | 'participant' | 'unknown'
 
 export type OccurrenceState =
-  | "scheduled"
-  | "starting"
-  | "verifying_accounts"
-  | "waiting_for_signin"
-  | "watching_for_link"
-  | "no_link"
-  | "joining"
-  | "in_lobby"
-  | "denied"
-  | "in_meeting"
-  | "restarting"
-  | "left_by_member"
-  | "leaving"
-  | "uploading"
-  | "transcribing"
-  | "waiting_for_pc"
-  | "post_processing"
-  | "completed"
-  | "skipped_capacity"
-  | "skipped_identity_clash"
-  | "skipped_pc_offline"
-  | "failed"
-  | "deleted";
+  | 'scheduled'
+  | 'starting'
+  | 'verifying_accounts'
+  | 'waiting_for_signin'
+  | 'watching_for_link'
+  | 'no_link'
+  | 'joining'
+  | 'in_lobby'
+  | 'denied'
+  | 'in_meeting'
+  | 'restarting'
+  | 'left_by_member'
+  | 'leaving'
+  | 'uploading'
+  | 'transcribing'
+  | 'waiting_for_pc'
+  | 'post_processing'
+  | 'completed'
+  | 'skipped_capacity'
+  | 'skipped_identity_clash'
+  | 'skipped_pc_offline'
+  | 'failed'
+  | 'deleted'
 
 export type FormState =
-  | "detected"
-  | "resolving"
-  | "checking_trust"
-  | "untrusted"
-  | "opening"
-  | "awaiting_signin"
-  | "inspecting"
-  | "not_attendance"
-  | "quiz"
-  | "filling"
-  | "needs_member"
-  | "submitting"
-  | "submitted"
-  | "already_answered"
-  | "failed";
+  | 'detected'
+  | 'resolving'
+  | 'checking_trust'
+  | 'untrusted'
+  | 'opening'
+  | 'awaiting_signin'
+  | 'inspecting'
+  | 'not_attendance'
+  | 'quiz'
+  | 'filling'
+  | 'needs_member'
+  | 'submitting'
+  | 'submitted'
+  | 'already_answered'
+  | 'failed'
 
-export type FormSource = "qr" | "meeting_chat" | "watched_chat";
-export type FormProvider = "google" | "microsoft";
-export type TrustReason =
-  "qr_on_screen" | "host" | "co_host" | "trusted_sender" | "org_restricted";
+export type FormSource = 'qr' | 'meeting_chat' | 'watched_chat'
+export type FormProvider = 'google' | 'microsoft'
+export type TrustReason = 'qr_on_screen' | 'host' | 'co_host' | 'trusted_sender' | 'org_restricted'
 
 export interface ChatMessage {
-  key: string; // platform message id, else `${sender}|${time}|${text.slice(0, 200)}`
-  sender: string;
-  senderRole: SenderRole;
-  time: string; // as displayed by the platform
-  seenAt: string; // ISO 8601, when the worker read it
-  text: string;
-  links: string[]; // absolute URLs found in the message
+  key: string // platform message id, else `${sender}|${time}|${text.slice(0, 200)}`
+  sender: string
+  senderRole: SenderRole
+  time: string // as displayed by the platform
+  seenAt: string // ISO 8601, when the worker read it
+  text: string
+  links: string[] // absolute URLs found in the message
 }
 
 export interface FormCandidate {
-  url: string;
-  source: FormSource;
-  sender: string | null;
-  senderRole: SenderRole | null;
-  seenAt: string;
+  url: string
+  source: FormSource
+  sender: string | null
+  senderRole: SenderRole | null
+  seenAt: string
 }
 
 export interface ResolvedForm extends FormCandidate {
-  finalUrl: string;
-  provider: FormProvider;
+  finalUrl: string
+  provider: FormProvider
 }
 
 export interface SavedDetail {
-  key: string; // e.g. "full_name", "student_id", or a custom key
-  value: string;
-  labels: string[]; // label variants, e.g. ["Matric No.", "No. Matrik"]
+  key: string // e.g. "full_name", "student_id", or a custom key
+  value: string
+  labels: string[] // label variants, e.g. ["Matric No.", "No. Matrik"]
 }
 
 export type EventType =
-  | "state"
-  | "joined"
-  | "notice_dismissed"
-  | "form"
-  | "alert"
-  | "error"
-  | "keyframe"
-  | "recording_gap"
-  | "mention"
-  | "deletion";
+  | 'state'
+  | 'joined'
+  | 'notice_dismissed'
+  | 'form'
+  | 'alert'
+  | 'error'
+  | 'keyframe'
+  | 'recording_gap'
+  | 'mention'
+  | 'deletion'
 
 export interface MeetingEvent {
-  occurrenceId: string;
-  attempt: number; // 1-based worker attempt
-  at: string; // ISO 8601
-  type: EventType;
-  data: Record<string, unknown>;
+  occurrenceId: string
+  attempt: number // 1-based worker attempt
+  at: string // ISO 8601
+  type: EventType
+  data: Record<string, unknown>
 }
 
-export type ControlCommand =
-  | "leave_now"
-  | "take_over"
-  | "pause_for_signin"
-  | "resume_after_signin"
-  | "stop";
+export type ControlCommand = 'leave_now' | 'take_over' | 'pause_for_signin' | 'resume_after_signin' | 'stop'
 
 export interface Heartbeat {
-  occurrenceId: string;
-  attempt: number;
-  state: OccurrenceState;
-  recording: boolean;
-  participants: number | null;
-  events: MeetingEvent[]; // events since the last acknowledged heartbeat
+  occurrenceId: string
+  attempt: number
+  state: OccurrenceState
+  recording: boolean
+  participants: number | null
+  events: MeetingEvent[] // events since the last acknowledged heartbeat
 }
 
 export interface HeartbeatReply {
-  ackedEvents: number; // how many of the sent events were stored
-  commands: ControlCommand[];
+  ackedEvents: number // how many of the sent events were stored
+  commands: ControlCommand[]
 }
 ```
 
@@ -207,48 +202,45 @@ Job configuration, `packages/core/src/job.ts`, validated with zod (`JobConfigSch
 
 ```ts
 export type LinkSource =
-  | { kind: "fixed"; url: string }
-  | { kind: "chat"; app: "whatsapp" | "discord" | "teams"; chat: string } // URL or exact chat name
-  | { kind: "paste" };
+  | { kind: 'fixed'; url: string }
+  | { kind: 'chat'; app: 'whatsapp' | 'discord' | 'teams'; chat: string } // URL or exact chat name
+  | { kind: 'paste' }
 
 export interface JobConfig {
-  occurrenceId: string;
-  attempt: number;
+  occurrenceId: string
+  attempt: number
   entry: {
-    name: string;
-    type: EntryType;
-    start: string; // ISO 8601 with offset
-    end: string;
-    timeZone: string; // IANA, e.g. "Asia/Kuala_Lumpur"
-    link: LinkSource;
-    trustedSenders: string[];
-    transcription: TranscriptionMode;
-    formDetails: Record<string, string>; // per-entry: course_code, section, lecturer
-    attendanceKeywords: string[];
-  };
-  identity: { id: string; name: string; zoomGuestName: string };
+    name: string
+    type: EntryType
+    start: string // ISO 8601 with offset
+    end: string
+    timeZone: string // IANA, e.g. "Asia/Kuala_Lumpur"
+    link: LinkSource
+    trustedSenders: string[]
+    transcription: TranscriptionMode
+    formDetails: Record<string, string> // per-entry: course_code, section, lecturer
+    attendanceKeywords: string[]
+  }
+  identity: { id: string; name: string; zoomGuestName: string }
   member: {
-    id: string;
-    displayName: string;
-    mentionNames: string[];
-    details: SavedDetail[];
-  };
-  ai: AiConfig;
-  ntfy: NtfyConfig;
-  dataDir: string; // the occurrence's directory, see "Data directory layout"
-  profileDir: string; // decrypted working copy of the identity's profile
-  control: { url: string; token: string } | null; // null in 1A
+    id: string
+    displayName: string
+    mentionNames: string[]
+    details: SavedDetail[]
+  }
+  ai: AiConfig
+  ntfy: NtfyConfig
+  dataDir: string // the occurrence's directory, see "Data directory layout"
+  profileDir: string // decrypted working copy of the identity's profile
+  control: { url: string; token: string } | null // null in 1A
 }
 ```
 
 State machines, `packages/core/src/occurrence-machine.ts` and `packages/core/src/form-machine.ts`, export pure transition functions:
 
 ```ts
-export function nextOccurrenceState(
-  from: OccurrenceState,
-  event: OccurrenceTrigger,
-): OccurrenceState; // throws IllegalTransition
-export function nextFormState(from: FormState, event: FormTrigger): FormState; // throws IllegalTransition
+export function nextOccurrenceState(from: OccurrenceState, event: OccurrenceTrigger): OccurrenceState // throws IllegalTransition
+export function nextFormState(from: FormState, event: FormTrigger): FormState // throws IllegalTransition
 ```
 
 `OccurrenceTrigger` and `FormTrigger` are string unions defined by milestone 1A (form) and 1C (occurrence), following the transitions in the design's [state machines](../app-design/2026-10-20-meeting-bot-design.md#state-machines).
@@ -258,48 +250,44 @@ export function nextFormState(from: FormState, event: FormTrigger): FormState; /
 `packages/worker/src/adapters/types.ts`:
 
 ```ts
-import type { Page } from "playwright";
+import type { Page } from 'playwright'
 
-export type MeetingState =
-  "in_meeting" | "lobby" | "ended" | "removed" | "breakout_prompt" | "unknown";
-export type AdmissionResult = "admitted" | "lobby_expired" | "lobby_denied";
+export type MeetingState = 'in_meeting' | 'lobby' | 'ended' | 'removed' | 'breakout_prompt' | 'unknown'
+export type AdmissionResult = 'admitted' | 'lobby_expired' | 'lobby_denied'
 export type JoinResult =
-  | { kind: "in_meeting" }
-  | { kind: "lobby" }
-  | { kind: "signin_required"; host: string }
-  | { kind: "account_busy" }
-  | { kind: "failed"; reason: string };
+  | { kind: 'in_meeting' }
+  | { kind: 'lobby' }
+  | { kind: 'signin_required'; host: string }
+  | { kind: 'account_busy' }
+  | { kind: 'failed'; reason: string }
 export interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  x: number
+  y: number
+  width: number
+  height: number
 }
 export interface ChatCursor {
-  seenKeys: string[];
+  seenKeys: string[]
 }
 
 export interface PlatformAdapter {
-  readonly platform: Platform;
-  normaliseLink(url: string): string | null; // null if not this platform's link
-  join(page: Page, opts: { guestName: string | null }): Promise<JoinResult>;
-  connectOutputAudio(page: Page): Promise<void>;
-  ensureLayout(page: Page): Promise<void>;
-  waitUntilAdmitted(page: Page, deadline: Date): Promise<AdmissionResult>;
-  assertDevicesOff(page: Page): Promise<void>; // throws DevicesOnError
-  readChat(
-    page: Page,
-    cursor: ChatCursor,
-  ): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>;
-  sweepChat(page: Page): Promise<ChatMessage[]>;
-  sharedScreenRegion(page: Page): Promise<Rect | null>; // in stage coordinates
-  participantCount(page: Page): Promise<number | null>;
-  meetingState(page: Page): Promise<MeetingState>;
-  dismissNotices(page: Page): Promise<string[]>; // texts of buttons clicked
-  leave(page: Page): Promise<void>;
+  readonly platform: Platform
+  normaliseLink(url: string): string | null // null if not this platform's link
+  join(page: Page, opts: { guestName: string | null }): Promise<JoinResult>
+  connectOutputAudio(page: Page): Promise<void>
+  ensureLayout(page: Page): Promise<void>
+  waitUntilAdmitted(page: Page, deadline: Date): Promise<AdmissionResult>
+  assertDevicesOff(page: Page): Promise<void> // throws DevicesOnError
+  readChat(page: Page, cursor: ChatCursor): Promise<{ messages: ChatMessage[]; cursor: ChatCursor }>
+  sweepChat(page: Page): Promise<ChatMessage[]>
+  sharedScreenRegion(page: Page): Promise<Rect | null> // in stage coordinates
+  participantCount(page: Page): Promise<number | null>
+  meetingState(page: Page): Promise<MeetingState>
+  dismissNotices(page: Page): Promise<string[]> // texts of buttons clicked
+  leave(page: Page): Promise<void>
 }
 
-export function adapterFor(url: string): PlatformAdapter | null; // packages/worker/src/adapters/index.ts
+export function adapterFor(url: string): PlatformAdapter | null // packages/worker/src/adapters/index.ts
 ```
 
 Other worker modules and their entry points (each plan that creates one owns its tests):
@@ -326,27 +314,22 @@ Other worker modules and their entry points (each plan that creates one owns its
 
 ```ts
 export interface AiConfig {
-  baseUrl: string; // OpenAI-compatible base URL
-  apiKey: string;
-  asrUrl: string; // DashScope real-time WebSocket URL
-  models: { summary: string; vision: string; formMatch: string; asr: string };
+  baseUrl: string // OpenAI-compatible base URL
+  apiKey: string
+  asrUrl: string // DashScope real-time WebSocket URL
+  models: { summary: string; vision: string; formMatch: string; asr: string }
 }
 export async function chatJson<T>(
   cfg: AiConfig,
   model: string,
   messages: ChatTurn[],
   schema: z.ZodType<T>,
-  timeoutMs: number,
-): Promise<T>;
-export async function chatText(
-  cfg: AiConfig,
-  model: string,
-  messages: ChatTurn[],
-  timeoutMs: number,
-): Promise<string>;
-export function openAsrStream(cfg: AiConfig): AsrStream; // send(pcm16le: Buffer), onResult(cb), close()
+  timeoutMs: number
+): Promise<T>
+export async function chatText(cfg: AiConfig, model: string, messages: ChatTurn[], timeoutMs: number): Promise<string>
+export function openAsrStream(cfg: AiConfig): AsrStream // send(pcm16le: Buffer), onResult(cb), close()
 export class AiKeyError extends Error {
-  status: 401 | 402 | 429;
+  status: 401 | 402 | 429
 }
 ```
 
@@ -356,34 +339,34 @@ All chat calls send `enable_thinking: false` unless a caller passes `thinking: t
 
 ```ts
 export interface NtfyConfig {
-  url: string;
-  topic: string;
-  token: string;
+  url: string
+  topic: string
+  token: string
 }
 export interface PingAction {
-  label: string;
-  url: string;
+  label: string
+  url: string
 } // ntfy "view" actions
 export interface Ping {
-  title: string;
-  message: string;
-  priority: "high" | "default";
-  actions?: PingAction[];
-  attachPath?: string;
+  title: string
+  message: string
+  priority: 'high' | 'default'
+  actions?: PingAction[]
+  attachPath?: string
 }
-export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void>;
+export async function sendPing(cfg: NtfyConfig, ping: Ping): Promise<void>
 ```
 
 `packages/pipeline`:
 
 ```ts
 export interface PipelineResult {
-  summaryPath: string;
-  transcriptPath: string;
-  slidesPath: string;
-  chatPath: string;
+  summaryPath: string
+  transcriptPath: string
+  slidesPath: string
+  chatPath: string
 }
-export async function runPipeline(cfg: JobConfig): Promise<PipelineResult>;
+export async function runPipeline(cfg: JobConfig): Promise<PipelineResult>
 ```
 
 ## Data directory layout

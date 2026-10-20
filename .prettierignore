@@ -1,0 +1,6 @@
+.agents/
+.claude/
+dist/
+test-results/
+playwright-report/
+packages/worker/test/fixtures/

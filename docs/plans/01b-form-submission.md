@@ -79,150 +79,133 @@ Contents:
 ```ts
 // packages/core/src/form-record.ts
 export type StopReason =
-  | "untrusted_source"
-  | "not_org_restricted"
-  | "tab_not_on_desk"
-  | "open_timeout"
-  | "signin_required_again"
-  | "signin_not_completed"
-  | "meeting_ended"
-  | "form_closed"
-  | "no_access"
-  | "captcha"
-  | "unknown_page"
-  | "fill_failed"
-  | "next_failed"
-  | "submit_failed"
-  | "deadline"
-  | "interrupted"
-  | "interrupted_submitting"
-  | "unexpected_error";
+  | 'untrusted_source'
+  | 'not_org_restricted'
+  | 'tab_not_on_desk'
+  | 'open_timeout'
+  | 'signin_required_again'
+  | 'signin_not_completed'
+  | 'meeting_ended'
+  | 'form_closed'
+  | 'no_access'
+  | 'captcha'
+  | 'unknown_page'
+  | 'fill_failed'
+  | 'next_failed'
+  | 'submit_failed'
+  | 'deadline'
+  | 'interrupted'
+  | 'interrupted_submitting'
+  | 'unexpected_error'
 
 export interface FilledField {
-  page: number; // 1-based
-  question: string; // label, cut to 120 characters
-  detailKey: string | null; // null for an attendance confirmation
-  value: string; // text typed or option chosen; never logged
-  via: "label" | "model" | "confirmation";
+  page: number // 1-based
+  question: string // label, cut to 120 characters
+  detailKey: string | null // null for an attendance confirmation
+  value: string // text typed or option chosen; never logged
+  via: 'label' | 'model' | 'confirmation'
 }
 
 export interface FormRecord {
-  formId: string;
-  occurrenceId: string;
-  url: string; // as first seen
-  finalUrl: string; // from resolveFormLink
-  provider: FormProvider;
-  source: FormSource;
-  sender: string | null;
-  senderRole: SenderRole | null;
-  seenAt: string; // ISO 8601, first sight
-  state: FormState;
-  history: { state: FormState; at: string }[];
-  trustReason: TrustReason | null;
-  reason: StopReason | null;
-  title: string | null;
-  fieldsFilled: FilledField[];
-  unmatched: string[]; // required question labels left unmatched, each cut to 120 characters
-  screenshots: string[]; // paths relative to the occurrence directory
-  signinRetried: boolean;
-  submittedAt: string | null;
-  pings: { state: FormState; at: string }[];
+  formId: string
+  occurrenceId: string
+  url: string // as first seen
+  finalUrl: string // from resolveFormLink
+  provider: FormProvider
+  source: FormSource
+  sender: string | null
+  senderRole: SenderRole | null
+  seenAt: string // ISO 8601, first sight
+  state: FormState
+  history: { state: FormState; at: string }[]
+  trustReason: TrustReason | null
+  reason: StopReason | null
+  title: string | null
+  fieldsFilled: FilledField[]
+  unmatched: string[] // required question labels left unmatched, each cut to 120 characters
+  screenshots: string[] // paths relative to the occurrence directory
+  signinRetried: boolean
+  submittedAt: string | null
+  pings: { state: FormState; at: string }[]
 }
 
-export const FormRecordSchema: z.ZodType<FormRecord>;
-export function newFormRecord(
-  f: ResolvedForm,
-  occurrenceId: string,
-): FormRecord; // state 'detected', history [{ state: 'detected', at: f.seenAt }]
-export function canonicalFormUrl(finalUrl: string): string;
-export function formIdFor(finalUrl: string): string; // first 16 hex characters of SHA-256 of canonicalFormUrl(finalUrl)
+export const FormRecordSchema: z.ZodType<FormRecord>
+export function newFormRecord(f: ResolvedForm, occurrenceId: string): FormRecord // state 'detected', history [{ state: 'detected', at: f.seenAt }]
+export function canonicalFormUrl(finalUrl: string): string
+export function formIdFor(finalUrl: string): string // first 16 hex characters of SHA-256 of canonicalFormUrl(finalUrl)
 
 // packages/core/src/job.ts
 export interface OrgConfig {
-  name: string;
-  emailDomain: string;
+  name: string
+  emailDomain: string
 } // e.g. { name: 'Example University', emailDomain: 'example.edu.my' }
 // JobConfig.identity gains `organisation: OrgConfig | null` (zod: nullable, default null), so 1A job files still parse; 1C's identity settings supply it.
 
 // packages/core/src/testing.ts (used by the tests of Tasks 2 to 15)
-export const sampleForm: ResolvedForm; // Google form G below, source 'qr', seenAt '2026-10-20T12:30:00.000Z'
-export function sampleRecord(patch?: Partial<FormRecord>): FormRecord; // newFormRecord(sampleForm, 'occ-1') with the patch applied
+export const sampleForm: ResolvedForm // Google form G below, source 'qr', seenAt '2026-10-20T12:30:00.000Z'
+export function sampleRecord(patch?: Partial<FormRecord>): FormRecord // newFormRecord(sampleForm, 'occ-1') with the patch applied
 ```
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 // packages/core/src/form-record.test.ts
-const G = "https://docs.google.com/forms/d/e/1FAIpQLSf-x/viewform";
+const G = 'https://docs.google.com/forms/d/e/1FAIpQLSf-x/viewform'
 
-test("canonicalFormUrl drops prefilled answers and direct-submit paths", () => {
-  expect(canonicalFormUrl(`${G}?usp=pp_url&entry.111=Absent`)).toBe(G);
+test('canonicalFormUrl drops prefilled answers and direct-submit paths', () => {
+  expect(canonicalFormUrl(`${G}?usp=pp_url&entry.111=Absent`)).toBe(G)
   expect(
-    canonicalFormUrl(
-      "https://docs.google.com/forms/d/e/1FAIpQLSf-x/formResponse?entry.111=Present&submit=Submit",
-    ),
-  ).toBe(G);
-  expect(
-    canonicalFormUrl(
-      "https://docs.google.com/forms/u/1/d/e/1FAIpQLSf-x/viewform#i1",
-    ),
-  ).toBe(G);
-  expect(
-    canonicalFormUrl(
-      "https://FORMS.office.com/Pages/ResponsePage.aspx?id=AbC_1&r1a2b=Absent&embed=true",
-    ),
-  ).toBe("https://forms.office.com/Pages/ResponsePage.aspx?id=AbC_1");
-  expect(
-    canonicalFormUrl("https://forms.office.com/r/XyZ123?origin=lprLink"),
-  ).toBe("https://forms.office.com/r/XyZ123");
-});
+    canonicalFormUrl('https://docs.google.com/forms/d/e/1FAIpQLSf-x/formResponse?entry.111=Present&submit=Submit')
+  ).toBe(G)
+  expect(canonicalFormUrl('https://docs.google.com/forms/u/1/d/e/1FAIpQLSf-x/viewform#i1')).toBe(G)
+  expect(canonicalFormUrl('https://FORMS.office.com/Pages/ResponsePage.aspx?id=AbC_1&r1a2b=Absent&embed=true')).toBe(
+    'https://forms.office.com/Pages/ResponsePage.aspx?id=AbC_1'
+  )
+  expect(canonicalFormUrl('https://forms.office.com/r/XyZ123?origin=lprLink')).toBe('https://forms.office.com/r/XyZ123')
+})
 
-test("formIdFor is the same for every variant of one form", () => {
-  const id = formIdFor(`${G}?usp=sf_link`);
-  expect(id).toMatch(/^[0-9a-f]{16}$/);
-  expect(
-    formIdFor("https://docs.google.com/forms/d/e/1FAIpQLSf-x/formResponse"),
-  ).toBe(id);
-  expect(
-    formIdFor("https://docs.google.com/forms/d/e/OTHER/viewform"),
-  ).not.toBe(id);
-});
+test('formIdFor is the same for every variant of one form', () => {
+  const id = formIdFor(`${G}?usp=sf_link`)
+  expect(id).toMatch(/^[0-9a-f]{16}$/)
+  expect(formIdFor('https://docs.google.com/forms/d/e/1FAIpQLSf-x/formResponse')).toBe(id)
+  expect(formIdFor('https://docs.google.com/forms/d/e/OTHER/viewform')).not.toBe(id)
+})
 
-test("newFormRecord starts detected and FormRecordSchema accepts it", () => {
+test('newFormRecord starts detected and FormRecordSchema accepts it', () => {
   const r = newFormRecord(
     {
       url: G,
       finalUrl: G,
-      provider: "google",
-      source: "qr",
+      provider: 'google',
+      source: 'qr',
       sender: null,
       senderRole: null,
-      seenAt: "2026-10-20T12:30:00.000Z",
+      seenAt: '2026-10-20T12:30:00.000Z'
     },
-    "occ-1",
-  );
+    'occ-1'
+  )
   expect(r).toMatchObject({
     formId: formIdFor(G),
-    state: "detected",
-    history: [{ state: "detected", at: "2026-10-20T12:30:00.000Z" }],
+    state: 'detected',
+    history: [{ state: 'detected', at: '2026-10-20T12:30:00.000Z' }],
     fieldsFilled: [],
-    pings: [],
-  });
-  expect(FormRecordSchema.parse(r)).toEqual(r);
-  expect(() => FormRecordSchema.parse({ ...r, state: "pinged" })).toThrow();
-});
+    pings: []
+  })
+  expect(FormRecordSchema.parse(r)).toEqual(r)
+  expect(() => FormRecordSchema.parse({ ...r, state: 'pinged' })).toThrow()
+})
 
 // packages/core/src/job.test.ts (add to 1A's file, reusing its sample job)
-test("identity.organisation defaults to null and accepts an OrgConfig", () => {
-  expect(JobConfigSchema.parse(sampleJob).identity.organisation).toBeNull();
-  const org = { name: "Example University", emailDomain: "example.edu.my" };
+test('identity.organisation defaults to null and accepts an OrgConfig', () => {
+  expect(JobConfigSchema.parse(sampleJob).identity.organisation).toBeNull()
+  const org = { name: 'Example University', emailDomain: 'example.edu.my' }
   expect(
     JobConfigSchema.parse({
       ...sampleJob,
-      identity: { ...sampleJob.identity, organisation: org },
-    }).identity.organisation,
-  ).toEqual(org);
-});
+      identity: { ...sampleJob.identity, organisation: org }
+    }).identity.organisation
+  ).toEqual(org)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -266,33 +249,29 @@ git commit -m "feat(core): add form record and form id"
 
 ```ts
 export type FormTrigger =
-  | "resolve_started"
-  | "resolved"
-  | "trusted"
-  | "trust_deferred"
-  | "trust_failed"
-  | "trusted_candidate_seen"
-  | "signin_wall"
-  | "signed_in"
-  | "page_loaded"
-  | "already_answered_seen"
-  | "org_check_failed"
-  | "quiz_detected"
-  | "no_attendance_terms"
-  | "inspected"
-  | "next_page"
-  | "unmatched_required"
-  | "submit_clicked"
-  | "confirmed"
-  | "error";
-export const TERMINAL_FORM_STATES: readonly FormState[]; // untrusted, not_attendance, quiz, needs_member, submitted, already_answered, failed
-export function isTerminalFormState(s: FormState): boolean;
-export function nextFormState(from: FormState, event: FormTrigger): FormState; // throws IllegalTransition
-export function applyFormTrigger(
-  rec: FormRecord,
-  trigger: FormTrigger,
-  at: string,
-): FormRecord; // new object; state from nextFormState, { state, at } appended to history
+  | 'resolve_started'
+  | 'resolved'
+  | 'trusted'
+  | 'trust_deferred'
+  | 'trust_failed'
+  | 'trusted_candidate_seen'
+  | 'signin_wall'
+  | 'signed_in'
+  | 'page_loaded'
+  | 'already_answered_seen'
+  | 'org_check_failed'
+  | 'quiz_detected'
+  | 'no_attendance_terms'
+  | 'inspected'
+  | 'next_page'
+  | 'unmatched_required'
+  | 'submit_clicked'
+  | 'confirmed'
+  | 'error'
+export const TERMINAL_FORM_STATES: readonly FormState[] // untrusted, not_attendance, quiz, needs_member, submitted, already_answered, failed
+export function isTerminalFormState(s: FormState): boolean
+export function nextFormState(from: FormState, event: FormTrigger): FormState // throws IllegalTransition
+export function applyFormTrigger(rec: FormRecord, trigger: FormTrigger, at: string): FormRecord // new object; state from nextFormState, { state, at } appended to history
 ```
 
 The complete table. Rows marked "added" are edges the design's diagram omits but its rules need:
@@ -326,82 +305,72 @@ submitting       already_answered_seen   already_answered
 
 ```ts
 const EDGES: [FormState, FormTrigger, FormState][] = [
-  ["detected", "resolve_started", "resolving"],
-  ["resolving", "resolved", "checking_trust"],
-  ["checking_trust", "trusted", "opening"],
-  ["checking_trust", "trust_deferred", "opening"],
-  ["checking_trust", "trust_failed", "untrusted"],
-  ["untrusted", "trusted_candidate_seen", "checking_trust"],
-  ["opening", "signin_wall", "awaiting_signin"],
-  ["awaiting_signin", "signed_in", "opening"],
-  ["opening", "page_loaded", "inspecting"],
-  ["opening", "already_answered_seen", "already_answered"],
-  ["inspecting", "org_check_failed", "untrusted"],
-  ["inspecting", "quiz_detected", "quiz"],
-  ["inspecting", "no_attendance_terms", "not_attendance"],
-  ["inspecting", "inspected", "filling"],
-  ["filling", "next_page", "inspecting"],
-  ["filling", "unmatched_required", "needs_member"],
-  ["filling", "submit_clicked", "submitting"],
-  ["submitting", "confirmed", "submitted"],
-  ["submitting", "already_answered_seen", "already_answered"],
-];
-test.each(EDGES)("%s --%s--> %s", (from, t, to) =>
-  expect(nextFormState(from, t)).toBe(to),
-);
+  ['detected', 'resolve_started', 'resolving'],
+  ['resolving', 'resolved', 'checking_trust'],
+  ['checking_trust', 'trusted', 'opening'],
+  ['checking_trust', 'trust_deferred', 'opening'],
+  ['checking_trust', 'trust_failed', 'untrusted'],
+  ['untrusted', 'trusted_candidate_seen', 'checking_trust'],
+  ['opening', 'signin_wall', 'awaiting_signin'],
+  ['awaiting_signin', 'signed_in', 'opening'],
+  ['opening', 'page_loaded', 'inspecting'],
+  ['opening', 'already_answered_seen', 'already_answered'],
+  ['inspecting', 'org_check_failed', 'untrusted'],
+  ['inspecting', 'quiz_detected', 'quiz'],
+  ['inspecting', 'no_attendance_terms', 'not_attendance'],
+  ['inspecting', 'inspected', 'filling'],
+  ['filling', 'next_page', 'inspecting'],
+  ['filling', 'unmatched_required', 'needs_member'],
+  ['filling', 'submit_clicked', 'submitting'],
+  ['submitting', 'confirmed', 'submitted'],
+  ['submitting', 'already_answered_seen', 'already_answered']
+]
+test.each(EDGES)('%s --%s--> %s', (from, t, to) => expect(nextFormState(from, t)).toBe(to))
 
-test("every non-terminal state fails on error", () => {
+test('every non-terminal state fails on error', () => {
   for (const s of [
-    "detected",
-    "resolving",
-    "checking_trust",
-    "opening",
-    "awaiting_signin",
-    "inspecting",
-    "filling",
-    "submitting",
+    'detected',
+    'resolving',
+    'checking_trust',
+    'opening',
+    'awaiting_signin',
+    'inspecting',
+    'filling',
+    'submitting'
   ] as FormState[])
-    expect(nextFormState(s, "error")).toBe("failed");
-});
+    expect(nextFormState(s, 'error')).toBe('failed')
+})
 
-test("terminal states and skipped steps are illegal", () => {
-  expect(() => nextFormState("submitted", "error")).toThrow(IllegalTransition);
-  expect(() => nextFormState("needs_member", "submit_clicked")).toThrow(
-    IllegalTransition,
-  );
-  expect(() => nextFormState("untrusted", "page_loaded")).toThrow(
-    IllegalTransition,
-  );
-  expect(() => nextFormState("checking_trust", "submit_clicked")).toThrow(
-    IllegalTransition,
-  );
-  expect(() => nextFormState("opening", "inspected")).toThrow(
-    IllegalTransition,
-  );
+test('terminal states and skipped steps are illegal', () => {
+  expect(() => nextFormState('submitted', 'error')).toThrow(IllegalTransition)
+  expect(() => nextFormState('needs_member', 'submit_clicked')).toThrow(IllegalTransition)
+  expect(() => nextFormState('untrusted', 'page_loaded')).toThrow(IllegalTransition)
+  expect(() => nextFormState('checking_trust', 'submit_clicked')).toThrow(IllegalTransition)
+  expect(() => nextFormState('opening', 'inspected')).toThrow(IllegalTransition)
   expect([...TERMINAL_FORM_STATES].sort()).toEqual([
-    "already_answered",
-    "failed",
-    "needs_member",
-    "not_attendance",
-    "quiz",
-    "submitted",
-    "untrusted",
-  ]);
-});
+    'already_answered',
+    'failed',
+    'needs_member',
+    'not_attendance',
+    'quiz',
+    'submitted',
+    'untrusted'
+  ])
+})
 
-test("applyFormTrigger appends to history without mutating", () => {
+test('applyFormTrigger appends to history without mutating', () => {
   const r = sampleRecord({
-    state: "detected",
-    history: [{ state: "detected", at: "T0" }],
-  });
-  const next = applyFormTrigger(r, "resolve_started", "T1");
-  expect(next.state).toBe("resolving");
+    state: 'detected',
+    history: [{ state: 'detected', at: 'T0' }]
+  })
+  const next = applyFormTrigger(r, 'resolve_started', 'T1')
+  expect(next.state).toBe('resolving')
   expect(next.history).toEqual([
-    { state: "detected", at: "T0" },
-    { state: "resolving", at: "T1" },
-  ]);
-  expect(r.history).toHaveLength(1);
-});
+    { state: 'detected', at: 'T0' },
+    { state: 'resolving', at: 'T1' }
+  ])
+  expect(r.history).toHaveLength(1)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -438,14 +407,9 @@ git commit -m "feat(core): complete the form state machine"
 - Produces:
 
 ```ts
-export async function saveFormRecord(
-  dataDir: string,
-  rec: FormRecord,
-): Promise<void>; // forms/<formId>/record.json via record.json.tmp and rename; creates the directory
-export async function loadFormRecords(
-  dataDir: string,
-): Promise<{ records: FormRecord[]; invalid: string[] }>; // invalid: formIds whose record.json is unreadable or fails the schema
-export function formEventData(rec: FormRecord): Record<string, unknown>; // { formId, state, provider, source, sender, trustReason, reason, fields }
+export async function saveFormRecord(dataDir: string, rec: FormRecord): Promise<void> // forms/<formId>/record.json via record.json.tmp and rename; creates the directory
+export async function loadFormRecords(dataDir: string): Promise<{ records: FormRecord[]; invalid: string[] }> // invalid: formIds whose record.json is unreadable or fails the schema
+export function formEventData(rec: FormRecord): Record<string, unknown> // { formId, state, provider, source, sender, trustReason, reason, fields }
 ```
 
 `fields` lists `detailKey` for each filled field, and `attendance_confirmation` where `detailKey` is null.
@@ -453,54 +417,49 @@ export function formEventData(rec: FormRecord): Record<string, unknown>; // { fo
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-const rec = sampleRecord();
+const rec = sampleRecord()
 
-test("saveFormRecord round-trips through loadFormRecords", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "tm-forms-"));
-  await saveFormRecord(dir, rec);
-  expect(await loadFormRecords(dir)).toEqual({ records: [rec], invalid: [] });
-  expect(existsSync(join(dir, "forms", rec.formId, "record.json.tmp"))).toBe(
-    false,
-  );
-});
+test('saveFormRecord round-trips through loadFormRecords', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tm-forms-'))
+  await saveFormRecord(dir, rec)
+  expect(await loadFormRecords(dir)).toEqual({ records: [rec], invalid: [] })
+  expect(existsSync(join(dir, 'forms', rec.formId, 'record.json.tmp'))).toBe(false)
+})
 
-test("an unreadable record still counts as handled", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "tm-forms-"));
-  await mkdir(join(dir, "forms", "abcdef0123456789"), { recursive: true });
-  await writeFile(
-    join(dir, "forms", "abcdef0123456789", "record.json"),
-    "not json",
-  );
+test('an unreadable record still counts as handled', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tm-forms-'))
+  await mkdir(join(dir, 'forms', 'abcdef0123456789'), { recursive: true })
+  await writeFile(join(dir, 'forms', 'abcdef0123456789', 'record.json'), 'not json')
   expect(await loadFormRecords(dir)).toEqual({
     records: [],
-    invalid: ["abcdef0123456789"],
-  });
-});
+    invalid: ['abcdef0123456789']
+  })
+})
 
-test("formEventData names fields but never carries their values", () => {
+test('formEventData names fields but never carries their values', () => {
   const data = formEventData({
     ...rec,
     fieldsFilled: [
       {
         page: 1,
-        question: "Full name",
-        detailKey: "full_name",
-        value: "Test Student",
-        via: "label",
+        question: 'Full name',
+        detailKey: 'full_name',
+        value: 'Test Student',
+        via: 'label'
       },
       {
         page: 2,
-        question: "Declaration",
+        question: 'Declaration',
         detailKey: null,
-        value: "I confirm I am attending this class",
-        via: "confirmation",
-      },
-    ],
-  });
-  expect(data.fields).toEqual(["full_name", "attendance_confirmation"]);
-  expect(JSON.stringify(data)).not.toContain("Test Student");
-  expect(JSON.stringify(data)).not.toContain("I confirm");
-});
+        value: 'I confirm I am attending this class',
+        via: 'confirmation'
+      }
+    ]
+  })
+  expect(data.fields).toEqual(['full_name', 'attendance_confirmation'])
+  expect(JSON.stringify(data)).not.toContain('Test Student')
+  expect(JSON.stringify(data)).not.toContain('I confirm')
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -538,13 +497,10 @@ git commit -m "feat(worker): persist form records and events"
 
 ```ts
 export interface FormLinks {
-  meetingPage: string | null;
-  signIn: string | null;
+  meetingPage: string | null
+  signIn: string | null
 }
-export function formPing(
-  rec: FormRecord,
-  opts: { entryName: string; timeZone: string; links: FormLinks },
-): Ping | null; // null for states that don't ping
+export function formPing(rec: FormRecord, opts: { entryName: string; timeZone: string; links: FormLinks }): Ping | null // null for states that don't ping
 ```
 
 Exact copy. `<entry>` is the entry name; `<provider>` is `Google Forms` or `Microsoft Forms`; `<time>` is `submittedAt` as `HH:MM` (24-hour) in the entry's time zone; `<sender>` is the sender, or `someone` when null; `<source>` is `meeting chat`, `watched chat` or `shared screen`. `Open form` links to `finalUrl`. `actions` is always an array, and `attachPath` is never set.
@@ -594,82 +550,66 @@ failed (high) "Form needs you"
 
 ```ts
 const opts = {
-  entryName: "Example lecture",
-  timeZone: "Asia/Kuala_Lumpur",
-  links: { meetingPage: null, signIn: null },
-};
+  entryName: 'Example lecture',
+  timeZone: 'Asia/Kuala_Lumpur',
+  links: { meetingPage: null, signIn: null }
+}
 const base = sampleRecord({
-  formId: "0123456789abcdef",
-  provider: "google",
-  finalUrl: "https://docs.google.com/forms/d/e/x/viewform",
-  sender: "Classmate",
-  source: "meeting_chat",
-});
-const open = [{ label: "Open form", url: base.finalUrl }];
+  formId: '0123456789abcdef',
+  provider: 'google',
+  finalUrl: 'https://docs.google.com/forms/d/e/x/viewform',
+  sender: 'Classmate',
+  source: 'meeting_chat'
+})
+const open = [{ label: 'Open form', url: base.finalUrl }]
 
-test("submitted", () =>
-  expect(
-    formPing(
-      { ...base, state: "submitted", submittedAt: "2026-10-20T12:42:10.000Z" },
-      opts,
-    ),
-  ).toEqual({
-    title: "Attendance submitted",
-    priority: "high",
+test('submitted', () =>
+  expect(formPing({ ...base, state: 'submitted', submittedAt: '2026-10-20T12:42:10.000Z' }, opts)).toEqual({
+    title: 'Attendance submitted',
+    priority: 'high',
     actions: [],
     message:
-      "Example lecture: attendance form submitted at 20:42 (Google Forms). Screenshots: forms/0123456789abcdef/ in the meeting folder.",
-  }));
+      'Example lecture: attendance form submitted at 20:42 (Google Forms). Screenshots: forms/0123456789abcdef/ in the meeting folder.'
+  }))
 
-test("needs_member quotes at most three questions", () =>
+test('needs_member quotes at most three questions', () =>
   expect(
     formPing(
       {
         ...base,
-        state: "needs_member",
-        unmatched: ["Q1", "Q2", "Q3", "Q4", "Q5"],
+        state: 'needs_member',
+        unmatched: ['Q1', 'Q2', 'Q3', 'Q4', 'Q5']
       },
-      opts,
-    )?.message,
+      opts
+    )?.message
   ).toBe(
-    'Example lecture: I didn\'t submit this Google Forms form because no saved detail answers "Q1", "Q2", "Q3" and 2 more.',
-  ));
+    'Example lecture: I didn\'t submit this Google Forms form because no saved detail answers "Q1", "Q2", "Q3" and 2 more.'
+  ))
 
-test("awaiting_signin links the form until 1C supplies a sign-in view", () => {
-  expect(
-    formPing({ ...base, state: "awaiting_signin" }, opts)?.actions,
-  ).toEqual([{ label: "Sign in again", url: base.finalUrl }]);
+test('awaiting_signin links the form until 1C supplies a sign-in view', () => {
+  expect(formPing({ ...base, state: 'awaiting_signin' }, opts)?.actions).toEqual([
+    { label: 'Sign in again', url: base.finalUrl }
+  ])
   expect(
     formPing(
-      { ...base, state: "awaiting_signin" },
+      { ...base, state: 'awaiting_signin' },
       {
         ...opts,
-        links: { meetingPage: null, signIn: "https://tm.example/signin" },
-      },
-    )?.actions,
-  ).toEqual([
-    { label: "Sign in again", url: "https://tm.example/signin" },
-    ...open,
-  ]);
-});
+        links: { meetingPage: null, signIn: 'https://tm.example/signin' }
+      }
+    )?.actions
+  ).toEqual([{ label: 'Sign in again', url: 'https://tm.example/signin' }, ...open])
+})
 
-test.each(CASES)("%s", (_name, patch, expected) =>
-  expect(formPing({ ...base, ...patch }, opts)).toEqual(expected),
-);
+test.each(CASES)('%s', (_name, patch, expected) => expect(formPing({ ...base, ...patch }, opts)).toEqual(expected))
 // CASES: one row per remaining line of the copy block (both untrusted reasons, not_attendance, quiz,
 // already_answered, and failed with open_timeout and interrupted_submitting), each expecting the block's
 // title, priority, `open` actions and message with "Example lecture" and "Google Forms" filled in.
 
-test("non-outcome states do not ping", () => {
-  for (const state of [
-    "detected",
-    "opening",
-    "inspecting",
-    "filling",
-    "submitting",
-  ] as const)
-    expect(formPing({ ...base, state }, opts)).toBeNull();
-});
+test('non-outcome states do not ping', () => {
+  for (const state of ['detected', 'opening', 'inspecting', 'filling', 'submitting'] as const)
+    expect(formPing({ ...base, state }, opts)).toBeNull()
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -707,88 +647,74 @@ git commit -m "feat(worker): add form ping copy"
 
 ```ts
 // packages/worker/src/forms/types.ts
-export type QuestionType =
-  "text" | "paragraph" | "radio" | "checkbox" | "dropdown" | "other"; // other: date, time, grid, file upload
+export type QuestionType = 'text' | 'paragraph' | 'radio' | 'checkbox' | 'dropdown' | 'other' // other: date, time, grid, file upload
 export interface FormQuestion {
-  id: string; // `p<page>q<n>`, n = 0-based position among the page's questions
-  label: string; // without the required marker or points line
-  type: QuestionType;
-  options: string[]; // [] for text, paragraph and other
-  required: boolean;
-  value: string | string[] | null; // current answer; null when empty
+  id: string // `p<page>q<n>`, n = 0-based position among the page's questions
+  label: string // without the required marker or points line
+  type: QuestionType
+  options: string[] // [] for text, paragraph and other
+  required: boolean
+  value: string | string[] | null // current answer; null when empty
 }
 export interface Restriction {
-  organisation: string | null; // from the provider's own footer
-  signedInAs: string | null; // email in the provider's own account line
-  orgOnly: boolean; // the provider's own "only your organisation" notice is shown
+  organisation: string | null // from the provider's own footer
+  signedInAs: string | null // email in the provider's own account line
+  orgOnly: boolean // the provider's own "only your organisation" notice is shown
 }
 export interface FormPage {
-  index: number; // 1-based
-  title: string;
-  description: string; // for looksLikeAttendance only; never sent to a model
-  questions: FormQuestion[];
-  quiz: boolean; // some question shows a points line
-  sendCopy: boolean | null; // the "send me a copy" box: null if absent, else whether ticked
-  hasNext: boolean;
-  hasSubmit: boolean;
-  restriction: Restriction;
+  index: number // 1-based
+  title: string
+  description: string // for looksLikeAttendance only; never sent to a model
+  questions: FormQuestion[]
+  quiz: boolean // some question shows a points line
+  sendCopy: boolean | null // the "send me a copy" box: null if absent, else whether ticked
+  hasNext: boolean
+  hasSubmit: boolean
+  restriction: Restriction
 }
 export type PageKind =
-  | "form"
-  | "signin"
-  | "already_answered"
-  | "confirmation"
-  | "closed"
-  | "no_access"
-  | "captcha"
-  | "unknown";
+  'form' | 'signin' | 'already_answered' | 'confirmation' | 'closed' | 'no_access' | 'captcha' | 'unknown'
 export interface MatchQuestion {
-  id: string;
-  label: string;
-  options: string[];
+  id: string
+  label: string
+  options: string[]
 }
 export type Answer =
   | {
-      questionId: string;
-      kind: "text";
-      value: string;
-      detailKey: string;
-      via: "label" | "model";
+      questionId: string
+      kind: 'text'
+      value: string
+      detailKey: string
+      via: 'label' | 'model'
     }
   | {
-      questionId: string;
-      kind: "choose";
-      option: string;
-      detailKey: string | null;
-      via: "label" | "model" | "confirmation";
-    };
+      questionId: string
+      kind: 'choose'
+      option: string
+      detailKey: string | null
+      via: 'label' | 'model' | 'confirmation'
+    }
 export interface PagePlan {
-  answers: Answer[];
-  unmatchedRequired: FormQuestion[];
+  answers: Answer[]
+  unmatchedRequired: FormQuestion[]
 }
 
 // packages/worker/src/forms/rules.ts
-export function normaliseText(s: string): string; // NFKC, lower case, each run of characters other than letters and digits becomes one space, trimmed
-export function looksLikeAttendance(
-  page: FormPage,
-  keywords: string[],
-): boolean;
-export function isPointsLine(line: string): boolean;
-export function orgRestricted(r: Restriction, org: OrgConfig | null): boolean;
-export function confirmsAttendance(option: string): boolean;
+export function normaliseText(s: string): string // NFKC, lower case, each run of characters other than letters and digits becomes one space, trimmed
+export function looksLikeAttendance(page: FormPage, keywords: string[]): boolean
+export function isPointsLine(line: string): boolean
+export function orgRestricted(r: Restriction, org: OrgConfig | null): boolean
+export function confirmsAttendance(option: string): boolean
 ```
 
 Pinned patterns, applied to `normaliseText` output except `POINTS_LINE`, which takes one trimmed line of a question's text:
 
 ```ts
-const ATTENDANCE_TERMS =
-  /\b(attendance|kehadiran|hadir|register|sign in sheet)\b/;
+const ATTENDANCE_TERMS = /\b(attendance|kehadiran|hadir|register|sign in sheet)\b/
 const POINTS_LINE =
-  /^\(?\d+(\.\d+)?\s*(point|points|mark|marks|mata|markah)\)?$|^(points|marks|mata|markah)\s*:\s*\d+(\.\d+)?$/i;
-const CONFIRM_POSITIVE =
-  /\b(present|presence|attend|attending|attended|attendance|hadir|kehadiran)\b/;
-const CONFIRM_NEGATIVE =
-  /\b(not|no|absent|tidak|tak|bukan|belum|cannot|unable|never|can t|won t|didn t|don t)\b/;
+  /^\(?\d+(\.\d+)?\s*(point|points|mark|marks|mata|markah)\)?$|^(points|marks|mata|markah)\s*:\s*\d+(\.\d+)?$/i
+const CONFIRM_POSITIVE = /\b(present|presence|attend|attending|attended|attendance|hadir|kehadiran)\b/
+const CONFIRM_NEGATIVE = /\b(not|no|absent|tidak|tak|bukan|belum|cannot|unable|never|can t|won t|didn t|don t)\b/
 ```
 
 - `looksLikeAttendance`: the title, description, question labels and options of page 1 match `ATTENDANCE_TERMS`, or contain a non-empty normalised entry keyword. Only page 1 is judged, because later pages can't be seen without filling page 1; a form whose only attendance terms are on later pages gets a "not attendance" ping, the safe direction.
@@ -800,135 +726,100 @@ const CONFIRM_NEGATIVE =
 ```ts
 const page = (p: Partial<FormPage>): FormPage => ({
   index: 1,
-  title: "",
-  description: "",
+  title: '',
+  description: '',
   questions: [],
   quiz: false,
   sendCopy: null,
   hasNext: false,
   hasSubmit: true,
   restriction: { organisation: null, signedInAs: null, orgOnly: false },
-  ...p,
-});
-const org = { name: "Example University", emailDomain: "example.edu.my" };
+  ...p
+})
+const org = { name: 'Example University', emailDomain: 'example.edu.my' }
 
-test("attendance terms in English and Malay, whole words only", () => {
-  for (const title of [
-    "Week 5 Attendance",
-    "Borang Kehadiran",
-    "Sign-in sheet",
-    "Register here",
-  ])
-    expect(looksLikeAttendance(page({ title }), [])).toBe(true);
+test('attendance terms in English and Malay, whole words only', () => {
+  for (const title of ['Week 5 Attendance', 'Borang Kehadiran', 'Sign-in sheet', 'Register here'])
+    expect(looksLikeAttendance(page({ title }), [])).toBe(true)
   expect(
     looksLikeAttendance(
       page({
-        title: "Week 5",
+        title: 'Week 5',
         questions: [
           {
-            id: "p1q0",
-            label: "Status",
-            type: "radio",
-            options: ["Hadir", "Tidak hadir"],
+            id: 'p1q0',
+            label: 'Status',
+            type: 'radio',
+            options: ['Hadir', 'Tidak hadir'],
             required: true,
-            value: null,
-          },
-        ],
+            value: null
+          }
+        ]
       }),
-      [],
-    ),
-  ).toBe(true);
-  expect(
-    looksLikeAttendance(page({ description: "Isi untuk kehadiran" }), []),
-  ).toBe(true);
-  expect(
-    looksLikeAttendance(page({ title: "Course registration feedback" }), []),
-  ).toBe(false);
-  expect(
-    looksLikeAttendance(page({ title: "ABC1234 check-in" }), ["abc1234 check"]),
-  ).toBe(true);
-});
+      []
+    )
+  ).toBe(true)
+  expect(looksLikeAttendance(page({ description: 'Isi untuk kehadiran' }), [])).toBe(true)
+  expect(looksLikeAttendance(page({ title: 'Course registration feedback' }), [])).toBe(false)
+  expect(looksLikeAttendance(page({ title: 'ABC1234 check-in' }), ['abc1234 check'])).toBe(true)
+})
 
-test("points lines mark a quiz; labels that mention points do not", () => {
-  for (const l of ["1 point", "2 points", "(1 point)", "Points: 5", "1 mata"])
-    expect(isPointsLine(l)).toBe(true);
-  expect(isPointsLine("Explain 2 points from today")).toBe(false);
-});
+test('points lines mark a quiz; labels that mention points do not', () => {
+  for (const l of ['1 point', '2 points', '(1 point)', 'Points: 5', '1 mata']) expect(isPointsLine(l)).toBe(true)
+  expect(isPointsLine('Explain 2 points from today')).toBe(false)
+})
 
-test("confirmation options", () => {
-  for (const o of [
-    "Present",
-    "Hadir",
-    "I confirm I am attending this class",
-    "Saya hadir",
-    "Present (late)",
-  ])
-    expect(confirmsAttendance(o)).toBe(true);
-  for (const o of [
-    "Absent",
-    "Not present",
-    "Tidak hadir",
-    "I can't attend",
-    "Presentation",
-    "Yes",
-  ])
-    expect(confirmsAttendance(o)).toBe(false);
-});
+test('confirmation options', () => {
+  for (const o of ['Present', 'Hadir', 'I confirm I am attending this class', 'Saya hadir', 'Present (late)'])
+    expect(confirmsAttendance(o)).toBe(true)
+  for (const o of ['Absent', 'Not present', 'Tidak hadir', "I can't attend", 'Presentation', 'Yes'])
+    expect(confirmsAttendance(o)).toBe(false)
+})
 
-test("organisation evidence", () => {
+test('organisation evidence', () => {
   expect(
     orgRestricted(
       {
-        organisation: "Example University",
-        signedInAs: "student@example.edu.my",
-        orgOnly: false,
+        organisation: 'Example University',
+        signedInAs: 'student@example.edu.my',
+        orgOnly: false
       },
-      org,
-    ),
-  ).toBe(true);
+      org
+    )
+  ).toBe(true)
   expect(
     orgRestricted(
       {
         organisation: null,
-        signedInAs: "student@graduate.example.edu.my",
-        orgOnly: true,
+        signedInAs: 'student@graduate.example.edu.my',
+        orgOnly: true
       },
-      org,
-    ),
-  ).toBe(true);
+      org
+    )
+  ).toBe(true)
   expect(
     orgRestricted(
       {
-        organisation: "Other University",
-        signedInAs: "student@example.edu.my",
-        orgOnly: false,
+        organisation: 'Other University',
+        signedInAs: 'student@example.edu.my',
+        orgOnly: false
       },
-      org,
-    ),
-  ).toBe(false);
-  expect(
-    orgRestricted(
-      { organisation: "Example University", signedInAs: null, orgOnly: false },
-      org,
-    ),
-  ).toBe(false);
-  expect(
-    orgRestricted(
-      { organisation: null, signedInAs: "someone@gmail.com", orgOnly: true },
-      org,
-    ),
-  ).toBe(false);
+      org
+    )
+  ).toBe(false)
+  expect(orgRestricted({ organisation: 'Example University', signedInAs: null, orgOnly: false }, org)).toBe(false)
+  expect(orgRestricted({ organisation: null, signedInAs: 'someone@gmail.com', orgOnly: true }, org)).toBe(false)
   expect(
     orgRestricted(
       {
-        organisation: "Example University",
-        signedInAs: "student@example.edu.my",
-        orgOnly: true,
+        organisation: 'Example University',
+        signedInAs: 'student@example.edu.my',
+        orgOnly: true
       },
-      null,
-    ),
-  ).toBe(false);
-});
+      null
+    )
+  ).toBe(false)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -964,59 +855,47 @@ git commit -m "feat(worker): add form detection rules"
 
 ```ts
 // details.ts
-export const DEFAULT_LABELS: Record<string, string[]>;
-export const DERIVED_LABELS: Record<string, string[]>;
-export function buildDetailPool(cfg: JobConfig): SavedDetail[];
+export const DEFAULT_LABELS: Record<string, string[]>
+export const DERIVED_LABELS: Record<string, string[]>
+export function buildDetailPool(cfg: JobConfig): SavedDetail[]
 // plan.ts
-export function exactLabelMatches(
-  page: FormPage,
-  pool: SavedDetail[],
-): Map<string, string>; // questionId -> detail key
-export function confirmationAnswer(q: FormQuestion): Answer | null;
-export function questionsForModel(
-  page: FormPage,
-  exact: Map<string, string>,
-): MatchQuestion[];
+export function exactLabelMatches(page: FormPage, pool: SavedDetail[]): Map<string, string> // questionId -> detail key
+export function confirmationAnswer(q: FormQuestion): Answer | null
+export function questionsForModel(page: FormPage, exact: Map<string, string>): MatchQuestion[]
 export function planPage(
   page: FormPage,
   pool: SavedDetail[],
   exact: Map<string, string>,
-  model: Map<string, string>,
-): PagePlan;
-export function verifyFill(plan: PagePlan, after: FormPage): boolean;
+  model: Map<string, string>
+): PagePlan
+export function verifyFill(plan: PagePlan, after: FormPage): boolean
 // test/forms/job.ts
 export function testJob(
   dataDir: string,
   patch?: {
-    organisation?: OrgConfig | null;
-    ai?: Partial<AiConfig>;
-    attendanceKeywords?: string[];
-  },
-): JobConfig;
+    organisation?: OrgConfig | null
+    ai?: Partial<AiConfig>
+    attendanceKeywords?: string[]
+  }
+): JobConfig
 ```
 
 Pinned values:
 
 ```ts
 export const DEFAULT_LABELS = {
-  full_name: ["Name", "Full name", "Nama", "Nama penuh"],
-  student_id: [
-    "Student ID",
-    "Matric No.",
-    "Matric number",
-    "No. Matrik",
-    "No. Pelajar",
-  ],
-  university_email: ["Email", "Email address", "Student email", "Emel"],
-  programme: ["Programme", "Program"],
-};
+  full_name: ['Name', 'Full name', 'Nama', 'Nama penuh'],
+  student_id: ['Student ID', 'Matric No.', 'Matric number', 'No. Matrik', 'No. Pelajar'],
+  university_email: ['Email', 'Email address', 'Student email', 'Emel'],
+  programme: ['Programme', 'Program']
+}
 export const DERIVED_LABELS = {
-  session_date: ["Date", "Class date", "Tarikh", "Tarikh kelas"],
-  session_start: ["Time", "Class time", "Start time", "Masa"],
-  course_code: ["Course code", "Subject code", "Kod kursus", "Kod subjek"],
-  section: ["Section", "Seksyen"],
-  lecturer: ["Lecturer", "Lecturer name", "Pensyarah", "Nama pensyarah"],
-};
+  session_date: ['Date', 'Class date', 'Tarikh', 'Tarikh kelas'],
+  session_start: ['Time', 'Class time', 'Start time', 'Masa'],
+  course_code: ['Course code', 'Subject code', 'Kod kursus', 'Kod subjek'],
+  section: ['Section', 'Seksyen'],
+  lecturer: ['Lecturer', 'Lecturer name', 'Pensyarah', 'Nama pensyarah']
+}
 ```
 
 - **Pool**: the member's details, each with its own labels plus `DEFAULT_LABELS[key]` plus the key with underscores as spaces; `session_date` (`DD/MM/YYYY`) and `session_start` (`HH:MM`, 24-hour) from `entry.start` in `entry.timeZone`; every `entry.formDetails` pair with `DERIVED_LABELS[key]` and its key as words. An `entry.formDetails` key overrides a member detail with the same key, and empty values are dropped.
@@ -1029,199 +908,162 @@ export const DERIVED_LABELS = {
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-const pool = buildDetailPool(testJob("/tmp/tm"));
-const q = (
-  id: string,
-  label: string,
-  type: QuestionType,
-  options: string[] = [],
-  required = false,
-): FormQuestion => ({ id, label, type, options, required, value: null });
+const pool = buildDetailPool(testJob('/tmp/tm'))
+const q = (id: string, label: string, type: QuestionType, options: string[] = [], required = false): FormQuestion => ({
+  id,
+  label,
+  type,
+  options,
+  required,
+  value: null
+})
 const pageOf = (questions: FormQuestion[]): FormPage => ({
   index: 1,
-  title: "",
-  description: "",
+  title: '',
+  description: '',
   questions,
   quiz: false,
   sendCopy: null,
   hasNext: false,
   hasSubmit: true,
-  restriction: { organisation: null, signedInAs: null, orgOnly: false },
-});
-const value = (key: string) => pool.find((d) => d.key === key)?.value;
+  restriction: { organisation: null, signedInAs: null, orgOnly: false }
+})
+const value = (key: string) => pool.find((d) => d.key === key)?.value
 
-test("derived values use the entry time zone", () => {
-  expect([
-    value("session_date"),
-    value("session_start"),
-    value("course_code"),
-    value("section"),
-  ]).toEqual(["20/10/2026", "20:00", "ABC1234", "02"]);
-  expect(pool.find((d) => d.key === "student_id")?.labels).toContain(
-    "No. Matrik",
-  );
-});
+test('derived values use the entry time zone', () => {
+  expect([value('session_date'), value('session_start'), value('course_code'), value('section')]).toEqual([
+    '20/10/2026',
+    '20:00',
+    'ABC1234',
+    '02'
+  ])
+  expect(pool.find((d) => d.key === 'student_id')?.labels).toContain('No. Matrik')
+})
 
-test("exact label variants match; ambiguous labels do not", () => {
+test('exact label variants match; ambiguous labels do not', () => {
   const p = pageOf([
-    q("p1q0", "Full name *", "text"),
-    q("p1q1", "No. Matrik:", "text"),
-    q("p1q2", "Programme of study", "text"),
-    q("p1q3", "Section", "dropdown", ["01", "02", "03"]),
-  ]);
+    q('p1q0', 'Full name *', 'text'),
+    q('p1q1', 'No. Matrik:', 'text'),
+    q('p1q2', 'Programme of study', 'text'),
+    q('p1q3', 'Section', 'dropdown', ['01', '02', '03'])
+  ])
   expect(exactLabelMatches(p, pool)).toEqual(
     new Map([
-      ["p1q0", "full_name"],
-      ["p1q1", "student_id"],
-      ["p1q3", "section"],
-    ]),
-  );
+      ['p1q0', 'full_name'],
+      ['p1q1', 'student_id'],
+      ['p1q3', 'section']
+    ])
+  )
   expect(
-    exactLabelMatches(pageOf([q("p1q0", "Full name", "text")]), [
+    exactLabelMatches(pageOf([q('p1q0', 'Full name', 'text')]), [
       ...pool,
-      { key: "nickname", value: "TS", labels: ["Full name"] },
-    ]).size,
-  ).toBe(0);
-});
+      { key: 'nickname', value: 'TS', labels: ['Full name'] }
+    ]).size
+  ).toBe(0)
+})
 
-test("confirmations need one confirming option on a required radio or checkbox", () => {
-  expect(
-    confirmationAnswer(
-      q("a", "Attendance", "radio", ["Present", "Absent"], true),
-    ),
-  ).toEqual({
-    questionId: "a",
-    kind: "choose",
-    option: "Present",
+test('confirmations need one confirming option on a required radio or checkbox', () => {
+  expect(confirmationAnswer(q('a', 'Attendance', 'radio', ['Present', 'Absent'], true))).toEqual({
+    questionId: 'a',
+    kind: 'choose',
+    option: 'Present',
     detailKey: null,
-    via: "confirmation",
-  });
+    via: 'confirmation'
+  })
   expect(
-    confirmationAnswer(
-      q(
-        "b",
-        "Declaration",
-        "checkbox",
-        ["I confirm I am attending this class"],
-        true,
-      ),
-    )?.kind,
-  ).toBe("choose");
-  expect(
-    confirmationAnswer(
-      q(
-        "c",
-        "Status",
-        "radio",
-        ["Present", "Present (online)", "Absent"],
-        true,
-      ),
-    ),
-  ).toBeNull();
-  expect(
-    confirmationAnswer(
-      q("d", "Status", "radio", ["Not present", "Tidak hadir"], true),
-    ),
-  ).toBeNull();
-  expect(
-    confirmationAnswer(
-      q("e", "Attendance", "radio", ["Present", "Absent"], false),
-    ),
-  ).toBeNull();
-  expect(
-    confirmationAnswer(
-      q("f", "Attendance", "dropdown", ["Present", "Absent"], true),
-    ),
-  ).toBeNull();
-});
+    confirmationAnswer(q('b', 'Declaration', 'checkbox', ['I confirm I am attending this class'], true))?.kind
+  ).toBe('choose')
+  expect(confirmationAnswer(q('c', 'Status', 'radio', ['Present', 'Present (online)', 'Absent'], true))).toBeNull()
+  expect(confirmationAnswer(q('d', 'Status', 'radio', ['Not present', 'Tidak hadir'], true))).toBeNull()
+  expect(confirmationAnswer(q('e', 'Attendance', 'radio', ['Present', 'Absent'], false))).toBeNull()
+  expect(confirmationAnswer(q('f', 'Attendance', 'dropdown', ['Present', 'Absent'], true))).toBeNull()
+})
 
-test("choice questions need an option exactly equal to the saved value", () => {
+test('choice questions need an option exactly equal to the saved value', () => {
   const p = pageOf([
-    q("p1q0", "Section", "dropdown", ["01", "02", "03"], true),
-    q("p1q1", "Section", "radio", ["Section 1", "Section 2"], true),
-  ]);
+    q('p1q0', 'Section', 'dropdown', ['01', '02', '03'], true),
+    q('p1q1', 'Section', 'radio', ['Section 1', 'Section 2'], true)
+  ])
   const plan = planPage(
     p,
     pool,
     new Map([
-      ["p1q0", "section"],
-      ["p1q1", "section"],
+      ['p1q0', 'section'],
+      ['p1q1', 'section']
     ]),
-    new Map(),
-  );
+    new Map()
+  )
   expect(plan.answers).toEqual([
     {
-      questionId: "p1q0",
-      kind: "choose",
-      option: "02",
-      detailKey: "section",
-      via: "label",
-    },
-  ]);
-  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(["p1q1"]);
-});
+      questionId: 'p1q0',
+      kind: 'choose',
+      option: '02',
+      detailKey: 'section',
+      via: 'label'
+    }
+  ])
+  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q1'])
+})
 
-test("optional unmatched questions are left blank; required ones block", () => {
+test('optional unmatched questions are left blank; required ones block', () => {
   const p = pageOf([
-    q("p1q0", "Any comments?", "paragraph"),
-    q("p1q1", "What did you learn today?", "paragraph", [], true),
-    q("p1q2", "Date", "other", [], true),
-    q("p1q3", "Programme of study", "text"),
-  ]);
-  const plan = planPage(p, pool, new Map(), new Map([["p1q3", "programme"]]));
+    q('p1q0', 'Any comments?', 'paragraph'),
+    q('p1q1', 'What did you learn today?', 'paragraph', [], true),
+    q('p1q2', 'Date', 'other', [], true),
+    q('p1q3', 'Programme of study', 'text')
+  ])
+  const plan = planPage(p, pool, new Map(), new Map([['p1q3', 'programme']]))
   expect(plan.answers).toEqual([
     {
-      questionId: "p1q3",
-      kind: "text",
-      value: "MSc Example",
-      detailKey: "programme",
-      via: "model",
-    },
-  ]);
-  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(["p1q1", "p1q2"]);
-});
+      questionId: 'p1q3',
+      kind: 'text',
+      value: 'MSc Example',
+      detailKey: 'programme',
+      via: 'model'
+    }
+  ])
+  expect(plan.unmatchedRequired.map((x) => x.id)).toEqual(['p1q1', 'p1q2'])
+})
 
-test("only unmatched, fillable questions go to the model", () => {
+test('only unmatched, fillable questions go to the model', () => {
   const p = pageOf([
-    q("p1q0", "Full name", "text"),
-    q("p1q1", "Attendance", "radio", ["Present", "Absent"], true),
-    q("p1q2", "Date", "other"),
-    q("p1q3", "Programme of study", "text", [], false),
-  ]);
+    q('p1q0', 'Full name', 'text'),
+    q('p1q1', 'Attendance', 'radio', ['Present', 'Absent'], true),
+    q('p1q2', 'Date', 'other'),
+    q('p1q3', 'Programme of study', 'text', [], false)
+  ])
   expect(questionsForModel(p, exactLabelMatches(p, pool))).toEqual([
-    { id: "p1q3", label: "Programme of study", options: [] },
-  ]);
-});
+    { id: 'p1q3', label: 'Programme of study', options: [] }
+  ])
+})
 
-test("verifyFill rejects a missing answer, a stray value or a ticked copy box", () => {
+test('verifyFill rejects a missing answer, a stray value or a ticked copy box', () => {
   const plan = {
     answers: [
       {
-        questionId: "p1q0",
-        kind: "text" as const,
-        value: "Test Student",
-        detailKey: "full_name",
-        via: "label" as const,
-      },
+        questionId: 'p1q0',
+        kind: 'text' as const,
+        value: 'Test Student',
+        detailKey: 'full_name',
+        via: 'label' as const
+      }
     ],
-    unmatchedRequired: [],
-  };
+    unmatchedRequired: []
+  }
   const ok = pageOf([
-    { ...q("p1q0", "Full name", "text"), value: "Test Student" },
-    q("p1q1", "Any comments?", "paragraph"),
-  ]);
-  expect(verifyFill(plan, ok)).toBe(true);
-  expect(verifyFill(plan, pageOf([q("p1q0", "Full name", "text")]))).toBe(
-    false,
-  );
+    { ...q('p1q0', 'Full name', 'text'), value: 'Test Student' },
+    q('p1q1', 'Any comments?', 'paragraph')
+  ])
+  expect(verifyFill(plan, ok)).toBe(true)
+  expect(verifyFill(plan, pageOf([q('p1q0', 'Full name', 'text')]))).toBe(false)
   expect(
     verifyFill(plan, {
       ...ok,
-      questions: [ok.questions[0], { ...ok.questions[1], value: "x" }],
-    }),
-  ).toBe(false);
-  expect(verifyFill(plan, { ...ok, sendCopy: true })).toBe(false);
-});
+      questions: [ok.questions[0], { ...ok.questions[1], value: 'x' }]
+    })
+  ).toBe(false)
+  expect(verifyFill(plan, { ...ok, sendCopy: true })).toBe(false)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1256,21 +1098,21 @@ git commit -m "feat(worker): plan form answers from details"
 - Produces:
 
 ```ts
-export const LABEL_LIMIT = 120;
-export const MATCH_TIMEOUT_MS = 5_000;
-export const FORM_MATCH_SYSTEM_PROMPT: string;
+export const LABEL_LIMIT = 120
+export const MATCH_TIMEOUT_MS = 5_000
+export const FORM_MATCH_SYSTEM_PROMPT: string
 export const FormMatchSchema: z.ZodType<{
   matches: {
-    question: string;
-    detail: string | null;
-    confidence: "high" | "medium" | "low";
-  }[];
-}>;
+    question: string
+    detail: string | null
+    confidence: 'high' | 'medium' | 'low'
+  }[]
+}>
 export async function matchWithModel(
   ai: AiConfig,
   questions: MatchQuestion[],
-  detailKeys: string[],
-): Promise<Map<string, string>>; // questionId -> detail key
+  detailKeys: string[]
+): Promise<Map<string, string>> // questionId -> detail key
 ```
 
 System prompt (exact):
@@ -1293,102 +1135,78 @@ The user message is `JSON.stringify({ details: detailKeys, questions })`, with e
 // stubRaw(content) answers with that raw message content; stubStatus(code) answers with that HTTP status.
 const ai = (url: string): AiConfig => ({
   baseUrl: url,
-  apiKey: "test",
-  asrUrl: "wss://unused",
-  models: { summary: "s", vision: "v", formMatch: "qwen-flash", asr: "a" },
-});
+  apiKey: 'test',
+  asrUrl: 'wss://unused',
+  models: { summary: 's', vision: 'v', formMatch: 'qwen-flash', asr: 'a' }
+})
 
-test("sends keys, labels and options cut to 120 characters, with thinking off", async () => {
+test('sends keys, labels and options cut to 120 characters, with thinking off', async () => {
   const s = stubCompletions({
-    matches: [{ question: "p1q0", detail: "programme", confidence: "high" }],
-  });
+    matches: [{ question: 'p1q0', detail: 'programme', confidence: 'high' }]
+  })
   const out = await matchWithModel(
     ai(s.url),
     [
       {
-        id: "p1q0",
-        label: "Programme of study ".repeat(20),
-        options: ["x".repeat(300)],
-      },
+        id: 'p1q0',
+        label: 'Programme of study '.repeat(20),
+        options: ['x'.repeat(300)]
+      }
     ],
-    ["full_name", "programme"],
-  );
-  const body = s.requests[0];
-  expect(body.model).toBe("qwen-flash");
-  expect(body.enable_thinking).toBe(false);
-  expect(body.messages[0].content).toBe(FORM_MATCH_SYSTEM_PROMPT);
-  const user = JSON.parse(body.messages[1].content);
-  expect(user.details).toEqual(["full_name", "programme"]);
-  expect([
-    user.questions[0].label.length,
-    user.questions[0].options[0].length,
-  ]).toEqual([120, 120]);
-  expect(out).toEqual(new Map([["p1q0", "programme"]]));
-});
+    ['full_name', 'programme']
+  )
+  const body = s.requests[0]
+  expect(body.model).toBe('qwen-flash')
+  expect(body.enable_thinking).toBe(false)
+  expect(body.messages[0].content).toBe(FORM_MATCH_SYSTEM_PROMPT)
+  const user = JSON.parse(body.messages[1].content)
+  expect(user.details).toEqual(['full_name', 'programme'])
+  expect([user.questions[0].label.length, user.questions[0].options[0].length]).toEqual([120, 120])
+  expect(out).toEqual(new Map([['p1q0', 'programme']]))
+})
 
-test("keeps only high-confidence matches to known keys and questions", async () => {
+test('keeps only high-confidence matches to known keys and questions', async () => {
   const s = stubCompletions({
     matches: [
-      { question: "p1q0", detail: "full_name", confidence: "high" },
-      { question: "p1q1", detail: "student_id", confidence: "medium" },
-      { question: "p1q2", detail: "password", confidence: "high" },
-      { question: "p9q9", detail: "full_name", confidence: "high" },
-      { question: "p1q3", detail: null, confidence: "high" },
-    ],
-  });
-  const qs = ["p1q0", "p1q1", "p1q2", "p1q3"].map((id) => ({
+      { question: 'p1q0', detail: 'full_name', confidence: 'high' },
+      { question: 'p1q1', detail: 'student_id', confidence: 'medium' },
+      { question: 'p1q2', detail: 'password', confidence: 'high' },
+      { question: 'p9q9', detail: 'full_name', confidence: 'high' },
+      { question: 'p1q3', detail: null, confidence: 'high' }
+    ]
+  })
+  const qs = ['p1q0', 'p1q1', 'p1q2', 'p1q3'].map((id) => ({
     id,
     label: id,
-    options: [],
-  }));
-  expect(
-    await matchWithModel(ai(s.url), qs, ["full_name", "student_id"]),
-  ).toEqual(new Map([["p1q0", "full_name"]]));
-});
+    options: []
+  }))
+  expect(await matchWithModel(ai(s.url), qs, ['full_name', 'student_id'])).toEqual(new Map([['p1q0', 'full_name']]))
+})
 
-test("returns no matches when the model takes longer than 5 seconds", async () => {
+test('returns no matches when the model takes longer than 5 seconds', async () => {
   const s = stubCompletions(
     {
-      matches: [{ question: "p1q0", detail: "full_name", confidence: "high" }],
+      matches: [{ question: 'p1q0', detail: 'full_name', confidence: 'high' }]
     },
-    8_000,
-  );
-  const t0 = Date.now();
-  expect(
-    (
-      await matchWithModel(
-        ai(s.url),
-        [{ id: "p1q0", label: "Nama", options: [] }],
-        ["full_name"],
-      )
-    ).size,
-  ).toBe(0);
-  expect(Date.now() - t0).toBeLessThan(6_000);
-});
+    8_000
+  )
+  const t0 = Date.now()
+  expect((await matchWithModel(ai(s.url), [{ id: 'p1q0', label: 'Nama', options: [] }], ['full_name'])).size).toBe(0)
+  expect(Date.now() - t0).toBeLessThan(6_000)
+})
 
-test("returns no matches on malformed JSON or an HTTP error, and makes no call without questions", async () => {
+test('returns no matches on malformed JSON or an HTTP error, and makes no call without questions', async () => {
   expect(
-    (
-      await matchWithModel(
-        ai(stubRaw("not json").url),
-        [{ id: "p1q0", label: "Nama", options: [] }],
-        ["full_name"],
-      )
-    ).size,
-  ).toBe(0);
+    (await matchWithModel(ai(stubRaw('not json').url), [{ id: 'p1q0', label: 'Nama', options: [] }], ['full_name']))
+      .size
+  ).toBe(0)
   expect(
-    (
-      await matchWithModel(
-        ai(stubStatus(500).url),
-        [{ id: "p1q0", label: "Nama", options: [] }],
-        ["full_name"],
-      )
-    ).size,
-  ).toBe(0);
-  const s = stubCompletions({ matches: [] });
-  await matchWithModel(ai(s.url), [], ["full_name"]);
-  expect(s.requests).toHaveLength(0);
-});
+    (await matchWithModel(ai(stubStatus(500).url), [{ id: 'p1q0', label: 'Nama', options: [] }], ['full_name'])).size
+  ).toBe(0)
+  const s = stubCompletions({ matches: [] })
+  await matchWithModel(ai(s.url), [], ['full_name'])
+  expect(s.requests).toHaveLength(0)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1425,47 +1243,42 @@ git commit -m "feat(worker): match form labels with the model"
 
 ```ts
 // drivers/selectors.ts
-export const FormSelectorsSchema: z.ZodType<FormSelectors>;
+export const FormSelectorsSchema: z.ZodType<FormSelectors>
 export async function loadFormSelectors(
   provider: FormProvider,
-  dir = process.env.TM_SELECTORS_DIR ?? "/app/config/selectors",
-): Promise<FormSelectors>; // google-forms.json | microsoft-forms.json
+  dir = process.env.TM_SELECTORS_DIR ?? '/app/config/selectors'
+): Promise<FormSelectors> // google-forms.json | microsoft-forms.json
 // drivers/driver.ts
 export class FormStepError extends Error {
-  code: "next_failed" | "submit_failed";
+  code: 'next_failed' | 'submit_failed'
 }
 export interface FormDriver {
-  readonly provider: FormProvider;
-  pageKind(page: Page): Promise<PageKind>;
-  readPage(page: Page, index: number): Promise<FormPage>;
-  fill(page: Page, form: FormPage, answers: Answer[]): Promise<void>; // also unticks "send me a copy"
-  next(page: Page): Promise<void>; // resolves when a new page's questions show; FormStepError('next_failed') on a validation error or after 10 s
-  submit(page: Page): Promise<void>; // FormStepError('submit_failed') on a validation error; else resolves when pageKind is no longer 'form' or after 15 s
+  readonly provider: FormProvider
+  pageKind(page: Page): Promise<PageKind>
+  readPage(page: Page, index: number): Promise<FormPage>
+  fill(page: Page, form: FormPage, answers: Answer[]): Promise<void> // also unticks "send me a copy"
+  next(page: Page): Promise<void> // resolves when a new page's questions show; FormStepError('next_failed') on a validation error or after 10 s
+  submit(page: Page): Promise<void> // FormStepError('submit_failed') on a validation error; else resolves when pageKind is no longer 'form' or after 15 s
 }
-export function createDriver(
-  provider: FormProvider,
-  map: FormSelectors,
-): FormDriver;
+export function createDriver(provider: FormProvider, map: FormSelectors): FormDriver
 // drivers/index.ts
-export async function driverFor(provider: FormProvider): Promise<FormDriver>; // loads the map once per provider and caches the driver
+export async function driverFor(provider: FormProvider): Promise<FormDriver> // loads the map once per provider and caches the driver
 // test/forms/route.ts
 export interface FixtureServer {
-  requests: string[]; // every form-provider URL requested
+  requests: string[] // every form-provider URL requested
   submissions: {
-    fixture: string;
-    answers: Record<string, string | string[]>;
-    sendCopy: boolean;
-  }[];
-  signedOut: Set<string>; // fixture names whose form URL redirects to the provider's sign-in page
-  submitResult: Map<string, "confirmation" | "already-responded">;
-  delayMs: Map<string, number>; // delay before serving a fixture
-  onFormLoad: ((fixture: string, count: number) => void) | null;
+    fixture: string
+    answers: Record<string, string | string[]>
+    sendCopy: boolean
+  }[]
+  signedOut: Set<string> // fixture names whose form URL redirects to the provider's sign-in page
+  submitResult: Map<string, 'confirmation' | 'already-responded'>
+  delayMs: Map<string, number> // delay before serving a fixture
+  onFormLoad: ((fixture: string, count: number) => void) | null
 }
-export async function routeFormFixtures(
-  context: BrowserContext,
-): Promise<FixtureServer>;
-export const googleUrl: (fixture: string) => string; // https://docs.google.com/forms/d/e/<fixture>/viewform
-export const microsoftUrl: (fixture: string) => string; // https://forms.office.com/Pages/ResponsePage.aspx?id=<fixture>
+export async function routeFormFixtures(context: BrowserContext): Promise<FixtureServer>
+export const googleUrl: (fixture: string) => string // https://docs.google.com/forms/d/e/<fixture>/viewform
+export const microsoftUrl: (fixture: string) => string // https://forms.office.com/Pages/ResponsePage.aspx?id=<fixture>
 ```
 
 Map schema (each selector is a Playwright selector; "inside question" means relative to one `question` element):
@@ -1502,9 +1315,9 @@ const FormSelectorsSchema = z.object({
     alreadyAnswered: z.array(z.string()),
     confirmation: z.array(z.string()),
     closed: z.array(z.string()),
-    noAccess: z.array(z.string()),
-  }),
-});
+    noAccess: z.array(z.string())
+  })
+})
 ```
 
 `config/selectors/google-forms.json`, starting values:
@@ -1576,195 +1389,170 @@ Google fixtures (`packages/worker/test/fixtures/forms/google/`). Every page uses
 ```ts
 const text = (questionId: string, value: string): Answer => ({
   questionId,
-  kind: "text",
+  kind: 'text',
   value,
-  detailKey: "x",
-  via: "label",
-});
+  detailKey: 'x',
+  via: 'label'
+})
 const choose = (questionId: string, option: string): Answer => ({
   questionId,
-  kind: "choose",
+  kind: 'choose',
   option,
   detailKey: null,
-  via: "label",
-});
+  via: 'label'
+})
 const CASES = [
   {
-    provider: "google" as const,
+    provider: 'google' as const,
     url: googleUrl,
     org: {
-      organisation: "Example University",
-      signedInAs: "student@example.edu.my",
-      orgOnly: false,
-    },
-  },
-];
+      organisation: 'Example University',
+      signedInAs: 'student@example.edu.my',
+      orgOnly: false
+    }
+  }
+]
 for (const c of CASES)
   test.describe(c.provider, () => {
-    let fx: FixtureServer;
-    let driver: FormDriver;
+    let fx: FixtureServer
+    let driver: FormDriver
     test.beforeEach(async ({ context }) => {
-      fx = await routeFormFixtures(context);
-      driver = await driverFor(c.provider);
-    });
+      fx = await routeFormFixtures(context)
+      driver = await driverFor(c.provider)
+    })
 
-    test("reads label, type, options and required for each widget", async ({
-      page,
-    }) => {
-      await page.goto(c.url("widgets"));
-      const p = await driver.readPage(page, 1);
-      expect(
-        p.questions.map((q) => [q.id, q.label, q.type, q.required]),
-      ).toEqual([
-        ["p1q0", "Short answer", "text", true],
-        ["p1q1", "Long answer", "paragraph", false],
-        ["p1q2", "Pick one", "radio", true],
-        ["p1q3", "Pick some", "checkbox", false],
-        ["p1q4", "Choose a section", "dropdown", true],
-        ["p1q5", "Date", "other", false],
-      ]);
-      expect([
-        p.questions[2].options,
-        p.questions[4].options,
-        p.questions[4].value,
-      ]).toEqual([["Present", "Absent"], ["01", "02", "03"], null]);
-      expect([p.sendCopy, p.quiz, p.hasNext, p.hasSubmit]).toEqual([
-        false,
-        false,
-        false,
-        true,
-      ]);
-    });
+    test('reads label, type, options and required for each widget', async ({ page }) => {
+      await page.goto(c.url('widgets'))
+      const p = await driver.readPage(page, 1)
+      expect(p.questions.map((q) => [q.id, q.label, q.type, q.required])).toEqual([
+        ['p1q0', 'Short answer', 'text', true],
+        ['p1q1', 'Long answer', 'paragraph', false],
+        ['p1q2', 'Pick one', 'radio', true],
+        ['p1q3', 'Pick some', 'checkbox', false],
+        ['p1q4', 'Choose a section', 'dropdown', true],
+        ['p1q5', 'Date', 'other', false]
+      ])
+      expect([p.questions[2].options, p.questions[4].options, p.questions[4].value]).toEqual([
+        ['Present', 'Absent'],
+        ['01', '02', '03'],
+        null
+      ])
+      expect([p.sendCopy, p.quiz, p.hasNext, p.hasSubmit]).toEqual([false, false, false, true])
+    })
 
-    test("fills every widget and unticks send-a-copy", async ({ page }) => {
-      await page.goto(c.url("widgets") + "#copy-on");
-      const before = await driver.readPage(page, 1);
-      expect(before.sendCopy).toBe(true);
+    test('fills every widget and unticks send-a-copy', async ({ page }) => {
+      await page.goto(c.url('widgets') + '#copy-on')
+      const before = await driver.readPage(page, 1)
+      expect(before.sendCopy).toBe(true)
       await driver.fill(page, before, [
         {
-          questionId: "p1q0",
-          kind: "text",
-          value: "abc",
-          detailKey: "x",
-          via: "label",
+          questionId: 'p1q0',
+          kind: 'text',
+          value: 'abc',
+          detailKey: 'x',
+          via: 'label'
         },
         {
-          questionId: "p1q2",
-          kind: "choose",
-          option: "Present",
+          questionId: 'p1q2',
+          kind: 'choose',
+          option: 'Present',
           detailKey: null,
-          via: "confirmation",
+          via: 'confirmation'
         },
         {
-          questionId: "p1q3",
-          kind: "choose",
-          option: "Tutorial",
-          detailKey: "y",
-          via: "label",
+          questionId: 'p1q3',
+          kind: 'choose',
+          option: 'Tutorial',
+          detailKey: 'y',
+          via: 'label'
         },
         {
-          questionId: "p1q4",
-          kind: "choose",
-          option: "02",
-          detailKey: "section",
-          via: "label",
-        },
-      ]);
-      const after = await driver.readPage(page, 1);
-      expect(after.questions.map((q) => q.value)).toEqual([
-        "abc",
-        null,
-        "Present",
-        ["Tutorial"],
-        "02",
-        null,
-      ]);
-      expect(after.sendCopy).toBe(false);
-    });
+          questionId: 'p1q4',
+          kind: 'choose',
+          option: '02',
+          detailKey: 'section',
+          via: 'label'
+        }
+      ])
+      const after = await driver.readPage(page, 1)
+      expect(after.questions.map((q) => q.value)).toEqual(['abc', null, 'Present', ['Tutorial'], '02', null])
+      expect(after.sendCopy).toBe(false)
+    })
 
-    test("moves through Next and submits", async ({ page }) => {
-      await page.goto(c.url("attendance"));
-      const p1 = await driver.readPage(page, 1);
-      expect([p1.hasNext, p1.hasSubmit]).toEqual([true, false]);
+    test('moves through Next and submits', async ({ page }) => {
+      await page.goto(c.url('attendance'))
+      const p1 = await driver.readPage(page, 1)
+      expect([p1.hasNext, p1.hasSubmit]).toEqual([true, false])
       await driver.fill(page, p1, [
-        text("p1q0", "Test Student"),
-        text("p1q1", "A00000000"),
-        text("p1q2", "ABC1234"),
-        choose("p1q3", "02"),
-      ]);
-      await driver.next(page);
-      const p2 = await driver.readPage(page, 2);
+        text('p1q0', 'Test Student'),
+        text('p1q1', 'A00000000'),
+        text('p1q2', 'ABC1234'),
+        choose('p1q3', '02')
+      ])
+      await driver.next(page)
+      const p2 = await driver.readPage(page, 2)
       expect(p2.questions.map((q) => `${q.id} ${q.label}`)).toEqual([
-        "p2q0 Attendance",
-        "p2q1 Declaration",
-        "p2q2 Any comments?",
-      ]);
-      await driver.fill(page, p2, [
-        choose("p2q0", "Present"),
-        choose("p2q1", "I confirm I am attending this class"),
-      ]);
-      await driver.submit(page);
-      expect(await driver.pageKind(page)).toBe("confirmation");
+        'p2q0 Attendance',
+        'p2q1 Declaration',
+        'p2q2 Any comments?'
+      ])
+      await driver.fill(page, p2, [choose('p2q0', 'Present'), choose('p2q1', 'I confirm I am attending this class')])
+      await driver.submit(page)
+      expect(await driver.pageKind(page)).toBe('confirmation')
       expect(fx.submissions[0]).toEqual({
-        fixture: "attendance",
+        fixture: 'attendance',
         sendCopy: false,
         answers: {
-          "Full name": "Test Student",
-          "Matric No.": "A00000000",
-          "Course code": "ABC1234",
-          Section: "02",
-          Attendance: "Present",
-          Declaration: ["I confirm I am attending this class"],
-        },
-      });
-    });
+          'Full name': 'Test Student',
+          'Matric No.': 'A00000000',
+          'Course code': 'ABC1234',
+          Section: '02',
+          Attendance: 'Present',
+          Declaration: ['I confirm I am attending this class']
+        }
+      })
+    })
 
-    test("Next with an empty required question fails with next_failed", async ({
-      page,
-    }) => {
-      await page.goto(c.url("attendance"));
+    test('Next with an empty required question fails with next_failed', async ({ page }) => {
+      await page.goto(c.url('attendance'))
       await expect(driver.next(page)).rejects.toMatchObject({
-        code: "next_failed",
-      });
-    });
+        code: 'next_failed'
+      })
+    })
 
-    test("marks a quiz from its points lines and keeps them out of labels", async ({
-      page,
-    }) => {
-      await page.goto(c.url("quiz"));
-      const p = await driver.readPage(page, 1);
-      expect(p.quiz).toBe(true);
-      expect(p.questions.every((q) => !/point/.test(q.label))).toBe(true);
-    });
+    test('marks a quiz from its points lines and keeps them out of labels', async ({ page }) => {
+      await page.goto(c.url('quiz'))
+      const p = await driver.readPage(page, 1)
+      expect(p.quiz).toBe(true)
+      expect(p.questions.every((q) => !/point/.test(q.label))).toBe(true)
+    })
 
-    test("classifies pages", async ({ page }) => {
+    test('classifies pages', async ({ page }) => {
       for (const [name, kind] of [
-        ["attendance", "form"],
-        ["captcha", "captcha"],
-        ["already-responded", "already_answered"],
-        ["closed", "closed"],
+        ['attendance', 'form'],
+        ['captcha', 'captcha'],
+        ['already-responded', 'already_answered'],
+        ['closed', 'closed']
       ] as const) {
-        await page.goto(c.url(name));
-        expect(await driver.pageKind(page)).toBe(kind);
+        await page.goto(c.url(name))
+        expect(await driver.pageKind(page)).toBe(kind)
       }
-      fx.signedOut.add("attendance");
-      await page.goto(c.url("attendance"));
-      expect(await driver.pageKind(page)).toBe("signin");
-    });
+      fx.signedOut.add('attendance')
+      await page.goto(c.url('attendance'))
+      expect(await driver.pageKind(page)).toBe('signin')
+    })
 
-    test("reads organisation evidence from the provider elements only", async ({
-      page,
-    }) => {
-      await page.goto(c.url("attendance"));
-      expect((await driver.readPage(page, 1)).restriction).toEqual(c.org);
-      await page.goto(c.url("external"));
+    test('reads organisation evidence from the provider elements only', async ({ page }) => {
+      await page.goto(c.url('attendance'))
+      expect((await driver.readPage(page, 1)).restriction).toEqual(c.org)
+      await page.goto(c.url('external'))
       expect((await driver.readPage(page, 1)).restriction).toEqual({
         organisation: null,
         signedInAs: null,
-        orgOnly: false,
-      });
-    });
-  });
+        orgOnly: false
+      })
+    })
+  })
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1889,25 +1677,22 @@ git commit -m "feat(worker): add Microsoft Forms driver"
 ```ts
 export class TabNotOnDeskError extends Error {}
 export class OpenTimeoutError extends Error {}
-export const OPEN_TIMEOUT_MS = 15_000;
-export const SIGNIN_WAIT_MS = 15 * 60_000; // matches the sign-in pause's 15-minute idle limit
-export const SIGNIN_POLL_MS = 2_000;
-export async function openDeskTab(
-  desk: Page,
-  open: () => Promise<Page> = () => desk.context().newPage(),
-): Promise<Page>;
+export const OPEN_TIMEOUT_MS = 15_000
+export const SIGNIN_WAIT_MS = 15 * 60_000 // matches the sign-in pause's 15-minute idle limit
+export const SIGNIN_POLL_MS = 2_000
+export async function openDeskTab(desk: Page, open: () => Promise<Page> = () => desk.context().newPage()): Promise<Page>
 export async function openForm(
   tab: Page,
   url: string,
   driver: FormDriver,
-  timeoutMs = OPEN_TIMEOUT_MS,
-): Promise<PageKind>;
+  timeoutMs = OPEN_TIMEOUT_MS
+): Promise<PageKind>
 export async function waitForTabSignin(
   tab: Page,
   driver: FormDriver,
   signal: AbortSignal,
-  timeoutMs = SIGNIN_WAIT_MS,
-): Promise<boolean>;
+  timeoutMs = SIGNIN_WAIT_MS
+): Promise<boolean>
 ```
 
 - **`openDeskTab`**: compares the CDP `Browser.getWindowForTarget` window id of the new tab with the desk page's. If they differ, it closes the tab and throws `TabNotOnDeskError`, so a form can never show on the recorded stage.
@@ -1918,84 +1703,60 @@ export async function waitForTabSignin(
 
 ```ts
 const windowOf = async (p: Page) =>
-  (
-    await (
-      await p.context().newCDPSession(p)
-    ).send("Browser.getWindowForTarget")
-  ).windowId;
+  (await (await p.context().newCDPSession(p)).send('Browser.getWindowForTarget')).windowId
 
-test("opens the form tab in the desk window", async ({ page: desk }) => {
-  const tab = await openDeskTab(desk);
-  expect(await windowOf(tab)).toBe(await windowOf(desk));
-});
+test('opens the form tab in the desk window', async ({ page: desk }) => {
+  const tab = await openDeskTab(desk)
+  expect(await windowOf(tab)).toBe(await windowOf(desk))
+})
 
-test("refuses and closes a tab that opened in another window", async ({
-  page: desk,
-}) => {
+test('refuses and closes a tab that opened in another window', async ({ page: desk }) => {
   const popup = async () => {
     const [p] = await Promise.all([
-      desk.waitForEvent("popup"),
-      desk.evaluate(() =>
-        window.open(
-          "about:blank",
-          "_blank",
-          "popup,left=2000,top=0,width=600,height=400",
-        ),
-      ),
-    ]);
-    return p;
-  };
-  await expect(openDeskTab(desk, popup)).rejects.toThrow(TabNotOnDeskError);
-  expect(desk.context().pages()).toHaveLength(1);
-});
+      desk.waitForEvent('popup'),
+      desk.evaluate(() => window.open('about:blank', '_blank', 'popup,left=2000,top=0,width=600,height=400'))
+    ])
+    return p
+  }
+  await expect(openDeskTab(desk, popup)).rejects.toThrow(TabNotOnDeskError)
+  expect(desk.context().pages()).toHaveLength(1)
+})
 
-test("reports form, signin and timeouts", async ({ context, page: desk }) => {
-  const fx = await routeFormFixtures(context);
-  const driver = await driverFor("google");
-  const tab = await openDeskTab(desk);
-  expect(await openForm(tab, googleUrl("attendance"), driver)).toBe("form");
-  fx.signedOut.add("attendance");
-  expect(await openForm(tab, googleUrl("attendance"), driver)).toBe("signin");
-  fx.delayMs.set("quiz", 5_000);
-  await expect(openForm(tab, googleUrl("quiz"), driver, 1_000)).rejects.toThrow(
-    OpenTimeoutError,
-  );
-});
+test('reports form, signin and timeouts', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  const driver = await driverFor('google')
+  const tab = await openDeskTab(desk)
+  expect(await openForm(tab, googleUrl('attendance'), driver)).toBe('form')
+  fx.signedOut.add('attendance')
+  expect(await openForm(tab, googleUrl('attendance'), driver)).toBe('signin')
+  fx.delayMs.set('quiz', 5_000)
+  await expect(openForm(tab, googleUrl('quiz'), driver, 1_000)).rejects.toThrow(OpenTimeoutError)
+})
 
-test("waits for the tab to come back to the form, without typing", async ({
-  context,
-  page: desk,
-}) => {
-  const fx = await routeFormFixtures(context);
-  const driver = await driverFor("google");
-  const tab = await openDeskTab(desk);
-  fx.signedOut.add("attendance");
-  await openForm(tab, googleUrl("attendance"), driver);
-  const waiting = waitForTabSignin(
-    tab,
-    driver,
-    new AbortController().signal,
-    10_000,
-  );
-  expect(await tab.inputValue("input[type=email]")).toBe("");
-  fx.signedOut.delete("attendance");
-  await tab.click("text=Continue");
-  expect(await waiting).toBe(true);
-});
+test('waits for the tab to come back to the form, without typing', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  const driver = await driverFor('google')
+  const tab = await openDeskTab(desk)
+  fx.signedOut.add('attendance')
+  await openForm(tab, googleUrl('attendance'), driver)
+  const waiting = waitForTabSignin(tab, driver, new AbortController().signal, 10_000)
+  expect(await tab.inputValue('input[type=email]')).toBe('')
+  fx.signedOut.delete('attendance')
+  await tab.click('text=Continue')
+  expect(await waiting).toBe(true)
+})
 
-test("stops waiting on abort or timeout", async ({ context, page: desk }) => {
-  const fx = await routeFormFixtures(context);
-  const driver = await driverFor("google");
-  const tab = await openDeskTab(desk);
-  fx.signedOut.add("attendance");
-  await openForm(tab, googleUrl("attendance"), driver);
-  const ac = new AbortController();
-  setTimeout(() => ac.abort(), 500);
-  expect(await waitForTabSignin(tab, driver, ac.signal, 10_000)).toBe(false);
-  expect(
-    await waitForTabSignin(tab, driver, new AbortController().signal, 1_000),
-  ).toBe(false);
-});
+test('stops waiting on abort or timeout', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  const driver = await driverFor('google')
+  const tab = await openDeskTab(desk)
+  fx.signedOut.add('attendance')
+  await openForm(tab, googleUrl('attendance'), driver)
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 500)
+  expect(await waitForTabSignin(tab, driver, ac.signal, 10_000)).toBe(false)
+  expect(await waitForTabSignin(tab, driver, new AbortController().signal, 1_000)).toBe(false)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2033,57 +1794,47 @@ git commit -m "feat(worker): open forms in a desk tab"
 ```ts
 // types.ts
 export interface FormContextBase {
-  cfg: JobConfig;
-  desk: Page;
-  links: FormLinks;
-  emitEvent(type: EventType, data: Record<string, unknown>): Promise<void>;
-  ping(p: Ping): Promise<void>;
-  matchLabels(
-    questions: MatchQuestion[],
-    detailKeys: string[],
-  ): Promise<Map<string, string>>;
-  waitForSignin(
-    tab: Page,
-    provider: FormProvider,
-    signal: AbortSignal,
-  ): Promise<boolean>;
+  cfg: JobConfig
+  desk: Page
+  links: FormLinks
+  emitEvent(type: EventType, data: Record<string, unknown>): Promise<void>
+  ping(p: Ping): Promise<void>
+  matchLabels(questions: MatchQuestion[], detailKeys: string[]): Promise<Map<string, string>>
+  waitForSignin(tab: Page, provider: FormProvider, signal: AbortSignal): Promise<boolean>
 }
 export interface FormContext extends FormContextBase {
-  previous: FormRecord | null; // the record to continue after a trust upgrade (Task 13), else null
-  signal: AbortSignal; // aborted when the dispatcher closes
+  previous: FormRecord | null // the record to continue after a trust upgrade (Task 13), else null
+  signal: AbortSignal // aborted when the dispatcher closes
 }
 // context.ts
 export function makeFormContextBase(
   cfg: JobConfig,
   desk: Page,
-  emitEvent: FormContextBase["emitEvent"],
-  links: FormLinks = { meetingPage: null, signIn: null },
-): FormContextBase;
+  emitEvent: FormContextBase['emitEvent'],
+  links: FormLinks = { meetingPage: null, signIn: null }
+): FormContextBase
 // handler.ts
-export const SUBMIT_DEADLINE_MS = 120_000;
-export async function handleForm(
-  f: ResolvedForm,
-  ctx: FormContext,
-): Promise<FormRecord>; // never throws
+export const SUBMIT_DEADLINE_MS = 120_000
+export async function handleForm(f: ResolvedForm, ctx: FormContext): Promise<FormRecord> // never throws
 // test/forms/context.ts
 export function testContext(
   desk: Page,
   job: JobConfig,
-  opts?: { signinTimeoutMs?: number },
+  opts?: { signinTimeoutMs?: number }
 ): {
-  ctx: FormContext;
-  pings: { ping: Ping; at: number }[];
-  events: Record<string, unknown>[];
-  matchCalls: MatchQuestion[][];
-  abort: AbortController;
-};
+  ctx: FormContext
+  pings: { ping: Ping; at: number }[]
+  events: Record<string, unknown>[]
+  matchCalls: MatchQuestion[][]
+  abort: AbortController
+}
 export function candidate(
   provider: FormProvider,
   fixture: string,
   source: FormSource,
   sender?: { name: string; role: SenderRole },
-  seenAgoMs?: number,
-): ResolvedForm;
+  seenAgoMs?: number
+): ResolvedForm
 ```
 
 `makeFormContextBase` wires `ping` to `sendPing(cfg.ntfy, p)`, catching failures and emitting an `error` event (`{ where: 'form_ping', message }`) instead of throwing. It wires `matchLabels` to `matchWithModel(cfg.ai, ...)` and `waitForSignin` to `waitForTabSignin(tab, await driverFor(provider), signal)`. `testContext` replaces `ping` with a recorder, `emitEvent` with one that keeps the data of each `form` event in `events`, `matchLabels` with a stub that maps the label "Programme of study" to `programme` and records its calls, and `waitForSignin` with `waitForTabSignin` at `opts.signinTimeoutMs` (default 30 seconds).
@@ -2101,228 +1852,159 @@ Handler sequence. "Apply T" means `applyFormTrigger`, then `saveFormRecord`, the
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-let fx: FixtureServer;
-let dir: string;
+let fx: FixtureServer
+let dir: string
 test.beforeEach(async ({ context }) => {
-  fx = await routeFormFixtures(context);
-  dir = test.info().outputPath("occ");
-});
-const participant = { name: "Classmate", role: "participant" as const };
+  fx = await routeFormFixtures(context)
+  dir = test.info().outputPath('occ')
+})
+const participant = { name: 'Classmate', role: 'participant' as const }
 
-test("submits a two-page Google form shown as a QR code", async ({
-  page: desk,
-  context,
-}) => {
-  const { ctx, pings, events } = testContext(desk, testJob(dir));
-  const rec = await handleForm(candidate("google", "attendance", "qr"), ctx);
-  expect([rec.state, rec.trustReason]).toEqual(["submitted", "qr_on_screen"]);
+test('submits a two-page Google form shown as a QR code', async ({ page: desk, context }) => {
+  const { ctx, pings, events } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+  expect([rec.state, rec.trustReason]).toEqual(['submitted', 'qr_on_screen'])
   expect(rec.history.map((h) => h.state)).toEqual([
-    "detected",
-    "resolving",
-    "checking_trust",
-    "opening",
-    "inspecting",
-    "filling",
-    "inspecting",
-    "filling",
-    "submitting",
-    "submitted",
-  ]);
+    'detected',
+    'resolving',
+    'checking_trust',
+    'opening',
+    'inspecting',
+    'filling',
+    'inspecting',
+    'filling',
+    'submitting',
+    'submitted'
+  ])
   expect(rec.fieldsFilled.map((f) => f.detailKey)).toEqual([
-    "full_name",
-    "student_id",
-    "course_code",
-    "section",
-    "programme",
+    'full_name',
+    'student_id',
+    'course_code',
+    'section',
+    'programme',
     null,
-    null,
-  ]);
+    null
+  ])
   expect(fx.submissions[0]).toEqual({
-    fixture: "attendance",
+    fixture: 'attendance',
     sendCopy: false,
     answers: {
-      "Full name": "Test Student",
-      "Matric No.": "A00000000",
-      "Course code": "ABC1234",
-      Section: "02",
-      "Programme of study": "MSc Example",
-      Attendance: "Present",
-      Declaration: ["I confirm I am attending this class"],
-    },
-  });
+      'Full name': 'Test Student',
+      'Matric No.': 'A00000000',
+      'Course code': 'ABC1234',
+      Section: '02',
+      'Programme of study': 'MSc Example',
+      Attendance: 'Present',
+      Declaration: ['I confirm I am attending this class']
+    }
+  })
   expect(rec.screenshots).toEqual(
-    ["filled_1.png", "filled.png", "confirmation.png"].map(
-      (n) => `forms/${rec.formId}/${n}`,
-    ),
-  );
-  for (const s of rec.screenshots)
-    expect(readFileSync(join(dir, s)).subarray(1, 4).toString()).toBe("PNG");
-  expect(
-    pings.map((p) => [p.ping.title, p.ping.priority, p.ping.attachPath]),
-  ).toEqual([["Attendance submitted", "high", undefined]]);
-  expect(JSON.stringify(events)).not.toContain("Test Student");
-  expect(context.pages()).toHaveLength(1); // the form tab was closed
-});
+    ['filled_1.png', 'filled.png', 'confirmation.png'].map((n) => `forms/${rec.formId}/${n}`)
+  )
+  for (const s of rec.screenshots) expect(readFileSync(join(dir, s)).subarray(1, 4).toString()).toBe('PNG')
+  expect(pings.map((p) => [p.ping.title, p.ping.priority, p.ping.attachPath])).toEqual([
+    ['Attendance submitted', 'high', undefined]
+  ])
+  expect(JSON.stringify(events)).not.toContain('Test Student')
+  expect(context.pages()).toHaveLength(1) // the form tab was closed
+})
 
-test("submits a Microsoft form the host posted in the meeting chat", async ({
-  page: desk,
-}) => {
+test('submits a Microsoft form the host posted in the meeting chat', async ({ page: desk }) => {
   const rec = await handleForm(
-    candidate("microsoft", "attendance", "meeting_chat", {
-      name: "Host",
-      role: "host",
+    candidate('microsoft', 'attendance', 'meeting_chat', {
+      name: 'Host',
+      role: 'host'
     }),
-    testContext(desk, testJob(dir)).ctx,
-  );
-  expect([rec.state, rec.trustReason]).toEqual(["submitted", "host"]);
-});
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect([rec.state, rec.trustReason]).toEqual(['submitted', 'host'])
+})
 
-test("trusts a participant's form only when it is limited to the member's organisation", async ({
-  page: desk,
-}) => {
-  for (const p of ["google", "microsoft"] as const)
+test("trusts a participant's form only when it is limited to the member's organisation", async ({ page: desk }) => {
+  for (const p of ['google', 'microsoft'] as const)
     expect(
-      (
-        await handleForm(
-          candidate(p, "attendance", "meeting_chat", participant),
-          testContext(desk, testJob(dir)).ctx,
-        )
-      ).trustReason,
-    ).toBe("org_restricted");
-  fx.submissions.length = 0;
-  const { ctx, pings } = testContext(desk, testJob(dir));
-  const rec = await handleForm(
-    candidate("google", "external", "meeting_chat", participant),
-    ctx,
-  );
-  expect([rec.state, rec.reason, fx.submissions.length]).toEqual([
-    "untrusted",
-    "not_org_restricted",
-    0,
-  ]);
-  expect([pings[0].ping.title, pings[0].ping.priority]).toEqual([
-    "Form seen, not submitted",
-    "high",
-  ]);
-});
+      (await handleForm(candidate(p, 'attendance', 'meeting_chat', participant), testContext(desk, testJob(dir)).ctx))
+        .trustReason
+    ).toBe('org_restricted')
+  fx.submissions.length = 0
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'external', 'meeting_chat', participant), ctx)
+  expect([rec.state, rec.reason, fx.submissions.length]).toEqual(['untrusted', 'not_org_restricted', 0])
+  expect([pings[0].ping.title, pings[0].ping.priority]).toEqual(['Form seen, not submitted', 'high'])
+})
 
-test("does not open a participant form when no organisation is configured", async ({
-  page: desk,
-}) => {
+test('does not open a participant form when no organisation is configured', async ({ page: desk }) => {
   const rec = await handleForm(
-    candidate("google", "attendance", "meeting_chat", participant),
-    testContext(desk, testJob(dir, { organisation: null })).ctx,
-  );
-  expect([rec.state, rec.reason, fx.requests.length]).toEqual([
-    "untrusted",
-    "untrusted_source",
-    0,
-  ]);
-});
+    candidate('google', 'attendance', 'meeting_chat', participant),
+    testContext(desk, testJob(dir, { organisation: null })).ctx
+  )
+  expect([rec.state, rec.reason, fx.requests.length]).toEqual(['untrusted', 'untrusted_source', 0])
+})
 
-test("refuses a form with an unmatched required question", async ({
-  page: desk,
-}) => {
-  const { ctx, pings } = testContext(desk, testJob(dir));
-  const rec = await handleForm(
-    candidate("google", "attendance-unmatched", "qr"),
-    ctx,
-  );
-  expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual([
-    "needs_member",
-    ["What did you learn today?"],
-    0,
-  ]);
-  expect(pings[0].ping.message).toContain('"What did you learn today?"');
-});
+test('refuses a form with an unmatched required question', async ({ page: desk }) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'attendance-unmatched', 'qr'), ctx)
+  expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual(['needs_member', ['What did you learn today?'], 0])
+  expect(pings[0].ping.message).toContain('"What did you learn today?"')
+})
 
-test("refuses quiz and non-attendance forms at normal priority", async ({
-  page: desk,
-}) => {
+test('refuses quiz and non-attendance forms at normal priority', async ({ page: desk }) => {
   for (const [fixture, state] of [
-    ["quiz", "quiz"],
-    ["not-attendance", "not_attendance"],
+    ['quiz', 'quiz'],
+    ['not-attendance', 'not_attendance']
   ] as const) {
-    const { ctx, pings } = testContext(desk, testJob(dir));
-    expect(
-      (await handleForm(candidate("microsoft", fixture, "qr"), ctx)).state,
-    ).toBe(state);
-    expect(pings[0].ping.priority).toBe("default");
+    const { ctx, pings } = testContext(desk, testJob(dir))
+    expect((await handleForm(candidate('microsoft', fixture, 'qr'), ctx)).state).toBe(state)
+    expect(pings[0].ping.priority).toBe('default')
   }
-  expect(fx.submissions).toHaveLength(0);
-});
+  expect(fx.submissions).toHaveLength(0)
+})
 
-test("records already answered on opening and after Submit", async ({
-  page: desk,
-}) => {
+test('records already answered on opening and after Submit', async ({ page: desk }) => {
   expect(
-    (
-      await handleForm(
-        candidate("google", "already-responded", "qr"),
-        testContext(desk, testJob(dir)).ctx,
-      )
-    ).state,
-  ).toBe("already_answered");
-  fx.submitResult.set("attendance", "already-responded");
-  const rec = await handleForm(
-    candidate("microsoft", "attendance", "qr"),
-    testContext(desk, testJob(dir)).ctx,
-  );
-  expect(rec.history.slice(-2).map((h) => h.state)).toEqual([
-    "submitting",
-    "already_answered",
-  ]);
-});
+    (await handleForm(candidate('google', 'already-responded', 'qr'), testContext(desk, testJob(dir)).ctx)).state
+  ).toBe('already_answered')
+  fx.submitResult.set('attendance', 'already-responded')
+  const rec = await handleForm(candidate('microsoft', 'attendance', 'qr'), testContext(desk, testJob(dir)).ctx)
+  expect(rec.history.slice(-2).map((h) => h.state)).toEqual(['submitting', 'already_answered'])
+})
 
-test("opens a prefilled link at its canonical URL", async ({ page: desk }) => {
+test('opens a prefilled link at its canonical URL', async ({ page: desk }) => {
   const f = {
-    ...candidate("google", "attendance", "qr"),
-    finalUrl: `${googleUrl("attendance")}?usp=pp_url&entry.111=Absent`,
-  };
-  expect((await handleForm(f, testContext(desk, testJob(dir)).ctx)).state).toBe(
-    "submitted",
-  );
-  expect(fx.requests.some((u) => u.includes("entry."))).toBe(false);
-  expect(fx.submissions[0].answers.Attendance).toBe("Present");
-});
-
-test("fails closed and CAPTCHA pages with a high-priority ping", async ({
-  page: desk,
-}) => {
-  for (const [fixture, reason] of [
-    ["closed", "form_closed"],
-    ["captcha", "captcha"],
-  ] as const) {
-    const { ctx, pings } = testContext(desk, testJob(dir));
-    expect(
-      await handleForm(candidate("google", fixture, "qr"), ctx),
-    ).toMatchObject({ state: "failed", reason });
-    expect([pings[0].ping.title, pings[0].ping.priority]).toEqual([
-      "Form needs you",
-      "high",
-    ]);
+    ...candidate('google', 'attendance', 'qr'),
+    finalUrl: `${googleUrl('attendance')}?usp=pp_url&entry.111=Absent`
   }
-});
+  expect((await handleForm(f, testContext(desk, testJob(dir)).ctx)).state).toBe('submitted')
+  expect(fx.requests.some((u) => u.includes('entry.'))).toBe(false)
+  expect(fx.submissions[0].answers.Attendance).toBe('Present')
+})
 
-test("never passes the form description to the matcher", async ({
-  page: desk,
-}) => {
-  const { ctx, matchCalls } = testContext(desk, testJob(dir));
-  await handleForm(candidate("google", "attendance", "qr"), ctx);
-  expect(JSON.stringify(matchCalls)).not.toContain(
-    "Fill in during the lecture",
-  );
-  expect(matchCalls.flat().map((q) => q.label)).toEqual(["Programme of study"]);
-});
+test('fails closed and CAPTCHA pages with a high-priority ping', async ({ page: desk }) => {
+  for (const [fixture, reason] of [
+    ['closed', 'form_closed'],
+    ['captcha', 'captcha']
+  ] as const) {
+    const { ctx, pings } = testContext(desk, testJob(dir))
+    expect(await handleForm(candidate('google', fixture, 'qr'), ctx)).toMatchObject({ state: 'failed', reason })
+    expect([pings[0].ping.title, pings[0].ping.priority]).toEqual(['Form needs you', 'high'])
+  }
+})
 
-test("stops at the 2-minute deadline", async ({ page: desk }) => {
+test('never passes the form description to the matcher', async ({ page: desk }) => {
+  const { ctx, matchCalls } = testContext(desk, testJob(dir))
+  await handleForm(candidate('google', 'attendance', 'qr'), ctx)
+  expect(JSON.stringify(matchCalls)).not.toContain('Fill in during the lecture')
+  expect(matchCalls.flat().map((q) => q.label)).toEqual(['Programme of study'])
+})
+
+test('stops at the 2-minute deadline', async ({ page: desk }) => {
   const rec = await handleForm(
-    candidate("google", "attendance", "qr", undefined, 121_000),
-    testContext(desk, testJob(dir)).ctx,
-  );
-  expect(rec).toMatchObject({ state: "failed", reason: "deadline" });
-  expect(fx.submissions).toHaveLength(0);
-});
+    candidate('google', 'attendance', 'qr', undefined, 121_000),
+    testContext(desk, testJob(dir)).ctx
+  )
+  expect(rec).toMatchObject({ state: 'failed', reason: 'deadline' })
+  expect(fx.submissions).toHaveLength(0)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2366,101 +2048,76 @@ The new branch, for kind `signin` in step 3:
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-const stateOf = (events: Record<string, unknown>[]) => events.at(-1)?.state;
+const stateOf = (events: Record<string, unknown>[]) => events.at(-1)?.state
 
 test('pings "Sign in again", then retries once after the member signs in and submits', async ({
   context,
-  page: desk,
+  page: desk
 }) => {
-  const fx = await routeFormFixtures(context);
-  fx.signedOut.add("attendance");
-  const { ctx, pings, events } = testContext(
-    desk,
-    testJob(test.info().outputPath("occ")),
-  );
-  const f = candidate("google", "attendance", "qr");
-  const running = handleForm(f, ctx);
-  await expect.poll(() => stateOf(events)).toBe("awaiting_signin");
+  const fx = await routeFormFixtures(context)
+  fx.signedOut.add('attendance')
+  const { ctx, pings, events } = testContext(desk, testJob(test.info().outputPath('occ')))
+  const f = candidate('google', 'attendance', 'qr')
+  const running = handleForm(f, ctx)
+  await expect.poll(() => stateOf(events)).toBe('awaiting_signin')
   expect(pings[0].ping).toMatchObject({
-    title: "Sign in again",
-    priority: "high",
-    actions: [{ label: "Sign in again", url: f.finalUrl }],
-  });
-  expect(pings[0].at - Date.parse(f.seenAt)).toBeLessThanOrEqual(30_000);
-  const tab = context
-    .pages()
-    .find((p) => p.url().startsWith("https://accounts.google.com"))!;
-  expect([
-    await tab.inputValue("input[type=email]"),
-    fx.submissions.length,
-  ]).toEqual(["", 0]);
-  fx.signedOut.delete("attendance");
-  await tab.click("text=Continue");
-  const rec = await running;
-  expect([rec.state, rec.signinRetried]).toEqual(["submitted", true]);
-  expect(rec.history.map((h) => h.state)).toContain("awaiting_signin");
-  expect(pings.map((p) => p.ping.title)).toEqual([
-    "Sign in again",
-    "Attendance submitted",
-  ]);
-});
+    title: 'Sign in again',
+    priority: 'high',
+    actions: [{ label: 'Sign in again', url: f.finalUrl }]
+  })
+  expect(pings[0].at - Date.parse(f.seenAt)).toBeLessThanOrEqual(30_000)
+  const tab = context.pages().find((p) => p.url().startsWith('https://accounts.google.com'))!
+  expect([await tab.inputValue('input[type=email]'), fx.submissions.length]).toEqual(['', 0])
+  fx.signedOut.delete('attendance')
+  await tab.click('text=Continue')
+  const rec = await running
+  expect([rec.state, rec.signinRetried]).toEqual(['submitted', true])
+  expect(rec.history.map((h) => h.state)).toContain('awaiting_signin')
+  expect(pings.map((p) => p.ping.title)).toEqual(['Sign in again', 'Attendance submitted'])
+})
 
-test("fails when sign-in is asked for again after the retry", async ({
-  context,
-  page: desk,
-}) => {
-  const fx = await routeFormFixtures(context);
-  fx.signedOut.add("attendance");
-  const { ctx, events } = testContext(
-    desk,
-    testJob(test.info().outputPath("occ")),
-  );
-  const running = handleForm(candidate("google", "attendance", "qr"), ctx);
-  await expect.poll(() => stateOf(events)).toBe("awaiting_signin");
-  fx.signedOut.delete("attendance");
-  fx.onFormLoad = (name) => fx.signedOut.add(name); // the session drops again right after the member's sign-in
+test('fails when sign-in is asked for again after the retry', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  fx.signedOut.add('attendance')
+  const { ctx, events } = testContext(desk, testJob(test.info().outputPath('occ')))
+  const running = handleForm(candidate('google', 'attendance', 'qr'), ctx)
+  await expect.poll(() => stateOf(events)).toBe('awaiting_signin')
+  fx.signedOut.delete('attendance')
+  fx.onFormLoad = (name) => fx.signedOut.add(name) // the session drops again right after the member's sign-in
   await context
     .pages()
-    .find((p) => p.url().startsWith("https://accounts.google.com"))!
-    .click("text=Continue");
+    .find((p) => p.url().startsWith('https://accounts.google.com'))!
+    .click('text=Continue')
   expect(await running).toMatchObject({
-    state: "failed",
-    reason: "signin_required_again",
-  });
-});
+    state: 'failed',
+    reason: 'signin_required_again'
+  })
+})
 
-test("fails with meeting_ended when the dispatcher closes during the wait", async ({
-  context,
-  page: desk,
-}) => {
-  const fx = await routeFormFixtures(context);
-  fx.signedOut.add("attendance");
-  const { ctx, events, abort } = testContext(
-    desk,
-    testJob(test.info().outputPath("occ")),
-  );
-  const running = handleForm(candidate("microsoft", "attendance", "qr"), ctx);
-  await expect.poll(() => stateOf(events)).toBe("awaiting_signin");
-  abort.abort();
+test('fails with meeting_ended when the dispatcher closes during the wait', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  fx.signedOut.add('attendance')
+  const { ctx, events, abort } = testContext(desk, testJob(test.info().outputPath('occ')))
+  const running = handleForm(candidate('microsoft', 'attendance', 'qr'), ctx)
+  await expect.poll(() => stateOf(events)).toBe('awaiting_signin')
+  abort.abort()
   expect(await running).toMatchObject({
-    state: "failed",
-    reason: "meeting_ended",
-  });
-});
+    state: 'failed',
+    reason: 'meeting_ended'
+  })
+})
 
-test("fails with signin_not_completed when the wait times out", async ({
-  context,
-  page: desk,
-}) => {
-  const fx = await routeFormFixtures(context);
-  fx.signedOut.add("attendance");
-  const { ctx } = testContext(desk, testJob(test.info().outputPath("occ")), {
-    signinTimeoutMs: 1_000,
-  });
-  expect(
-    await handleForm(candidate("google", "attendance", "qr"), ctx),
-  ).toMatchObject({ state: "failed", reason: "signin_not_completed" });
-});
+test('fails with signin_not_completed when the wait times out', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  fx.signedOut.add('attendance')
+  const { ctx } = testContext(desk, testJob(test.info().outputPath('occ')), {
+    signinTimeoutMs: 1_000
+  })
+  expect(await handleForm(candidate('google', 'attendance', 'qr'), ctx)).toMatchObject({
+    state: 'failed',
+    reason: 'signin_not_completed'
+  })
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2496,16 +2153,13 @@ git commit -m "feat(worker): retry forms once after sign-in"
 
 ```ts
 export interface FormDispatcher {
-  offer(f: ResolvedForm): void;
-  close(): Promise<FormRecord[]>; // aborts sign-in waits, waits for every running form, returns all records of this occurrence
+  offer(f: ResolvedForm): void
+  close(): Promise<FormRecord[]> // aborts sign-in waits, waits for every running form, returns all records of this occurrence
 }
 export async function startFormDispatcher(
   base: FormContextBase,
-  handle: (
-    f: ResolvedForm,
-    ctx: FormContext,
-  ) => Promise<FormRecord> = handleForm,
-): Promise<FormDispatcher>;
+  handle: (f: ResolvedForm, ctx: FormContext) => Promise<FormRecord> = handleForm
+): Promise<FormDispatcher>
 ```
 
 Rules:
@@ -2526,93 +2180,87 @@ Rules:
 // cfg = testJob(dir), recording pings in `pings`; byName(records, name) finds a form's record; tmp() makes a temporary
 // directory; settle() waits for queued promises; deferred<T>() returns { promise, resolve }; host and participant are
 // { name, role } senders; mock comes from bun:test and once from node:events.
-test("a restart fails unfinished forms once and never hands any loaded form out again", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "tm-disp-"));
+test('a restart fails unfinished forms once and never hands any loaded form out again', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tm-disp-'))
   for (const [n, s] of [
-    ["A", "submitted"],
-    ["B", "submitting"],
-    ["C", "filling"],
+    ['A', 'submitted'],
+    ['B', 'submitting'],
+    ['C', 'filling']
   ] as const)
-    await saveFormRecord(dir, recFor(n, s));
-  await mkdir(join(dir, "forms", formIdFor(formFor("D", "qr").finalUrl)), {
-    recursive: true,
-  }); // no readable record.json
-  const handle = mock(async (f: ResolvedForm) => recFor("X", "submitted"));
-  const { base, pings } = fakeBase(dir);
-  const d = await startFormDispatcher(base, handle);
-  const { records } = await loadFormRecords(dir);
-  expect(byName(records, "B")).toMatchObject({
-    state: "failed",
-    reason: "interrupted_submitting",
-  });
-  expect(byName(records, "C")).toMatchObject({
-    state: "failed",
-    reason: "interrupted",
-  });
-  expect(byName(records, "A").state).toBe("submitted");
-  expect(pings.map((p) => p.title)).toEqual([
-    "Form needs you",
-    "Form needs you",
-  ]);
-  for (const n of ["A", "B", "C", "D"]) d.offer(formFor(n, "qr"));
-  await d.close();
-  expect(handle).not.toHaveBeenCalled();
-});
+    await saveFormRecord(dir, recFor(n, s))
+  await mkdir(join(dir, 'forms', formIdFor(formFor('D', 'qr').finalUrl)), {
+    recursive: true
+  }) // no readable record.json
+  const handle = mock(async (f: ResolvedForm) => recFor('X', 'submitted'))
+  const { base, pings } = fakeBase(dir)
+  const d = await startFormDispatcher(base, handle)
+  const { records } = await loadFormRecords(dir)
+  expect(byName(records, 'B')).toMatchObject({
+    state: 'failed',
+    reason: 'interrupted_submitting'
+  })
+  expect(byName(records, 'C')).toMatchObject({
+    state: 'failed',
+    reason: 'interrupted'
+  })
+  expect(byName(records, 'A').state).toBe('submitted')
+  expect(pings.map((p) => p.title)).toEqual(['Form needs you', 'Form needs you'])
+  for (const n of ['A', 'B', 'C', 'D']) d.offer(formFor(n, 'qr'))
+  await d.close()
+  expect(handle).not.toHaveBeenCalled()
+})
 
-test("the same form is handled once", async () => {
-  const handle = mock(async (f: ResolvedForm) => recFor("F", "submitted"));
-  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle);
-  d.offer(formFor("F", "qr"));
+test('the same form is handled once', async () => {
+  const handle = mock(async (f: ResolvedForm) => recFor('F', 'submitted'))
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'qr'))
   d.offer({
-    ...formFor("F", "meeting_chat", host),
-    finalUrl: formFor("F", "qr").finalUrl + "?usp=sf_link",
-  });
-  await d.close();
-  expect(handle).toHaveBeenCalledTimes(1);
-});
+    ...formFor('F', 'meeting_chat', host),
+    finalUrl: formFor('F', 'qr').finalUrl + '?usp=sf_link'
+  })
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(1)
+})
 
-test("a trusted sighting re-handles a form that ended untrusted", async () => {
+test('a trusted sighting re-handles a form that ended untrusted', async () => {
   const handle = mock(async (f: ResolvedForm, ctx: FormContext) =>
-    recFor("F", ctx.previous ? "submitted" : "untrusted"),
-  );
-  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle);
-  d.offer(formFor("F", "meeting_chat", participant));
-  await settle();
-  d.offer(formFor("F", "meeting_chat", participant)); // a second untrusted sighting is ignored
-  d.offer(formFor("F", "qr"));
-  await d.close();
-  expect(handle).toHaveBeenCalledTimes(2);
-  expect(handle.mock.calls[1][1].previous?.state).toBe("untrusted");
-});
+    recFor('F', ctx.previous ? 'submitted' : 'untrusted')
+  )
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  await settle()
+  d.offer(formFor('F', 'meeting_chat', participant)) // a second untrusted sighting is ignored
+  d.offer(formFor('F', 'qr'))
+  await d.close()
+  expect(handle).toHaveBeenCalledTimes(2)
+  expect(handle.mock.calls[1][1].previous?.state).toBe('untrusted')
+})
 
-test("a trusted sighting during an untrusted run waits and runs if that run ends untrusted", async () => {
-  const first = deferred<FormRecord>();
+test('a trusted sighting during an untrusted run waits and runs if that run ends untrusted', async () => {
+  const first = deferred<FormRecord>()
   const handle = mock((f: ResolvedForm, ctx: FormContext) =>
-    ctx.previous ? Promise.resolve(recFor("F", "submitted")) : first.promise,
-  );
-  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle);
-  d.offer(formFor("F", "meeting_chat", participant));
-  d.offer(formFor("F", "qr"));
-  expect(handle).toHaveBeenCalledTimes(1);
-  first.resolve(recFor("F", "untrusted"));
-  expect((await d.close()).map((r) => r.state)).toContain("submitted");
-  expect(handle).toHaveBeenCalledTimes(2);
-});
+    ctx.previous ? Promise.resolve(recFor('F', 'submitted')) : first.promise
+  )
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, handle)
+  d.offer(formFor('F', 'meeting_chat', participant))
+  d.offer(formFor('F', 'qr'))
+  expect(handle).toHaveBeenCalledTimes(1)
+  first.resolve(recFor('F', 'untrusted'))
+  expect((await d.close()).map((r) => r.state)).toContain('submitted')
+  expect(handle).toHaveBeenCalledTimes(2)
+})
 
-test("close aborts the signal handlers see", async () => {
-  let seen: AbortSignal | null = null;
-  const d = await startFormDispatcher(
-    fakeBase(await tmp()).base,
-    async (f, ctx) => {
-      seen = ctx.signal;
-      await once(ctx.signal, "abort");
-      return recFor("F", "failed");
-    },
-  );
-  d.offer(formFor("F", "qr"));
-  await d.close();
-  expect(seen!.aborted).toBe(true);
-});
+test('close aborts the signal handlers see', async () => {
+  let seen: AbortSignal | null = null
+  const d = await startFormDispatcher(fakeBase(await tmp()).base, async (f, ctx) => {
+    seen = ctx.signal
+    await once(ctx.signal, 'abort')
+    return recFor('F', 'failed')
+  })
+  d.offer(formFor('F', 'qr'))
+  await d.close()
+  expect(seen!.aborted).toBe(true)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2652,16 +2300,16 @@ git commit -m "feat(worker): dispatch forms once per meeting"
 export async function onFormCandidate(
   c: FormCandidate,
   deps: {
-    resolve: (c: FormCandidate) => Promise<ResolvedForm | null>;
-    dispatcher: FormDispatcher;
-    emitEvent: FormContextBase["emitEvent"];
-  },
-): Promise<void>; // offers the resolved form; a link that isn't a form emits ('form', { host, source, ignored: 'not_a_form' }) with the host only, never the URL (it may carry a passcode)
+    resolve: (c: FormCandidate) => Promise<ResolvedForm | null>
+    dispatcher: FormDispatcher
+    emitEvent: FormContextBase['emitEvent']
+  }
+): Promise<void> // offers the resolved form; a link that isn't a form emits ('form', { host, source, ignored: 'not_a_form' }) with the host only, never the URL (it may carry a passcode)
 // test/forms/model-stub.ts
 export async function startModelStub(opts: {
-  delayMs: number;
-  reply: unknown;
-}): Promise<{ url: string; requests: unknown[]; close(): Promise<void> }>; // node:http, OpenAI-compatible /chat/completions
+  delayMs: number
+  reply: unknown
+}): Promise<{ url: string; requests: unknown[]; close(): Promise<void> }> // node:http, OpenAI-compatible /chat/completions
 ```
 
 Changes to `runOccurrence`:
@@ -2675,145 +2323,119 @@ Changes to `runOccurrence`:
 ```ts
 // packages/worker/src/forms/intake.test.ts
 const cand: FormCandidate = {
-  url: "https://docs.google.com/forms/d/e/x/viewform",
-  source: "meeting_chat",
-  sender: "Dr Example",
-  senderRole: "host",
-  seenAt: new Date().toISOString(),
-};
+  url: 'https://docs.google.com/forms/d/e/x/viewform',
+  source: 'meeting_chat',
+  sender: 'Dr Example',
+  senderRole: 'host',
+  seenAt: new Date().toISOString()
+}
 
-test("a resolved candidate is offered to the dispatcher", async () => {
-  const offered: ResolvedForm[] = [];
-  const f = { ...cand, finalUrl: cand.url, provider: "google" as const };
+test('a resolved candidate is offered to the dispatcher', async () => {
+  const offered: ResolvedForm[] = []
+  const f = { ...cand, finalUrl: cand.url, provider: 'google' as const }
   await onFormCandidate(cand, {
     resolve: async () => f,
     dispatcher: { offer: (x) => offered.push(x), close: async () => [] },
-    emitEvent: async () => {},
-  });
-  expect(offered).toEqual([f]);
-});
+    emitEvent: async () => {}
+  })
+  expect(offered).toEqual([f])
+})
 
-test("a link that is not a form is logged by host only and not offered", async () => {
-  const events: unknown[] = [];
-  const offered: unknown[] = [];
+test('a link that is not a form is logged by host only and not offered', async () => {
+  const events: unknown[] = []
+  const offered: unknown[] = []
   await onFormCandidate(
-    { ...cand, url: "https://example.zoom.us/j/1?pwd=<passcode>" },
+    { ...cand, url: 'https://example.zoom.us/j/1?pwd=<passcode>' },
     {
       resolve: async () => null,
       dispatcher: { offer: (x) => offered.push(x), close: async () => [] },
       emitEvent: async (t, d) => {
-        events.push([t, d]);
-      },
-    },
-  );
+        events.push([t, d])
+      }
+    }
+  )
   expect([offered, events]).toEqual([
     [],
     [
       [
-        "form",
+        'form',
         {
-          host: "example.zoom.us",
-          source: "meeting_chat",
-          ignored: "not_a_form",
-        },
-      ],
-    ],
-  ]);
-});
+          host: 'example.zoom.us',
+          source: 'meeting_chat',
+          ignored: 'not_a_form'
+        }
+      ]
+    ]
+  ])
+})
 
 // packages/worker/test/forms-speed.spec.ts
 // cand(provider, fixture, source, sender?) is a FormCandidate for googleUrl/microsoftUrl(fixture) seen now;
 // toResolved(c) adds finalUrl = c.url and the provider; host and participant are { name, role } senders.
-test.setTimeout(180_000);
+test.setTimeout(180_000)
 const resolveAfter5s = async (c: FormCandidate) => {
-  await sleep(5_000);
-  return toResolved(c);
-}; // the resolver's own upper bound
+  await sleep(5_000)
+  return toResolved(c)
+} // the resolver's own upper bound
 
-async function run(
-  desk: Page,
-  dir: string,
-  modelDelayMs: number,
-  cands: FormCandidate[],
-) {
+async function run(desk: Page, dir: string, modelDelayMs: number, cands: FormCandidate[]) {
   const model = await startModelStub({
     delayMs: modelDelayMs,
     reply: {
-      matches: [{ question: "p1q4", detail: "programme", confidence: "high" }],
-    },
-  });
-  const job = testJob(dir, { ai: { baseUrl: model.url } });
+      matches: [{ question: 'p1q4', detail: 'programme', confidence: 'high' }]
+    }
+  })
+  const job = testJob(dir, { ai: { baseUrl: model.url } })
   const d = await startFormDispatcher({
     ...makeFormContextBase(job, desk, async () => {}),
-    ping: async () => {},
-  });
+    ping: async () => {}
+  })
   await Promise.all(
     cands.map((c) =>
       onFormCandidate(c, {
         resolve: resolveAfter5s,
         dispatcher: d,
-        emitEvent: async () => {},
-      }),
-    ),
-  );
-  const recs = await d.close();
-  await model.close();
-  return recs;
+        emitEvent: async () => {}
+      })
+    )
+  )
+  const recs = await d.close()
+  await model.close()
+  return recs
 }
 
-test("trusted forms are submitted within 2 minutes of first sight", async ({
-  context,
-  page: desk,
-}) => {
-  await routeFormFixtures(context);
-  const recs = await run(desk, test.info().outputPath("occ"), 0, [
-    cand("google", "attendance", "qr"),
-    cand("microsoft", "attendance", "meeting_chat", host),
-  ]);
-  expect(recs.map((r) => r.state)).toEqual(["submitted", "submitted"]);
-  for (const r of recs)
-    expect(
-      Date.parse(r.submittedAt!) - Date.parse(r.seenAt),
-    ).toBeLessThanOrEqual(120_000);
-});
+test('trusted forms are submitted within 2 minutes of first sight', async ({ context, page: desk }) => {
+  await routeFormFixtures(context)
+  const recs = await run(desk, test.info().outputPath('occ'), 0, [
+    cand('google', 'attendance', 'qr'),
+    cand('microsoft', 'attendance', 'meeting_chat', host)
+  ])
+  expect(recs.map((r) => r.state)).toEqual(['submitted', 'submitted'])
+  for (const r of recs) expect(Date.parse(r.submittedAt!) - Date.parse(r.seenAt)).toBeLessThanOrEqual(120_000)
+})
 
-test("fallback pings go out within 30 seconds of first sight, even with a slow model", async ({
+test('fallback pings go out within 30 seconds of first sight, even with a slow model', async ({
   context,
-  page: desk,
+  page: desk
 }) => {
-  await routeFormFixtures(context);
-  const recs = await run(desk, test.info().outputPath("occ"), 10_000, [
-    cand("google", "attendance-unmatched", "qr"),
-    cand("google", "quiz", "qr"),
-    cand("microsoft", "not-attendance", "qr"),
-    cand("microsoft", "external", "meeting_chat", participant),
-  ]);
-  expect(recs.map((r) => r.state).sort()).toEqual([
-    "needs_member",
-    "not_attendance",
-    "quiz",
-    "untrusted",
-  ]);
-  for (const r of recs)
-    expect(
-      Date.parse(r.pings[0].at) - Date.parse(r.seenAt),
-    ).toBeLessThanOrEqual(30_000);
-});
+  await routeFormFixtures(context)
+  const recs = await run(desk, test.info().outputPath('occ'), 10_000, [
+    cand('google', 'attendance-unmatched', 'qr'),
+    cand('google', 'quiz', 'qr'),
+    cand('microsoft', 'not-attendance', 'qr'),
+    cand('microsoft', 'external', 'meeting_chat', participant)
+  ])
+  expect(recs.map((r) => r.state).sort()).toEqual(['needs_member', 'not_attendance', 'quiz', 'untrusted'])
+  for (const r of recs) expect(Date.parse(r.pings[0].at) - Date.parse(r.seenAt)).toBeLessThanOrEqual(30_000)
+})
 
-test("a form page that never loads is pinged within 30 seconds", async ({
-  context,
-  page: desk,
-}) => {
-  const fx = await routeFormFixtures(context);
-  fx.delayMs.set("attendance", 60_000);
-  const [r] = await run(desk, test.info().outputPath("occ"), 0, [
-    cand("google", "attendance", "qr"),
-  ]);
-  expect(r).toMatchObject({ state: "failed", reason: "open_timeout" });
-  expect(Date.parse(r.pings[0].at) - Date.parse(r.seenAt)).toBeLessThanOrEqual(
-    30_000,
-  );
-});
+test('a form page that never loads is pinged within 30 seconds', async ({ context, page: desk }) => {
+  const fx = await routeFormFixtures(context)
+  fx.delayMs.set('attendance', 60_000)
+  const [r] = await run(desk, test.info().outputPath('occ'), 0, [cand('google', 'attendance', 'qr')])
+  expect(r).toMatchObject({ state: 'failed', reason: 'open_timeout' })
+  expect(Date.parse(r.pings[0].at) - Date.parse(r.seenAt)).toBeLessThanOrEqual(30_000)
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2849,7 +2471,7 @@ git commit -m "feat(worker): submit forms during the meeting"
 - Produces (adds to contracts):
 
 ```ts
-export function attendanceLine(records: FormRecord[], timeZone: string): string;
+export function attendanceLine(records: FormRecord[], timeZone: string): string
 ```
 
 The design's template line is `Attendance: <submitted at HH:MM (provider) ✓ | not seen | needs you: <link>>`. Parts, joined with `; `, in this order:
@@ -2863,53 +2485,50 @@ With no parts, the line is `not seen`; `quiz` and `not_attendance` records never
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-const tz = "Asia/Kuala_Lumpur";
-const rec = sampleRecord();
+const tz = 'Asia/Kuala_Lumpur'
+const rec = sampleRecord()
 const g = {
   ...rec,
-  provider: "google" as const,
-  state: "submitted" as const,
-  submittedAt: "2026-10-20T12:42:10.000Z",
-};
+  provider: 'google' as const,
+  state: 'submitted' as const,
+  submittedAt: '2026-10-20T12:42:10.000Z'
+}
 const m = {
   ...rec,
-  provider: "microsoft" as const,
-  state: "submitted" as const,
-  submittedAt: "2026-10-20T13:05:00.000Z",
-};
+  provider: 'microsoft' as const,
+  state: 'submitted' as const,
+  submittedAt: '2026-10-20T13:05:00.000Z'
+}
 const needs = {
   ...rec,
-  state: "needs_member" as const,
-  finalUrl: "https://docs.google.com/forms/d/e/x/viewform",
-};
+  state: 'needs_member' as const,
+  finalUrl: 'https://docs.google.com/forms/d/e/x/viewform'
+}
 
-test("submitted forms, in time order", () =>
+test('submitted forms, in time order', () =>
   expect(attendanceLine([m, g], tz)).toBe(
-    "submitted at 20:42 (Google Forms) ✓; submitted at 21:05 (Microsoft Forms) ✓",
-  ));
-test("forms that need the member", () =>
+    'submitted at 20:42 (Google Forms) ✓; submitted at 21:05 (Microsoft Forms) ✓'
+  ))
+test('forms that need the member', () =>
   expect(attendanceLine([g, needs], tz)).toBe(
-    "submitted at 20:42 (Google Forms) ✓; needs you: https://docs.google.com/forms/d/e/x/viewform",
-  ));
-test("already answered", () =>
-  expect(
-    attendanceLine(
-      [{ ...rec, provider: "microsoft", state: "already_answered" }],
-      tz,
-    ),
-  ).toBe("already answered (Microsoft Forms) ✓"));
-test("quizzes and non-attendance forms do not count", () => {
+    'submitted at 20:42 (Google Forms) ✓; needs you: https://docs.google.com/forms/d/e/x/viewform'
+  ))
+test('already answered', () =>
+  expect(attendanceLine([{ ...rec, provider: 'microsoft', state: 'already_answered' }], tz)).toBe(
+    'already answered (Microsoft Forms) ✓'
+  ))
+test('quizzes and non-attendance forms do not count', () => {
   expect(
     attendanceLine(
       [
-        { ...rec, state: "quiz" },
-        { ...rec, state: "not_attendance" },
+        { ...rec, state: 'quiz' },
+        { ...rec, state: 'not_attendance' }
       ],
-      tz,
-    ),
-  ).toBe("not seen");
-  expect(attendanceLine([], tz)).toBe("not seen");
-});
+      tz
+    )
+  ).toBe('not seen')
+  expect(attendanceLine([], tz)).toBe('not seen')
+})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**

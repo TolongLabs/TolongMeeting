@@ -163,27 +163,21 @@ set-source-mute tm_mic 1
 
 ```js
 export const DESIGN_ARGS = [
-  "--disable-blink-features=AutomationControlled",
-  "--autoplay-policy=no-user-gesture-required",
-  "--password-store=basic",
-  "--use-gl=angle",
-  "--use-angle=swiftshader",
-  "--disable-backgrounding-occluded-windows",
-  "--disable-renderer-backgrounding",
-];
+  '--disable-blink-features=AutomationControlled',
+  '--autoplay-policy=no-user-gesture-required',
+  '--password-store=basic',
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding'
+]
 const context = await chromium.launchPersistentContext(profileDir, {
-  channel: "chrome",
+  channel: 'chrome',
   headless: false,
   viewport: null,
-  ignoreDefaultArgs: ["--enable-automation"],
-  args: [
-    ...DESIGN_ARGS,
-    ...extraArgs,
-    `--app=${stageUrl}`,
-    "--window-position=0,0",
-    "--window-size=1920,1080",
-  ],
-});
+  ignoreDefaultArgs: ['--enable-automation'],
+  args: [...DESIGN_ARGS, ...extraArgs, `--app=${stageUrl}`, '--window-position=0,0', '--window-size=1920,1080']
+})
 ```
 
 `hold.mjs --stage-url <url> --desk-url <url> [--desk-url <url> ...]` launches, writes `/data/results/hold-<ISO time>.json` with `{ chrome: browser.version(), node: process.version, stageBounds, deskBounds }`, and on SIGTERM closes the context so the profile is flushed. It is the container used for every member sign-in. `run-worker.sh` and `new-identity.sh` follow the Interfaces block; `measure-audio.sh` runs `docker exec <container> ffmpeg -hide_banner -f pulse -i tm_sink.monitor -t <seconds> -af volumedetect -f null -` and prints the two volume lines; `stage-shot.sh` runs `ffmpeg -f x11grab -video_size 1920x1080 -i :99.0+0,0 -frames:v 1` inside the container and copies the file out. `precommit-check.sh` fails on any staged path matching `\.(png|jpe?g|webp|mkv|mp4|webm|wav|flac|pcm|tar|enc|db|sqlite)$` outside `spikes/03-qr/samples/`, or any added line matching `pwd=|tk_[A-Za-z0-9]{8,}|sk-[A-Za-z0-9]{8,}|tskey-|Bearer [A-Za-z0-9._-]{8,}`; it prints only the file names, never the match.
@@ -921,16 +915,16 @@ Expected: the check prints nothing; the commit succeeds.
 `compose.yaml` runs `binwiederhier/ntfy:<pinned tag>` (command `serve`, `server.yml` mounted at `/etc/ntfy/server.yml`, a volume at `/var/lib/ntfy`, published on `127.0.0.1:8090:80`) and, under the Compose profile `phone`, `caddy:<pinned tag>` on ports 80 and 443 with the Caddyfile `<ntfy-host> { reverse_proxy ntfy:80 }`. `server.yml`:
 
 ```yaml
-base-url: "http://127.0.0.1:8090"
-listen-http: ":80"
+base-url: 'http://127.0.0.1:8090'
+listen-http: ':80'
 behind-proxy: true
-cache-file: "/var/lib/ntfy/cache.db"
-auth-file: "/var/lib/ntfy/user.db"
-auth-default-access: "deny-all"
-attachment-cache-dir: "/var/lib/ntfy/attachments"
-attachment-total-size-limit: "1G"
-attachment-file-size-limit: "5M"
-attachment-expiry-duration: "3h"
+cache-file: '/var/lib/ntfy/cache.db'
+auth-file: '/var/lib/ntfy/user.db'
+auth-default-access: 'deny-all'
+attachment-cache-dir: '/var/lib/ntfy/attachments'
+attachment-total-size-limit: '1G'
+attachment-file-size-limit: '5M'
+attachment-expiry-duration: '3h'
 ```
 
 | Check                       | Threshold                                                                                                                                                                                     |
@@ -1020,7 +1014,7 @@ Outcome table. Each spike task applies its matching rows in its own commit; this
 
 | Row  | Outcome                                                                                                                                                                               | Design edits                                                                                                                                                                                                                                                                                                                                                       | Plan edits                                                                                                                                                                                                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Any outcome, every spike                                                                                                                                                              | "Early spikes": append to the spike's item "Result (<date>): <one sentence>. `[Report](../../spikes/<NN>-<slug>/REPORT.md)`."                                                                                                                                                                                                                                        | `README.md`, "When the spikes change things": append the result to the spike's bullet (spikes 4 and 6 get bullets if they changed anything)                                                                                                                                                                                                                                     |
+| 0    | Any outcome, every spike                                                                                                                                                              | "Early spikes": append to the spike's item "Result (<date>): <one sentence>. `[Report](../../spikes/<NN>-<slug>/REPORT.md)`."                                                                                                                                                                                                                                      | `README.md`, "When the spikes change things": append the result to the spike's bullet (spikes 4 and 6 get bullets if they changed anything)                                                                                                                                                                                                                                     |
 | 1.1  | University and work pass on the server route                                                                                                                                          | "Run locations": replace "The spike 1 results decide the default for a member's university and work identities." with "Spike 1 found university and work sign-ins held for 7 days from the server, so both default to the server."                                                                                                                                 | None; plan 08 stays after 03                                                                                                                                                                                                                                                                                                                                                    |
 | 1.2  | An identity type fails on the server but passes through home                                                                                                                          | "Run locations": the default sentence names `server_via_home` for that identity type, with the reason; "Platform realities", "University and work sign-in policies": add what was observed; "Build order", item 11: split into "Home route", right after milestone 1C, and "Local mode", where it is                                                               | `README.md`: split row 08 into 08a (home route, depends on 01c, placed after 01c) and 08b (local mode, depends on 03); `08-run-locations.md`: home-route tasks first, without the dependency on 03; `01c-website-and-scheduler.md`: the identity form's run-location default and help text follow `runLocation.*`                                                               |
 | 1.3  | An identity type fails on both routes                                                                                                                                                 | "Run locations": that identity type defaults to `local`; "Build order": move items 6 (companion app and native mode) and 11 (run locations) to right after milestone 1C, as item 11 foresees                                                                                                                                                                       | `README.md`: order 00, 01a, 01b, 01c, 03, 08, then 02, 04, 05, 06, 07; `01a-recorder-and-pings.md`: milestone acceptance runs the worker image on the member's PC through Docker Desktop; `01c`: default as in 1.2                                                                                                                                                              |

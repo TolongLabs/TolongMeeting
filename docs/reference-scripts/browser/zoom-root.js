@@ -25,9 +25,13 @@
  */
 
 window.sdcRoot = function sdcRoot() {
-  const f = document.getElementById('webclient');
-  return (f && f.contentDocument) || document;
-};
+  const f = document.getElementById('webclient')
+  return (f && f.contentDocument) || document
+}
 
-const root = sdcRoot();
-({ inIframe: root !== document, buttons: root.querySelectorAll('button').length, chatList: !!root.querySelector('.chat-container__chat-list') })
+const root = sdcRoot()
+;({
+  inIframe: root !== document,
+  buttons: root.querySelectorAll('button').length,
+  chatList: !!root.querySelector('.chat-container__chat-list')
+})

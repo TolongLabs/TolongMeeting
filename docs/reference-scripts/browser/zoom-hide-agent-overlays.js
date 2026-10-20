@@ -23,13 +23,13 @@
  *   showed the overlays in the recording.
  */
 
-const SDC_OVERLAYS = '#claude-agent-glow-border, #claude-static-indicator-container';
-let added = false;
+const SDC_OVERLAYS = '#claude-agent-glow-border, #claude-static-indicator-container'
+let added = false
 if (!document.getElementById('sdc-hide-overlays')) {
-  const s = document.createElement('style');
-  s.id = 'sdc-hide-overlays';
-  s.textContent = SDC_OVERLAYS + ' { display: none !important; }';
-  document.head.appendChild(s);
-  added = true;
+  const s = document.createElement('style')
+  s.id = 'sdc-hide-overlays'
+  s.textContent = SDC_OVERLAYS + ' { display: none !important; }'
+  document.head.appendChild(s)
+  added = true
 }
-({ added, hidden: [...document.querySelectorAll(SDC_OVERLAYS)].map(e => e.id + ': ' + getComputedStyle(e).display) })
+;({ added, hidden: [...document.querySelectorAll(SDC_OVERLAYS)].map((e) => e.id + ': ' + getComputedStyle(e).display) })

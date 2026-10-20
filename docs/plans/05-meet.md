@@ -84,34 +84,32 @@ Names used from earlier plans:
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { expect, test } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { meetSelectors } from "./selectors";
+import { expect, test } from 'bun:test'
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { meetSelectors } from './selectors'
 
-const shipped = join(import.meta.dir, "../../../../../config/selectors");
+const shipped = join(import.meta.dir, '../../../../../config/selectors')
 
-test("the shipped meet.json loads with every key the adapter reads", async () => {
-  process.env.TM_SELECTORS_DIR = shipped;
-  const sel = await meetSelectors();
-  expect(sel.joinButtons).toEqual(["Join now", "Join here too", "Ask to join"]);
-  expect(sel.noticeAllowlist).toEqual(["Got it", "OK", "Dismiss"]);
-  expect(sel.selectors.leaveButton).toBe("[aria-label='Leave call']");
-  expect(
-    new RegExp(sel.texts.blocked, "i").test("You can’t join this video call"),
-  ).toBe(true);
-});
+test('the shipped meet.json loads with every key the adapter reads', async () => {
+  process.env.TM_SELECTORS_DIR = shipped
+  const sel = await meetSelectors()
+  expect(sel.joinButtons).toEqual(['Join now', 'Join here too', 'Ask to join'])
+  expect(sel.noticeAllowlist).toEqual(['Got it', 'OK', 'Dismiss'])
+  expect(sel.selectors.leaveButton).toBe("[aria-label='Leave call']")
+  expect(new RegExp(sel.texts.blocked, 'i').test('You can’t join this video call')).toBe(true)
+})
 
-test("a missing key fails loudly and names the key", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "sel-"));
-  cpSync(shipped, dir, { recursive: true });
-  const map = JSON.parse(readFileSync(join(dir, "meet.json"), "utf8"));
-  delete map.selectors.leaveButton;
-  writeFileSync(join(dir, "meet.json"), JSON.stringify(map));
-  process.env.TM_SELECTORS_DIR = dir;
-  await expect(meetSelectors()).rejects.toThrow(/leaveButton/);
-});
+test('a missing key fails loudly and names the key', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sel-'))
+  cpSync(shipped, dir, { recursive: true })
+  const map = JSON.parse(readFileSync(join(dir, 'meet.json'), 'utf8'))
+  delete map.selectors.leaveButton
+  writeFileSync(join(dir, 'meet.json'), JSON.stringify(map))
+  process.env.TM_SELECTORS_DIR = dir
+  await expect(meetSelectors()).rejects.toThrow(/leaveButton/)
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -197,43 +195,34 @@ git commit -m "feat(worker): add meet selector map"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { expect, test } from "bun:test";
-import { normaliseMeetLink } from "./link";
+import { expect, test } from 'bun:test'
+import { normaliseMeetLink } from './link'
 
-const MEET = "https://meet.google.com/abc-defg-hij";
+const MEET = 'https://meet.google.com/abc-defg-hij'
 
 test.each([
   [MEET, MEET],
-  ["https://meet.google.com/ABCDEFGHIJ", MEET],
-  ["meet.google.com/abc-defg-hij", MEET],
+  ['https://meet.google.com/ABCDEFGHIJ', MEET],
+  ['meet.google.com/abc-defg-hij', MEET],
   [`${MEET}?authuser=1&hs=122&pli=1`, MEET],
-  [
-    `https://www.google.com/url?q=${encodeURIComponent(MEET)}&sa=D&source=calendar`,
-    MEET,
-  ],
-  [
-    `https://apc01.safelinks.protection.outlook.com/?url=${encodeURIComponent(MEET)}&data=TESTDATA&reserved=0`,
-    MEET,
-  ],
-  ["https://g.co/meet/abc-defg-hij", MEET],
-  [
-    "https://meet.google.com/lookup/testclass",
-    "https://meet.google.com/lookup/testclass",
-  ],
-])("normalises %s", (input, expected) => {
-  expect(normaliseMeetLink(input)).toBe(expected);
-});
+  [`https://www.google.com/url?q=${encodeURIComponent(MEET)}&sa=D&source=calendar`, MEET],
+  [`https://apc01.safelinks.protection.outlook.com/?url=${encodeURIComponent(MEET)}&data=TESTDATA&reserved=0`, MEET],
+  ['https://g.co/meet/abc-defg-hij', MEET],
+  ['https://meet.google.com/lookup/testclass', 'https://meet.google.com/lookup/testclass']
+])('normalises %s', (input, expected) => {
+  expect(normaliseMeetLink(input)).toBe(expected)
+})
 
 test.each([
-  "https://meet.google.com/new",
-  "https://meet.google.com/landing",
-  "https://meet.google.com/abc-defg",
-  "https://meet.google.com.evil.example/abc-defg-hij",
-  "https://teams.microsoft.com/meet/1234567890123?p=TESTPASS",
-  "not a url",
-])("rejects %s", (input) => {
-  expect(normaliseMeetLink(input)).toBeNull();
-});
+  'https://meet.google.com/new',
+  'https://meet.google.com/landing',
+  'https://meet.google.com/abc-defg',
+  'https://meet.google.com.evil.example/abc-defg-hij',
+  'https://teams.microsoft.com/meet/1234567890123?p=TESTPASS',
+  'not a url'
+])('rejects %s', (input) => {
+  expect(normaliseMeetLink(input)).toBeNull()
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -303,124 +292,107 @@ git commit -m "feat(worker): normalise meet links"
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-import { expect, test } from "@playwright/test";
-import { joinMeet } from "../../src/adapters/meet/join";
-import { meetSelectors } from "../../src/adapters/meet/selectors";
-import { meetClicks, serveMeet } from "./serve";
+import { expect, test } from '@playwright/test'
+import { joinMeet } from '../../src/adapters/meet/join'
+import { meetSelectors } from '../../src/adapters/meet/selectors'
+import { meetClicks, serveMeet } from './serve'
 
-const MEET = "https://meet.google.com/abc-defg-hij";
-const sel = await meetSelectors();
+const MEET = 'https://meet.google.com/abc-defg-hij'
+const sel = await meetSelectors()
 
-test("turns devices off, then joins now", async ({ page }) => {
+test('turns devices off, then joins now', async ({ page }) => {
   await serveMeet(page, {
-    scene: "prejoin",
-    mic: "on",
-    camera: "on",
-    joinAs: "join-now",
-  });
-  await page.goto(MEET);
-  expect(await joinMeet(page, sel)).toEqual({ kind: "in_meeting" });
-  expect(await meetClicks(page)).toEqual([
-    "Turn off microphone",
-    "Turn off camera",
-    "Join now",
-  ]);
-});
+    scene: 'prejoin',
+    mic: 'on',
+    camera: 'on',
+    joinAs: 'join-now'
+  })
+  await page.goto(MEET)
+  expect(await joinMeet(page, sel)).toEqual({ kind: 'in_meeting' })
+  expect(await meetClicks(page)).toEqual(['Turn off microphone', 'Turn off camera', 'Join now'])
+})
 
-test("asks to join when the organisation does not trust the member", async ({
-  page,
-}) => {
+test('asks to join when the organisation does not trust the member', async ({ page }) => {
   await serveMeet(page, {
-    scene: "prejoin",
-    mic: "off",
-    camera: "off",
-    joinAs: "ask",
-  });
-  await page.goto(MEET);
-  expect(await joinMeet(page, sel)).toEqual({ kind: "lobby" });
-  expect(await meetClicks(page)).toEqual(["Ask to join"]);
-});
+    scene: 'prejoin',
+    mic: 'off',
+    camera: 'off',
+    joinAs: 'ask'
+  })
+  await page.goto(MEET)
+  expect(await joinMeet(page, sel)).toEqual({ kind: 'lobby' })
+  expect(await meetClicks(page)).toEqual(['Ask to join'])
+})
 
-test("passes the device dialog without granting anything", async ({ page }) => {
+test('passes the device dialog without granting anything', async ({ page }) => {
   await serveMeet(page, {
-    scene: "prejoin-permissions",
-    mic: "off",
-    camera: "off",
-    joinAs: "join-now",
-  });
-  await page.goto(MEET);
-  expect(await joinMeet(page, sel)).toEqual({ kind: "in_meeting" });
-  expect(await meetClicks(page)).toEqual([
-    "Continue without microphone and camera",
-    "Join now",
-  ]);
-});
+    scene: 'prejoin-permissions',
+    mic: 'off',
+    camera: 'off',
+    joinAs: 'join-now'
+  })
+  await page.goto(MEET)
+  expect(await joinMeet(page, sel)).toEqual({ kind: 'in_meeting' })
+  expect(await meetClicks(page)).toEqual(['Continue without microphone and camera', 'Join now'])
+})
 
-test("joins here too, never switching the member out of the call", async ({
-  page,
-}) => {
+test('joins here too, never switching the member out of the call', async ({ page }) => {
   await serveMeet(page, {
-    scene: "prejoin",
-    mic: "off",
-    camera: "off",
-    joinAs: "other-device",
-  });
-  await page.goto(MEET);
-  expect(await joinMeet(page, sel)).toEqual({ kind: "in_meeting" });
-  expect(await meetClicks(page)).toEqual(["Join here too"]);
-});
+    scene: 'prejoin',
+    mic: 'off',
+    camera: 'off',
+    joinAs: 'other-device'
+  })
+  await page.goto(MEET)
+  expect(await joinMeet(page, sel)).toEqual({ kind: 'in_meeting' })
+  expect(await meetClicks(page)).toEqual(['Join here too'])
+})
 
-test("an anonymous pre-join means the session expired: no guest knock", async ({
-  page,
-}) => {
-  await serveMeet(page, { scene: "prejoin-anonymous" });
-  await page.goto(MEET);
+test('an anonymous pre-join means the session expired: no guest knock', async ({ page }) => {
+  await serveMeet(page, { scene: 'prejoin-anonymous' })
+  await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({
-    kind: "signin_required",
-    host: "meet.google.com",
-  });
-  await expect(page.locator(sel.selectors.prejoinNameInput)).toHaveValue("");
-  expect(await meetClicks(page)).toEqual([]);
-});
+    kind: 'signin_required',
+    host: 'meet.google.com'
+  })
+  await expect(page.locator(sel.selectors.prejoinNameInput)).toHaveValue('')
+  expect(await meetClicks(page)).toEqual([])
+})
 
-test("a Google sign-in page is signin_required on its host", async ({
-  page,
-}) => {
-  await serveMeet(page, { scene: "signin" });
-  await page.goto(MEET);
+test('a Google sign-in page is signin_required on its host', async ({ page }) => {
+  await serveMeet(page, { scene: 'signin' })
+  await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({
-    kind: "signin_required",
-    host: "accounts.google.com",
-  });
-});
+    kind: 'signin_required',
+    host: 'accounts.google.com'
+  })
+})
 
-test("an automation block fails at once", async ({ page }) => {
-  await serveMeet(page, { scene: "blocked" });
-  await page.goto(MEET);
-  const started = Date.now();
+test('an automation block fails at once', async ({ page }) => {
+  await serveMeet(page, { scene: 'blocked' })
+  await page.goto(MEET)
+  const started = Date.now()
   expect(await joinMeet(page, sel)).toEqual({
-    kind: "failed",
-    reason: "meet_blocked",
-  });
-  expect(Date.now() - started).toBeLessThan(5_000);
-});
+    kind: 'failed',
+    reason: 'meet_blocked'
+  })
+  expect(Date.now() - started).toBeLessThan(5_000)
+})
 
-test("an invalid code fails; an unrecognised page times out", async ({
-  page,
-}) => {
-  await serveMeet(page, { scene: "invalid" });
-  await page.goto(MEET);
+test('an invalid code fails; an unrecognised page times out', async ({ page }) => {
+  await serveMeet(page, { scene: 'invalid' })
+  await page.goto(MEET)
   expect(await joinMeet(page, sel)).toEqual({
-    kind: "failed",
-    reason: "invalid_link",
-  });
-  await serveMeet(page, { scene: "blank" });
-  await page.goto(MEET);
+    kind: 'failed',
+    reason: 'invalid_link'
+  })
+  await serveMeet(page, { scene: 'blank' })
+  await page.goto(MEET)
   expect(await joinMeet(page, sel, 3_000)).toEqual({
-    kind: "failed",
-    reason: "prejoin_timeout",
-  });
-});
+    kind: 'failed',
+    reason: 'prejoin_timeout'
+  })
+})
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -475,94 +447,81 @@ Add scenes `lobby-review` ("Your request to join is being reviewed"), `lobby-den
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-import { expect, test } from "@playwright/test";
-import {
-  meetMeetingState,
-  waitMeetAdmitted,
-} from "../../src/adapters/meet/state";
-import { meetSelectors } from "../../src/adapters/meet/selectors";
-import { meetClicks, serveMeet, setMeetScene } from "./serve";
+import { expect, test } from '@playwright/test'
+import { meetMeetingState, waitMeetAdmitted } from '../../src/adapters/meet/state'
+import { meetSelectors } from '../../src/adapters/meet/selectors'
+import { meetClicks, serveMeet, setMeetScene } from './serve'
 
-const MEET = "https://meet.google.com/abc-defg-hij";
-const sel = await meetSelectors();
-const soon = (ms: number) => new Date(Date.now() + ms);
+const MEET = 'https://meet.google.com/abc-defg-hij'
+const sel = await meetSelectors()
+const soon = (ms: number) => new Date(Date.now() + ms)
 
 for (const [scene, state] of [
-  ["lobby", "lobby"],
-  ["lobby-review", "lobby"],
-  ["meeting", "in_meeting"],
-  ["ended", "ended"],
-  ["left", "ended"],
-  ["removed", "removed"],
-  ["blank", "unknown"],
+  ['lobby', 'lobby'],
+  ['lobby-review', 'lobby'],
+  ['meeting', 'in_meeting'],
+  ['ended', 'ended'],
+  ['left', 'ended'],
+  ['removed', 'removed'],
+  ['blank', 'unknown']
 ] as const) {
   test(`scene ${scene} reads as ${state}`, async ({ page }) => {
-    await serveMeet(page, { scene, mic: "off", camera: "off" });
-    await page.goto(MEET);
-    expect(await meetMeetingState(page, sel)).toBe(state);
-  });
+    await serveMeet(page, { scene, mic: 'off', camera: 'off' })
+    await page.goto(MEET)
+    expect(await meetMeetingState(page, sel)).toBe(state)
+  })
 }
 
-test("chat and spoken captions are never state signals", async ({ page }) => {
+test('chat and spoken captions are never state signals', async ({ page }) => {
   await serveMeet(page, {
-    scene: "meeting",
-    mic: "off",
-    camera: "off",
-    sidePanel: "chat",
-    captions: "and then you left the meeting",
+    scene: 'meeting',
+    mic: 'off',
+    camera: 'off',
+    sidePanel: 'chat',
+    captions: 'and then you left the meeting',
     messages: [
       {
-        id: "c1",
-        sender: "Student",
-        time: "10:01",
-        text: "You've been removed from the meeting",
-      },
-    ],
-  });
-  await page.goto(MEET);
-  expect(await meetMeetingState(page, sel)).toBe("in_meeting");
-});
+        id: 'c1',
+        sender: 'Student',
+        time: '10:01',
+        text: "You've been removed from the meeting"
+      }
+    ]
+  })
+  await page.goto(MEET)
+  expect(await meetMeetingState(page, sel)).toBe('in_meeting')
+})
 
-test("a breakout prompt reads as breakout_prompt and is not touched", async ({
-  page,
-}) => {
+test('a breakout prompt reads as breakout_prompt and is not touched', async ({ page }) => {
   await serveMeet(page, {
-    scene: "meeting",
-    mic: "off",
-    camera: "off",
-    breakout: true,
-  });
-  await page.goto(MEET);
-  expect(await meetMeetingState(page, sel)).toBe("breakout_prompt");
-  expect(await meetClicks(page)).toEqual([]);
-});
+    scene: 'meeting',
+    mic: 'off',
+    camera: 'off',
+    breakout: true
+  })
+  await page.goto(MEET)
+  expect(await meetMeetingState(page, sel)).toBe('breakout_prompt')
+  expect(await meetClicks(page)).toEqual([])
+})
 
-test("admitted from the lobby, and from the review queue", async ({ page }) => {
-  for (const scene of ["lobby", "lobby-review"] as const) {
-    await serveMeet(page, { scene, mic: "off", camera: "off" });
-    await page.goto(MEET);
-    setTimeout(() => void setMeetScene(page, "meeting"), 2_000);
-    expect(await waitMeetAdmitted(page, sel, soon(20_000), 500)).toBe(
-      "admitted",
-    );
+test('admitted from the lobby, and from the review queue', async ({ page }) => {
+  for (const scene of ['lobby', 'lobby-review'] as const) {
+    await serveMeet(page, { scene, mic: 'off', camera: 'off' })
+    await page.goto(MEET)
+    setTimeout(() => void setMeetScene(page, 'meeting'), 2_000)
+    expect(await waitMeetAdmitted(page, sel, soon(20_000), 500)).toBe('admitted')
   }
-});
+})
 
-test("denied, expired and deadline outcomes", async ({ page }) => {
-  await serveMeet(page, { scene: "lobby-denied" });
-  await page.goto(MEET);
-  expect(await waitMeetAdmitted(page, sel, soon(20_000), 500)).toBe(
-    "lobby_denied",
-  );
-  await setMeetScene(page, "lobby-expired");
-  expect(await waitMeetAdmitted(page, sel, soon(20_000), 500)).toBe(
-    "lobby_expired",
-  );
-  await setMeetScene(page, "lobby-review");
-  expect(await waitMeetAdmitted(page, sel, soon(2_000), 500)).toBe(
-    "lobby_expired",
-  );
-});
+test('denied, expired and deadline outcomes', async ({ page }) => {
+  await serveMeet(page, { scene: 'lobby-denied' })
+  await page.goto(MEET)
+  expect(await waitMeetAdmitted(page, sel, soon(20_000), 500)).toBe('lobby_denied')
+  await setMeetScene(page, 'lobby-expired')
+  expect(await waitMeetAdmitted(page, sel, soon(20_000), 500)).toBe('lobby_expired')
+  await setMeetScene(page, 'lobby-review')
+  expect(await waitMeetAdmitted(page, sel, soon(2_000), 500)).toBe('lobby_expired')
+})
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -610,114 +569,97 @@ Add `MeetFixtureConfig.notices: { role: 'dialog' | 'alert'; text: string; button
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-import { expect, test } from "@playwright/test";
+import { expect, test } from '@playwright/test'
 import {
   assertMeetDevicesOff,
   connectMeetOutputAudio,
   dismissMeetNotices,
-  leaveMeet,
-} from "../../src/adapters/meet/controls";
-import { meetMeetingState } from "../../src/adapters/meet/state";
-import { meetSelectors } from "../../src/adapters/meet/selectors";
-import { DevicesOnError } from "../../src/adapters/types";
-import { meetClicks, serveMeet } from "./serve";
+  leaveMeet
+} from '../../src/adapters/meet/controls'
+import { meetMeetingState } from '../../src/adapters/meet/state'
+import { meetSelectors } from '../../src/adapters/meet/selectors'
+import { DevicesOnError } from '../../src/adapters/types'
+import { meetClicks, serveMeet } from './serve'
 
-const MEET = "https://meet.google.com/abc-defg-hij";
-const sel = await meetSelectors();
+const MEET = 'https://meet.google.com/abc-defg-hij'
+const sel = await meetSelectors()
 
-test("devices off passes; either device on, or a missing control, throws", async ({
-  page,
-}) => {
-  await serveMeet(page, { scene: "meeting", mic: "off", camera: "off" });
-  await page.goto(MEET);
-  await assertMeetDevicesOff(page, sel);
-  for (const patch of [{ mic: "on" }, { camera: "on" }] as const) {
+test('devices off passes; either device on, or a missing control, throws', async ({ page }) => {
+  await serveMeet(page, { scene: 'meeting', mic: 'off', camera: 'off' })
+  await page.goto(MEET)
+  await assertMeetDevicesOff(page, sel)
+  for (const patch of [{ mic: 'on' }, { camera: 'on' }] as const) {
     await serveMeet(page, {
-      scene: "meeting",
-      mic: "off",
-      camera: "off",
-      ...patch,
-    });
-    await page.goto(MEET);
-    await expect(assertMeetDevicesOff(page, sel)).rejects.toBeInstanceOf(
-      DevicesOnError,
-    );
+      scene: 'meeting',
+      mic: 'off',
+      camera: 'off',
+      ...patch
+    })
+    await page.goto(MEET)
+    await expect(assertMeetDevicesOff(page, sel)).rejects.toBeInstanceOf(DevicesOnError)
   }
-  await serveMeet(page, { scene: "meeting", mic: "off", camera: "off" });
-  await page.goto(MEET);
-  await page.evaluate(
-    (s) => document.querySelector(s)?.remove(),
-    sel.selectors.micToggle,
-  );
-  await expect(assertMeetDevicesOff(page, sel)).rejects.toBeInstanceOf(
-    DevicesOnError,
-  );
-  expect(await meetClicks(page)).toEqual([]);
-});
+  await serveMeet(page, { scene: 'meeting', mic: 'off', camera: 'off' })
+  await page.goto(MEET)
+  await page.evaluate((s) => document.querySelector(s)?.remove(), sel.selectors.micToggle)
+  await expect(assertMeetDevicesOff(page, sel)).rejects.toBeInstanceOf(DevicesOnError)
+  expect(await meetClicks(page)).toEqual([])
+})
 
-test("clicks only allowlisted buttons inside notices, never the breakout prompt or side panel", async ({
-  page,
-}) => {
+test('clicks only allowlisted buttons inside notices, never the breakout prompt or side panel', async ({ page }) => {
   await serveMeet(page, {
-    scene: "meeting",
-    mic: "off",
-    camera: "off",
-    sidePanel: "chat",
+    scene: 'meeting',
+    mic: 'off',
+    camera: 'off',
+    sidePanel: 'chat',
     breakout: true,
     notices: [
       {
-        role: "dialog",
-        text: "Others may see your video differently",
-        button: "Got it",
+        role: 'dialog',
+        text: 'Others may see your video differently',
+        button: 'Got it'
       },
-      { role: "alert", text: "This call is being recorded", button: "Dismiss" },
+      { role: 'alert', text: 'This call is being recorded', button: 'Dismiss' },
       {
-        role: "dialog",
-        text: "Someone wants to join this call",
-        button: "Admit",
+        role: 'dialog',
+        text: 'Someone wants to join this call',
+        button: 'Admit'
       },
-      { role: "dialog", text: "Turn on captions?", button: "Turn on captions" },
-    ],
-  });
-  await page.goto(MEET);
-  expect(await dismissMeetNotices(page, sel)).toEqual(["Got it", "Dismiss"]);
-  expect(await meetClicks(page)).toEqual(["Got it", "Dismiss"]);
-  await expect(page.locator(sel.selectors.sidePanel)).toBeVisible();
-});
+      { role: 'dialog', text: 'Turn on captions?', button: 'Turn on captions' }
+    ]
+  })
+  await page.goto(MEET)
+  expect(await dismissMeetNotices(page, sel)).toEqual(['Got it', 'Dismiss'])
+  expect(await meetClicks(page)).toEqual(['Got it', 'Dismiss'])
+  await expect(page.locator(sel.selectors.sidePanel)).toBeVisible()
+})
 
-test("output audio needs no clicks, and fails loudly when no audio element exists", async ({
-  page,
-}) => {
-  await serveMeet(page, { scene: "meeting", mic: "off", camera: "off" });
-  await page.goto(MEET);
-  await connectMeetOutputAudio(page, sel);
-  expect(await meetClicks(page)).toEqual([]);
+test('output audio needs no clicks, and fails loudly when no audio element exists', async ({ page }) => {
+  await serveMeet(page, { scene: 'meeting', mic: 'off', camera: 'off' })
+  await page.goto(MEET)
+  await connectMeetOutputAudio(page, sel)
+  expect(await meetClicks(page)).toEqual([])
   await serveMeet(page, {
-    scene: "meeting",
-    mic: "off",
-    camera: "off",
-    audioElements: 0,
-  });
-  await page.goto(MEET);
-  await expect(connectMeetOutputAudio(page, sel)).rejects.toThrow(
-    /no meeting audio/,
-  );
-});
+    scene: 'meeting',
+    mic: 'off',
+    camera: 'off',
+    audioElements: 0
+  })
+  await page.goto(MEET)
+  await expect(connectMeetOutputAudio(page, sel)).rejects.toThrow(/no meeting audio/)
+})
 
-test("leaves without ending the call for everyone, even as host", async ({
-  page,
-}) => {
+test('leaves without ending the call for everyone, even as host', async ({ page }) => {
   await serveMeet(page, {
-    scene: "meeting",
-    mic: "off",
-    camera: "off",
-    host: true,
-  });
-  await page.goto(MEET);
-  await leaveMeet(page, sel);
-  expect(await meetClicks(page)).toEqual(["Leave call", "Just leave the call"]);
-  expect(await meetMeetingState(page, sel)).toBe("ended");
-});
+    scene: 'meeting',
+    mic: 'off',
+    camera: 'off',
+    host: true
+  })
+  await page.goto(MEET)
+  await leaveMeet(page, sel)
+  expect(await meetClicks(page)).toEqual(['Leave call', 'Just leave the call'])
+  expect(await meetMeetingState(page, sel)).toBe('ended')
+})
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -765,59 +707,59 @@ git commit -m "feat(worker): add meet devices, notices, leave"
 - [ ] **Step 1: Write the failing unit test**
 
 ```ts
-import { expect, test } from "bun:test";
-import { toMeetChatMessages } from "./chat";
-import { roleFromMeetLabel } from "./roles";
+import { expect, test } from 'bun:test'
+import { toMeetChatMessages } from './chat'
+import { roleFromMeetLabel } from './roles'
 
-const seenAt = "2026-11-02T10:06:30.000Z";
+const seenAt = '2026-11-02T10:06:30.000Z'
 
-test("assigns roles, extracts links and falls back to a composite key", () => {
+test('assigns roles, extracts links and falls back to a composite key', () => {
   const out = toMeetChatMessages(
     [
       {
-        id: "spaces/X/messages/1",
-        sender: "Lecturer",
-        time: "10:05 AM",
-        text: "Attendance",
-        hrefs: ["https://www.google.com/url?q=https://forms.gle/TESTFORM"],
+        id: 'spaces/X/messages/1',
+        sender: 'Lecturer',
+        time: '10:05 AM',
+        text: 'Attendance',
+        hrefs: ['https://www.google.com/url?q=https://forms.gle/TESTFORM']
       },
       {
         id: null,
-        sender: "Student",
-        time: "10:06 AM",
-        text: "copy: https://docs.google.com/forms/d/e/TESTFORM/viewform).",
-        hrefs: [],
-      },
+        sender: 'Student',
+        time: '10:06 AM',
+        text: 'copy: https://docs.google.com/forms/d/e/TESTFORM/viewform).',
+        hrefs: []
+      }
     ],
-    { roles: new Map([["lecturer", "host"]]), seenAt },
-  );
+    { roles: new Map([['lecturer', 'host']]), seenAt }
+  )
   expect(out[0]).toEqual({
-    key: "spaces/X/messages/1",
-    sender: "Lecturer",
-    senderRole: "host",
-    time: "10:05 AM",
+    key: 'spaces/X/messages/1',
+    sender: 'Lecturer',
+    senderRole: 'host',
+    time: '10:05 AM',
     seenAt,
-    text: "Attendance",
-    links: ["https://www.google.com/url?q=https://forms.gle/TESTFORM"],
-    replyTo: null,
-  });
+    text: 'Attendance',
+    links: ['https://www.google.com/url?q=https://forms.gle/TESTFORM'],
+    replyTo: null
+  })
   expect(out[1]).toMatchObject({
-    key: "Student|10:06 AM|copy: https://docs.google.com/forms/d/e/TESTFORM/viewform).",
-    senderRole: "unknown",
-    links: ["https://docs.google.com/forms/d/e/TESTFORM/viewform"],
-  });
-});
+    key: 'Student|10:06 AM|copy: https://docs.google.com/forms/d/e/TESTFORM/viewform).',
+    senderRole: 'unknown',
+    links: ['https://docs.google.com/forms/d/e/TESTFORM/viewform']
+  })
+})
 
 test.each([
-  ["Meeting host", "host"],
-  ["Host", "host"],
-  ["Co-host", "co_host"],
-  ["Cohost", "co_host"],
-  ["", "participant"],
-  ["External", "participant"],
-] as const)("participant label %s is %s", (label, role) => {
-  expect(roleFromMeetLabel(label)).toBe(role);
-});
+  ['Meeting host', 'host'],
+  ['Host', 'host'],
+  ['Co-host', 'co_host'],
+  ['Cohost', 'co_host'],
+  ['', 'participant'],
+  ['External', 'participant']
+] as const)('participant label %s is %s', (label, role) => {
+  expect(roleFromMeetLabel(label)).toBe(role)
+})
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -841,91 +783,77 @@ Make the chat list scrollable (40 px per message, 10 visible) with `MeetFixtureC
 - [ ] **Step 6: Write the failing browser test**
 
 ```ts
-import { expect, test } from "@playwright/test";
-import { readMeetChat, sweepMeetChat } from "../../src/adapters/meet/chat";
-import { meetSelectors } from "../../src/adapters/meet/selectors";
-import { meetClicks, serveMeet } from "./serve";
+import { expect, test } from '@playwright/test'
+import { readMeetChat, sweepMeetChat } from '../../src/adapters/meet/chat'
+import { meetSelectors } from '../../src/adapters/meet/selectors'
+import { meetClicks, serveMeet } from './serve'
 
-const MEET = "https://meet.google.com/abc-defg-hij";
-const sel = await meetSelectors();
-const msgs = (n: number, from = "Student") =>
+const MEET = 'https://meet.google.com/abc-defg-hij'
+const sel = await meetSelectors()
+const msgs = (n: number, from = 'Student') =>
   Array.from({ length: n }, (_, i) => ({
     id: `m${i}`,
     sender: from,
-    time: "10:00 AM",
-    text: `message ${i}`,
-  }));
+    time: '10:00 AM',
+    text: `message ${i}`
+  }))
 const base = {
-  scene: "meeting",
-  mic: "off",
-  camera: "off",
-  sidePanel: "chat",
-  people: [{ name: "Student" }],
-} as const;
+  scene: 'meeting',
+  mic: 'off',
+  camera: 'off',
+  sidePanel: 'chat',
+  people: [{ name: 'Student' }]
+} as const
 
-test("returns new messages once, then nothing", async ({ page }) => {
-  await serveMeet(page, { ...base, messages: msgs(5) });
-  await page.goto(MEET);
-  const first = await readMeetChat(page, sel, { seenKeys: [] });
-  expect(first.messages.map((m) => m.key)).toEqual([
-    "m0",
-    "m1",
-    "m2",
-    "m3",
-    "m4",
-  ]);
-  expect((await readMeetChat(page, sel, first.cursor)).messages).toEqual([]);
-});
+test('returns new messages once, then nothing', async ({ page }) => {
+  await serveMeet(page, { ...base, messages: msgs(5) })
+  await page.goto(MEET)
+  const first = await readMeetChat(page, sel, { seenKeys: [] })
+  expect(first.messages.map((m) => m.key)).toEqual(['m0', 'm1', 'm2', 'm3', 'm4'])
+  expect((await readMeetChat(page, sel, first.cursor)).messages).toEqual([])
+})
 
-test("keeps the list at the bottom and the sweep reads everything", async ({
-  page,
-}) => {
-  await serveMeet(page, { ...base, messages: msgs(40), chatScroll: "top" });
-  await page.goto(MEET);
-  expect(
-    (await readMeetChat(page, sel, { seenKeys: [] })).messages.at(-1)?.key,
-  ).toBe("m39");
-  expect((await sweepMeetChat(page, sel)).length).toBe(40);
-  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible();
-});
+test('keeps the list at the bottom and the sweep reads everything', async ({ page }) => {
+  await serveMeet(page, { ...base, messages: msgs(40), chatScroll: 'top' })
+  await page.goto(MEET)
+  expect((await readMeetChat(page, sel, { seenKeys: [] })).messages.at(-1)?.key).toBe('m39')
+  expect((await sweepMeetChat(page, sel)).length).toBe(40)
+  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
+})
 
-test("a host who joined late is recognised when they post a link, and chat is reopened", async ({
-  page,
-}) => {
-  await serveMeet(page, { ...base, messages: msgs(1) });
-  await page.goto(MEET);
-  const first = await readMeetChat(page, sel, { seenKeys: [] });
+test('a host who joined late is recognised when they post a link, and chat is reopened', async ({ page }) => {
+  await serveMeet(page, { ...base, messages: msgs(1) })
+  await page.goto(MEET)
+  const first = await readMeetChat(page, sel, { seenKeys: [] })
   await page.evaluate(() => {
-    (window as any).__addPerson({ name: "Lecturer", label: "Meeting host" });
-    (window as any).__addMessage({
-      id: "f1",
-      sender: "Lecturer",
-      time: "10:05 AM",
-      text: "Attendance",
-      href: "https://forms.gle/TESTFORM",
-    });
-  });
-  const next = await readMeetChat(page, sel, first.cursor);
+    ;(window as any).__addPerson({ name: 'Lecturer', label: 'Meeting host' })
+    ;(window as any).__addMessage({
+      id: 'f1',
+      sender: 'Lecturer',
+      time: '10:05 AM',
+      text: 'Attendance',
+      href: 'https://forms.gle/TESTFORM'
+    })
+  })
+  const next = await readMeetChat(page, sel, first.cursor)
   expect(next.messages[0]).toMatchObject({
-    sender: "Lecturer",
-    senderRole: "host",
-    links: ["https://forms.gle/TESTFORM"],
-  });
-  expect(await meetClicks(page)).toEqual(["People", "Chat with everyone"]);
-  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible();
-});
+    sender: 'Lecturer',
+    senderRole: 'host',
+    links: ['https://forms.gle/TESTFORM']
+  })
+  expect(await meetClicks(page)).toEqual(['People', 'Chat with everyone'])
+  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
+})
 
-test("the chat panel closed means no messages and no clicks", async ({
-  page,
-}) => {
-  await serveMeet(page, { ...base, sidePanel: "closed", messages: msgs(3) });
-  await page.goto(MEET);
+test('the chat panel closed means no messages and no clicks', async ({ page }) => {
+  await serveMeet(page, { ...base, sidePanel: 'closed', messages: msgs(3) })
+  await page.goto(MEET)
   expect(await readMeetChat(page, sel, { seenKeys: [] })).toEqual({
     messages: [],
-    cursor: { seenKeys: [] },
-  });
-  expect(await meetClicks(page)).toEqual([]);
-});
+    cursor: { seenKeys: [] }
+  })
+  expect(await meetClicks(page)).toEqual([])
+})
 ```
 
 - [ ] **Step 7: Run it to verify it fails**
@@ -971,78 +899,64 @@ Add `MeetFixtureConfig.peopleCount: number | null` (shown as a badge inside the 
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-import { expect, test } from "@playwright/test";
-import {
-  ensureMeetLayout,
-  meetParticipantCount,
-  meetSharedScreenRegion,
-} from "../../src/adapters/meet/layout";
-import { meetSelectors } from "../../src/adapters/meet/selectors";
-import { meetClicks, serveMeet, setMeetScene } from "./serve";
+import { expect, test } from '@playwright/test'
+import { ensureMeetLayout, meetParticipantCount, meetSharedScreenRegion } from '../../src/adapters/meet/layout'
+import { meetSelectors } from '../../src/adapters/meet/selectors'
+import { meetClicks, serveMeet, setMeetScene } from './serve'
 
-const MEET = "https://meet.google.com/abc-defg-hij";
-const sel = await meetSelectors();
-const base = { scene: "meeting", mic: "off", camera: "off" } as const;
+const MEET = 'https://meet.google.com/abc-defg-hij'
+const sel = await meetSelectors()
+const base = { scene: 'meeting', mic: 'off', camera: 'off' } as const
 const share = {
   box: { x: 0, y: 0, width: 1440, height: 900 },
   width: 1440,
-  height: 1080,
-};
+  height: 1080
+}
 
-test.use({ viewport: { width: 1920, height: 1080 } });
+test.use({ viewport: { width: 1920, height: 1080 } })
 
-test("reads the participant count from the badge with chat left open", async ({
-  page,
-}) => {
-  await serveMeet(page, { ...base, sidePanel: "chat", peopleCount: 57 });
-  await page.goto(MEET);
-  expect(await meetParticipantCount(page, sel)).toBe(57);
-  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible();
-  expect(await meetClicks(page)).toEqual([]);
-});
+test('reads the participant count from the badge with chat left open', async ({ page }) => {
+  await serveMeet(page, { ...base, sidePanel: 'chat', peopleCount: 57 })
+  await page.goto(MEET)
+  expect(await meetParticipantCount(page, sel)).toBe(57)
+  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
+  expect(await meetClicks(page)).toEqual([])
+})
 
-test("reopens chat when the people list took the panel", async ({ page }) => {
-  await serveMeet(page, { ...base, sidePanel: "people", share: null });
-  await page.goto(MEET);
-  await ensureMeetLayout(page, sel);
-  expect(await meetClicks(page)).toEqual(["Chat with everyone"]);
-});
+test('reopens chat when the people list took the panel', async ({ page }) => {
+  await serveMeet(page, { ...base, sidePanel: 'people', share: null })
+  await page.goto(MEET)
+  await ensureMeetLayout(page, sel)
+  expect(await meetClicks(page)).toEqual(['Chat with everyone'])
+})
 
-test("turns captions off and spotlights a share once", async ({ page }) => {
+test('turns captions off and spotlights a share once', async ({ page }) => {
   await serveMeet(page, {
     ...base,
-    sidePanel: "chat",
-    captions: "the QR code is at the bottom",
-    share,
-  });
-  await page.goto(MEET);
-  await ensureMeetLayout(page, sel);
-  await ensureMeetLayout(page, sel);
-  expect(await meetClicks(page)).toEqual([
-    "Turn off captions",
-    "More options",
-    "Adjust view",
-    "Spotlight",
-    "Close",
-  ]);
-  await expect(page.locator(sel.selectors.captionsRegion)).toHaveCount(0);
-  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible();
-});
+    sidePanel: 'chat',
+    captions: 'the QR code is at the bottom',
+    share
+  })
+  await page.goto(MEET)
+  await ensureMeetLayout(page, sel)
+  await ensureMeetLayout(page, sel)
+  expect(await meetClicks(page)).toEqual(['Turn off captions', 'More options', 'Adjust view', 'Spotlight', 'Close'])
+  await expect(page.locator(sel.selectors.captionsRegion)).toHaveCount(0)
+  await expect(page.locator(sel.selectors.chatScroller)).toBeVisible()
+})
 
-test("the shared-screen region is the picture inside the letterbox", async ({
-  page,
-}) => {
-  await serveMeet(page, { ...base, share });
-  await page.goto(MEET);
+test('the shared-screen region is the picture inside the letterbox', async ({ page }) => {
+  await serveMeet(page, { ...base, share })
+  await page.goto(MEET)
   expect(await meetSharedScreenRegion(page, sel)).toEqual({
     x: 120,
     y: 0,
     width: 1200,
-    height: 900,
-  });
-  await setMeetScene(page, "meeting", { share: null });
-  expect(await meetSharedScreenRegion(page, sel)).toBeNull();
-});
+    height: 900
+  })
+  await setMeetScene(page, 'meeting', { share: null })
+  expect(await meetSharedScreenRegion(page, sel)).toBeNull()
+})
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -1085,66 +999,58 @@ git commit -m "feat(worker): keep meet share large and chat open"
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-import { expect, test } from "bun:test";
-import { adapterFor } from "../index";
+import { expect, test } from 'bun:test'
+import { adapterFor } from '../index'
 
-test("adapterFor picks meet for meet links only", () => {
-  expect(
-    adapterFor("https://meet.google.com/abc-defg-hij?authuser=1")?.platform,
-  ).toBe("meet");
-  expect(adapterFor("https://meet.google.com/new")).toBeNull();
-  expect(
-    adapterFor("https://us02web.zoom.us/j/1234567890?pwd=TESTPASS")?.platform,
-  ).toBe("zoom");
-});
+test('adapterFor picks meet for meet links only', () => {
+  expect(adapterFor('https://meet.google.com/abc-defg-hij?authuser=1')?.platform).toBe('meet')
+  expect(adapterFor('https://meet.google.com/new')).toBeNull()
+  expect(adapterFor('https://us02web.zoom.us/j/1234567890?pwd=TESTPASS')?.platform).toBe('zoom')
+})
 ```
 
 ```ts
-import { expect, test } from "@playwright/test";
-import { meetAdapter } from "../../src/adapters/meet";
-import { serveMeet } from "./serve";
+import { expect, test } from '@playwright/test'
+import { meetAdapter } from '../../src/adapters/meet'
+import { serveMeet } from './serve'
 
-test("a step that runs past its timeout rejects, naming the step", async ({
-  page,
-}) => {
-  await serveMeet(page, { scene: "blank" });
-  await page.goto("https://meet.google.com/abc-defg-hij");
-  await expect(meetAdapter.leave(page)).rejects.toThrow(
-    "meet leave timed out after 20000 ms",
-  );
-});
+test('a step that runs past its timeout rejects, naming the step', async ({ page }) => {
+  await serveMeet(page, { scene: 'blank' })
+  await page.goto('https://meet.google.com/abc-defg-hij')
+  await expect(meetAdapter.leave(page)).rejects.toThrow('meet leave timed out after 20000 ms')
+})
 ```
 
 ```ts
 // packages/notify/src/messages.test.ts
-test("meet sign-in copy", () => {
-  expect(alertPing("Data Mining", "meet_signin").message).toBe(
-    "Google asked to sign in, so the bot couldn't join the Meet call. Sign in to Google again for this identity.",
-  );
-});
+test('meet sign-in copy', () => {
+  expect(alertPing('Data Mining', 'meet_signin').message).toBe(
+    "Google asked to sign in, so the bot couldn't join the Meet call. Sign in to Google again for this identity."
+  )
+})
 ```
 
 ```ts
 // packages/worker/src/run.test.ts, with 01a's fakeDeps (give its scripted adapter a platform and a join result if it has no such options yet)
-test("a Meet sign-in request pings meet_signin", async () => {
+test('a Meet sign-in request pings meet_signin', async () => {
   const d = fakeDeps({
-    platform: "meet",
-    join: { kind: "signin_required", host: "accounts.google.com" },
-  });
+    platform: 'meet',
+    join: { kind: 'signin_required', host: 'accounts.google.com' }
+  })
   expect(await runOccurrence(lectureCfg, d)).toMatchObject({
-    result: "failed",
-    reason: "signin_required",
-  });
-  expect(d.alerts).toEqual(["meet_signin"]);
-});
+    result: 'failed',
+    reason: 'signin_required'
+  })
+  expect(d.alerts).toEqual(['meet_signin'])
+})
 
-test("the layout is kept on every refresh, not only after joining", async () => {
+test('the layout is kept on every refresh, not only after joining', async () => {
   const d = fakeDeps({
-    states: ["in_meeting", "in_meeting", "in_meeting", "ended"],
-  });
-  await runOccurrence(lectureCfg, d);
-  expect(d.calls.filter((c) => c === "ensureLayout").length).toBeGreaterThan(1);
-});
+    states: ['in_meeting', 'in_meeting', 'in_meeting', 'ended']
+  })
+  await runOccurrence(lectureCfg, d)
+  expect(d.calls.filter((c) => c === 'ensureLayout').length).toBeGreaterThan(1)
+})
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -1168,8 +1074,8 @@ export const MEET_TIMEOUTS = {
   participantCount: 5_000,
   meetingState: 5_000,
   dismissNotices: 5_000,
-  leave: 20_000,
-} as const;
+  leave: 20_000
+} as const
 ```
 
 `adapterFor` gains `meetAdapter` after the adapters it already tries; the first whose `normaliseLink` isn't null wins. In `run.ts`, step 5 pings `meet_signin` (with plan 01c's "Sign in again" action, as for `zoom_signin`) when the adapter's platform is `meet`, and step 8 calls `ensureLayout` with each 10-second refresh of `sharedScreenRegion` and `participantCount`, so chat comes back after a roster read and a new presentation is spotlighted. In `messages.ts`, add `meet_signin` with the copy in the test.
@@ -1210,53 +1116,47 @@ No earlier plan builds the design's monthly smoke test. Plan 04's Task 11 specif
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-import { expect, test } from "bun:test";
-import { MeetSelectorsSchema } from "../adapters/meet/selectors";
-import { SMOKE_ENTRIES } from "./entries";
-import { meetSmoke } from "./meet";
+import { expect, test } from 'bun:test'
+import { MeetSelectorsSchema } from '../adapters/meet/selectors'
+import { SMOKE_ENTRIES } from './entries'
+import { meetSmoke } from './meet'
 
-test("the meet smoke entry is registered and checks only real selector keys", () => {
-  expect(SMOKE_ENTRIES).toContain(meetSmoke);
+test('the meet smoke entry is registered and checks only real selector keys', () => {
+  expect(SMOKE_ENTRIES).toContain(meetSmoke)
   for (const key of Object.values(meetSmoke.checkpoints).flat()) {
-    expect(Object.keys(MeetSelectorsSchema.shape.selectors.shape)).toContain(
-      key,
-    );
+    expect(Object.keys(MeetSelectorsSchema.shape.selectors.shape)).toContain(key)
   }
-});
+})
 ```
 
 ```ts
-import { expect, test } from "@playwright/test";
-import { runSmokeEntry } from "../../src/smoke/run";
-import { meetSmoke } from "../../src/smoke/meet";
-import { serveMeet } from "./serve";
+import { expect, test } from '@playwright/test'
+import { runSmokeEntry } from '../../src/smoke/run'
+import { meetSmoke } from '../../src/smoke/meet'
+import { serveMeet } from './serve'
 
-const URL = "https://meet.google.com/abc-defg-hij";
+const URL = 'https://meet.google.com/abc-defg-hij'
 const cfg = {
-  scene: "prejoin",
-  mic: "off",
-  camera: "off",
-  joinAs: "join-now",
-  sidePanel: "closed",
-  people: [{ name: "Member" }],
-} as const;
+  scene: 'prejoin',
+  mic: 'off',
+  camera: 'off',
+  joinAs: 'join-now',
+  sidePanel: 'closed',
+  people: [{ name: 'Member' }]
+} as const
 
-test("passes on the full imitation", async ({ page }) => {
-  await serveMeet(page, cfg);
-  expect(await runSmokeEntry(page, meetSmoke, URL)).toEqual({ missing: [] });
-});
+test('passes on the full imitation', async ({ page }) => {
+  await serveMeet(page, cfg)
+  expect(await runSmokeEntry(page, meetSmoke, URL)).toEqual({ missing: [] })
+})
 
-test("fails loudly, naming the key, when the chat button is gone", async ({
-  page,
-}) => {
+test('fails loudly, naming the key, when the chat button is gone', async ({ page }) => {
   await serveMeet(page, {
     ...cfg,
-    omit: ["[aria-label='Chat with everyone']"],
-  });
-  expect((await runSmokeEntry(page, meetSmoke, URL)).missing).toContain(
-    "chatButton",
-  );
-});
+    omit: ["[aria-label='Chat with everyone']"]
+  })
+  expect((await runSmokeEntry(page, meetSmoke, URL)).missing).toContain('chatButton')
+})
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -1270,24 +1170,24 @@ Add `MeetFixtureConfig.omit: string[]` (selectors whose elements the fixture lea
 
 ```ts
 export const meetSmoke: SmokeEntry = {
-  platform: "meet",
+  platform: 'meet',
   selectors: meetSelectors,
   checkpoints: {
     inMeeting: [
-      "leaveButton",
-      "micToggle",
-      "micOff",
-      "cameraToggle",
-      "cameraOff",
-      "chatButton",
-      "peopleButton",
-      "moreButton",
+      'leaveButton',
+      'micToggle',
+      'micOff',
+      'cameraToggle',
+      'cameraOff',
+      'chatButton',
+      'peopleButton',
+      'moreButton'
     ],
-    afterLayout: ["sidePanel", "chatScroller"],
-    afterSweep: ["chatScroller"],
-    afterLeave: [],
-  },
-};
+    afterLayout: ['sidePanel', 'chatScroller'],
+    afterSweep: ['chatScroller'],
+    afterLeave: []
+  }
+}
 ```
 
 The Meet test meeting is a standing meeting owned by a Google Workspace test account with access set to "Open", so the smoke identity joins without knocking. Add its line to `docker/worker/smoke.crontab`.

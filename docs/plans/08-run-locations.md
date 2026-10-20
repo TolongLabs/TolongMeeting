@@ -76,71 +76,55 @@ Contents:
 
 ```ts
 // packages/core/src/companion.ts
-export type CompanionJobKind = "native_transcription" | "local_run";
+export type CompanionJobKind = 'native_transcription' | 'local_run'
 export interface LocalRunPayload {
-  occurrenceId: string;
-  identityId: string;
-  identityName: string;
-  image: string;
-  job: JobConfig;
+  occurrenceId: string
+  identityId: string
+  identityName: string
+  image: string
+  job: JobConfig
 } // job.ai.apiKey '', job.member.details [], job.ntfy.token '', job.control null
 export type CompanionJob = {
-  id: string;
-  state: CompanionJobState;
-  occurrenceId: string;
-  attempts: number;
-} & (
-  | { kind: "native_transcription"; payload: NativeJobPayload }
-  | { kind: "local_run"; payload: LocalRunPayload }
-);
+  id: string
+  state: CompanionJobState
+  occurrenceId: string
+  attempts: number
+} & ({ kind: 'native_transcription'; payload: NativeJobPayload } | { kind: 'local_run'; payload: LocalRunPayload })
 export type CompanionCommand =
-  | { type: "job_available"; jobId: string }
-  | { type: "open_signin"; identityId: string }
-  | { type: "local_identities_changed" };
+  | { type: 'job_available'; jobId: string }
+  | { type: 'open_signin'; identityId: string }
+  | { type: 'local_identities_changed' }
 export interface LocalSecrets {
-  apiKey: string;
-  details: SavedDetail[];
+  apiKey: string
+  details: SavedDetail[]
 }
-export type PreflightReason =
-  "ok" | "docker_unavailable" | "docker_memory_low" | "image_unavailable";
+export type PreflightReason = 'ok' | 'docker_unavailable' | 'docker_memory_low' | 'image_unavailable'
 export interface PreflightReport {
-  reason: PreflightReason;
-  dockerMemBytes: number | null;
+  reason: PreflightReason
+  dockerMemBytes: number | null
 }
-export const MIN_DOCKER_MEM_BYTES = 4_026_531_840; // 3.75 GiB: a 4 GB Docker Desktop allotment reports about 3.8 GiB
-export const DEVICE_ONLINE_WINDOW_MS = 90_000;
-export const LOCAL_HEARTBEAT_TIMEOUT_MS = 120_000;
-export function shortTime(iso: string, timeZone: string): string; // '14:00'
+export const MIN_DOCKER_MEM_BYTES = 4_026_531_840 // 3.75 GiB: a 4 GB Docker Desktop allotment reports about 3.8 GiB
+export const DEVICE_ONLINE_WINDOW_MS = 90_000
+export const LOCAL_HEARTBEAT_TIMEOUT_MS = 120_000
+export function shortTime(iso: string, timeZone: string): string // '14:00'
 
 // packages/web/db/companion.ts
-export function isDeviceOnline(
-  db: Db,
-  deviceId: string,
-  now?: Date,
-): Promise<boolean>;
-export function deviceName(db: Db, deviceId: string): Promise<string | null>;
-export function listLocalIdentities(
-  db: Db,
-  device: DeviceAuth,
-): Promise<{ id: string; name: string }[]>;
+export function isDeviceOnline(db: Db, deviceId: string, now?: Date): Promise<boolean>
+export function deviceName(db: Db, deviceId: string): Promise<string | null>
+export function listLocalIdentities(db: Db, device: DeviceAuth): Promise<{ id: string; name: string }[]>
 
 // packages/web/lib/run-locations/settings.ts
 export type RunLocationChoice =
-  | { location: "server" }
-  | { location: "server_via_home" }
-  | { location: "local"; deviceId: string };
+  { location: 'server' } | { location: 'server_via_home' } | { location: 'local'; deviceId: string }
 export function setRunLocation(
   db: Db,
   memberId: string,
   identityId: string,
-  choice: RunLocationChoice,
-): Promise<{ ok: true } | { ok: false; error: "device_not_found" }>; // Task 11 adds 'home_route_not_set_up'
+  choice: RunLocationChoice
+): Promise<{ ok: true } | { ok: false; error: 'device_not_found' }> // Task 11 adds 'home_route_not_set_up'
 
 // packages/scheduler/src/profile-delete.ts, pg-boss queue 'profile-delete'
-export function deleteServerProfile(
-  identityId: string,
-  profileRoot?: string,
-): Promise<void>; // default $TM_PROFILE_ROOT
+export function deleteServerProfile(identityId: string, profileRoot?: string): Promise<void> // default $TM_PROFILE_ROOT
 ```
 
 - Routes (adds to contracts): `PUT /api/identities/<id>/run-location` (member session, body `RunLocationChoice`); `GET /api/companion/identities` (device token) answers `{ identities: { id: string; name: string }[]; image: string }`, where `image` is `TM_WORKER_IMAGE_REF`.
@@ -149,74 +133,62 @@ export function deleteServerProfile(
 
 ```ts
 // companion.test.ts (added)
-test("shortTime and the memory floor", () => {
-  expect(shortTime("2026-10-21T14:00:00+08:00", "Asia/Kuala_Lumpur")).toBe(
-    "14:00",
-  );
-  expect(MIN_DOCKER_MEM_BYTES).toBe(3.75 * 1024 ** 3);
-});
+test('shortTime and the memory floor', () => {
+  expect(shortTime('2026-10-21T14:00:00+08:00', 'Asia/Kuala_Lumpur')).toBe('14:00')
+  expect(MIN_DOCKER_MEM_BYTES).toBe(3.75 * 1024 ** 3)
+})
 
 // settings.test.ts
 test("My PC needs one of the member's own unrevoked devices", async () => {
   expect(
     await setRunLocation(db, memberA, identityA, {
-      location: "local",
-      deviceId: f.b1.deviceId,
-    }),
-  ).toEqual({ ok: false, error: "device_not_found" });
+      location: 'local',
+      deviceId: f.b1.deviceId
+    })
+  ).toEqual({ ok: false, error: 'device_not_found' })
   expect(
     await setRunLocation(db, memberA, identityA, {
-      location: "local",
-      deviceId: f.a1.deviceId,
-    }),
-  ).toEqual({ ok: true });
-});
-test("switching to My PC deletes the server profile and tells that PC", async () => {
+      location: 'local',
+      deviceId: f.a1.deviceId
+    })
+  ).toEqual({ ok: true })
+})
+test('switching to My PC deletes the server profile and tells that PC', async () => {
   await setRunLocation(db, memberA, identityA, {
-    location: "local",
-    deviceId: f.a1.deviceId,
-  });
-  expect(scheduled).toContainEqual([
-    "profile-delete",
-    { identityId: identityA },
-    0,
-  ]);
-  expect(
-    (await listCompanionEvents(db, f.a1, 0)).map((e) => e.command),
-  ).toContainEqual({ type: "local_identities_changed" });
-  expect(await listLocalIdentities(db, f.a1)).toEqual([
-    { id: identityA, name: "University" },
-  ]);
-  expect(await listLocalIdentities(db, f.a2)).toEqual([]);
-});
-test("revoking the PC clears the binding but leaves the identity on My PC", async () => {
+    location: 'local',
+    deviceId: f.a1.deviceId
+  })
+  expect(scheduled).toContainEqual(['profile-delete', { identityId: identityA }, 0])
+  expect((await listCompanionEvents(db, f.a1, 0)).map((e) => e.command)).toContainEqual({
+    type: 'local_identities_changed'
+  })
+  expect(await listLocalIdentities(db, f.a1)).toEqual([{ id: identityA, name: 'University' }])
+  expect(await listLocalIdentities(db, f.a2)).toEqual([])
+})
+test('revoking the PC clears the binding but leaves the identity on My PC', async () => {
   await setRunLocation(db, memberA, identityA, {
-    location: "local",
-    deviceId: f.a1.deviceId,
-  });
-  await revokeDevice(db, memberA, f.a1.deviceId);
+    location: 'local',
+    deviceId: f.a1.deviceId
+  })
+  await revokeDevice(db, memberA, f.a1.deviceId)
   expect(await identityRow(identityA)).toMatchObject({
-    runLocation: "local",
-    localDeviceId: null,
-  });
-});
-test("a device counts as online for 90 seconds after it was last seen", async () => {
-  await touchDevice(f.a1.deviceId, t0);
-  expect(await isDeviceOnline(db, f.a1.deviceId, plus(90_000))).toBe(true);
-  expect(await isDeviceOnline(db, f.a1.deviceId, plus(90_001))).toBe(false);
-});
+    runLocation: 'local',
+    localDeviceId: null
+  })
+})
+test('a device counts as online for 90 seconds after it was last seen', async () => {
+  await touchDevice(f.a1.deviceId, t0)
+  expect(await isDeviceOnline(db, f.a1.deviceId, plus(90_000))).toBe(true)
+  expect(await isDeviceOnline(db, f.a1.deviceId, plus(90_001))).toBe(false)
+})
 
 // profile-delete.test.ts
-test("deleteServerProfile removes only that identity", async () => {
-  const root = await profileRootWith([
-    "u1/work/Default/Cookies",
-    "u1/checkpoints/1.tar.enc",
-    "u2/work/x",
-  ]);
-  await deleteServerProfile("u1", root);
-  expect(existsSync(join(root, "u1"))).toBe(false);
-  expect(existsSync(join(root, "u2/work/x"))).toBe(true);
-});
+test('deleteServerProfile removes only that identity', async () => {
+  const root = await profileRootWith(['u1/work/Default/Cookies', 'u1/checkpoints/1.tar.enc', 'u2/work/x'])
+  await deleteServerProfile('u1', root)
+  expect(existsSync(join(root, 'u1'))).toBe(false)
+  expect(existsSync(join(root, 'u2/work/x'))).toBe(true)
+})
 ```
 
 `scheduled` records `scheduleJob` calls (through `mock.module`); `identityRow`, `touchDevice` and `profileRootWith` are local helpers; `t0` and `plus` are as in plan 03.
@@ -257,51 +229,30 @@ git commit -m "feat(web): choose where an identity runs"
 
 ```ts
 export interface LocalDeps {
-  sendPing: typeof sendPing;
-  transition: typeof applyTrigger;
-  fail(occurrenceId: string, reason: string): Promise<void>;
-  schedule: typeof scheduleJob;
-  memberNtfy: typeof memberNtfy;
-  meetingUrl: typeof meetingUrl;
+  sendPing: typeof sendPing
+  transition: typeof applyTrigger
+  fail(occurrenceId: string, reason: string): Promise<void>
+  schedule: typeof scheduleJob
+  memberNtfy: typeof memberNtfy
+  meetingUrl: typeof meetingUrl
 } // fail = applyTrigger(…, 'fail', { reason }) then pingWorkerFailed
-export function toLocalPayload(
-  cfg: JobConfig,
-  identityName: string,
-  image: string,
-): LocalRunPayload;
+export function toLocalPayload(cfg: JobConfig, identityName: string, image: string): LocalRunPayload
 export function startLocalRun(
   db: Db,
   cfg: JobConfig,
   deps: LocalDeps,
-  now?: Date,
-): Promise<"offered" | "skipped_pc_offline">;
+  now?: Date
+): Promise<'offered' | 'skipped_pc_offline'>
 export function checkLocalClaim(
   db: Db,
   jobId: string,
   deps: LocalDeps,
-  now?: Date,
-): Promise<"claimed" | "skipped_pc_offline">; // runs at offer + 120 s
-export function checkLocalStart(
-  db: Db,
-  jobId: string,
-  deps: LocalDeps,
-  now?: Date,
-): Promise<"running" | "failed">; // runs at T-10
-export function localHeartbeatTimeout(
-  state: OccurrenceState,
-  silentForMs: number,
-): "none" | "pc_lost"; // used by plan 01c's monitor for local runs
-export function localSecrets(
-  db: Db,
-  device: DeviceAuth,
-  jobId: string,
-  now?: Date,
-): Promise<LocalSecrets | null>;
-export function releaseJob(
-  db: Db,
-  device: DeviceAuth,
-  jobId: string,
-): Promise<boolean>; // claimed -> pending, attempts unchanged
+  now?: Date
+): Promise<'claimed' | 'skipped_pc_offline'> // runs at offer + 120 s
+export function checkLocalStart(db: Db, jobId: string, deps: LocalDeps, now?: Date): Promise<'running' | 'failed'> // runs at T-10
+export function localHeartbeatTimeout(state: OccurrenceState, silentForMs: number): 'none' | 'pc_lost' // used by plan 01c's monitor for local runs
+export function localSecrets(db: Db, device: DeviceAuth, jobId: string, now?: Date): Promise<LocalSecrets | null>
+export function releaseJob(db: Db, device: DeviceAuth, jobId: string): Promise<boolean> // claimed -> pending, attempts unchanged
 ```
 
 - Routes (adds to contracts): `GET /api/companion/jobs/<id>/secrets` (200 `LocalSecrets` with `Cache-Control: no-store`; 404 outside the active window or for any other job); `POST /api/companion/jobs/<id>/release` (204).
@@ -310,101 +261,82 @@ export function releaseJob(
 
 ```ts
 // dispatch.test.ts. Entry "Data Mining", 14:00 to 16:00 Asia/Kuala_Lumpur, identity "University" bound to f.a1 named "DESKTOP-ABC"; T-60 is 13:00.
-test("toLocalPayload strips every secret and the control block", () => {
-  const p = toLocalPayload(
-    cfgA,
-    "University",
-    "ghcr.io/tl/tolongmeeting-worker:1.0.0",
-  );
-  expect(p.job.ai.apiKey).toBe("");
-  expect(p.job.member.details).toEqual([]);
-  expect(p.job.ntfy.token).toBe("");
-  expect(p.job.control).toBeNull();
-  expect(JSON.stringify(p)).not.toContain(cfgA.ai.apiKey);
-});
-test("an online PC gets the job, an announcement and a claim check at 120 s", async () => {
-  await touchDevice(f.a1.deviceId, at("12:59:30"));
-  expect(await startLocalRun(db, cfgA, deps, at("13:00"))).toBe("offered");
-  const jobs = await listJobsForDevice(db, f.a1);
-  expect(jobs).toContainEqual(
-    expect.objectContaining({ kind: "local_run", occurrenceId: f.occA }),
-  );
-  expect(await listJobsForDevice(db, f.a2)).toEqual([]);
-  expect(deps.scheduled).toContainEqual([
-    "local-claim-check",
-    { jobId: jobs[0].id },
-    120,
-  ]);
-  expect(deps.scheduled).toContainEqual([
-    "local-start-check",
-    { jobId: jobs[0].id },
-    3000,
-  ]);
-});
-test("a PC not seen for 90 seconds is skipped with an immediate high-priority ping", async () => {
-  await touchDevice(f.a1.deviceId, at("12:58:00"));
-  expect(await startLocalRun(db, cfgA, deps, at("13:00"))).toBe(
-    "skipped_pc_offline",
-  );
-  expect(deps.transitions).toEqual([[f.occA, "skip_pc_offline"]]);
+test('toLocalPayload strips every secret and the control block', () => {
+  const p = toLocalPayload(cfgA, 'University', 'ghcr.io/tl/tolongmeeting-worker:1.0.0')
+  expect(p.job.ai.apiKey).toBe('')
+  expect(p.job.member.details).toEqual([])
+  expect(p.job.ntfy.token).toBe('')
+  expect(p.job.control).toBeNull()
+  expect(JSON.stringify(p)).not.toContain(cfgA.ai.apiKey)
+})
+test('an online PC gets the job, an announcement and a claim check at 120 s', async () => {
+  await touchDevice(f.a1.deviceId, at('12:59:30'))
+  expect(await startLocalRun(db, cfgA, deps, at('13:00'))).toBe('offered')
+  const jobs = await listJobsForDevice(db, f.a1)
+  expect(jobs).toContainEqual(expect.objectContaining({ kind: 'local_run', occurrenceId: f.occA }))
+  expect(await listJobsForDevice(db, f.a2)).toEqual([])
+  expect(deps.scheduled).toContainEqual(['local-claim-check', { jobId: jobs[0].id }, 120])
+  expect(deps.scheduled).toContainEqual(['local-start-check', { jobId: jobs[0].id }, 3000])
+})
+test('a PC not seen for 90 seconds is skipped with an immediate high-priority ping', async () => {
+  await touchDevice(f.a1.deviceId, at('12:58:00'))
+  expect(await startLocalRun(db, cfgA, deps, at('13:00'))).toBe('skipped_pc_offline')
+  expect(deps.transitions).toEqual([[f.occA, 'skip_pc_offline']])
   expect(deps.pings).toEqual([
     {
-      title: "Your PC is offline",
-      message:
-        "Data Mining (14:00) runs on DESKTOP-ABC, which is asleep or off, so the bot won't join.",
-      priority: "high",
-      actions: [{ label: "Open meeting page", url: deps.meetingUrl(f.occA) }],
-    },
-  ]);
-});
-test("an identity without a paired PC is skipped with its own message", async () => {
-  await clearBinding(identityA);
-  await startLocalRun(db, cfgA, deps, at("13:00"));
+      title: 'Your PC is offline',
+      message: "Data Mining (14:00) runs on DESKTOP-ABC, which is asleep or off, so the bot won't join.",
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: deps.meetingUrl(f.occA) }]
+    }
+  ])
+})
+test('an identity without a paired PC is skipped with its own message', async () => {
+  await clearBinding(identityA)
+  await startLocalRun(db, cfgA, deps, at('13:00'))
   expect(deps.pings[0].message).toBe(
-    "Data Mining (14:00) runs on My PC, but no PC is paired for University, so the bot won't join.",
-  );
-});
-test("an unclaimed offer is cancelled and skipped after 120 s", async () => {
-  await touchDevice(f.a1.deviceId, at("13:00"));
-  await startLocalRun(db, cfgA, deps, at("13:00"));
-  const [job] = await listJobsForDevice(db, f.a1);
-  expect(await checkLocalClaim(db, job.id, deps, at("13:02"))).toBe(
-    "skipped_pc_offline",
-  );
-  expect((await getJob(db, job.id))?.state).toBe("cancelled");
-});
-test("no heartbeat by T-10 fails the run with the last preflight reason", async () => {
-  const job = await claimedLocalRun(f.a1, { error: "docker_unavailable" });
-  expect(await checkLocalStart(db, job, deps, at("13:50"))).toBe("failed");
-  expect(deps.failed).toEqual([[f.occA, "docker_unavailable"]]);
-  expect((await getJob(db, job))?.state).toBe("failed");
-});
-test("a local run times out after 120 s of silence, but never once it is uploading", () => {
-  expect(localHeartbeatTimeout("in_meeting", 119_999)).toBe("none");
-  expect(localHeartbeatTimeout("in_meeting", 120_001)).toBe("pc_lost");
-  expect(localHeartbeatTimeout("uploading", 36_000_000)).toBe("none");
-  expect(localHeartbeatTimeout("transcribing", 36_000_000)).toBe("none");
-});
+    "Data Mining (14:00) runs on My PC, but no PC is paired for University, so the bot won't join."
+  )
+})
+test('an unclaimed offer is cancelled and skipped after 120 s', async () => {
+  await touchDevice(f.a1.deviceId, at('13:00'))
+  await startLocalRun(db, cfgA, deps, at('13:00'))
+  const [job] = await listJobsForDevice(db, f.a1)
+  expect(await checkLocalClaim(db, job.id, deps, at('13:02'))).toBe('skipped_pc_offline')
+  expect((await getJob(db, job.id))?.state).toBe('cancelled')
+})
+test('no heartbeat by T-10 fails the run with the last preflight reason', async () => {
+  const job = await claimedLocalRun(f.a1, { error: 'docker_unavailable' })
+  expect(await checkLocalStart(db, job, deps, at('13:50'))).toBe('failed')
+  expect(deps.failed).toEqual([[f.occA, 'docker_unavailable']])
+  expect((await getJob(db, job))?.state).toBe('failed')
+})
+test('a local run times out after 120 s of silence, but never once it is uploading', () => {
+  expect(localHeartbeatTimeout('in_meeting', 119_999)).toBe('none')
+  expect(localHeartbeatTimeout('in_meeting', 120_001)).toBe('pc_lost')
+  expect(localHeartbeatTimeout('uploading', 36_000_000)).toBe('none')
+  expect(localHeartbeatTimeout('transcribing', 36_000_000)).toBe('none')
+})
 
 // local.test.ts
-test("secrets go only to the PC holding an active local run", async () => {
-  const id = await claimedLocalRun(f.a1);
-  expect(await localSecrets(db, f.a1, id, at("12:49"))).toBeNull(); // before start - 70 min
-  expect(await localSecrets(db, f.a1, id, at("13:00"))).toEqual({
+test('secrets go only to the PC holding an active local run', async () => {
+  const id = await claimedLocalRun(f.a1)
+  expect(await localSecrets(db, f.a1, id, at('12:49'))).toBeNull() // before start - 70 min
+  expect(await localSecrets(db, f.a1, id, at('13:00'))).toEqual({
     apiKey: memberAKey,
-    details: memberADetails,
-  });
-  expect(await localSecrets(db, f.a1, id, at("16:31"))).toBeNull(); // after end + 30 min
-  expect(await localSecrets(db, f.a2, id, at("13:00"))).toBeNull();
-  expect(await localSecrets(db, f.b1, id, at("13:00"))).toBeNull();
-});
-test("local runs keep their claim when the lease lapses; release keeps the attempt count", async () => {
-  const id = await claimedLocalRun(f.a1);
-  expect(await releaseExpiredLeases(db, at("18:00"))).not.toContain(id);
-  const native = await claimedNativeJob(f.a1);
-  expect(await releaseJob(db, f.a1, native)).toBe(true);
-  expect((await getJob(db, native))?.attempts).toBe(0);
-});
+    details: memberADetails
+  })
+  expect(await localSecrets(db, f.a1, id, at('16:31'))).toBeNull() // after end + 30 min
+  expect(await localSecrets(db, f.a2, id, at('13:00'))).toBeNull()
+  expect(await localSecrets(db, f.b1, id, at('13:00'))).toBeNull()
+})
+test('local runs keep their claim when the lease lapses; release keeps the attempt count', async () => {
+  const id = await claimedLocalRun(f.a1)
+  expect(await releaseExpiredLeases(db, at('18:00'))).not.toContain(id)
+  const native = await claimedNativeJob(f.a1)
+  expect(await releaseJob(db, f.a1, native)).toBe(true)
+  expect((await getJob(db, native))?.attempts).toBe(0)
+})
 ```
 
 `at('HH:mm[:ss]')` is that time on 21 October 2026 in Kuala Lumpur; `deps` records `pings`, `transitions`, `failed` and `scheduled`; `claimedLocalRun(device, { error? })` creates and claims a `local_run` job, setting its `error` column.
@@ -444,39 +376,24 @@ git commit -m "feat(scheduler): offer local runs to the PC"
 - Produces:
 
 ```ts
-export const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024;
-export function isUploadPath(relPath: string): boolean;
-export function relayHeartbeat(
-  db: Db,
-  device: DeviceAuth,
-  jobId: string,
-  hb: Heartbeat,
-): Promise<HeartbeatReply | null>;
-export function recordPreflight(
-  db: Db,
-  device: DeviceAuth,
-  jobId: string,
-  r: PreflightReport,
-): Promise<void>;
-export function uploadOffset(
-  db: Db,
-  device: DeviceAuth,
-  jobId: string,
-  relPath: string,
-): Promise<number | null>;
+export const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024
+export function isUploadPath(relPath: string): boolean
+export function relayHeartbeat(db: Db, device: DeviceAuth, jobId: string, hb: Heartbeat): Promise<HeartbeatReply | null>
+export function recordPreflight(db: Db, device: DeviceAuth, jobId: string, r: PreflightReport): Promise<void>
+export function uploadOffset(db: Db, device: DeviceAuth, jobId: string, relPath: string): Promise<number | null>
 export function appendUpload(
   db: Db,
   device: DeviceAuth,
   jobId: string,
   relPath: string,
   contentRange: string,
-  body: ReadableStream<Uint8Array>,
-): Promise<{ status: 204 | 400 | 404 | 409; offset: number }>;
+  body: ReadableStream<Uint8Array>
+): Promise<{ status: 204 | 400 | 404 | 409; offset: number }>
 export function completeLocalRun(
   db: Db,
   device: DeviceAuth,
-  jobId: string,
-): Promise<{ ok: true } | { ok: false; missing: string[] }>;
+  jobId: string
+): Promise<{ ok: true } | { ok: false; missing: string[] }>
 ```
 
 - Routes (adds to contracts): `POST .../heartbeat` (body `Heartbeat`, answers `HeartbeatReply`); `POST .../preflight` (body `PreflightReport`, 204); `HEAD .../files/<path>` (header `Upload-Offset`); `PUT .../files/<path>` (header `Content-Range: bytes <start>-<end>/<total>`, 204, or 409 with `Upload-Offset`); `POST .../complete` (204, or 400 with `{ missing }`). All under `/api/companion/jobs/<id>/`, for the device holding that `local_run` job.
@@ -485,130 +402,97 @@ export function completeLocalRun(
 
 ```ts
 test.each([
-  ["recording/meeting.mkv", true],
-  ["recording/attempt_2_seg_014.mkv", true],
-  ["frames/0007_141502.png", true],
-  ["chat.jsonl", true],
-  ["events.jsonl", true],
-  ["forms/f1/record.json", true],
-  ["forms/f1/filled.png", true],
-  ["transcript/live.jsonl", true],
-  ["transcript/native/audio.srt", true],
-  ["audio.flac", false],
-  ["../other/events.jsonl", false],
-  ["forms/../../x.json", false],
-  ["/etc/passwd", false],
-  ["recording\\meeting.mkv", false],
-  ["profiles/u1/work/Cookies", false],
-])("isUploadPath(%s) is %p", (p, ok) => expect(isUploadPath(p)).toBe(ok));
+  ['recording/meeting.mkv', true],
+  ['recording/attempt_2_seg_014.mkv', true],
+  ['frames/0007_141502.png', true],
+  ['chat.jsonl', true],
+  ['events.jsonl', true],
+  ['forms/f1/record.json', true],
+  ['forms/f1/filled.png', true],
+  ['transcript/live.jsonl', true],
+  ['transcript/native/audio.srt', true],
+  ['audio.flac', false],
+  ['../other/events.jsonl', false],
+  ['forms/../../x.json', false],
+  ['/etc/passwd', false],
+  ['recording\\meeting.mkv', false],
+  ['profiles/u1/work/Cookies', false]
+])('isUploadPath(%s) is %p', (p, ok) => expect(isUploadPath(p)).toBe(ok))
 
-test("a heartbeat is passed to the heartbeat handler only for the run this PC holds", async () => {
-  const id = await claimedLocalRun(f.a1);
-  expect(await relayHeartbeat(db, f.a1, id, hb(f.occA, "in_meeting"))).toEqual({
+test('a heartbeat is passed to the heartbeat handler only for the run this PC holds', async () => {
+  const id = await claimedLocalRun(f.a1)
+  expect(await relayHeartbeat(db, f.a1, id, hb(f.occA, 'in_meeting'))).toEqual({
     ackedEvents: 0,
-    commands: [],
-  });
-  expect(
-    await relayHeartbeat(db, f.a1, id, hb(f.occB, "in_meeting")),
-  ).toBeNull();
-  expect(
-    await relayHeartbeat(db, f.a2, id, hb(f.occA, "in_meeting")),
-  ).toBeNull();
-});
-test("entering restarting sends the restart ping once", async () => {
-  const id = await claimedLocalRun(f.a1);
-  await relayHeartbeat(db, f.a1, id, hb(f.occA, "in_meeting"));
+    commands: []
+  })
+  expect(await relayHeartbeat(db, f.a1, id, hb(f.occB, 'in_meeting'))).toBeNull()
+  expect(await relayHeartbeat(db, f.a2, id, hb(f.occA, 'in_meeting'))).toBeNull()
+})
+test('entering restarting sends the restart ping once', async () => {
+  const id = await claimedLocalRun(f.a1)
+  await relayHeartbeat(db, f.a1, id, hb(f.occA, 'in_meeting'))
   await relayHeartbeat(db, f.a1, id, {
-    ...hb(f.occA, "restarting"),
-    attempt: 2,
-  });
+    ...hb(f.occA, 'restarting'),
+    attempt: 2
+  })
   await relayHeartbeat(db, f.a1, id, {
-    ...hb(f.occA, "restarting"),
-    attempt: 2,
-  });
-  expect(restartPings).toEqual([[f.occA, 2]]);
-});
-test("Docker not running pings once; low memory fails the run", async () => {
-  const id = await claimedLocalRun(f.a1);
+    ...hb(f.occA, 'restarting'),
+    attempt: 2
+  })
+  expect(restartPings).toEqual([[f.occA, 2]])
+})
+test('Docker not running pings once; low memory fails the run', async () => {
+  const id = await claimedLocalRun(f.a1)
   await recordPreflight(db, f.a1, id, {
-    reason: "docker_unavailable",
-    dockerMemBytes: null,
-  });
+    reason: 'docker_unavailable',
+    dockerMemBytes: null
+  })
   await recordPreflight(db, f.a1, id, {
-    reason: "docker_unavailable",
-    dockerMemBytes: null,
-  });
+    reason: 'docker_unavailable',
+    dockerMemBytes: null
+  })
   expect(pings).toEqual([
     expect.objectContaining({
-      title: "Start Docker Desktop",
-      priority: "high",
-      message:
-        "Data Mining (14:00) runs on DESKTOP-ABC, but Docker Desktop isn't running. Start it before 13:50.",
-    }),
-  ]);
-  const id2 = await claimedLocalRun(f.a1);
+      title: 'Start Docker Desktop',
+      priority: 'high',
+      message: "Data Mining (14:00) runs on DESKTOP-ABC, but Docker Desktop isn't running. Start it before 13:50."
+    })
+  ])
+  const id2 = await claimedLocalRun(f.a1)
   await recordPreflight(db, f.a1, id2, {
-    reason: "docker_memory_low",
-    dockerMemBytes: 2 * 1024 ** 3,
-  });
-  expect(triggers).toContainEqual([
-    f.occA,
-    "fail",
-    { reason: "docker_memory_low" },
-  ]);
+    reason: 'docker_memory_low',
+    dockerMemBytes: 2 * 1024 ** 3
+  })
+  expect(triggers).toContainEqual([f.occA, 'fail', { reason: 'docker_memory_low' }])
   expect(pings.at(-1)).toMatchObject({
-    title: "Docker Desktop needs more memory",
+    title: 'Docker Desktop needs more memory',
     message:
-      "Data Mining (14:00) can't run on DESKTOP-ABC: Docker Desktop has 2.0 GB and a meeting needs about 4 GB. Set memory=4GB or more under [wsl2] in %UserProfile%\\.wslconfig, then restart Docker Desktop.",
-  });
-});
-test("uploads resume at the server offset and refuse gaps", async () => {
-  const id = await claimedLocalRun(f.a1);
-  expect(await uploadOffset(db, f.a1, id, "chat.jsonl")).toBe(0);
-  expect(
-    (await appendUpload(db, f.a1, id, "chat.jsonl", "bytes 0-9/20", bytes(10)))
-      .status,
-  ).toBe(204);
-  expect(
-    await appendUpload(db, f.a1, id, "chat.jsonl", "bytes 15-19/20", bytes(5)),
-  ).toEqual({ status: 409, offset: 10 });
-  expect(
-    (
-      await appendUpload(
-        db,
-        f.a1,
-        id,
-        "chat.jsonl",
-        "bytes 10-19/20",
-        bytes(10),
-      )
-    ).status,
-  ).toBe(204);
-  expect(Bun.file(join(occDirA, "chat.jsonl")).size).toBe(20);
-  expect(
-    (await appendUpload(db, f.a1, id, "audio.flac", "bytes 0-9/10", bytes(10)))
-      .status,
-  ).toBe(400);
-});
-test("complete needs events.jsonl, and the native transcript when there is a recording in native mode", async () => {
-  const id = await claimedLocalRun(f.a1, { transcription: "native" });
-  await uploaded(id, ["events.jsonl", "recording/meeting.mkv"]);
+      "Data Mining (14:00) can't run on DESKTOP-ABC: Docker Desktop has 2.0 GB and a meeting needs about 4 GB. Set memory=4GB or more under [wsl2] in %UserProfile%\\.wslconfig, then restart Docker Desktop."
+  })
+})
+test('uploads resume at the server offset and refuse gaps', async () => {
+  const id = await claimedLocalRun(f.a1)
+  expect(await uploadOffset(db, f.a1, id, 'chat.jsonl')).toBe(0)
+  expect((await appendUpload(db, f.a1, id, 'chat.jsonl', 'bytes 0-9/20', bytes(10))).status).toBe(204)
+  expect(await appendUpload(db, f.a1, id, 'chat.jsonl', 'bytes 15-19/20', bytes(5))).toEqual({
+    status: 409,
+    offset: 10
+  })
+  expect((await appendUpload(db, f.a1, id, 'chat.jsonl', 'bytes 10-19/20', bytes(10))).status).toBe(204)
+  expect(Bun.file(join(occDirA, 'chat.jsonl')).size).toBe(20)
+  expect((await appendUpload(db, f.a1, id, 'audio.flac', 'bytes 0-9/10', bytes(10))).status).toBe(400)
+})
+test('complete needs events.jsonl, and the native transcript when there is a recording in native mode', async () => {
+  const id = await claimedLocalRun(f.a1, { transcription: 'native' })
+  await uploaded(id, ['events.jsonl', 'recording/meeting.mkv'])
   expect(await completeLocalRun(db, f.a1, id)).toEqual({
     ok: false,
-    missing: [
-      "transcript/native/audio.txt",
-      "transcript/native/audio.srt",
-      "transcript/native/audio.json",
-    ],
-  });
-  await uploaded(id, [
-    "transcript/native/audio.txt",
-    "transcript/native/audio.srt",
-    "transcript/native/audio.json",
-  ]);
-  expect(await completeLocalRun(db, f.a1, id)).toEqual({ ok: true });
-  expect(enqueued).toEqual([f.occA]);
-});
+    missing: ['transcript/native/audio.txt', 'transcript/native/audio.srt', 'transcript/native/audio.json']
+  })
+  await uploaded(id, ['transcript/native/audio.txt', 'transcript/native/audio.srt', 'transcript/native/audio.json'])
+  expect(await completeLocalRun(db, f.a1, id)).toEqual({ ok: true })
+  expect(enqueued).toEqual([f.occA])
+})
 ```
 
 The fixture is Task 2's (entry "Data Mining" at 14:00, PC "DESKTOP-ABC"). `hb(occurrenceId, state)` builds a `Heartbeat` with attempt 1, `recording: true`, `participants: 12`, no events; `applyTrigger` (recording `triggers`), `handleHeartbeat`, `pingRestart`, `pingWorkerFailed`, `enqueuePipeline` and `sendPing` are replaced by recorders through `mock.module`; `uploaded(id, paths)` uploads small files.
@@ -661,87 +545,77 @@ git commit -m "feat(web): relay and upload for local runs"
 
 ```ts
 export interface DockerLike {
-  info(): Promise<{ memTotal: number } | null>; // null when the daemon isn't reachable
-  imagePresent(ref: string): Promise<boolean>;
-  pull(ref: string): Promise<boolean>;
-  run(args: string[]): Promise<string>; // the whole argument list, starting with 'run'; resolves stdout once docker exits (the container id with -d)
-  wait(name: string): Promise<number>; // exit code
-  stop(name: string, timeoutSec: number): Promise<void>;
-  rm(name: string): Promise<void>;
-  volumeRm(name: string): Promise<void>;
-  volumes(prefix: string): Promise<string[]>;
-  running(): Promise<{ name: string; identityId: string | null }[]>; // from the label tm.identity
-  port(name: string, containerPort: number): Promise<number | null>; // published host port
-  ensureNetwork(name: string): Promise<void>;
+  info(): Promise<{ memTotal: number } | null> // null when the daemon isn't reachable
+  imagePresent(ref: string): Promise<boolean>
+  pull(ref: string): Promise<boolean>
+  run(args: string[]): Promise<string> // the whole argument list, starting with 'run'; resolves stdout once docker exits (the container id with -d)
+  wait(name: string): Promise<number> // exit code
+  stop(name: string, timeoutSec: number): Promise<void>
+  rm(name: string): Promise<void>
+  volumeRm(name: string): Promise<void>
+  volumes(prefix: string): Promise<string[]>
+  running(): Promise<{ name: string; identityId: string | null }[]> // from the label tm.identity
+  port(name: string, containerPort: number): Promise<number | null> // published host port
+  ensureNetwork(name: string): Promise<void>
 }
-export function dockerCli(spawn: SpawnLike): DockerLike;
-export function preflight(
-  docker: DockerLike,
-  imageRef: string,
-): Promise<PreflightReport>;
+export function dockerCli(spawn: SpawnLike): DockerLike
+export function preflight(docker: DockerLike, imageRef: string): Promise<PreflightReport>
 export function checkBeforeFirstRun(d: {
-  docker: DockerLike;
-  imageRef: string;
-  notifier: DesktopNotifier;
-}): Promise<PreflightReport>;
+  docker: DockerLike
+  imageRef: string
+  notifier: DesktopNotifier
+}): Promise<PreflightReport>
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("preflight: unavailable, low memory, missing image, ok", async () => {
+test('preflight: unavailable, low memory, missing image, ok', async () => {
   expect(await preflight(fakeDocker({ info: null }), REF)).toEqual({
-    reason: "docker_unavailable",
-    dockerMemBytes: null,
-  });
-  expect(
-    await preflight(fakeDocker({ memTotal: MIN_DOCKER_MEM_BYTES - 1 }), REF),
-  ).toEqual({
-    reason: "docker_memory_low",
-    dockerMemBytes: MIN_DOCKER_MEM_BYTES - 1,
-  });
+    reason: 'docker_unavailable',
+    dockerMemBytes: null
+  })
+  expect(await preflight(fakeDocker({ memTotal: MIN_DOCKER_MEM_BYTES - 1 }), REF)).toEqual({
+    reason: 'docker_memory_low',
+    dockerMemBytes: MIN_DOCKER_MEM_BYTES - 1
+  })
   expect(
     await preflight(
       fakeDocker({
         memTotal: MIN_DOCKER_MEM_BYTES,
         image: false,
-        pullOk: false,
+        pullOk: false
       }),
-      REF,
-    ),
-  ).toMatchObject({ reason: "image_unavailable" });
-  expect(
-    await preflight(
-      fakeDocker({ memTotal: 8 * 1024 ** 3, image: false, pullOk: true }),
-      REF,
-    ),
-  ).toMatchObject({ reason: "ok" });
-});
-test("dockerCli asks for the memory as JSON, hidden and without a shell", async () => {
-  const calls: unknown[][] = [];
-  await dockerCli(
-    (c, a, o) => (calls.push([c, a, o]), processPrinting("4100000000\n")),
-  ).info();
+      REF
+    )
+  ).toMatchObject({ reason: 'image_unavailable' })
+  expect(await preflight(fakeDocker({ memTotal: 8 * 1024 ** 3, image: false, pullOk: true }), REF)).toMatchObject({
+    reason: 'ok'
+  })
+})
+test('dockerCli asks for the memory as JSON, hidden and without a shell', async () => {
+  const calls: unknown[][] = []
+  await dockerCli((c, a, o) => (calls.push([c, a, o]), processPrinting('4100000000\n'))).info()
   expect(calls[0]).toEqual([
-    "docker",
-    ["info", "--format", "{{json .MemTotal}}"],
-    expect.objectContaining({ shell: false, windowsHide: true }),
-  ]);
-});
-test("checkBeforeFirstRun explains low memory in a notification", async () => {
-  const shown: { title: string; body: string }[] = [];
+    'docker',
+    ['info', '--format', '{{json .MemTotal}}'],
+    expect.objectContaining({ shell: false, windowsHide: true })
+  ])
+})
+test('checkBeforeFirstRun explains low memory in a notification', async () => {
+  const shown: { title: string; body: string }[] = []
   await checkBeforeFirstRun({
     docker: fakeDocker({ memTotal: 2 * 1024 ** 3 }),
     imageRef: REF,
-    notifier: { show: (n) => shown.push(n) },
-  });
+    notifier: { show: (n) => shown.push(n) }
+  })
   expect(shown).toEqual([
     expect.objectContaining({
-      title: "Docker Desktop needs more memory",
-      body: "Docker Desktop has 2.0 GB; local meetings need about 4 GB. Set memory=4GB or more under [wsl2] in %UserProfile%\\.wslconfig, then restart Docker Desktop.",
-    }),
-  ]);
-});
+      title: 'Docker Desktop needs more memory',
+      body: 'Docker Desktop has 2.0 GB; local meetings need about 4 GB. Set memory=4GB or more under [wsl2] in %UserProfile%\\.wslconfig, then restart Docker Desktop.'
+    })
+  ])
+})
 ```
 
 `REF` is `ghcr.io/tl/tolongmeeting-worker:1.0.0`; `fakeDocker` answers from its options; `processPrinting(text)` is a `SpawnLike` result that prints `text` and exits 0.
@@ -783,116 +657,106 @@ git commit -m "feat(companion): check Docker before local runs"
 ```ts
 // companion
 export interface LocalPaths {
-  root: string;
-  data: string;
-  runs: string;
-  profiles: string;
+  root: string
+  data: string
+  runs: string
+  profiles: string
 } // %LOCALAPPDATA%\TolongMeeting and its data, runs, profiles folders
-export function localPaths(localAppData: string): LocalPaths;
-export function ensureProfileKey(secrets: SecretStore): Promise<Buffer>; // the PC's local key: 32 random bytes, created once
-export function identityKeyFile(localKey: Buffer, identityId: string): string; // base64 of profileKey(localKey, identityId), the content of /run/tm/profile.key
-export function profileVolume(identityId: string): string; // 'tm-profile-<identityId>'
-export function checkpointsDir(p: LocalPaths, identityId: string): string; // <profiles>\<identityId>\checkpoints
+export function localPaths(localAppData: string): LocalPaths
+export function ensureProfileKey(secrets: SecretStore): Promise<Buffer> // the PC's local key: 32 random bytes, created once
+export function identityKeyFile(localKey: Buffer, identityId: string): string // base64 of profileKey(localKey, identityId), the content of /run/tm/profile.key
+export function profileVolume(identityId: string): string // 'tm-profile-<identityId>'
+export function checkpointsDir(p: LocalPaths, identityId: string): string // <profiles>\<identityId>\checkpoints
 export function writeEphemeral(
   dir: string,
-  files: Record<string, string | Buffer>,
-): Promise<{ dir: string; remove(): Promise<void> }>;
+  files: Record<string, string | Buffer>
+): Promise<{ dir: string; remove(): Promise<void> }>
 export function removeAfterFirstHeartbeat(
   e: { remove(): Promise<void> },
   firstHeartbeat: Promise<void>,
-  maxMs?: number,
-): Promise<void>; // default 120000
+  maxMs?: number
+): Promise<void> // default 120000
 export function recoverStaleVolumes(d: {
-  docker: DockerLike;
-  checkpoint(identityId: string): Promise<void>;
-}): Promise<string[]>;
+  docker: DockerLike
+  checkpoint(identityId: string): Promise<void>
+}): Promise<string[]>
 // worker
-export function profileKeyOnce(identityId: string): Buffer; // loadProfileKey on the first call, then the cached buffer
-export function restoreProfile(
-  archive: string,
-  dir: string,
-  key: Buffer,
-): Promise<void>;
+export function profileKeyOnce(identityId: string): Buffer // loadProfileKey on the first call, then the cached buffer
+export function restoreProfile(archive: string, dir: string, key: Buffer): Promise<void>
 ```
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 // vault.test.ts
-test("the profile key is 32 bytes, made once, and kept only in the SecretStore", async () => {
-  const secrets = new SecretStore(tmpFile(), fakeSafe(true));
-  const k1 = await ensureProfileKey(secrets);
-  expect(k1.length).toBe(32);
-  expect((await ensureProfileKey(secrets)).equals(k1)).toBe(true);
-});
-test("short-lived files go after the first heartbeat, or after 120 s at most", async () => {
+test('the profile key is 32 bytes, made once, and kept only in the SecretStore', async () => {
+  const secrets = new SecretStore(tmpFile(), fakeSafe(true))
+  const k1 = await ensureProfileKey(secrets)
+  expect(k1.length).toBe(32)
+  expect((await ensureProfileKey(secrets)).equals(k1)).toBe(true)
+})
+test('short-lived files go after the first heartbeat, or after 120 s at most', async () => {
   const e = await writeEphemeral(tmpDir(), {
-    "job.json": "{}",
-    "profile.key": "a2V5",
-  });
-  let beat!: () => void;
-  const done = removeAfterFirstHeartbeat(
-    e,
-    new Promise<void>((r) => (beat = r)),
-    1000,
-  );
-  expect(existsSync(join(e.dir, "profile.key"))).toBe(true);
-  beat();
-  await done;
-  expect(existsSync(e.dir)).toBe(false);
-  const e2 = await writeEphemeral(tmpDir(), { "profile.key": "a2V5" });
-  await removeAfterFirstHeartbeat(e2, new Promise(() => {}), 20);
-  expect(existsSync(e2.dir)).toBe(false);
-});
-test("a stale profile volume is checkpointed, then removed; a volume in use is left alone", async () => {
+    'job.json': '{}',
+    'profile.key': 'a2V5'
+  })
+  let beat!: () => void
+  const done = removeAfterFirstHeartbeat(e, new Promise<void>((r) => (beat = r)), 1000)
+  expect(existsSync(join(e.dir, 'profile.key'))).toBe(true)
+  beat()
+  await done
+  expect(existsSync(e.dir)).toBe(false)
+  const e2 = await writeEphemeral(tmpDir(), { 'profile.key': 'a2V5' })
+  await removeAfterFirstHeartbeat(e2, new Promise(() => {}), 20)
+  expect(existsSync(e2.dir)).toBe(false)
+})
+test('a stale profile volume is checkpointed, then removed; a volume in use is left alone', async () => {
   const docker = fakeDocker({
-    volumes: ["tm-profile-u1", "tm-profile-u2"],
-    running: [{ name: "tm-run-o1-1", identityId: "u1" }],
-  });
-  const checkpointed: string[] = [];
+    volumes: ['tm-profile-u1', 'tm-profile-u2'],
+    running: [{ name: 'tm-run-o1-1', identityId: 'u1' }]
+  })
+  const checkpointed: string[] = []
   expect(
     await recoverStaleVolumes({
       docker,
       checkpoint: async (id) => {
-        checkpointed.push(id);
-      },
-    }),
-  ).toEqual(["u2"]);
-  expect(checkpointed).toEqual(["u2"]);
-  expect(docker.removedVolumes).toEqual(["tm-profile-u2"]);
-});
-test("the key file holds the per-identity key derived from the local key", () => {
+        checkpointed.push(id)
+      }
+    })
+  ).toEqual(['u2'])
+  expect(checkpointed).toEqual(['u2'])
+  expect(docker.removedVolumes).toEqual(['tm-profile-u2'])
+})
+test('the key file holds the per-identity key derived from the local key', () => {
   expect(
-    Buffer.from(identityKeyFile(Buffer.alloc(32), "i1"), "base64").equals(
-      profileKey(Buffer.alloc(32), "i1"),
-    ),
-  ).toBe(true);
-});
+    Buffer.from(identityKeyFile(Buffer.alloc(32), 'i1'), 'base64').equals(profileKey(Buffer.alloc(32), 'i1'))
+  ).toBe(true)
+})
 
 // key.test.ts (added case)
-test("profileKeyOnce reads the key file once, so the companion can delete it", async () => {
-  const f = join(tmpdir(), "once.key");
-  await Bun.write(f, Buffer.alloc(32, 7).toString("base64"));
-  process.env.TM_PROFILE_KEY_FILE = f;
-  const k = profileKeyOnce("i1");
-  rmSync(f);
-  expect(profileKeyOnce("i1").equals(k)).toBe(true);
-  expect(k.equals(Buffer.alloc(32, 7))).toBe(true);
-  delete process.env.TM_PROFILE_KEY_FILE;
-});
+test('profileKeyOnce reads the key file once, so the companion can delete it', async () => {
+  const f = join(tmpdir(), 'once.key')
+  await Bun.write(f, Buffer.alloc(32, 7).toString('base64'))
+  process.env.TM_PROFILE_KEY_FILE = f
+  const k = profileKeyOnce('i1')
+  rmSync(f)
+  expect(profileKeyOnce('i1').equals(k)).toBe(true)
+  expect(k.equals(Buffer.alloc(32, 7))).toBe(true)
+  delete process.env.TM_PROFILE_KEY_FILE
+})
 
 // restore.test.ts
-test("restoreProfile brings back what checkpointProfile saved", async () => {
+test('restoreProfile brings back what checkpointProfile saved', async () => {
   const work = await dirWith({
-    "Default/Cookies": "c",
-    "Default/Local Storage/leveldb/000003.log": "l",
-  });
-  const key = Buffer.alloc(32, 1);
-  const archive = await checkpointProfile(work, tmpDir(), key);
-  const restored = tmpDir();
-  await restoreProfile(archive, restored, key);
-  expect(await Bun.file(join(restored, "Default/Cookies")).text()).toBe("c");
-});
+    'Default/Cookies': 'c',
+    'Default/Local Storage/leveldb/000003.log': 'l'
+  })
+  const key = Buffer.alloc(32, 1)
+  const archive = await checkpointProfile(work, tmpDir(), key)
+  const restored = tmpDir()
+  await restoreProfile(archive, restored, key)
+  expect(await Bun.file(join(restored, 'Default/Cookies')).text()).toBe('c')
+})
 ```
 
 `dirWith` writes a temporary folder; `fakeDocker` is Task 4's, recording `removedVolumes`.
@@ -933,92 +797,88 @@ git commit -m "feat(companion): keep local profiles encrypted"
 
 ```ts
 export interface Relay {
-  port: number;
-  token: string; // 32 random bytes, base64url, per run
-  containerUrl: string; // http://host.docker.internal:<port>/heartbeat
-  firstHeartbeat(attempt: number): Promise<void>;
-  lastHeartbeatAt(): number | null; // epoch ms
-  inject(c: ControlCommand): void; // delivered in the next reply, once
-  synthetic(hb: Heartbeat): Promise<HeartbeatReply>;
-  close(): Promise<void>;
+  port: number
+  token: string // 32 random bytes, base64url, per run
+  containerUrl: string // http://host.docker.internal:<port>/heartbeat
+  firstHeartbeat(attempt: number): Promise<void>
+  lastHeartbeatAt(): number | null // epoch ms
+  inject(c: ControlCommand): void // delivered in the next reply, once
+  synthetic(hb: Heartbeat): Promise<HeartbeatReply>
+  close(): Promise<void>
 }
 export function startRelay(d: {
-  api: Pick<CompanionApi, "heartbeat">;
-  jobId: string;
-  occurrenceId: string;
-}): Promise<Relay>;
+  api: Pick<CompanionApi, 'heartbeat'>
+  jobId: string
+  occurrenceId: string
+}): Promise<Relay>
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("the relay listens on 127.0.0.1 only", async () => {
+test('the relay listens on 127.0.0.1 only', async () => {
   const r = await startRelay({
     api: replying([]),
-    jobId: "j1",
-    occurrenceId: "o1",
-  });
-  expect(addressOf(r)).toBe("127.0.0.1");
-  expect(r.containerUrl).toBe(
-    `http://host.docker.internal:${r.port}/heartbeat`,
-  );
-  await r.close();
-});
-test("a wrong token is a 401 and is not forwarded", async () => {
-  const api = replying([]);
-  const r = await startRelay({ api, jobId: "j1", occurrenceId: "o1" });
-  expect((await post(r, "nope", hb("o1"))).status).toBe(401);
-  expect(api.sent).toEqual([]);
-  await r.close();
-});
-test("heartbeats are forwarded and injected commands are added once", async () => {
+    jobId: 'j1',
+    occurrenceId: 'o1'
+  })
+  expect(addressOf(r)).toBe('127.0.0.1')
+  expect(r.containerUrl).toBe(`http://host.docker.internal:${r.port}/heartbeat`)
+  await r.close()
+})
+test('a wrong token is a 401 and is not forwarded', async () => {
+  const api = replying([])
+  const r = await startRelay({ api, jobId: 'j1', occurrenceId: 'o1' })
+  expect((await post(r, 'nope', hb('o1'))).status).toBe(401)
+  expect(api.sent).toEqual([])
+  await r.close()
+})
+test('heartbeats are forwarded and injected commands are added once', async () => {
   const r = await startRelay({
-    api: replying(["leave_now"]),
-    jobId: "j1",
-    occurrenceId: "o1",
-  });
-  r.inject("pause_for_signin");
-  expect(await (await post(r, r.token, hb("o1"))).json()).toEqual({
+    api: replying(['leave_now']),
+    jobId: 'j1',
+    occurrenceId: 'o1'
+  })
+  r.inject('pause_for_signin')
+  expect(await (await post(r, r.token, hb('o1'))).json()).toEqual({
     ackedEvents: 0,
-    commands: ["leave_now", "pause_for_signin"],
-  });
-  expect(await (await post(r, r.token, hb("o1"))).json()).toEqual({
+    commands: ['leave_now', 'pause_for_signin']
+  })
+  expect(await (await post(r, r.token, hb('o1'))).json()).toEqual({
     ackedEvents: 0,
-    commands: ["leave_now"],
-  });
-  await r.close();
-});
-test("a heartbeat for another occurrence is a 400", async () => {
+    commands: ['leave_now']
+  })
+  await r.close()
+})
+test('a heartbeat for another occurrence is a 400', async () => {
   const r = await startRelay({
     api: replying([]),
-    jobId: "j1",
-    occurrenceId: "o1",
-  });
-  expect((await post(r, r.token, hb("o2"))).status).toBe(400);
-  await r.close();
-});
-test("when the server is unreachable the relay answers 503 and keeps injected commands", async () => {
-  const api = failingThenReplying([]);
-  const r = await startRelay({ api, jobId: "j1", occurrenceId: "o1" });
-  r.inject("resume_after_signin");
-  expect((await post(r, r.token, hb("o1"))).status).toBe(503);
-  expect((await (await post(r, r.token, hb("o1"))).json()).commands).toEqual([
-    "resume_after_signin",
-  ]);
-  await r.close();
-});
+    jobId: 'j1',
+    occurrenceId: 'o1'
+  })
+  expect((await post(r, r.token, hb('o2'))).status).toBe(400)
+  await r.close()
+})
+test('when the server is unreachable the relay answers 503 and keeps injected commands', async () => {
+  const api = failingThenReplying([])
+  const r = await startRelay({ api, jobId: 'j1', occurrenceId: 'o1' })
+  r.inject('resume_after_signin')
+  expect((await post(r, r.token, hb('o1'))).status).toBe(503)
+  expect((await (await post(r, r.token, hb('o1'))).json()).commands).toEqual(['resume_after_signin'])
+  await r.close()
+})
 test("firstHeartbeat(attempt) resolves on that attempt's first heartbeat", async () => {
   const r = await startRelay({
     api: replying([]),
-    jobId: "j1",
-    occurrenceId: "o1",
-  });
-  const first = r.firstHeartbeat(2);
-  await post(r, r.token, { ...hb("o1"), attempt: 2 });
-  await first;
-  expect(r.lastHeartbeatAt()).not.toBeNull();
-  await r.close();
-});
+    jobId: 'j1',
+    occurrenceId: 'o1'
+  })
+  const first = r.firstHeartbeat(2)
+  await post(r, r.token, { ...hb('o1'), attempt: 2 })
+  await first
+  expect(r.lastHeartbeatAt()).not.toBeNull()
+  await r.close()
+})
 ```
 
 `replying(commands)` is a fake `api.heartbeat` that records `sent` and answers `{ ackedEvents: 0, commands }`; `post(relay, token, body)` posts to `http://127.0.0.1:<port>/heartbeat` with the bearer token.
@@ -1061,41 +921,32 @@ git commit -m "feat(companion): relay worker heartbeats"
 
 ```ts
 const run = (...args: string[]) =>
-  Bun.spawnSync(["bash", "docker/egress/deny-private.sh", "--print", ...args])
+  Bun.spawnSync(['bash', 'docker/egress/deny-private.sh', '--print', ...args])
     .stdout.toString()
     .trim()
-    .split("\n");
+    .split('\n')
 
-test("local holder rules: allow the relay, then reject private ranges", () => {
-  expect(run("--allow-tcp", "192.168.65.254:41234")).toEqual([
-    "iptables -A OUTPUT -p tcp -d 192.168.65.254 --dport 41234 -j ACCEPT",
-    "iptables -A OUTPUT -d 10.0.0.0/8 -j REJECT",
-    "iptables -A OUTPUT -d 172.16.0.0/12 -j REJECT",
-    "iptables -A OUTPUT -d 192.168.0.0/16 -j REJECT",
-    "iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT",
-    "iptables -A OUTPUT -d 100.64.0.0/10 -j REJECT",
-    "ip6tables -A OUTPUT -d fe80::/10 -j REJECT",
-    "ip6tables -A OUTPUT -d fc00::/7 -j REJECT",
-  ]);
-});
-test("home-route rules apply to the tunnel interface only", () => {
-  const lines = run("--out-iface", "tailscale0");
-  expect(lines[0]).toBe(
-    "iptables -A OUTPUT -o tailscale0 -d 10.0.0.0/8 -j REJECT",
-  );
-  expect(lines).toHaveLength(7);
-  expect(lines.every((l) => l.includes("-o tailscale0"))).toBe(true);
-});
-test("an unknown option fails", () => {
-  expect(
-    Bun.spawnSync([
-      "bash",
-      "docker/egress/deny-private.sh",
-      "--print",
-      "--allow-all",
-    ]).exitCode,
-  ).not.toBe(0);
-});
+test('local holder rules: allow the relay, then reject private ranges', () => {
+  expect(run('--allow-tcp', '192.168.65.254:41234')).toEqual([
+    'iptables -A OUTPUT -p tcp -d 192.168.65.254 --dport 41234 -j ACCEPT',
+    'iptables -A OUTPUT -d 10.0.0.0/8 -j REJECT',
+    'iptables -A OUTPUT -d 172.16.0.0/12 -j REJECT',
+    'iptables -A OUTPUT -d 192.168.0.0/16 -j REJECT',
+    'iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT',
+    'iptables -A OUTPUT -d 100.64.0.0/10 -j REJECT',
+    'ip6tables -A OUTPUT -d fe80::/10 -j REJECT',
+    'ip6tables -A OUTPUT -d fc00::/7 -j REJECT'
+  ])
+})
+test('home-route rules apply to the tunnel interface only', () => {
+  const lines = run('--out-iface', 'tailscale0')
+  expect(lines[0]).toBe('iptables -A OUTPUT -o tailscale0 -d 10.0.0.0/8 -j REJECT')
+  expect(lines).toHaveLength(7)
+  expect(lines.every((l) => l.includes('-o tailscale0'))).toBe(true)
+})
+test('an unknown option fails', () => {
+  expect(Bun.spawnSync(['bash', 'docker/egress/deny-private.sh', '--print', '--allow-all']).exitCode).not.toBe(0)
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1131,62 +982,49 @@ git commit -m "feat(docker): add private-range egress rules"
 - Produces:
 
 ```ts
-export const LOCAL_NETWORK = "tm-local";
-export const MAX_LOCAL_ATTEMPTS = 4; // the first run and up to 3 restarts
-export const SILENCE_RESTART_MS = 30_000;
+export const LOCAL_NETWORK = 'tm-local'
+export const MAX_LOCAL_ATTEMPTS = 4 // the first run and up to 3 restarts
+export const SILENCE_RESTART_MS = 30_000
 export interface RunMounts {
-  dataDir: string;
-  checkpointsDir: string;
-  ephemeralDir: string;
+  dataDir: string
+  checkpointsDir: string
+  ephemeralDir: string
 }
-export function holderName(scope: string): string; // 'tm-net-<scope>'
-export function signinName(identityId: string): string; // 'tm-signin-<identityId>'
-export function holderArgs(o: {
-  scope: string;
-  identityId: string;
-  image: string;
-  allowTcp: string[];
-}): string[];
+export function holderName(scope: string): string // 'tm-net-<scope>'
+export function signinName(identityId: string): string // 'tm-signin-<identityId>'
+export function holderArgs(o: { scope: string; identityId: string; image: string; allowTcp: string[] }): string[]
 export function workerArgs(o: {
-  occurrenceId: string;
-  identityId: string;
-  attempt: number;
-  image: string;
-  mounts: RunMounts;
-}): string[];
-export function checkpointArgs(o: {
-  identityId: string;
-  image: string;
-  mounts: Omit<RunMounts, "dataDir">;
-}): string[];
+  occurrenceId: string
+  identityId: string
+  attempt: number
+  image: string
+  mounts: RunMounts
+}): string[]
+export function checkpointArgs(o: { identityId: string; image: string; mounts: Omit<RunMounts, 'dataDir'> }): string[]
 export function localJobConfig(
   p: LocalRunPayload,
   s: LocalSecrets,
   ntfy: NtfyConfig,
   relay: { containerUrl: string; token: string },
-  attempt: number,
-): JobConfig;
+  attempt: number
+): JobConfig
 export class LocalRunner {
   constructor(d: {
-    api: CompanionApi;
-    docker: DockerLike;
-    secrets: SecretStore;
-    state: StateStore;
-    paths: LocalPaths;
-    keepAwake: KeepAwake;
-    native: NativeRunner;
-    ntfy: () => Promise<NtfyConfig>;
-    after: (
-      job: CompanionJob,
-      dataDir: string,
-      outcome: "ended" | "crashed",
-    ) => Promise<void>;
-    preflightRetryMs?: number;
-  }); // default 30000
-  run(job: CompanionJob): Promise<void>;
-  activeIdentity(): string | null;
-  inject(identityId: string, c: ControlCommand): boolean;
-  noVncPort(identityId: string): number | null;
+    api: CompanionApi
+    docker: DockerLike
+    secrets: SecretStore
+    state: StateStore
+    paths: LocalPaths
+    keepAwake: KeepAwake
+    native: NativeRunner
+    ntfy: () => Promise<NtfyConfig>
+    after: (job: CompanionJob, dataDir: string, outcome: 'ended' | 'crashed') => Promise<void>
+    preflightRetryMs?: number
+  }) // default 30000
+  run(job: CompanionJob): Promise<void>
+  activeIdentity(): string | null
+  inject(identityId: string, c: ControlCommand): boolean
+  noVncPort(identityId: string): number | null
 }
 ```
 
@@ -1194,192 +1032,171 @@ export class LocalRunner {
 
 ```ts
 const mounts = {
-  dataDir: "C:\\TM\\data",
-  checkpointsDir: "C:\\TM\\profiles\\u1\\checkpoints",
-  ephemeralDir: "C:\\TM\\runs\\r1",
-};
+  dataDir: 'C:\\TM\\data',
+  checkpointsDir: 'C:\\TM\\profiles\\u1\\checkpoints',
+  ephemeralDir: 'C:\\TM\\runs\\r1'
+}
 
-test("the worker gets paths, never secrets, and no extra capabilities", () => {
+test('the worker gets paths, never secrets, and no extra capabilities', () => {
   const a = workerArgs({
-    occurrenceId: "o1",
-    identityId: "u1",
+    occurrenceId: 'o1',
+    identityId: 'u1',
     attempt: 2,
     image: REF,
-    mounts,
-  });
+    mounts
+  })
   expect(a).toEqual(
     expect.arrayContaining([
-      "--name",
-      "tm-run-o1-2",
-      "--label",
-      "tm.identity=u1",
-      "--shm-size=2g",
-      "--network",
-      "container:tm-net-o1",
-      "-v",
-      "tm-profile-u1:/tm/profiles/u1/work",
-      "-v",
-      "C:\\TM\\profiles\\u1\\checkpoints:/tm/profiles/u1/checkpoints",
-      "-v",
-      "C:\\TM\\data:/tm/data",
-      "-v",
-      "C:\\TM\\runs\\r1:/run/tm:ro",
-      "-e",
-      "TM_DATA_ROOT=/tm/data",
-      "-e",
-      "TM_PROFILE_ROOT=/tm/profiles",
-      "-e",
-      "TM_PROFILE_KEY_FILE=/run/tm/profile.key",
-    ]),
-  );
-  expect(a.filter((x, i) => a[i - 1] === "-e")).toEqual([
-    "TM_DATA_ROOT=/tm/data",
-    "TM_PROFILE_ROOT=/tm/profiles",
-    "TM_PROFILE_KEY_FILE=/run/tm/profile.key",
-  ]);
-  expect(a.join(" ")).not.toMatch(/--cap-add|--privileged|-p /);
-  expect(a.slice(a.indexOf(REF) + 1)).toEqual([
-    "tm-worker",
-    "--job",
-    "/run/tm/job.json",
-  ]);
-});
-test("the holder owns the network rules and publishes noVNC on 127.0.0.1 only", () => {
+      '--name',
+      'tm-run-o1-2',
+      '--label',
+      'tm.identity=u1',
+      '--shm-size=2g',
+      '--network',
+      'container:tm-net-o1',
+      '-v',
+      'tm-profile-u1:/tm/profiles/u1/work',
+      '-v',
+      'C:\\TM\\profiles\\u1\\checkpoints:/tm/profiles/u1/checkpoints',
+      '-v',
+      'C:\\TM\\data:/tm/data',
+      '-v',
+      'C:\\TM\\runs\\r1:/run/tm:ro',
+      '-e',
+      'TM_DATA_ROOT=/tm/data',
+      '-e',
+      'TM_PROFILE_ROOT=/tm/profiles',
+      '-e',
+      'TM_PROFILE_KEY_FILE=/run/tm/profile.key'
+    ])
+  )
+  expect(a.filter((x, i) => a[i - 1] === '-e')).toEqual([
+    'TM_DATA_ROOT=/tm/data',
+    'TM_PROFILE_ROOT=/tm/profiles',
+    'TM_PROFILE_KEY_FILE=/run/tm/profile.key'
+  ])
+  expect(a.join(' ')).not.toMatch(/--cap-add|--privileged|-p /)
+  expect(a.slice(a.indexOf(REF) + 1)).toEqual(['tm-worker', '--job', '/run/tm/job.json'])
+})
+test('the holder owns the network rules and publishes noVNC on 127.0.0.1 only', () => {
   const a = holderArgs({
-    scope: "o1",
-    identityId: "u1",
+    scope: 'o1',
+    identityId: 'u1',
     image: REF,
-    allowTcp: ["host.docker.internal:41234"],
-  });
+    allowTcp: ['host.docker.internal:41234']
+  })
   expect(a).toEqual(
     expect.arrayContaining([
-      "--name",
-      "tm-net-o1",
-      "--network",
-      "tm-local",
-      "--cap-add",
-      "NET_ADMIN",
-      "--user",
-      "0",
-      "-p",
-      "127.0.0.1::6080",
-    ]),
-  );
+      '--name',
+      'tm-net-o1',
+      '--network',
+      'tm-local',
+      '--cap-add',
+      'NET_ADMIN',
+      '--user',
+      '0',
+      '-p',
+      '127.0.0.1::6080'
+    ])
+  )
   expect(a.slice(a.indexOf(REF) + 1)).toEqual([
-    "deny-private.sh",
-    "--allow-tcp",
-    "host.docker.internal:41234",
-    "--hold",
-  ]);
-});
-test("localJobConfig fills secrets, the relay and container paths", () => {
+    'deny-private.sh',
+    '--allow-tcp',
+    'host.docker.internal:41234',
+    '--hold'
+  ])
+})
+test('localJobConfig fills secrets, the relay and container paths', () => {
   const cfg = localJobConfig(
     payload,
-    { apiKey: "sk-x", details },
+    { apiKey: 'sk-x', details },
     ntfy,
     {
-      containerUrl: "http://host.docker.internal:41234/heartbeat",
-      token: "rt",
+      containerUrl: 'http://host.docker.internal:41234/heartbeat',
+      token: 'rt'
     },
-    2,
-  );
+    2
+  )
   expect(cfg).toMatchObject({
     attempt: 2,
-    ai: { apiKey: "sk-x" },
+    ai: { apiKey: 'sk-x' },
     ntfy,
     control: {
-      url: "http://host.docker.internal:41234/heartbeat",
-      token: "rt",
+      url: 'http://host.docker.internal:41234/heartbeat',
+      token: 'rt'
     },
-    dataDir: "/tm/data/occurrences/o1",
-    profileDir: "/tm/profiles/u1/work",
-  });
-  expect(cfg.member.details).toEqual(details);
-});
-test("a run: claim, preflight, secrets, holder, worker, files gone after the first heartbeat", async () => {
-  const r = runnerWith();
-  await r.run(localJob);
+    dataDir: '/tm/data/occurrences/o1',
+    profileDir: '/tm/profiles/u1/work'
+  })
+  expect(cfg.member.details).toEqual(details)
+})
+test('a run: claim, preflight, secrets, holder, worker, files gone after the first heartbeat', async () => {
+  const r = runnerWith()
+  await r.run(localJob)
   expect(log).toEqual([
-    "claim",
-    "preflight ok",
-    "secrets",
-    "pause native",
-    "keep awake",
-    "run tm-net-o1",
-    "run tm-run-o1-1",
-    "first heartbeat 1",
-    "ephemeral removed",
-    "exit 0",
-    "rm tm-net-o1",
-    "volume rm tm-profile-u1",
-    "after ended",
-    "release keep awake",
-    "resume native",
-  ]);
-});
-test("Docker not running: reported, retried every 30 s, and the run starts once it is up", async () => {
+    'claim',
+    'preflight ok',
+    'secrets',
+    'pause native',
+    'keep awake',
+    'run tm-net-o1',
+    'run tm-run-o1-1',
+    'first heartbeat 1',
+    'ephemeral removed',
+    'exit 0',
+    'rm tm-net-o1',
+    'volume rm tm-profile-u1',
+    'after ended',
+    'release keep awake',
+    'resume native'
+  ])
+})
+test('Docker not running: reported, retried every 30 s, and the run starts once it is up', async () => {
   const r = runnerWith({
     infoSequence: [null, null, { memTotal: 8 * 1024 ** 3 }],
-    preflightRetryMs: 10,
-  });
-  await r.run(localJob);
-  expect(api.preflights.map((p) => p.reason)).toEqual([
-    "docker_unavailable",
-    "docker_unavailable",
-    "ok",
-  ]);
-  expect(log).toContain("run tm-run-o1-1");
-});
-test("low memory reports and stops before any container starts", async () => {
-  const r = runnerWith({ memTotal: 2 * 1024 ** 3 });
-  await r.run(localJob);
-  expect(api.preflights.map((p) => p.reason)).toEqual(["docker_memory_low"]);
-  expect(log.some((l) => l.startsWith("run "))).toBe(false);
-});
-test("a crash restarts the worker as the next attempt with fresh files, reporting restarting", async () => {
-  const r = runnerWith({ exitCodes: [137, 0] });
-  await r.run(localJob);
+    preflightRetryMs: 10
+  })
+  await r.run(localJob)
+  expect(api.preflights.map((p) => p.reason)).toEqual(['docker_unavailable', 'docker_unavailable', 'ok'])
+  expect(log).toContain('run tm-run-o1-1')
+})
+test('low memory reports and stops before any container starts', async () => {
+  const r = runnerWith({ memTotal: 2 * 1024 ** 3 })
+  await r.run(localJob)
+  expect(api.preflights.map((p) => p.reason)).toEqual(['docker_memory_low'])
+  expect(log.some((l) => l.startsWith('run '))).toBe(false)
+})
+test('a crash restarts the worker as the next attempt with fresh files, reporting restarting', async () => {
+  const r = runnerWith({ exitCodes: [137, 0] })
+  await r.run(localJob)
   expect(log).toEqual(
-    expect.arrayContaining([
-      "run tm-run-o1-1",
-      "synthetic restarting 2",
-      "run tm-run-o1-2",
-      "first heartbeat 2",
-    ]),
-  );
-  expect(ephemeralWrites).toBe(2);
-});
-test("30 s without a heartbeat counts as a crash", async () => {
+    expect.arrayContaining(['run tm-run-o1-1', 'synthetic restarting 2', 'run tm-run-o1-2', 'first heartbeat 2'])
+  )
+  expect(ephemeralWrites).toBe(2)
+})
+test('30 s without a heartbeat counts as a crash', async () => {
   const r = runnerWith({
     silentAfterFirst: true,
     exitCodes: [null, 0],
-    silenceMs: 20,
-  });
-  await r.run(localJob);
-  expect(log).toEqual(
-    expect.arrayContaining(["stop tm-run-o1-1", "run tm-run-o1-2"]),
-  );
-});
-test("after the third restart fails, the profile is checkpointed and the outputs go on as crashed", async () => {
-  const r = runnerWith({ exitCodes: [1, 1, 1, 1] });
-  await r.run(localJob);
-  expect(log.filter((l) => l.startsWith("run tm-run-o1-"))).toHaveLength(4);
-  expect(log).toEqual(
-    expect.arrayContaining(["checkpoint u1", "after crashed"]),
-  );
-  expect(log.indexOf("checkpoint u1")).toBeLessThan(
-    log.indexOf("volume rm tm-profile-u1"),
-  );
-});
-test("an open sign-in container for the identity is stopped and checkpointed before the run", async () => {
+    silenceMs: 20
+  })
+  await r.run(localJob)
+  expect(log).toEqual(expect.arrayContaining(['stop tm-run-o1-1', 'run tm-run-o1-2']))
+})
+test('after the third restart fails, the profile is checkpointed and the outputs go on as crashed', async () => {
+  const r = runnerWith({ exitCodes: [1, 1, 1, 1] })
+  await r.run(localJob)
+  expect(log.filter((l) => l.startsWith('run tm-run-o1-'))).toHaveLength(4)
+  expect(log).toEqual(expect.arrayContaining(['checkpoint u1', 'after crashed']))
+  expect(log.indexOf('checkpoint u1')).toBeLessThan(log.indexOf('volume rm tm-profile-u1'))
+})
+test('an open sign-in container for the identity is stopped and checkpointed before the run', async () => {
   const r = runnerWith({
-    running: [{ name: "tm-signin-u1", identityId: "u1" }],
-  });
-  await r.run(localJob);
-  expect(log.indexOf("stop tm-signin-u1")).toBeLessThan(
-    log.indexOf("run tm-run-o1-1"),
-  );
-});
+    running: [{ name: 'tm-signin-u1', identityId: 'u1' }]
+  })
+  await r.run(localJob)
+  expect(log.indexOf('stop tm-signin-u1')).toBeLessThan(log.indexOf('run tm-run-o1-1'))
+})
 ```
 
 `runnerWith(opts)` builds a `LocalRunner` over fakes that append to `log` (`DockerLike`, relay, `KeepAwake`, `NativeRunner`, `after`) and an `api` fake recording `preflights` and `failures`; `localJob` is a claimed `local_run` job for occurrence `o1`, identity `u1`; `REF`, `payload`, `details` and `ntfy` are fixtures.
@@ -1427,135 +1244,118 @@ git commit -m "feat(companion): run meeting workers locally"
 - Produces:
 
 ```ts
-export const UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
-export function uploadSet(occDir: string): Promise<string[]>; // relative POSIX paths
-export function uploadFile(
-  api: CompanionApi,
-  jobId: string,
-  occDir: string,
-  relPath: string,
-): Promise<void>;
-export function flacArgs(o: {
-  image: string;
-  dataDir: string;
-  occurrenceId: string;
-}): string[];
+export const UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024
+export function uploadSet(occDir: string): Promise<string[]> // relative POSIX paths
+export function uploadFile(api: CompanionApi, jobId: string, occDir: string, relPath: string): Promise<void>
+export function flacArgs(o: { image: string; dataDir: string; occurrenceId: string }): string[]
 export function finishLocalRun(
   d: {
-    api: CompanionApi;
-    docker: DockerLike;
-    settings: () => Settings;
-    spawn: SpawnLike;
-    report(state: "uploading" | "transcribing"): Promise<void>;
-    retryMs?: number;
+    api: CompanionApi
+    docker: DockerLike
+    settings: () => Settings
+    spawn: SpawnLike
+    report(state: 'uploading' | 'transcribing'): Promise<void>
+    retryMs?: number
   },
   job: CompanionJob,
   dataDir: string,
-  outcome: "ended" | "crashed",
-): Promise<void>; // retryMs default 60000
+  outcome: 'ended' | 'crashed'
+): Promise<void> // retryMs default 60000
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("the upload set skips the FLAC, and segments once meeting.mkv exists", async () => {
+test('the upload set skips the FLAC, and segments once meeting.mkv exists', async () => {
   const occ = await occWith([
-    "events.jsonl",
-    "chat.jsonl",
-    "audio.flac",
-    "recording/meeting.mkv",
-    "recording/attempt_1_seg_000.mkv",
-    "frames/0001_140002.png",
-    "transcript/native/audio.json",
-  ]);
+    'events.jsonl',
+    'chat.jsonl',
+    'audio.flac',
+    'recording/meeting.mkv',
+    'recording/attempt_1_seg_000.mkv',
+    'frames/0001_140002.png',
+    'transcript/native/audio.json'
+  ])
   expect((await uploadSet(occ)).sort()).toEqual([
-    "chat.jsonl",
-    "events.jsonl",
-    "frames/0001_140002.png",
-    "recording/meeting.mkv",
-  ]);
-  const noJoin = await occWith([
-    "events.jsonl",
-    "recording/attempt_1_seg_000.mkv",
-  ]);
-  expect(await uploadSet(noJoin)).toContain("recording/attempt_1_seg_000.mkv");
-});
-test("uploadFile resumes from the server offset in 16 MiB chunks", async () => {
-  const occ = await occWithSized("recording/meeting.mkv", 40 * 1024 * 1024);
-  const api = uploadApi({ offset: 16 * 1024 * 1024 });
-  await uploadFile(api, "j1", occ, "recording/meeting.mkv");
-  expect(api.ranges).toEqual([
-    "bytes 16777216-33554431/41943040",
-    "bytes 33554432-41943039/41943040",
-  ]);
-});
-test("the FLAC is extracted with the worker image, offline", () => {
-  expect(
-    flacArgs({ image: REF, dataDir: "C:\\TM\\data", occurrenceId: "o1" }),
-  ).toEqual([
-    "run",
-    "--rm",
-    "--network",
-    "none",
-    "-v",
-    "C:\\TM\\data:/tm/data",
+    'chat.jsonl',
+    'events.jsonl',
+    'frames/0001_140002.png',
+    'recording/meeting.mkv'
+  ])
+  const noJoin = await occWith(['events.jsonl', 'recording/attempt_1_seg_000.mkv'])
+  expect(await uploadSet(noJoin)).toContain('recording/attempt_1_seg_000.mkv')
+})
+test('uploadFile resumes from the server offset in 16 MiB chunks', async () => {
+  const occ = await occWithSized('recording/meeting.mkv', 40 * 1024 * 1024)
+  const api = uploadApi({ offset: 16 * 1024 * 1024 })
+  await uploadFile(api, 'j1', occ, 'recording/meeting.mkv')
+  expect(api.ranges).toEqual(['bytes 16777216-33554431/41943040', 'bytes 33554432-41943039/41943040'])
+})
+test('the FLAC is extracted with the worker image, offline', () => {
+  expect(flacArgs({ image: REF, dataDir: 'C:\\TM\\data', occurrenceId: 'o1' })).toEqual([
+    'run',
+    '--rm',
+    '--network',
+    'none',
+    '-v',
+    'C:\\TM\\data:/tm/data',
     REF,
-    "ffmpeg",
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-i",
-    "/tm/data/occurrences/o1/recording/meeting.mkv",
-    "-map",
-    "0:a",
-    "-ac",
-    "1",
-    "-ar",
-    "48000",
-    "-c:a",
-    "flac",
-    "/tm/data/occurrences/o1/audio.flac",
-  ]);
-});
-test("native: upload, transcribe on the PC, upload the transcript, complete, then clean up", async () => {
-  const { d, occ, log } = afterFixture({ transcription: "native" });
-  await finishLocalRun(d, nativeLocalJob, dataDir, "ended");
+    'ffmpeg',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-i',
+    '/tm/data/occurrences/o1/recording/meeting.mkv',
+    '-map',
+    '0:a',
+    '-ac',
+    '1',
+    '-ar',
+    '48000',
+    '-c:a',
+    'flac',
+    '/tm/data/occurrences/o1/audio.flac'
+  ])
+})
+test('native: upload, transcribe on the PC, upload the transcript, complete, then clean up', async () => {
+  const { d, occ, log } = afterFixture({ transcription: 'native' })
+  await finishLocalRun(d, nativeLocalJob, dataDir, 'ended')
   expect(log).toEqual([
-    "report uploading",
-    "upload events.jsonl",
-    "upload recording/meeting.mkv",
-    "report transcribing",
-    "docker flac",
-    "whisper",
-    "upload transcript/native/audio.txt",
-    "upload transcript/native/audio.srt",
-    "upload transcript/native/audio.json",
-    "complete",
-  ]);
-  expect(existsSync(occ)).toBe(false);
-});
-test("a failed complete keeps the local data and retries", async () => {
+    'report uploading',
+    'upload events.jsonl',
+    'upload recording/meeting.mkv',
+    'report transcribing',
+    'docker flac',
+    'whisper',
+    'upload transcript/native/audio.txt',
+    'upload transcript/native/audio.srt',
+    'upload transcript/native/audio.json',
+    'complete'
+  ])
+  expect(existsSync(occ)).toBe(false)
+})
+test('a failed complete keeps the local data and retries', async () => {
   const { d, occ, log } = afterFixture({
-    transcription: "live",
+    transcription: 'live',
     completeFailures: 1,
-    retryMs: 10,
-  });
-  await finishLocalRun(d, liveLocalJob, dataDir, "ended");
-  expect(log.filter((l) => l === "complete")).toHaveLength(2);
-  expect(existsSync(occ)).toBe(false);
-});
-test("a crashed run uploads what exists, reports worker_crashed and cleans up, without transcribing", async () => {
-  const { d, occ, log } = afterFixture({ transcription: "native" });
-  await finishLocalRun(d, nativeLocalJob, dataDir, "crashed");
+    retryMs: 10
+  })
+  await finishLocalRun(d, liveLocalJob, dataDir, 'ended')
+  expect(log.filter((l) => l === 'complete')).toHaveLength(2)
+  expect(existsSync(occ)).toBe(false)
+})
+test('a crashed run uploads what exists, reports worker_crashed and cleans up, without transcribing', async () => {
+  const { d, occ, log } = afterFixture({ transcription: 'native' })
+  await finishLocalRun(d, nativeLocalJob, dataDir, 'crashed')
   expect(log).toEqual([
-    "report uploading",
-    "upload events.jsonl",
-    "upload recording/meeting.mkv",
-    "fail worker_crashed",
-  ]);
-  expect(existsSync(occ)).toBe(false);
-});
+    'report uploading',
+    'upload events.jsonl',
+    'upload recording/meeting.mkv',
+    'fail worker_crashed'
+  ])
+  expect(existsSync(occ)).toBe(false)
+})
 ```
 
 `occWith(paths)` and `occWithSized(path, bytes)` build an occurrence folder; `uploadApi({ offset })` answers `uploadOffset` with `offset` and records each chunk's `Content-Range`; `afterFixture` returns fakes that append to `log`.
@@ -1595,24 +1395,20 @@ git commit -m "feat(companion): upload local meeting outputs"
 - Produces:
 
 ```ts
-export function signinArgs(o: {
-  identityId: string;
-  image: string;
-  mounts: Omit<RunMounts, "dataDir">;
-}): string[];
-export function vncUrl(port: number, password: string): string; // http://127.0.0.1:<port>/vnc.html#autoconnect=1&resize=scale&password=<password>
-export function isAllowedSigninUrl(url: string, port: number): boolean;
+export function signinArgs(o: { identityId: string; image: string; mounts: Omit<RunMounts, 'dataDir'> }): string[]
+export function vncUrl(port: number, password: string): string // http://127.0.0.1:<port>/vnc.html#autoconnect=1&resize=scale&password=<password>
+export function isAllowedSigninUrl(url: string, port: number): boolean
 export class SigninController {
   constructor(d: {
-    runner: LocalRunner;
-    docker: DockerLike;
-    secrets: SecretStore;
-    paths: LocalPaths;
-    imageRef: () => string;
-    openWindow(url: string, onDone: () => void): void;
-  });
-  open(identityId: string): Promise<void>;
-  done(identityId: string): Promise<void>;
+    runner: LocalRunner
+    docker: DockerLike
+    secrets: SecretStore
+    paths: LocalPaths
+    imageRef: () => string
+    openWindow(url: string, onDone: () => void): void
+  })
+  open(identityId: string): Promise<void>
+  done(identityId: string): Promise<void>
 }
 ```
 
@@ -1622,62 +1418,58 @@ export class SigninController {
 
 ```ts
 // signin.test.ts
-test("during a local run the view attaches to the worker desk and pauses automation", async () => {
-  const c = controllerWith({ activeIdentity: "u1", noVncPort: 49152 });
-  await c.open("u1");
-  expect(injected).toEqual([["u1", "pause_for_signin"]]);
-  expect(opened[0]).toStartWith("http://127.0.0.1:49152/vnc.html#");
-  expect(log.some((l) => l.startsWith("run "))).toBe(false);
-  await c.done("u1");
-  expect(injected.at(-1)).toEqual(["u1", "resume_after_signin"]);
-});
-test("otherwise a sign-in container starts, and Done checkpoints and removes it", async () => {
-  const c = controllerWith({ activeIdentity: null });
-  await c.open("u1");
-  expect(log).toEqual(["run tm-net-signin-u1", "run tm-signin-u1"]);
-  await c.done("u1");
-  expect(log.slice(2)).toEqual([
-    "stop tm-signin-u1 60",
-    "rm tm-net-signin-u1",
-    "volume rm tm-profile-u1",
-  ]);
-});
-test("the VNC password travels in the URL fragment, never the query", () => {
-  const u = new URL(vncUrl(49152, "pw"));
-  expect(u.search).toBe("");
-  expect(u.hash).toContain("password=pw");
-});
-test("the window stays on the loopback noVNC page", () => {
-  expect(isAllowedSigninUrl("http://127.0.0.1:49152/vnc.html#x", 49152)).toBe(
-    true,
-  );
-  expect(isAllowedSigninUrl("http://127.0.0.1:49153/", 49152)).toBe(false);
-  expect(isAllowedSigninUrl("https://login.microsoftonline.com/", 49152)).toBe(
-    false,
-  );
-});
+test('during a local run the view attaches to the worker desk and pauses automation', async () => {
+  const c = controllerWith({ activeIdentity: 'u1', noVncPort: 49152 })
+  await c.open('u1')
+  expect(injected).toEqual([['u1', 'pause_for_signin']])
+  expect(opened[0]).toStartWith('http://127.0.0.1:49152/vnc.html#')
+  expect(log.some((l) => l.startsWith('run '))).toBe(false)
+  await c.done('u1')
+  expect(injected.at(-1)).toEqual(['u1', 'resume_after_signin'])
+})
+test('otherwise a sign-in container starts, and Done checkpoints and removes it', async () => {
+  const c = controllerWith({ activeIdentity: null })
+  await c.open('u1')
+  expect(log).toEqual(['run tm-net-signin-u1', 'run tm-signin-u1'])
+  await c.done('u1')
+  expect(log.slice(2)).toEqual(['stop tm-signin-u1 60', 'rm tm-net-signin-u1', 'volume rm tm-profile-u1'])
+})
+test('the VNC password travels in the URL fragment, never the query', () => {
+  const u = new URL(vncUrl(49152, 'pw'))
+  expect(u.search).toBe('')
+  expect(u.hash).toContain('password=pw')
+})
+test('the window stays on the loopback noVNC page', () => {
+  expect(isAllowedSigninUrl('http://127.0.0.1:49152/vnc.html#x', 49152)).toBe(true)
+  expect(isAllowedSigninUrl('http://127.0.0.1:49153/', 49152)).toBe(false)
+  expect(isAllowedSigninUrl('https://login.microsoftonline.com/', 49152)).toBe(false)
+})
 
 // open-signin.test.ts
-test("open-signin reaches only the bound PC", async () => {
-  await bindLocal(identityA, f.a1);
-  await touchDevice(f.a1.deviceId, new Date());
-  expect(
-    await (await POST(sessionReq(memberA), params(identityA))).json(),
-  ).toEqual({ opened: true, pcName: "DESKTOP-ABC" });
-  expect(
-    (await listCompanionEvents(db, f.a1, 0)).map((e) => e.command),
-  ).toContainEqual({ type: "open_signin", identityId: identityA });
-  expect(await listCompanionEvents(db, f.a2, 0)).toEqual([]);
-});
-test("open-signin explains an offline PC or a server identity", async () => {
-  await bindLocal(identityA, f.a1);
-  expect(
-    await (await POST(sessionReq(memberA), params(identityA))).json(),
-  ).toEqual({ opened: false, reason: "pc_offline" });
-  expect(
-    await (await POST(sessionReq(memberA), params(identityServer))).json(),
-  ).toEqual({ opened: false, reason: "not_local" });
-});
+test('open-signin reaches only the bound PC', async () => {
+  await bindLocal(identityA, f.a1)
+  await touchDevice(f.a1.deviceId, new Date())
+  expect(await (await POST(sessionReq(memberA), params(identityA))).json()).toEqual({
+    opened: true,
+    pcName: 'DESKTOP-ABC'
+  })
+  expect((await listCompanionEvents(db, f.a1, 0)).map((e) => e.command)).toContainEqual({
+    type: 'open_signin',
+    identityId: identityA
+  })
+  expect(await listCompanionEvents(db, f.a2, 0)).toEqual([])
+})
+test('open-signin explains an offline PC or a server identity', async () => {
+  await bindLocal(identityA, f.a1)
+  expect(await (await POST(sessionReq(memberA), params(identityA))).json()).toEqual({
+    opened: false,
+    reason: 'pc_offline'
+  })
+  expect(await (await POST(sessionReq(memberA), params(identityServer))).json()).toEqual({
+    opened: false,
+    reason: 'not_local'
+  })
+})
 ```
 
 `controllerWith` builds a `SigninController` over fakes recording `injected`, `opened` and `log`.
@@ -1718,61 +1510,44 @@ git commit -m "feat(companion): sign in to local identities"
 
 ```ts
 export interface TailscaleConfig {
-  clientId: string;
-  clientSecret: string;
-  tailnet: string;
+  clientId: string
+  clientSecret: string
+  tailnet: string
 }
 export interface TailscaleDevice {
-  nodeId: string;
-  hostname: string;
-  addresses: string[];
-  tags: string[];
-  connectedToControl: boolean;
-  enabledRoutes: string[];
+  nodeId: string
+  hostname: string
+  addresses: string[]
+  tags: string[]
+  connectedToControl: boolean
+  enabledRoutes: string[]
 }
 export class TailscaleApi {
-  constructor(cfg: TailscaleConfig, f?: typeof fetch);
-  createAuthKey(o: {
-    tags: string[];
-    ephemeral: boolean;
-    expirySeconds: number;
-    description: string;
-  }): Promise<string>;
-  devices(): Promise<TailscaleDevice[]>;
+  constructor(cfg: TailscaleConfig, f?: typeof fetch)
+  createAuthKey(o: { tags: string[]; ephemeral: boolean; expirySeconds: number; description: string }): Promise<string>
+  devices(): Promise<TailscaleDevice[]>
 }
-export type HomeRouteStatus =
-  "ready" | "offline" | "not_exit_node" | "not_enrolled";
-export function homeHostname(memberId: string): string; // 'tm-home-' + the first 8 hex characters of the member id
-export function enrolKey(
-  api: TailscaleApi,
-  memberId: string,
-): Promise<{ key: string; hostname: string }>;
+export type HomeRouteStatus = 'ready' | 'offline' | 'not_exit_node' | 'not_enrolled'
+export function homeHostname(memberId: string): string // 'tm-home-' + the first 8 hex characters of the member id
+export function enrolKey(api: TailscaleApi, memberId: string): Promise<{ key: string; hostname: string }>
 export function checkHomeRoute(
   db: Db,
   api: TailscaleApi,
   memberId: string,
-  now?: Date,
-): Promise<{ status: HomeRouteStatus; hostname: string; ipv4: string | null }>;
+  now?: Date
+): Promise<{ status: HomeRouteStatus; hostname: string; ipv4: string | null }>
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("the OAuth token is fetched once and keys are single-use, pre-authorised and tagged", async () => {
-  const seen: Request[] = [];
-  const api = new TailscaleApi(
-    { clientId: "id", clientSecret: "sec", tailnet: "-" },
-    tsFake(seen),
-  );
-  const { key, hostname } = await enrolKey(
-    api,
-    "1a2b3c4d-0000-4000-8000-000000000000",
-  );
-  await api.devices();
-  expect(
-    seen.filter((r) => r.url.endsWith("/api/v2/oauth/token")),
-  ).toHaveLength(1);
-  const create = seen.find((r) => r.url.endsWith("/api/v2/tailnet/-/keys"))!;
+test('the OAuth token is fetched once and keys are single-use, pre-authorised and tagged', async () => {
+  const seen: Request[] = []
+  const api = new TailscaleApi({ clientId: 'id', clientSecret: 'sec', tailnet: '-' }, tsFake(seen))
+  const { key, hostname } = await enrolKey(api, '1a2b3c4d-0000-4000-8000-000000000000')
+  await api.devices()
+  expect(seen.filter((r) => r.url.endsWith('/api/v2/oauth/token'))).toHaveLength(1)
+  const create = seen.find((r) => r.url.endsWith('/api/v2/tailnet/-/keys'))!
   expect(await create.clone().json()).toEqual({
     capabilities: {
       devices: {
@@ -1780,83 +1555,75 @@ test("the OAuth token is fetched once and keys are single-use, pre-authorised an
           reusable: false,
           ephemeral: false,
           preauthorized: true,
-          tags: ["tag:tm-home"],
-        },
-      },
+          tags: ['tag:tm-home']
+        }
+      }
     },
     expirySeconds: 3600,
-    description: "tm-home 1a2b3c4d",
-  });
-  expect(key).toStartWith("tskey-auth-");
-  expect(hostname).toBe("tm-home-1a2b3c4d");
-});
+    description: 'tm-home 1a2b3c4d'
+  })
+  expect(key).toStartWith('tskey-auth-')
+  expect(hostname).toBe('tm-home-1a2b3c4d')
+})
 test.each([
-  [{ connectedToControl: true, enabledRoutes: ["0.0.0.0/0", "::/0"] }, "ready"],
-  [
-    { connectedToControl: false, enabledRoutes: ["0.0.0.0/0", "::/0"] },
-    "offline",
-  ],
-  [{ connectedToControl: true, enabledRoutes: [] }, "not_exit_node"],
-])("checkHomeRoute(%o) is %s", async (dev, status) => {
+  [{ connectedToControl: true, enabledRoutes: ['0.0.0.0/0', '::/0'] }, 'ready'],
+  [{ connectedToControl: false, enabledRoutes: ['0.0.0.0/0', '::/0'] }, 'offline'],
+  [{ connectedToControl: true, enabledRoutes: [] }, 'not_exit_node']
+])('checkHomeRoute(%o) is %s', async (dev, status) => {
   const api = apiWithDevices([
     {
-      nodeId: "n1",
-      hostname: "tm-home-1a2b3c4d",
-      addresses: ["100.101.102.103", "fd7a::1"],
-      tags: ["tag:tm-home"],
-      ...dev,
-    },
-  ]);
-  expect((await checkHomeRoute(db, api, memberA)).status).toBe(status);
-});
+      nodeId: 'n1',
+      hostname: 'tm-home-1a2b3c4d',
+      addresses: ['100.101.102.103', 'fd7a::1'],
+      tags: ['tag:tm-home'],
+      ...dev
+    }
+  ])
+  expect((await checkHomeRoute(db, api, memberA)).status).toBe(status)
+})
 test("another member's device or an untagged one never counts", async () => {
   const api = apiWithDevices([
     {
-      nodeId: "n2",
-      hostname: "tm-home-99999999",
-      addresses: ["100.1.1.1"],
-      tags: ["tag:tm-home"],
+      nodeId: 'n2',
+      hostname: 'tm-home-99999999',
+      addresses: ['100.1.1.1'],
+      tags: ['tag:tm-home'],
       connectedToControl: true,
-      enabledRoutes: ["0.0.0.0/0", "::/0"],
+      enabledRoutes: ['0.0.0.0/0', '::/0']
     },
     {
-      nodeId: "n3",
-      hostname: "tm-home-1a2b3c4d",
-      addresses: ["100.1.1.2"],
+      nodeId: 'n3',
+      hostname: 'tm-home-1a2b3c4d',
+      addresses: ['100.1.1.2'],
       tags: [],
       connectedToControl: true,
-      enabledRoutes: ["0.0.0.0/0", "::/0"],
-    },
-  ]);
-  expect((await checkHomeRoute(db, api, memberA)).status).toBe("not_enrolled");
-});
-test("a ready node is stored with its IPv4 address", async () => {
-  await checkHomeRoute(db, readyApi, memberA, t0);
+      enabledRoutes: ['0.0.0.0/0', '::/0']
+    }
+  ])
+  expect((await checkHomeRoute(db, api, memberA)).status).toBe('not_enrolled')
+})
+test('a ready node is stored with its IPv4 address', async () => {
+  await checkHomeRoute(db, readyApi, memberA, t0)
   expect(await homeNodeRow(memberA)).toMatchObject({
-    nodeId: "n1",
-    hostname: "tm-home-1a2b3c4d",
-    ipv4: "100.101.102.103",
-    checkedAt: t0,
-  });
-});
-test("server through home needs a ready node", async () => {
+    nodeId: 'n1',
+    hostname: 'tm-home-1a2b3c4d',
+    ipv4: '100.101.102.103',
+    checkedAt: t0
+  })
+})
+test('server through home needs a ready node', async () => {
   expect(
     await setRunLocation(db, memberB, identityB, {
-      location: "server_via_home",
-    }),
-  ).toEqual({ ok: false, error: "home_route_not_set_up" });
-});
-test("the tailnet policy: workers reach only the internet; home devices reach nothing; home exit nodes are approved", async () => {
-  const p = await Bun.file("config/tailscale/policy.json").json();
-  expect(p.acls).toEqual([
-    { action: "accept", src: ["tag:tm-worker"], dst: ["autogroup:internet:*"] },
-  ]);
-  expect(p.autoApprovers).toEqual({ exitNode: ["tag:tm-home"] });
-  expect(Object.keys(p.tagOwners).sort()).toEqual([
-    "tag:tm-home",
-    "tag:tm-worker",
-  ]);
-});
+      location: 'server_via_home'
+    })
+  ).toEqual({ ok: false, error: 'home_route_not_set_up' })
+})
+test('the tailnet policy: workers reach only the internet; home devices reach nothing; home exit nodes are approved', async () => {
+  const p = await Bun.file('config/tailscale/policy.json').json()
+  expect(p.acls).toEqual([{ action: 'accept', src: ['tag:tm-worker'], dst: ['autogroup:internet:*'] }])
+  expect(p.autoApprovers).toEqual({ exitNode: ['tag:tm-home'] })
+  expect(Object.keys(p.tagOwners).sort()).toEqual(['tag:tm-home', 'tag:tm-worker'])
+})
 ```
 
 `memberA`'s id starts with `1a2b3c4d`; `tsFake(seen)` answers the token, key and device endpoints and records requests; `apiWithDevices(list)` and `readyApi` return a `TailscaleApi` over such a fake.
@@ -1913,66 +1680,59 @@ git commit -m "feat(web): enrol a home exit node"
 
 ```ts
 export interface HomeDeps extends LocalDeps {
-  api: TailscaleApi;
-  launchViaHome(cfg: JobConfig, exitNodeIp: string): Promise<void>;
+  api: TailscaleApi
+  launchViaHome(cfg: JobConfig, exitNodeIp: string): Promise<void>
 }
 export function startViaHome(
   db: Db,
   cfg: JobConfig,
   deps: HomeDeps,
-  now?: Date,
-): Promise<"launched" | "waiting" | "failed">;
+  now?: Date
+): Promise<'launched' | 'waiting' | 'failed'>
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("a ready exit node launches the worker through it", async () => {
-  expect(
-    await startViaHome(
-      db,
-      cfgHome,
-      deps({ status: "ready", ipv4: "100.101.102.103" }),
-      at("13:00"),
-    ),
-  ).toBe("launched");
-  expect(launched).toEqual([[cfgHome.occurrenceId, "100.101.102.103"]]);
-});
-test("an offline exit node pings once at T-60 and rechecks every minute", async () => {
-  const d = deps({ status: "offline", ipv4: null });
-  expect(await startViaHome(db, cfgHome, d, at("13:00"))).toBe("waiting");
-  expect(await startViaHome(db, cfgHome, d, at("13:01"))).toBe("waiting");
+test('a ready exit node launches the worker through it', async () => {
+  expect(await startViaHome(db, cfgHome, deps({ status: 'ready', ipv4: '100.101.102.103' }), at('13:00'))).toBe(
+    'launched'
+  )
+  expect(launched).toEqual([[cfgHome.occurrenceId, '100.101.102.103']])
+})
+test('an offline exit node pings once at T-60 and rechecks every minute', async () => {
+  const d = deps({ status: 'offline', ipv4: null })
+  expect(await startViaHome(db, cfgHome, d, at('13:00'))).toBe('waiting')
+  expect(await startViaHome(db, cfgHome, d, at('13:01'))).toBe('waiting')
   expect(d.pings).toEqual([
     {
-      title: "Home connection offline",
+      title: 'Home connection offline',
       message:
         "Data Mining (14:00) runs through your home device tm-home-1a2b3c4d, which isn't online. Turn it on before 13:50, or the bot won't join.",
-      priority: "high",
-      actions: [
-        { label: "Open meeting page", url: d.meetingUrl(cfgHome.occurrenceId) },
-      ],
-    },
-  ]);
+      priority: 'high',
+      actions: [{ label: 'Open meeting page', url: d.meetingUrl(cfgHome.occurrenceId) }]
+    }
+  ])
   expect(d.scheduled).toEqual([
-    ["home-route-recheck", { occurrenceId: cfgHome.occurrenceId }, 60],
-    ["home-route-recheck", { occurrenceId: cfgHome.occurrenceId }, 60],
-  ]);
-});
-test("still offline at T-10 fails the occurrence; never a launch without the exit node", async () => {
-  const d = deps({ status: "offline", ipv4: null });
-  expect(await startViaHome(db, cfgHome, d, at("13:50"))).toBe("failed");
-  expect(d.failed).toEqual([[cfgHome.occurrenceId, "home_exit_node_offline"]]);
-  expect(launched).toEqual([]);
-});
-test("a tunnel that does not come up counts as offline", async () => {
+    ['home-route-recheck', { occurrenceId: cfgHome.occurrenceId }, 60],
+    ['home-route-recheck', { occurrenceId: cfgHome.occurrenceId }, 60]
+  ])
+})
+test('still offline at T-10 fails the occurrence; never a launch without the exit node', async () => {
+  const d = deps({ status: 'offline', ipv4: null })
+  expect(await startViaHome(db, cfgHome, d, at('13:50'))).toBe('failed')
+  expect(d.failed).toEqual([[cfgHome.occurrenceId, 'home_exit_node_offline']])
+  expect(launched).toEqual([])
+})
+test('a tunnel that does not come up counts as offline', async () => {
   const d = deps({
-    status: "ready",
-    ipv4: "100.101.102.103",
-    launchThrows: new HomeRouteUnavailable(),
-  });
-  expect(await startViaHome(db, cfgHome, d, at("13:00"))).toBe("waiting");
-  expect(d.pings[0].title).toBe("Home connection offline");
-});
+    status: 'ready',
+    ipv4: '100.101.102.103',
+    launchThrows: new HomeRouteUnavailable()
+  })
+  expect(await startViaHome(db, cfgHome, d, at('13:00'))).toBe('waiting')
+  expect(d.pings[0].title).toBe('Home connection offline')
+})
 ```
 
 `deps({ status, ipv4, launchThrows? })` fakes `checkHomeRoute` through the injected API and records `pings`, `failed`, `scheduled` and `launched`; `cfgHome` is the "Data Mining" entry for an identity of member A set to `server_via_home`.
@@ -2012,122 +1772,116 @@ git commit -m "feat(scheduler): check the home route at T-60"
 - Produces:
 
 ```ts
-export const HOME_ROUTE_IMAGE = "tm-home-route";
+export const HOME_ROUTE_IMAGE = 'tm-home-route'
 export class HomeRouteUnavailable extends Error {}
-export function sidecarName(occurrenceId: string): string; // 'tm-home-<occurrenceId>'
+export function sidecarName(occurrenceId: string): string // 'tm-home-<occurrenceId>'
 export function sidecarCreateBody(o: {
-  occurrenceId: string;
-  authKey: string;
-  exitNodeIp: string;
-  tailscaleVersion: string;
-  network: string;
-}): Record<string, unknown>;
+  occurrenceId: string
+  authKey: string
+  exitNodeIp: string
+  tailscaleVersion: string
+  network: string
+}): Record<string, unknown>
 export function launchViaHome(
   cfg: JobConfig,
   exitNodeIp: string,
   d: {
-    api: TailscaleApi;
+    api: TailscaleApi
     docker: {
-      create(name: string, body: unknown): Promise<void>;
-      start(name: string): Promise<void>;
-      healthy(name: string): Promise<boolean>;
-      stop(name: string): Promise<void>;
-    };
-    launchWorker: typeof launchWorker;
-    network: string;
-    tailscaleVersion: string;
-    healthTimeoutMs?: number;
-  },
-): Promise<void>; // healthTimeoutMs default 60000
+      create(name: string, body: unknown): Promise<void>
+      start(name: string): Promise<void>
+      healthy(name: string): Promise<boolean>
+      stop(name: string): Promise<void>
+    }
+    launchWorker: typeof launchWorker
+    network: string
+    tailscaleVersion: string
+    healthTimeoutMs?: number
+  }
+): Promise<void> // healthTimeoutMs default 60000
 ```
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("the sidecar body: kernel networking, in-memory state, the exit node and nothing else", () => {
+test('the sidecar body: kernel networking, in-memory state, the exit node and nothing else', () => {
   const b = sidecarCreateBody({
-    occurrenceId: "o1",
-    authKey: "tskey-auth-x",
-    exitNodeIp: "100.101.102.103",
-    tailscaleVersion: "1.90.0",
-    network: "tm-workers",
-  }) as any;
-  expect(b.Image).toBe("tm-home-route:1.90.0");
+    occurrenceId: 'o1',
+    authKey: 'tskey-auth-x',
+    exitNodeIp: '100.101.102.103',
+    tailscaleVersion: '1.90.0',
+    network: 'tm-workers'
+  }) as any
+  expect(b.Image).toBe('tm-home-route:1.90.0')
   expect(b.Env).toEqual([
-    "TS_AUTHKEY=tskey-auth-x",
-    "TS_HOSTNAME=tm-worker-o1",
-    "TS_USERSPACE=false",
-    "TS_TAILSCALED_EXTRA_ARGS=--state=mem:",
-    "TS_EXTRA_ARGS=--exit-node=100.101.102.103 --exit-node-allow-lan-access=true --accept-dns=false --advertise-tags=tag:tm-worker",
-  ]);
+    'TS_AUTHKEY=tskey-auth-x',
+    'TS_HOSTNAME=tm-worker-o1',
+    'TS_USERSPACE=false',
+    'TS_TAILSCALED_EXTRA_ARGS=--state=mem:',
+    'TS_EXTRA_ARGS=--exit-node=100.101.102.103 --exit-node-allow-lan-access=true --accept-dns=false --advertise-tags=tag:tm-worker'
+  ])
   expect(b.HostConfig).toEqual({
-    CapAdd: ["NET_ADMIN"],
+    CapAdd: ['NET_ADMIN'],
     Devices: [
       {
-        PathOnHost: "/dev/net/tun",
-        PathInContainer: "/dev/net/tun",
-        CgroupPermissions: "rwm",
-      },
+        PathOnHost: '/dev/net/tun',
+        PathInContainer: '/dev/net/tun',
+        CgroupPermissions: 'rwm'
+      }
     ],
-    NetworkMode: "tm-workers",
-    AutoRemove: true,
-  });
-  expect(b.Healthcheck.Test).toEqual(["CMD", "test", "-f", "/tmp/tm-ready"]);
-});
-test("launchViaHome mints an ephemeral worker key, waits for the tunnel, then joins the worker to it", async () => {
-  const d = sidecarDeps({ healthyAfter: 2 });
-  await launchViaHome(cfgHome, "100.101.102.103", d);
+    NetworkMode: 'tm-workers',
+    AutoRemove: true
+  })
+  expect(b.Healthcheck.Test).toEqual(['CMD', 'test', '-f', '/tmp/tm-ready'])
+})
+test('launchViaHome mints an ephemeral worker key, waits for the tunnel, then joins the worker to it', async () => {
+  const d = sidecarDeps({ healthyAfter: 2 })
+  await launchViaHome(cfgHome, '100.101.102.103', d)
   expect(d.keys).toEqual([
     {
-      tags: ["tag:tm-worker"],
+      tags: ['tag:tm-worker'],
       ephemeral: true,
       expirySeconds: 600,
-      description: `tm-worker ${cfgHome.occurrenceId}`,
-    },
-  ]);
-  expect(d.workerLaunches).toEqual([
-    { networkMode: `container:tm-home-${cfgHome.occurrenceId}` },
-  ]);
-});
-test("a tunnel that is not healthy in time is removed and reported", async () => {
-  const d = sidecarDeps({ healthyAfter: Infinity, healthTimeoutMs: 20 });
-  await expect(
-    launchViaHome(cfgHome, "100.101.102.103", d),
-  ).rejects.toBeInstanceOf(HomeRouteUnavailable);
-  expect(d.stopped).toEqual([`tm-home-${cfgHome.occurrenceId}`]);
-  expect(d.workerLaunches).toEqual([]);
-});
-test("the proxy allows the sidecar exactly as built, and nothing more", () => {
+      description: `tm-worker ${cfgHome.occurrenceId}`
+    }
+  ])
+  expect(d.workerLaunches).toEqual([{ networkMode: `container:tm-home-${cfgHome.occurrenceId}` }])
+})
+test('a tunnel that is not healthy in time is removed and reported', async () => {
+  const d = sidecarDeps({ healthyAfter: Infinity, healthTimeoutMs: 20 })
+  await expect(launchViaHome(cfgHome, '100.101.102.103', d)).rejects.toBeInstanceOf(HomeRouteUnavailable)
+  expect(d.stopped).toEqual([`tm-home-${cfgHome.occurrenceId}`])
+  expect(d.workerLaunches).toEqual([])
+})
+test('the proxy allows the sidecar exactly as built, and nothing more', () => {
   const ok = sidecarCreateBody({
-    occurrenceId: "o1",
-    authKey: "k",
-    exitNodeIp: "100.1.1.1",
-    tailscaleVersion: "1.90.0",
-    network: "tm-workers",
-  }) as any;
-  expect(allowCreate(ok)).toBe(true);
-  expect(
-    allowCreate({ ...ok, HostConfig: { ...ok.HostConfig, Privileged: true } }),
-  ).toBe(false);
+    occurrenceId: 'o1',
+    authKey: 'k',
+    exitNodeIp: '100.1.1.1',
+    tailscaleVersion: '1.90.0',
+    network: 'tm-workers'
+  }) as any
+  expect(allowCreate(ok)).toBe(true)
+  expect(allowCreate({ ...ok, HostConfig: { ...ok.HostConfig, Privileged: true } })).toBe(false)
   expect(
     allowCreate({
       ...ok,
-      HostConfig: { ...ok.HostConfig, Binds: ["/:/host"] },
-    }),
-  ).toBe(false);
+      HostConfig: { ...ok.HostConfig, Binds: ['/:/host'] }
+    })
+  ).toBe(false)
   expect(
     allowCreate({
       ...ok,
-      HostConfig: { ...ok.HostConfig, CapAdd: ["NET_ADMIN", "SYS_ADMIN"] },
-    }),
-  ).toBe(false);
+      HostConfig: { ...ok.HostConfig, CapAdd: ['NET_ADMIN', 'SYS_ADMIN'] }
+    })
+  ).toBe(false)
   expect(
     allowCreate({
       ...workerCreateBody,
-      HostConfig: { ...workerCreateBody.HostConfig, CapAdd: ["NET_ADMIN"] },
-    }),
-  ).toBe(false);
-});
+      HostConfig: { ...workerCreateBody.HostConfig, CapAdd: ['NET_ADMIN'] }
+    })
+  ).toBe(false)
+})
 ```
 
 `sidecarDeps` records `keys`, `workerLaunches` and `stopped`, and reports the sidecar healthy after `healthyAfter` polls; `workerCreateBody` is plan 01c's worker create body fixture.

@@ -29,17 +29,26 @@
  *   from 20:05.
  */
 
-const N = 4;
-const hostPath = s => s.replace(/https?:\/\/\S+/g, u => { try { const x = new URL(u); return '<' + x.host + x.pathname.replace(/\/$/, '') + '>'; } catch (e) { return '<link>'; } });
-[...document.querySelectorAll('li[id^="chat-messages-"]')].slice(-N).map(li => {
-  const c = li.querySelector('[id^="message-content-"]'), t = li.querySelector('time');
-  const links = [...li.querySelectorAll('a[href]')].map(a => a.href).filter(h => /zoom\.us/i.test(h));
+const N = 4
+const hostPath = (s) =>
+  s.replace(/https?:\/\/\S+/g, (u) => {
+    try {
+      const x = new URL(u)
+      return '<' + x.host + x.pathname.replace(/\/$/, '') + '>'
+    } catch (e) {
+      return '<link>'
+    }
+  })
+;[...document.querySelectorAll('li[id^="chat-messages-"]')].slice(-N).map((li) => {
+  const c = li.querySelector('[id^="message-content-"]'),
+    t = li.querySelector('time')
+  const links = [...li.querySelectorAll('a[href]')].map((a) => a.href).filter((h) => /zoom\.us/i.test(h))
   return {
     time: t && t.getAttribute('datetime'),
     // Fix: URLs in the text become <host/path>, as in the session's follow-up read of the post.
     // The polling version returned the raw text, which could include a link with its passcode.
     text: hostPath(c ? c.innerText : '').slice(0, 160),
     zoomLinks: links.length,
-    meetingIds: links.map(h => (h.match(/\/(?:j|w|wc\/join|wc)\/(\d{9,11})/) || [])[1]).filter(Boolean)
-  };
+    meetingIds: links.map((h) => (h.match(/\/(?:j|w|wc\/join|wc)\/(\d{9,11})/) || [])[1]).filter(Boolean)
+  }
 })
