@@ -2679,6 +2679,7 @@ Manual verification on real meetings and real forms, for the design's acceptance
 
 - Modify: `docker/worker/Dockerfile` (add `x11vnc`, for the desk view in step 5; 1C's remote view uses the same package)
 - Modify, only if the live forms differ: `config/selectors/google-forms.json`, `config/selectors/microsoft-forms.json` and the matching fixtures
+- Modify, only if the live Zoom client differs: `config/selectors/zoom.json` roster selectors (`participantsList`, `participantItem`, `participantName`, `participantRole`) and matching fixtures
 
 **Interfaces:**
 
@@ -2709,7 +2710,7 @@ Use the member's own university account to create the forms, as the design's tes
 
 Job file: 1A's, plus `identity.organisation` (the university's name exactly as G1's footer shows it, and its email domain), `entry.trustedSenders` with the host's display name, `entry.formDetails` with `course_code` and `section`, and `member.details` with `full_name`, `student_id`, `university_email` and `programme`.
 
-Open G1 and M1 in the desk view (step 5's commands) and compare their DOM with the maps. If anything differs, update the maps and fixtures, rerun `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts` until it passes, and commit with `git commit -m "fix(worker): match live form DOM"`.
+Open G1 and M1 in the desk view (step 5's commands) and compare their DOM with the maps. If anything differs, update the maps and fixtures, rerun `bunx playwright test -c packages/worker/playwright.config.ts test/forms-driver.spec.ts` until it passes, and commit with `git commit -m "fix(worker): match live form DOM"`. Live check also Zoom's new participants roster selectors (`participantsList`, `participantItem`, `participantName`, `participantRole`) against a live Zoom meeting to verify host and co-host role labels.
 
 - [ ] **Step 3: Form fixture test**
 
