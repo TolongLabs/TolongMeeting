@@ -124,20 +124,39 @@ async function sweepDir(dir: string, failures: unknown[]): Promise<void> {
 /**
  * Run once when the app starts: a crash can leave key files, job files or audio in `runs/` and `jobs/`. Every file
  * under them is overwritten with zeros and deleted, folders included; the two folders themselves stay. A link is
- * removed, never followed. One file that cannot be removed does not stop the others; the failures are thrown together
- * afterwards.
+ * removed, never followed. A file or folder that cannot be removed does not stop the others (nor the other folder);
+ * the failures are thrown together afterwards as an `AggregateError`, so the caller can log them and go on.
  */
 export async function sweepPlaintext(dirs: PlaintextDirs): Promise<void> {
   const failures: unknown[] = []
   for (const dir of [dirs.runs, dirs.jobs]) {
-    const st = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null
-      throw error
-    })
-    if (st === null) continue
-    if (!st.isDirectory()) throw new Error('A folder to sweep is not a real folder')
-    await sweepDir(dir, failures)
+    try {
+      const st = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
+      if (st === null) continue
+      if (!st.isDirectory()) throw new Error('A folder to sweep is not a real folder')
+      await sweepDir(dir, failures)
+    } catch (error) {
+      failures.push(error)
+    }
   }
   if (failures.length > 0)
     throw new AggregateError(failures, `${failures.length} plaintext file(s) could not be removed`)
+}
+
+/**
+ * `sweepPlaintext` for the app's start: what could not be removed is logged (how many, and the error names only: a
+ * name never holds a path, a key or a token) and the app starts anyway, so a locked file cannot keep the PC from
+ * running meetings.
+ */
+export async function sweepPlaintextAtStart(dirs: PlaintextDirs, log: (message: string) => void): Promise<void> {
+  try {
+    await sweepPlaintext(dirs)
+  } catch (error) {
+    if (!(error instanceof AggregateError)) throw error
+    const names = new Set(error.errors.map((e: unknown) => (e instanceof Error ? e.name : typeof e)))
+    log(`plaintext sweep: ${error.errors.length} item(s) could not be removed (${[...names].join(', ')})`)
+  }
 }

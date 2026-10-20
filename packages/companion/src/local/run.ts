@@ -263,7 +263,7 @@ export class LocalRunner {
       a.job = job
       if (!(await this.dockerReady(job, a.stop.signal))) return
 
-      const secrets = await api.secrets(job.id)
+      let secrets = await api.secrets(job.id)
       const ntfy = await this.d.ntfy()
       st.localKey = await ensureProfileKey(this.d.secrets)
       st.nativePaused = true
@@ -281,6 +281,9 @@ export class LocalRunner {
 
       for (let attempt = 1; attempt <= MAX_LOCAL_ATTEMPTS; attempt++) {
         if (a.holderGone) await this.startHolder(a)
+        // Each attempt gets fresh secrets (R12): the AI key may have changed since the last one, and the website gives them
+        // out only near the meeting.
+        if (attempt > 1) secrets = await api.secrets(job.id)
         st.lastCode = await this.attempt(a, attempt, secrets, ntfy, st.localKey)
         await st.notices?.stop()
         st.notices = null

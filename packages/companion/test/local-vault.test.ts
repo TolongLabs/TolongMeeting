@@ -8,7 +8,12 @@ import { SecretStore, type SafeStorageLike } from '../src/secrets'
 import { handleRevoked } from '../src/pairing'
 import { checkRunArgs } from '../src/local/docker'
 import type { DockerLike } from '../src/local/docker'
-import { removeAfterFirstHeartbeat, sweepPlaintext, writeEphemeral } from '../src/local/ephemeral'
+import {
+  removeAfterFirstHeartbeat,
+  sweepPlaintext,
+  sweepPlaintextAtStart,
+  writeEphemeral
+} from '../src/local/ephemeral'
 import {
   checkpointsDir,
   checkpointVolume,
@@ -261,4 +266,23 @@ test('sweepPlaintext follows no link and tolerates missing folders', async () =>
   await symlink(outside, linkedRoot)
   await expect(sweepPlaintext({ runs: linkedRoot, jobs: join(dir, 'x') })).rejects.toThrow()
   expect(readdirSync(outside)).toEqual(['precious.txt'])
+})
+
+test('sweepPlaintextAtStart sweeps the good folder, logs only counts and error names, and does not throw', async () => {
+  const outside = join(dir, 'outside')
+  await mkdir(outside)
+  const linkedRoot = join(dir, 'linked-root')
+  await symlink(outside, linkedRoot)
+  const jobs = join(dir, 'jobs')
+  await mkdir(jobs)
+  await writeFile(join(jobs, 'SECRET-NAME.json'), '{"token":"x"}')
+  const logged: string[] = []
+  // The first folder is not a real folder; the second is still swept.
+  await sweepPlaintextAtStart({ runs: linkedRoot, jobs }, (m) => logged.push(m))
+  expect(readdirSync(jobs)).toEqual([])
+  expect(logged).toEqual(['plaintext sweep: 1 item(s) could not be removed (Error)'])
+  expect(logged.join()).not.toContain('SECRET-NAME')
+  logged.length = 0
+  await sweepPlaintextAtStart({ runs: join(dir, 'none'), jobs }, (m) => logged.push(m))
+  expect(logged).toEqual([])
 })

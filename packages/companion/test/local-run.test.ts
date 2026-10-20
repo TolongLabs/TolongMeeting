@@ -728,6 +728,8 @@ describe('a worker that crashes', () => {
     ])
     expect(w.log.filter((l) => l === `run tm-net-${OCC}`)).toHaveLength(1)
     expect(w.jobsSeen.map((j) => j.attempt)).toEqual([1, 2])
+    // Secrets are fetched again for each attempt, not kept from the first (R12).
+    expect(w.log.filter((l) => l === 'secrets')).toHaveLength(2)
     // Fresh files per attempt: two different folders, neither left behind.
     expect(w.ephGone).toEqual([true, true])
     expect(w.afterCalls.map((a) => a.outcome)).toEqual(['ended'])

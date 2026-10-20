@@ -5,7 +5,7 @@ import { app, Notification, powerSaveBlocker, safeStorage, session, shell } from
 import { APP_USER_MODEL_ID } from '../app-id'
 import { KeepAwake } from '../keep-awake'
 import { dockerCli } from '../local/docker'
-import { sweepPlaintext } from '../local/ephemeral'
+import { sweepPlaintextAtStart } from '../local/ephemeral'
 import { nodeSpawn } from '../jobs/whisper'
 import { jobsDir, localRunPaths, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
 import { SecretStore } from '../secrets'
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
 
   // A crash can leave key files, job files or audio behind: wipe them before anything can start, paired or not.
   const localPaths = localRunPaths(paths)
-  await sweepPlaintext({ runs: localPaths.runs, jobs: jobsDir(paths) })
+  await sweepPlaintextAtStart({ runs: localPaths.runs, jobs: jobsDir(paths) }, (message) => console.error(message))
 
   const settings = await loadSettings(settingsFile(paths), paths.documents, TM_PUBLIC_URL)
   const ports: Ports = {
