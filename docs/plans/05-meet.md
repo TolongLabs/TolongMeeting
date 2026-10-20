@@ -893,11 +893,11 @@ git commit -m "feat(worker): read meet chat with roles"
 - Consumes: `MeetSelectors` (Task 1); `meetState`, `serveMeet`, `setMeetScene`, `meetClicks` (Task 3); `Rect` from `packages/worker/src/adapters/types.ts`.
 - Produces, in `packages/worker/src/adapters/meet/layout.ts`: `meetParticipantCount(page: Page, sel: MeetSelectors): Promise<number | null>`, `ensureMeetLayout(page: Page, sel: MeetSelectors): Promise<void>`, `meetSharedScreenRegion(page: Page, sel: MeetSelectors): Promise<Rect | null>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `MeetFixtureConfig.peopleCount: number | null` (shown as a badge inside the "People" button). Whenever `captions` (Task 4) isn't null, the toolbar shows a "Turn off captions" button, which removes the `[aria-label='Captions']` region and becomes "Turn on captions". Add `share: { box: Rect; width: number; height: number } | null`, rendered as `<div data-is-presentation="true"><video></video></div>` at `box` with the stream size given through a canvas `captureStream()` of `width` by `height`, so `videoWidth` and `videoHeight` are real. "More options" opens a `role="menu"` with "Adjust view", "Turn on captions" and "Settings"; "Adjust view" opens a `role="dialog"` with radio options "Auto", "Tiled", "Spotlight" and "Sidebar" and a `aria-label="Close"` button.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -960,23 +960,23 @@ test('the shared-screen region is the picture inside the letterbox', async ({ pa
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/layout.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/layout`.
 
-- [ ] **Step 4: Implement the three functions in `packages/worker/src/adapters/meet/layout.ts`**
+- [x] **Step 4: Implement the three functions in `packages/worker/src/adapters/meet/layout.ts`**
 
 - `meetParticipantCount`: the first integer in `peopleButton`'s text, else in its `aria-label`, else `null`; it never clicks.
 - `ensureMeetLayout`, in this order: click `captionsOnButton` when visible (it never turns captions on); click `chatButton` when `chatScroller` isn't visible; when `sharedScreen` is visible and `meetState(page).shareSeen` is false, click `moreButton`, the menu item whose text matches `texts.layoutMenu`, the option whose text matches `texts.spotlight`, then `dialogClose`, and set `shareSeen`; reset `shareSeen` when no share is visible.
 - `meetSharedScreenRegion`: the first visible `sharedScreen` element's box, shrunk to the picture inside it by `videoWidth`/`videoHeight` (contain-fit, centred), rounded to whole pixels, in page coordinates, which are stage coordinates as in 01a's Zoom adapter; `null` when no share is visible, so 01a falls back to its brightness crop.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/layout.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/layout.ts
