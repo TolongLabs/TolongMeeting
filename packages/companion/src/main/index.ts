@@ -34,7 +34,9 @@ let stopping = false
 async function main(): Promise<void> {
   const paths = resolvePaths({
     platform: process.platform,
-    appData: app.getPath('appData'),
+    // TM_APP_DATA_DIR moves the settings, secrets and single-instance lock to another folder; the Electron smoke test uses
+    // it so a run never touches the member's real %APPDATA% (Electron reads that folder from Windows, not from the env).
+    appData: process.env.TM_APP_DATA_DIR ?? app.getPath('appData'),
     localAppData: process.env.LOCALAPPDATA,
     documents: app.getPath('documents')
   })

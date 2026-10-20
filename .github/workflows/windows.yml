@@ -44,3 +44,4 @@ jobs:
         run: bun test packages/companion/test/smoke.test.ts --timeout 120000
         env:
           TM_ELECTRON_SMOKE: '1'
+          TM_ELECTRON_PACKAGED: ${{ github.workspace }}\packages\companion\release\win-unpacked\TolongMeeting.exe
