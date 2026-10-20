@@ -16,9 +16,10 @@ import {
 } from '@tm/core'
 import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { safeDbError } from './errors'
-import { companionEvents, companionJobs, type Db } from './index'
+import { companionEvents, companionJobs, deviceTokens, occurrences, type Db } from './index'
+import { applyTrigger } from './transitions'
 
-export type { DeviceAuth }
+export type { Db, DeviceAuth }
 
 /** How long a member's companion events are kept: older ones are pruned whenever the member gets a new one. */
 const EVENT_KEEP_MS = 24 * 3_600_000
@@ -221,6 +222,49 @@ export async function claimJob(
       )
     return visible ? 'conflict' : null
   })
+}
+
+/**
+ * `claimJob`, and for a `native_transcription` job whose occurrence waits for a PC (`waiting_for_pc`) the move back to
+ * `transcribing` (`pc_claimed`), in one transaction: when the move fails the job stays unclaimed. An occurrence in any
+ * other state is left alone.
+ */
+export async function claimJobAndResume(
+  db: Db,
+  device: DeviceAuth,
+  jobId: string,
+  now: Date = new Date()
+): Promise<CompanionJob | 'conflict' | null> {
+  return guarded(() =>
+    db.transaction(async (tx) => {
+      const result = await claimJob(tx, device, jobId, now)
+      if (result === null || result === 'conflict' || result.kind !== 'native_transcription') return result
+      const [occ] = await tx
+        .select({ state: occurrences.state })
+        .from(occurrences)
+        .where(eq(occurrences.id, result.occurrenceId))
+      if (occ?.state === 'waiting_for_pc') await applyTrigger(tx, result.occurrenceId, 'pc_claimed')
+      return result
+    })
+  )
+}
+
+/** Marks the device as seen. `false` when its token is revoked (or gone). */
+export async function touchDevice(db: Db, device: DeviceAuth, now: Date = new Date()): Promise<boolean> {
+  const rows = await guarded(() =>
+    db
+      .update(deviceTokens)
+      .set({ lastUsedAt: now })
+      .where(
+        and(
+          eq(deviceTokens.id, device.deviceId),
+          eq(deviceTokens.memberId, device.memberId),
+          isNull(deviceTokens.revokedAt)
+        )
+      )
+      .returning({ id: deviceTokens.id })
+  )
+  return rows.length === 1
 }
 
 /**

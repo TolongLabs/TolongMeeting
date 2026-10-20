@@ -143,6 +143,14 @@ describe('claim', () => {
   })
 })
 
+test('the database refuses a claimed job without a lease', async () => {
+  const id = await pendingJob(fx.a1.memberId, fx.occA)
+  const claimWithoutLease = async () => {
+    await db.update(companionJobs).set({ state: 'claimed' }).where(eq(companionJobs.id, id))
+  }
+  await expect(claimWithoutLease()).rejects.toThrow()
+})
+
 describe('progress', () => {
   const claimed = async () => {
     const id = await pendingJob(fx.a1.memberId, fx.occA)

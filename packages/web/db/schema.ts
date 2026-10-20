@@ -653,7 +653,9 @@ export const companionJobs = pgTable(
     check('companion_jobs_kind_check', oneOf(t.kind, COMPANION_JOB_KINDS)),
     check('companion_jobs_state_check', oneOf(t.state, COMPANION_JOB_STATES)),
     check('companion_jobs_attempts_check', sql`${t.attempts} >= 0`),
-    check('companion_jobs_local_run_target_check', sql`${t.kind} <> 'local_run' or ${t.targetDeviceId} is not null`)
+    check('companion_jobs_local_run_target_check', sql`${t.kind} <> 'local_run' or ${t.targetDeviceId} is not null`),
+    // A claimed job has a lease: `releaseExpiredLeases` and `getClaimedJob` read it.
+    check('companion_jobs_claimed_lease_check', sql`${t.state} <> 'claimed' or ${t.leaseUntil} is not null`)
   ]
 )
 

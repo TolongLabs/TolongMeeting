@@ -43,6 +43,13 @@
       "when": 1792463343770,
       "tag": "0005_companion_and_run_locations",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792479320395,
+      "tag": "0006_claimed_job_lease",
+      "breakpoints": true
     }
   ]
 }

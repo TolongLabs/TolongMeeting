@@ -1,16 +1,14 @@
 import type { CompanionEvent, CompanionJob, DeviceAuth, SummaryListItem } from '@tm/core'
-import { and, eq, isNull } from 'drizzle-orm'
 import {
-  claimJob,
+  claimJobAndResume,
   getClaimedJob,
   listCompanionEvents,
   listJobsForDevice,
   releaseExpiredLeases,
-  renewLease
+  renewLease,
+  touchDevice,
+  type Db
 } from '../../db/companion'
-import { safeDbError } from '../../db/errors'
-import { deviceTokens, occurrences, type Db } from '../../db'
-import { applyTrigger } from '../../db/transitions'
 import { listSummaries, readSummary } from './summaries'
 import { companionDeps } from './deps'
 import { authenticateDevice } from './tokens'
@@ -60,19 +58,7 @@ export function createDeviceScope(db: Db, device: DeviceAuth): DeviceScope {
     device: Object.freeze(known),
     listJobs: () => listJobsForDevice(db, known),
     listEvents: (afterId: number) => listCompanionEvents(db, known, afterId),
-    claimJob: async (jobId: string, now?: Date) => {
-      if (!UUID.test(jobId)) return null
-      return db.transaction(async (tx) => {
-        const result = await claimJob(tx, known, jobId, now)
-        if (result === null || result === 'conflict' || result.kind !== 'native_transcription') return result
-        const [occ] = await tx
-          .select({ state: occurrences.state })
-          .from(occurrences)
-          .where(eq(occurrences.id, result.occurrenceId))
-        if (occ?.state === 'waiting_for_pc') await applyTrigger(tx, result.occurrenceId, 'pc_claimed')
-        return result
-      })
-    },
+    claimJob: async (jobId: string, now?: Date) => (UUID.test(jobId) ? claimJobAndResume(db, known, jobId, now) : null),
     renewLease: async (jobId: string, now?: Date) => UUID.test(jobId) && (await renewLease(db, known, jobId, now)),
     getClaimedJob: async (jobId: string, now?: Date) =>
       UUID.test(jobId) ? getClaimedJob(db, known, jobId, now) : null,
@@ -81,24 +67,7 @@ export function createDeviceScope(db: Db, device: DeviceAuth): DeviceScope {
     releaseLapsedLeases: async (now?: Date) => {
       await releaseExpiredLeases(db, now)
     },
-    touch: async (now: Date = new Date()) => {
-      try {
-        const rows = await db
-          .update(deviceTokens)
-          .set({ lastUsedAt: now })
-          .where(
-            and(
-              eq(deviceTokens.id, known.deviceId),
-              eq(deviceTokens.memberId, known.memberId),
-              isNull(deviceTokens.revokedAt)
-            )
-          )
-          .returning({ id: deviceTokens.id })
-        return rows.length === 1
-      } catch (e) {
-        throw safeDbError(e)
-      }
-    }
+    touch: (now?: Date) => touchDevice(db, known, now)
   })
 }
 
