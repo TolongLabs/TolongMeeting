@@ -26,7 +26,7 @@ async function appears(page: Page, selector: string): Promise<boolean> {
 /**
  * Joins the platform's standing test meeting at `url`, reads it the way a run does and leaves. Returns what is missing:
  * a selector key (a selector from `entry.selectors()` that matches no element at its checkpoint) or `step:<name>` (an
- * adapter step that threw or gave an unexpected result). The run goes on after a failure, so one report lists everything.
+ * adapter step that threw or gave an unexpected result). The run goes on after a failure, so one report lists everything, except that a failed device check leaves at once.
  * A selector map that cannot be read throws.
  */
 export async function runSmokeEntry(page: Page, entry: SmokeEntry, url: string): Promise<{ missing: string[] }> {
@@ -66,6 +66,11 @@ export async function runSmokeEntry(page: Page, entry: SmokeEntry, url: string):
   })
   await check(entry.checkpoints.inMeeting)
   await step('assertDevicesOff', () => adapter.assertDevicesOff(page))
+  // The bot is live in a real meeting with a device on, or could not tell: it leaves at once and touches nothing else.
+  if (missing.has('step:assertDevicesOff')) {
+    await step('leave', () => adapter.leave(page))
+    return { missing: [...missing] }
+  }
   await step('connectOutputAudio', () => adapter.connectOutputAudio(page))
   await step('ensureLayout', () => adapter.ensureLayout(page))
   await check(entry.checkpoints.afterLayout)
