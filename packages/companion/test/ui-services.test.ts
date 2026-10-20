@@ -231,6 +231,18 @@ describe('SettingsService', () => {
       ok: false,
       message: 'Summaries folder: the path must be absolute'
     })
+    expect(await r.service.save(form({ summariesDir: '\\\\evil\\share' }))).toEqual({
+      ok: false,
+      message: 'Summaries folder: UNC and device paths are not allowed'
+    })
+    expect(await r.service.save(form({ summariesDir: 'C:\\Windows\\System32' }))).toEqual({
+      ok: false,
+      message: 'Summaries folder: system folders are not allowed'
+    })
+    expect(await r.service.save(form({ summariesDir: 'C:\\' }))).toEqual({
+      ok: false,
+      message: 'Summaries folder: drive and filesystem roots are not allowed'
+    })
     expect(await r.service.save(form({ whisperCommand: ' ' }))).toEqual({
       ok: false,
       message: 'Whisper command: enter a value'
@@ -238,6 +250,10 @@ describe('SettingsService', () => {
     expect(await r.service.save(form({ whisperCwd: 'relative' }))).toEqual({
       ok: false,
       message: 'Whisper folder: the path must be absolute'
+    })
+    expect(await r.service.save(form({ whisperCwd: '\\\\attacker\\share' }))).toEqual({
+      ok: false,
+      message: 'Whisper folder: UNC and device paths are not allowed'
     })
     expect(await r.service.save(form({ whisperModel: 'x'.repeat(65) }))).toEqual({
       ok: false,

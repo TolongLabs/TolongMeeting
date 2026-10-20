@@ -24,27 +24,103 @@ const ServerUrlSchema = z
     )
   }, 'the server URL must be https (http only for localhost) and carry no credentials')
 
-const AbsolutePathSchema = text(1024).refine(
-  (v) => posix.isAbsolute(v) || win32.isAbsolute(v),
-  'the path must be absolute'
-)
+export function validateFolderPath(v: string): { ok: true; path: string } | { ok: false; error: string } {
+  if (
+    v.startsWith('\\\\') ||
+    v.startsWith('//') ||
+    v.startsWith('\\\\?\\') ||
+    v.startsWith('\\\\.\\') ||
+    v.startsWith('//?/') ||
+    v.startsWith('//./') ||
+    /^[\\/]{1,2}(\?|\.)[\\/]/.test(v)
+  ) {
+    return { ok: false, error: 'UNC and device paths are not allowed' }
+  }
+
+  const isPosix = v.startsWith('/')
+  const isWin = /^[a-zA-Z]:[\\/]/.test(v)
+  if (!isPosix && !isWin) {
+    return { ok: false, error: 'the path must be absolute' }
+  }
+
+  const normalized = isWin ? win32.normalize(v) : posix.normalize(v)
+
+  if (normalized.split(/[\\/]/).includes('..')) {
+    return { ok: false, error: 'the path must be absolute' }
+  }
+
+  // Refuse drive roots and filesystem roots
+  if (isPosix && normalized === '/') {
+    return { ok: false, error: 'drive and filesystem roots are not allowed' }
+  }
+  if (isWin && /^[a-zA-Z]:[\\/]*$/.test(normalized)) {
+    return { ok: false, error: 'drive and filesystem roots are not allowed' }
+  }
+
+  // Refuse system folders
+  if (isPosix) {
+    const POSIX_SYSTEM = ['/etc', '/bin', '/sbin', '/usr', '/var', '/proc', '/sys', '/dev', '/boot']
+    for (const sys of POSIX_SYSTEM) {
+      if (normalized === sys || normalized.startsWith(sys + '/')) {
+        return { ok: false, error: 'system folders are not allowed' }
+      }
+    }
+  }
+
+  if (isWin) {
+    const normLower = normalized.toLowerCase()
+    if (/^[a-zA-Z]:\\(windows|program files|program files \(x86\)|programdata)($|\\)/i.test(normalized)) {
+      return { ok: false, error: 'system folders are not allowed' }
+    }
+    const envSysRoots = [
+      process.env.SystemRoot,
+      process.env.SYSTEMROOT,
+      process.env.ProgramFiles,
+      process.env['ProgramFiles(x86)'],
+      process.env.ProgramData
+    ].filter(Boolean) as string[]
+
+    for (const envPath of envSysRoots) {
+      const normEnv = win32.normalize(envPath).toLowerCase()
+      if (normLower === normEnv || normLower.startsWith(normEnv + '\\')) {
+        return { ok: false, error: 'system folders are not allowed' }
+      }
+    }
+  }
+
+  return { ok: true, path: normalized }
+}
+
+export function isValidSettingsFolder(path: unknown): boolean {
+  return typeof path === 'string' && validateFolderPath(path).ok
+}
+
+const FolderPathSchema = text(1024).superRefine((v, ctx) => {
+  const res = validateFolderPath(v)
+  if (!res.ok) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: res.error
+    })
+  }
+})
 
 const WhisperSchema = z.strictObject({
   command: text(2048),
-  cwd: AbsolutePathSchema.nullable(),
+  cwd: FolderPathSchema.nullable(),
   model: text(64)
 })
 
 export const SettingsSchema = z.strictObject({
   serverUrl: ServerUrlSchema,
-  summariesDir: AbsolutePathSchema,
+  summariesDir: FolderPathSchema,
   whisper: WhisperSchema
 }) satisfies z.ZodType<Settings>
 
 /** What a settings file may hold: any subset, so a newly added key falls back to its default. */
 const SettingsFileSchema = z.strictObject({
   serverUrl: ServerUrlSchema.optional(),
-  summariesDir: AbsolutePathSchema.optional(),
+  summariesDir: FolderPathSchema.optional(),
   whisper: WhisperSchema.partial().optional()
 })
 

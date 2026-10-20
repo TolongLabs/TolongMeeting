@@ -9,7 +9,7 @@ import { sweepPlaintextAtStart } from '../local/ephemeral'
 import { nodeSpawn } from '../jobs/whisper'
 import { jobsDir, localRunPaths, resolvePaths, secretsFile, settingsFile, stateFile } from '../paths'
 import { SecretStore } from '../secrets'
-import { loadSettings, saveSettings } from '../settings'
+import { isValidSettingsFolder, loadSettings, saveSettings } from '../settings'
 import { StateStore } from '../state'
 import { PairingService, SettingsService } from '../ui/services'
 import { installGuards } from './guard'
@@ -125,6 +125,10 @@ async function main(): Promise<void> {
     join(appDir(), 'assets'),
     {
       openSummaries: () => {
+        if (!isValidSettingsFolder(settings.summariesDir)) {
+          console.error('could not open the summaries folder: folder is not valid')
+          return
+        }
         // The folder may not exist before the first summary; the shell port opens it only when it does.
         mkdir(settings.summariesDir, { recursive: true })
           .then(() => ports.shell.openPath(settings.summariesDir))
