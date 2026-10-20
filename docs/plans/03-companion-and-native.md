@@ -362,8 +362,8 @@ git commit -m "feat(web): add companion tables and queries"
 
 **Files:**
 
-- Create: `packages/web/lib/companion/tokens.ts`, `packages/web/app/api/companion/pair/route.ts`, `packages/web/app/api/devices/pairing-code/route.ts`, `packages/web/app/api/devices/[id]/revoke/route.ts`, `packages/web/app/devices/page.tsx`
-- Test: `packages/web/lib/companion/tokens.test.ts`
+- Create: `packages/web/lib/companion/tokens.ts`, `packages/web/app/api/companion/pair/route.ts`, `packages/web/app/api/devices/pairing-code/route.ts`, `packages/web/app/api/devices/[id]/revoke/route.ts`, `packages/web/app/devices/page.tsx` _(Deferred to the Figma gate: `app/devices/page.tsx`, the list, "Pair a PC" button and code display; the routes and `lib/` are built. Also added: `lib/companion/deps.ts` with `pairDeps()` and `ntfyConfigOf`, and `lib/companion/deps.ts` joins the `no-direct-db` allow-list.)_
+- Test: `packages/web/test/companion-tokens.test.ts`
 
 **Interfaces:**
 
@@ -394,7 +394,7 @@ export function revokeDevice(db: Db, memberId: string, deviceId: string, now?: D
 
 - Routes (adds to contracts): `POST /api/companion/pair` (body `PairRequest`, no session, answers `PairResponse` or 400), `POST /api/devices/pairing-code` and `POST /api/devices/<id>/revoke` (member session). The Devices page at `/devices` lists the member's PCs (name, paired, last seen, Remove) and a "Pair a PC" button that shows the website address and the code as `XXXX-XXXX`, "valid for 10 minutes".
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const t0 = new Date('2026-10-21T08:00:00Z')
@@ -439,21 +439,21 @@ test('a revoked token is refused; another member cannot revoke it', async () => 
 
 `pairA(at)` creates and redeems a code for `memberA`; `memberANtfy` is what `memberNtfy` returns for member A in the fixture.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/web/lib/companion/tokens.test.ts`
+Run: `bun test packages/web/test/companion-tokens.test.ts`
 Expected: FAIL with "Cannot find module './tokens'"
 
-- [ ] **Step 3: Implement the functions in `packages/web/lib/companion/tokens.ts`, the three routes and the Devices page**
+- [x] **Step 3: Implement the functions in `packages/web/lib/companion/tokens.ts`, the three routes and the Devices page**
 
 Codes are 8 characters from the Crockford alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, stored only as `hashSecret(normalisePairingCode(code))`, valid 10 minutes, single use. `redeemPairingCode` marks the pairing used and inserts the device token in one transaction; `pairedAt` is `now`. `authenticateDevice` accepts only `Bearer tmd_...` and refuses revoked rows.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/web/lib/companion/tokens.test.ts`
+Run: `bun test packages/web/test/companion-tokens.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/companion packages/web/app/api/companion/pair packages/web/app/api/devices packages/web/app/devices
@@ -1440,7 +1440,7 @@ export function startNtfySubscriber(d: {
 }): { stop(): void }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const now = new Date('2026-10-21T08:00:00Z')
@@ -1524,21 +1524,21 @@ test('the subscriber sends the token as a header and resumes with since=<last id
 
 `streamOf(text)` answers a 200 response whose body streams `text` and then closes; `recorder` is Task 11's fake `fetch`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/companion/src/ntfy.test.ts`
 Expected: FAIL with "Cannot find module './ntfy'"
 
-- [ ] **Step 3: Implement `backoff.ts`, `ntfy.ts` and the wiring**
+- [ ] **Step 3: Implement `backoff.ts`, `ntfy.ts` and the wiring** (`backoff.ts` and `ntfy.ts` done; the `main/index.ts` wiring is left to the integrator)
 
 `sticky` is `priority >= 4`; `title` falls back to `TolongMeeting`; `clickUrl` is the message's `click` when it is `https:`, else the first kept button's URL. In `main/index.ts`, a click or button opens its URL with `shell.openExternal` only after a second `https:` check; `sync_summaries` calls Task 13's `syncSummaries`. Without a stored `ntfyLastId`, the first connection omits `since`. Reconnects wait `reconnectDelayMs(attempt)`, resetting after a message arrives.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/companion/src/ntfy.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/companion/src
