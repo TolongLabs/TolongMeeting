@@ -563,6 +563,43 @@ test('a leave that throws closes the stage; no meeting means nothing to click', 
   }
 })
 
+test('a leave confirmation dialog or reload reads unknown but is not out: the stage is closed', async () => {
+  const stage = fakeStage()
+  // Before the click the bot is in the meeting; the dialog then hides the toolbar for two reads and the bot is still in.
+  const a = fakeAdapter(['in_meeting', 'unknown', 'unknown', 'in_meeting'])
+  expect(await leaveMeeting(asPage(stage), asAdapter(a), FASTLEAVE)).toBe('closed')
+  expect([a.leaveCalls, stage.closeCalls]).toEqual([1, 1])
+})
+
+test('unknown on 3 reads in a row after the click, or removed, confirms the leave', async () => {
+  const gone = fakeStage()
+  const a = fakeAdapter(['in_meeting', 'unknown', 'unknown', 'unknown'])
+  expect(await leaveMeeting(asPage(gone), asAdapter(a), FASTLEAVE)).toBe('left')
+  expect(gone.closeCalls).toBe(0)
+  const kicked = fakeStage()
+  expect(await leaveMeeting(asPage(kicked), asAdapter(fakeAdapter(['in_meeting', 'removed'])), FASTLEAVE)).toBe('left')
+  expect(kicked.closeCalls).toBe(0)
+})
+
+test('a meetingState that throws closes the stage, before or after the click', async () => {
+  const before = fakeStage()
+  const a = fakeAdapter(['in_meeting'])
+  a.meetingState = async () => {
+    throw new Error('Target closed')
+  }
+  expect(await leaveMeeting(asPage(before), asAdapter(a), FASTLEAVE)).toBe('closed')
+  expect([a.leaveCalls, before.closeCalls]).toEqual([0, 1])
+  const after = fakeStage()
+  const b = fakeAdapter(['in_meeting'])
+  let reads = 0
+  b.meetingState = async () => {
+    if (++reads > 1) throw new Error('Target closed')
+    return 'in_meeting'
+  }
+  expect(await leaveMeeting(asPage(after), asAdapter(b), FASTLEAVE)).toBe('closed')
+  expect([b.leaveCalls, after.closeCalls]).toEqual([1, 1])
+})
+
 test('a repeated leave is idempotent: the second finds the meeting over and clicks nothing', async () => {
   const stage = fakeStage()
   const a = fakeAdapter(['in_meeting'], { leaveSetsEnded: true })
