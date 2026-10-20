@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { formatOffset, localParts, type JobConfig } from '@tm/core'
+import { readNativeTranscript } from './native/read'
 import { correctNames } from './names'
 
 export interface LiveLine {
@@ -32,6 +33,7 @@ const PARAGRAPH_CHARS = 600
 const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you for watching', 'thanks for watching'])
 const NO_LIVE_TRANSCRIPT = '_No live transcript for this meeting._'
 const NO_SPEECH = '_No speech recognised in the live transcript._'
+const NO_NATIVE_SPEECH = '_No speech recognised in the transcript._'
 
 export function isHallucination(text: string): boolean {
   const core = text
@@ -172,7 +174,7 @@ function header(cfg: JobConfig): string {
   const when = `${from.weekday} ${from.dayMonthYear}, ${clock(from.hhmm)} to ${clock(to.hhmm)} (${timeZone})`
   return (
     `# ${name}: transcript\n\n` +
-    `${when}. Live transcription; times are from the recording start, and names may be misheard.\n\n` +
+    `${when}. ${cfg.entry.transcription === 'native' ? 'Transcribed after the meeting' : 'Live transcription'}; times are from the recording start, and names may be misheard.\n\n` +
     '## Transcript\n\n'
   )
 }
@@ -193,10 +195,23 @@ async function liveBody(cfg: JobConfig, livePath: string, vocab: string[]): Prom
   return blocks.map((block) => renderBlock(block, vocab)).join('\n\n')
 }
 
-// Writes out/transcript.md and returns its path. A missing live.jsonl means there was no live transcript.
+// Native rows are relative to the joined recording, so there are no attempt gaps to place.
+async function nativeBody(cfg: JobConfig, vocab: string[]): Promise<string> {
+  const blocks = paragraphs(await readNativeTranscript(cfg.dataDir), [])
+  if (blocks.length === 0) return NO_NATIVE_SPEECH
+  return blocks.map((block) => renderBlock(block, vocab)).join('\n\n')
+}
+
+// Writes out/transcript.md and returns its path. A missing live.jsonl means there was no live transcript; a native
+// entry reads transcript/native/audio.json instead, and a missing file there is an error, not an empty transcript.
 export async function buildTranscript(cfg: JobConfig, vocab: string[]): Promise<string> {
   const livePath = join(cfg.dataDir, 'transcript', 'live.jsonl')
-  const body = (await Bun.file(livePath).exists()) ? await liveBody(cfg, livePath, vocab) : NO_LIVE_TRANSCRIPT
+  const body =
+    cfg.entry.transcription === 'native'
+      ? await nativeBody(cfg, vocab)
+      : (await Bun.file(livePath).exists())
+        ? await liveBody(cfg, livePath, vocab)
+        : NO_LIVE_TRANSCRIPT
   const outPath = join(cfg.dataDir, 'out', 'transcript.md')
   await mkdir(dirname(outPath), { recursive: true })
   await Bun.write(outPath, `${header(cfg)}${body}\n`)

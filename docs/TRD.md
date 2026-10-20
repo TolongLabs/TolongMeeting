@@ -768,6 +768,7 @@ The milestone plans were written in parallel against this page. Each marks the s
   - tables `device_pairings`, `companion_jobs` and `companion_events`;
   - the trigger `pc_claimed`; the queues `native-job-check` and `profile-delete`; `Ping.tags` with the `tm_summary` tag; the `/api/companion/*` routes;
   - `TM_DATA_ROOT` for web; `TM_WORKER_IMAGE_REF`.
+  - pipeline: `readNativeTranscript(occDir)` in `packages/pipeline/src/native/read.ts` (contained read of `transcript/native/audio.json`, validated with `WhisperJsonSchema`, hallucination-filtered); `buildTranscript` reads it when `entry.transcription` is `native`.
 - **04 Teams and 05 Meet**:
   - selector maps `teams.json` and `meet.json` with `TeamsSelectorsSchema` and `MeetSelectorsSchema`;
   - adapters `teamsAdapter`, `meetAdapter`, `TEAMS_TIMEOUTS`, `MEET_TIMEOUTS`, and `teamsChatReader`;

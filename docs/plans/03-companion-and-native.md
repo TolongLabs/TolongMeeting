@@ -961,14 +961,14 @@ git commit -m "feat(web): serve audio and accept transcripts"
 
 - Create: `packages/pipeline/src/native/read.ts`
 - Modify: plan 01a's transcript step in `packages/pipeline/src/` (the reader of `transcript/live.jsonl`), which reads `readNativeTranscript(cfg.dataDir)` when `cfg.entry.transcription === 'native'`
-- Test: `packages/pipeline/src/native/read.test.ts`
+- Test: `packages/pipeline/test/native-read.test.ts`
 
 **Interfaces:**
 
 - Consumes: `WhisperJsonSchema` (Task 1); `runPipeline(cfg: JobConfig): Promise<PipelineResult>`; plan 01a's hallucination filter if `packages/pipeline` exports one.
 - Produces: `readNativeTranscript(occDir: string): Promise<{ startMs: number; endMs: number; text: string }[]>`, the same row shape as `transcript/live.jsonl`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('whisper segments become recording-relative rows in milliseconds', async () => {
@@ -1000,21 +1000,21 @@ test('runPipeline builds transcript.md from the native transcript', async () => 
 
 `nativeOccurrenceFixture` writes a minimal occurrence directory (no `transcript/live.jsonl`) and stubs the AI client the way plan 01a's pipeline tests do.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/pipeline/src/native/read.test.ts`
+Run: `bun test packages/pipeline/test/native-read.test.ts`
 Expected: FAIL with "Cannot find module './read'"
 
-- [ ] **Step 3: Implement `readNativeTranscript` and the branch in the transcript step**
+- [x] **Step 3: Implement `readNativeTranscript` and the branch in the transcript step**
 
 Drop a segment when its text, trimmed, lower-cased and stripped of trailing punctuation, is empty, `you` or `thank you for watching` (reuse plan 01a's filter when it exists, keeping these cases). Round seconds to milliseconds with `Math.round(s * 1000)`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/pipeline/src/native/read.test.ts`
+Run: `bun test packages/pipeline/test/native-read.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/pipeline/src
