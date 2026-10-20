@@ -66,6 +66,8 @@ export interface FakeOptions {
   teardownBudgetMs?: number
   /** Called by `adapter.leave`; it may throw or never settle. */
   leave?: () => Promise<void>
+  /** A leave click that does not take: the page stays in the meeting, so `leaveMeeting` closes the stage page. */
+  leaveStays?: boolean
   /** Called by `context.close`. */
   contextClose?: () => Promise<void>
   /** Called by `checkpointProfile`. */
@@ -93,6 +95,8 @@ export interface FakeDeps extends RunDeps {
   joinOpts: unknown[]
   /** How many times the run called `ensureLayout` (`calls` holds only the first). */
   layoutCalls: number
+  /** How many times a stage page was closed (`leaveMeeting` does that when a leave does not take). */
+  stageCloses: number
   /** Every URL the stage pages were sent to, in order. */
   gotos: string[]
   leftAt: Date | null
@@ -189,6 +193,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     joinCount: 0,
     joinOpts: [] as unknown[],
     layoutCalls: 0,
+    stageCloses: 0,
     gotos: [] as string[],
     leftAt: null as Date | null,
     forms: null as FakeDeps['forms'],
@@ -217,11 +222,15 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       },
       url: () => 'https://app.zoom.us/wc/12345678901/join',
       isClosed: () => false,
+      close: async () => void (fake.stageCloses += 1),
       screenshot: async () => Buffer.from('png'),
       ariaSnapshot: async () => '- document'
     }) as unknown as Page
 
+  let clicked = false
   const nextState = (): MeetingState => {
+    // After a leave click the page shows the meeting over (the scripted states are for the bot's time in the meeting).
+    if (clicked && !opts.leaveStays) return 'ended'
     if (states === 'always_in_meeting') return 'in_meeting'
     const at = () => states[Math.min(stateIndex, states.length - 1)]!
     let current = at()
@@ -287,6 +296,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     },
     leave: async () => {
       rec('leave')
+      clicked = true
       fake.leftAt = clock()
       await opts.leave?.()
     }

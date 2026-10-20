@@ -6,6 +6,7 @@ import {
   controlTokenHash,
   formatWhen,
   localParts,
+  stripPasscode,
   triggerFor,
   vncSecret,
   type AccountCheckData,
@@ -31,6 +32,7 @@ import { DeskPause } from './control/desk-pause'
 import type { SigninTabOptions } from './control/desk-tabs'
 import { startHeartbeat, type HeartbeatLoop } from './control/heartbeat'
 import { LinkOverride } from './control/link-override'
+import { leaveMeeting } from './control/leave'
 import { siteLinks } from './control/links'
 import { EventOutbox } from './control/outbox'
 import { acknowledgedState, rememberState } from './control/resume'
@@ -43,6 +45,7 @@ import { createFrameHandler, type FrameHandler } from './frames/handler'
 import type { FrameLoop } from './frames/frames'
 import type { LiveAsr } from './asr/live'
 import { setupProfile, type ProfileSetup } from './profile-setup'
+import { startMentionWatch } from './mentions/watch'
 import { closeQr } from './qr/qr'
 import type { Recorder } from './recorder/recorder'
 import { defaultDeps, type OccurrenceOutcome, type RunDeps } from './run-deps'
@@ -106,7 +109,7 @@ const SIGNIN_DEADLINE_BEFORE_START_MS = 5 * MINUTE
 // and the next one still runs.
 const BOUND = {
   sweep: 10_000,
-  leave: 10_000,
+  leave: 20_000,
   stopChat: 5_000,
   stopWatcher: 5_000,
   stopFrames: 5_000,
@@ -135,10 +138,14 @@ const RESUME_RETRY_MS = 1_000
 /** What a race against the abort signal returns when the signal wins. */
 const ABORTED = Symbol('aborted')
 
+type LeaveCommand = NonNullable<OccurrenceOutcome['command']>
+
 interface Verdict {
   result: OccurrenceOutcome['result']
   endedBy: OccurrenceOutcome['endedBy']
   reason: string | null
+  /** Only on `member_left`: the command that ended the meeting. */
+  command?: LeaveCommand
 }
 
 const failed = (reason: string, endedBy: Verdict['endedBy'] = null): Verdict => ({ result: 'failed', endedBy, reason })
@@ -175,6 +182,7 @@ const OutcomeSchema = z.object({
   result: z.enum(['completed', 'denied', 'not_admitted', 'failed']),
   endedBy: z.enum(['page', 'removed', 'hard_stop', 'dropped', 'terminated', 'member_left', 'stopped']).nullable(),
   reason: z.string().nullable(),
+  command: z.enum(['leave_now', 'take_over']).optional(),
   joinedAt: z.string().nullable(),
   endedAt: z.string()
 }) satisfies z.ZodType<OccurrenceOutcome>
@@ -224,6 +232,8 @@ class OccurrenceRun {
   private state: OccurrenceState = 'starting'
   private recording = false
   private endRequest: EndRequest | null = null
+  /** The command behind a `leave` request; a `take_over` replaces a `leave_now` that came first. */
+  private endCommand: LeaveCommand = 'leave_now'
   private verdict: Verdict | null = null
   /** An earlier attempt already ended the meeting: this one only reports and finishes the recording. */
   private resumed = false
@@ -242,6 +252,9 @@ class OccurrenceRun {
   private url = ''
   /** Which source supplied `url`. Only the source and the host go to the website, never the link. */
   private linkSource: JoinedLinkSource = 'fixed'
+  /** The link as it was given, before `normaliseLink`: what `linkUsed` reports once joining has started. */
+  private rawLink = ''
+  private joiningStarted = false
   private forms: FormDispatcher | null = null
   /** Set once teardown closed the dispatcher: a link resolved after that is pinged as "not checked" instead. */
   private formsClosed = false
@@ -394,7 +407,12 @@ class OccurrenceRun {
   // the states after it are reported once the server has taken that heartbeat, the recording is joined if it is not
   // yet (never by a replaced worker), and the hand-over is reported.
   private async finishEarlier(outcome: OccurrenceOutcome): Promise<OccurrenceOutcome> {
-    const verdict: Verdict = { result: outcome.result, endedBy: outcome.endedBy, reason: outcome.reason }
+    const verdict: Verdict = {
+      result: outcome.result,
+      endedBy: outcome.endedBy,
+      reason: outcome.reason,
+      ...(outcome.command === undefined ? {} : { command: outcome.command })
+    }
     this.resumed = true
     this.verdict = verdict
     this.joinedAt = outcome.joinedAt === null ? null : new Date(outcome.joinedAt)
@@ -404,7 +422,7 @@ class OccurrenceRun {
       if (this.handsOver) await this.walkTo('uploading')
       else if (verdict.endedBy === 'member_left') {
         await this.walkTo('in_meeting')
-        await this.setState('left_by_member')
+        await this.setState('left_by_member', undefined, outcome.command)
       } else if (verdict.result === 'denied') {
         await this.walkTo('joining')
         await this.setState('in_lobby')
@@ -494,8 +512,21 @@ class OccurrenceRun {
       state: this.state,
       recording: this.recording,
       participants: this.participants,
-      events: this.outbox?.pending() ?? []
+      events: this.outbox?.pending() ?? [],
+      ...(this.linkUsed === null ? {} : { linkUsed: this.linkUsed })
     }
+  }
+
+  // The link the bot joined with, before `normaliseLink`, from the moment joining starts. The worker cuts the passcode
+  // (the website cuts it again); the server takes only an https link of at most 2,048 characters, and a heartbeat with
+  // anything else would be refused whole. A raw link that does not qualify (no scheme) falls back to the normalised one.
+  private get linkUsed(): string | null {
+    if (!this.joiningStarted) return null
+    for (const candidate of [this.rawLink, this.url]) {
+      const link = stripPasscode(candidate)
+      if (link.length <= 2048 && URL.canParse(link) && new URL(link).protocol === 'https:') return link
+    }
+    return null
   }
 
   private onReply(reply: HeartbeatReply): void {
@@ -510,7 +541,7 @@ class OccurrenceRun {
 
   private async runCommands(commands: HeartbeatReply['commands']): Promise<void> {
     await dispatchCommands(commands, {
-      leave: async () => this.requestEnd('leave'),
+      leave: async (command) => this.requestEnd('leave', command),
       stop: async () => this.requestEnd('stop'),
       pause: () => this.pauseDesk(),
       resume: () => this.resumeDesk()
@@ -557,15 +588,21 @@ class OccurrenceRun {
 
   // Asks the run to end: it wakes every wait, and the run takes its normal teardown. The first request stands, except
   // that being replaced by another attempt overrides all (a replaced worker reports nothing more).
-  private requestEnd(kind: EndRequest): void {
+  private requestEnd(kind: EndRequest, command: LeaveCommand = 'leave_now'): void {
     if (this.endRequest === null || kind === 'superseded') this.endRequest = kind
+    // Taking over is the stronger ask: the member opens the meeting once the bot is out.
+    if (kind === 'leave' && this.endRequest === 'leave' && command === 'take_over') this.endCommand = 'take_over'
     this.wake()
   }
 
   // Reports a change of state: a `state` event, and the state the next heartbeat carries. A move the server's state
   // machine has no edge for is not sent: a restarted worker is already past the early states, and a bug elsewhere is
   // reported rather than sent.
-  private async setState(next: OccurrenceState, link?: StateEventData['link']): Promise<void> {
+  private async setState(
+    next: OccurrenceState,
+    link?: StateEventData['link'],
+    command?: StateEventData['command']
+  ): Promise<void> {
     if (next === this.state) return
     if (triggerFor(this.state, next) === null) {
       if (this.cfg.attempt === 1)
@@ -573,7 +610,11 @@ class OccurrenceRun {
       return
     }
     this.state = next
-    await this.ev('state', { state: next, ...(link === undefined ? {} : { link }) } satisfies StateEventData)
+    await this.ev('state', {
+      state: next,
+      ...(command === undefined ? {} : { command }),
+      ...(link === undefined ? {} : { link })
+    } satisfies StateEventData)
   }
 
   // The states of the first join. A rejoin after a drop keeps the state `in_meeting`.
@@ -667,7 +708,8 @@ class OccurrenceRun {
     const joined = this.joinedAt !== null
     const result = joined ? 'completed' : 'failed'
     if (this.deps.signal?.aborted !== true) {
-      if (this.endRequest === 'leave') return { result, endedBy: 'member_left', reason: 'left_by_member' }
+      if (this.endRequest === 'leave')
+        return { result, endedBy: 'member_left', reason: 'left_by_member', command: this.endCommand }
       if (this.endRequest === 'stop') return { result, endedBy: 'stopped', reason: 'stopped' }
       if (this.endRequest === 'superseded') return { result, endedBy: 'terminated', reason: 'superseded' }
     }
@@ -912,6 +954,7 @@ class OccurrenceRun {
     if (adapter === null || url === null) return false
     this.adapter = adapter
     this.url = url
+    this.rawLink = raw
     this.linkSource = source
     return true
   }
@@ -1109,6 +1152,7 @@ class OccurrenceRun {
   // Joining starts: the watcher now offers form links, and a link a watcher found is kept for a restarted attempt.
   private async startJoining(): Promise<void> {
     this.watchPhase = 'during'
+    this.joiningStarted = true
     if (this.linkSource === 'watched') {
       await this.optional('joined link', () => writeJoinedLink(this.cfg.dataDir, this.url))
     }
@@ -1340,10 +1384,24 @@ class OccurrenceRun {
 
   // Leaves the meeting. A leave that failed or timed out may have left the bot in the call, so the browser is closed at
   // once: closing it is what ends the participant.
+  // `leaveMeeting` clicks leave, confirms the page is out, and closes the stage page itself when it is not ('closed').
   private async leave(): Promise<void> {
-    const left = await this.bounded('leave', BOUND.leave, () => this.adapter!.leave(this.stage!))
+    const out: { result: Awaited<ReturnType<typeof leaveMeeting>> | null } = { result: null }
+    const finished = await this.bounded('leave', BOUND.leave, async () => {
+      out.result = await leaveMeeting(this.stage!, this.adapter!)
+    })
     this.inMeeting = false
-    if (!left) await this.closeBrowser()
+    if (!finished || out.result !== 'left') await this.closeBrowser()
+  }
+
+  // A member's leave or take-over waits for the form submit in progress: the dispatcher stops taking forms (a form not
+  // yet clicked ends as `meeting_ended`, so no Submit is ever clicked a second time) and settles the running ones, a
+  // submit among them. Only then does the bot leave.
+  private async settleForms(): Promise<void> {
+    const forms = this.forms
+    if (forms === null || this.formsClosed) return
+    this.formsClosed = true
+    await this.bounded('forms.settle', BOUND.forms, () => forms.close())
   }
 
   // Closes the guest browser and the main context, each once; a context that failed to close is tried again.
@@ -1389,13 +1447,31 @@ class OccurrenceRun {
     frames?.onFatal((e) => this.fault('screen capture', e))
     if (cfg.entry.transcription === 'live') {
       const audio = this.audio!
+      // A work meeting listens for the member's names (a lecture has a roll call too, but no ping is wanted there).
+      const mentions = this.lecture ? null : this.startMentions()
       this.asr = await this.optional('live transcription', () =>
         deps.startLiveAsr(audio, cfg.ai, join(cfg.dataDir, 'transcript', 'live.jsonl'), {
           baseMs: audio.startedAt.getTime() - this.recorder!.startedAt.getTime(),
-          onError: (e) => this.asrError(e)
+          onError: (e) => this.asrError(e),
+          ...(mentions === null ? {} : { onResult: (r) => mentions.onResult(r) })
         })
       )
     }
+  }
+
+  // The watch for the member's names. Its pings carry no link or passcode (see `pings.nameMentioned`), and a failure of
+  // the ping or the event is logged by the watch itself and never reaches the speech path.
+  private startMentions(): ReturnType<typeof startMentionWatch> {
+    const { cfg, deps, links } = this
+    return startMentionWatch({
+      names: cfg.member.mentionNames,
+      entry: cfg.entry.name,
+      timeZone: cfg.entry.timeZone,
+      recordingStartedAt: this.recorder!.startedAt,
+      links: links === null ? null : { meetingPage: links.meetingPage, takeOver: links.takeOver },
+      emit: (atMs) => void this.ev('mention', { atMs }),
+      ping: (p) => deps.sendPing(cfg.ntfy, p)
+    })
   }
 
   private asrError(error: Error): void {
@@ -1611,12 +1687,13 @@ class OccurrenceRun {
     if (this.inMeeting) {
       const chat = this.chat
       if (chat) await this.bounded('chat.sweepNow', BOUND.sweep, () => chat.sweepNow())
+      if (this.endRequest === 'leave') await this.settleForms()
       await this.leave()
     } else if (this.isAborted) {
       // A join abandoned by the stop signal may still complete in the page: closing the browser first keeps the bot out.
       await this.closeBrowser()
     }
-    if (this.verdict?.endedBy === 'member_left') await this.setState('left_by_member')
+    if (this.verdict?.endedBy === 'member_left') await this.setState('left_by_member', undefined, this.verdict.command)
     else if (this.handsOver) await this.setState('uploading')
     await this.stopWatching()
     if (this.chat) await this.bounded('chat.stop', BOUND.stopChat, () => this.chat!.stop())

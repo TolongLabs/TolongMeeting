@@ -371,7 +371,7 @@ Ping copy, added to 01c's `pings` (actions left out when `links` is null, as in 
 | ------------------------------------------------------------------- | -------- | ---------------------------------- | -------------------------------------------------------------------------- | -------------------------------- |
 | `nameMentioned({ entry, at, transcript, meetingUrl, takeOverUrl })` | high     | `Your name was mentioned: <entry>` | `Heard at <at>. The last 30 seconds:` then a line break and `<transcript>` | `Open meeting page`, `Take over` |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/mentions/watch.test.ts
@@ -487,19 +487,19 @@ test('mention copy', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/mentions packages/worker/src/asr/live.test.ts packages/worker/src/control/links.test.ts packages/notify`
 Expected: FAIL with `Cannot find module './watch'`.
 
-- [ ] **Step 3: Implement `watch.ts`, `onResult`, the two links, `pings.nameMentioned` and the `run.ts` wiring**
+- [x] **Step 3: Implement `watch.ts`, `onResult`, the two links, `pings.nameMentioned` and the `run.ts` wiring**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src packages/notify && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src packages/notify/src docs/TRD.md
@@ -535,10 +535,10 @@ Rules:
 
 - `leaveMeeting`: when `meetingState` is neither `in_meeting` nor `lobby`, return `'left'` without clicking. Otherwise call `adapter.leave(stage)` and poll `meetingState` every `pollMs` until it is neither; if that hasn't happened within `confirmMs`, or `leave` throws, close the stage page (`stage.close({ runBeforeUnload: false })`) and return `'closed'`.
 - `dispatchCommands` calls `h.leave` once per batch, with `'take_over'` when the batch holds one, else `'leave_now'`.
-- `run.ts`: 01c's leave handler calls `leaveMeeting` in place of `adapter.leave`, and only after it returns emits `left_by_member` with `command`; the rest of 01c's finish is unchanged. From the moment joining starts, `getStatus` sends `linkUsed`. The joined ping's actions become `Open meeting page`, `Make the bot leave` and `Take over`, from `siteLinks`.
+- `run.ts`: 01c's leave handler calls `leaveMeeting` in place of `adapter.leave`, and only after it returns emits `left_by_member` with `command`; the rest of 01c's finish is unchanged. From the moment joining starts, `getStatus` sends `linkUsed`. The joined ping's actions become `Open meeting page`, `Make the bot leave` and `Take over`, from `siteLinks`. The leave step's bound (`BOUND.leave`) is 20 s, so the 10 s confirmation of `leaveMeeting` is not cut; a leave that failed or was cut also closes the browser. A leave or take-over command waits first for the form submit in progress (the dispatcher settles its running forms, bounded by `BOUND.forms`), then leaves; no Submit is clicked twice. A take-over ends with `left_by_member` and no summary hand-over.
 - `HeartbeatSchema` accepts an optional `linkUsed`: an `https:` URL of at most 2,048 characters.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/control/leave.test.ts
@@ -605,19 +605,19 @@ test('a heartbeat may carry the joined link', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/control packages/core/src/control.test.ts`
 Expected: FAIL with `Cannot find module './leave'`.
 
-- [ ] **Step 3: Implement `leave.ts`, the command change, the schema and type changes, and the `run.ts` wiring**
+- [x] **Step 3: Implement `leave.ts`, the command change, the schema and type changes, and the `run.ts` wiring**
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/control packages/core && bun run typecheck`
 Expected: PASS, `0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src packages/core/src docs/TRD.md

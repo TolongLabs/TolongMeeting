@@ -23,6 +23,8 @@ export interface OccurrenceOutcome {
   result: 'completed' | 'denied' | 'not_admitted' | 'failed'
   endedBy: 'page' | 'removed' | 'hard_stop' | 'dropped' | 'terminated' | 'member_left' | 'stopped' | null
   reason: string | null
+  /** Only on `member_left`: the command that ended the meeting. */
+  command?: 'leave_now' | 'take_over'
   joinedAt: string | null
   endedAt: string
 }
