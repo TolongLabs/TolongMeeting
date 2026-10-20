@@ -1295,11 +1295,11 @@ Unwrap one Safe Links level by its `url` parameter (core can't import the worker
 Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: PASS (9 new core cases; the timetable tests, with the replaced Teams case).
 
-- [ ] **Step 5: Build the chat fixture**
+- [x] **Step 5: Build the chat fixture**
 
 `chat.html` imitates a Teams chat page at a `/l/chat/` URL, using the meeting chat's item markup (Task 4) inside `[data-tid='message-pane-list-viewport']`. With `launcher` it first shows the launcher from `app.html`. It renders the newest 20 messages and, each time the list is scrolled to the top, loads the next 20 older ones after 500 ms, as Teams does; `window.__addMessage(m)` appends one. It has a compose box `[data-tid='ckeditor']` (`contenteditable`), a "Send" button and a "React" button on every message; focusing or typing in the compose box, or clicking "Send" or "React", sets `window.__touched = true`. In `serveWatcherFixtures`, `teams` routes `chatUrl` to `chat.html` (or, with `loginRequired`, a 302 to `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`, served by Task 3's `signin.html`).
 
-- [ ] **Step 6: Write the failing browser tests**
+- [x] **Step 6: Write the failing browser tests**
 
 ```ts
 // packages/worker/test/watchers/teams.spec.ts
@@ -1416,12 +1416,12 @@ test('a signed-out profile rejects the start with the sign-in host', async ({ co
 
 In plan 02's `packages/worker/src/watchers/index.test.ts`, the Teams line becomes `expect(watcherFor('teams')).toBe(teams.startWatcher);`.
 
-- [ ] **Step 7: Run them to verify they fail**
+- [x] **Step 7: Run them to verify they fail**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/teams.spec.ts` and `bun test packages/worker/src/watchers/index.test.ts`
 Expected: FAIL, cannot resolve `../../src/watchers/teams`; `watcherFor('teams')` is still `null`.
 
-- [ ] **Step 8: Implement `teamsChatReader` and `startWatcher`, and register the watcher**
+- [x] **Step 8: Implement `teamsChatReader` and `startWatcher`, and register the watcher**
 
 Like plan 02's Discord reader, it reads in one `page.evaluate` per read and never clicks or types, except the launcher's "Continue on this browser":
 
@@ -1431,12 +1431,12 @@ Like plan 02's Discord reader, it reads in one `page.evaluate` per read and neve
 - `startWatcher` accepts only `{ kind: 'chat', app: 'teams' }` (else a `TypeError`), normalises `chat` with `normaliseTeamsChatUrl` (null throws `WatcherChatError('not_found')`) and returns `runChatWatcher(desk, teamsChatReader(url, await teamsSelectors()), onLink)`. The 24-hour scan, poll intervals, newest-link rule, pasted-link override and form candidates are plan 02's loop, unchanged.
 - `watcherFor('teams')` returns this `startWatcher`.
 
-- [ ] **Step 9: Run them to verify they pass**
+- [x] **Step 9: Run them to verify they pass**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/watchers/teams.spec.ts` and `bun test packages/worker/src/watchers/index.test.ts`
 Expected: PASS (4 browser tests; the `watcherFor` test).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/web/lib/timetable.ts packages/web/test/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/TRD.md

@@ -1,18 +1,19 @@
 import type { ChatApp } from '@tm/core'
 import * as discord from './discord'
+import * as teams from './teams'
 import * as whatsapp from './whatsapp'
 
 export type StartWatcher = typeof discord.startWatcher
 
-/** The watcher for a chat app; null where there is none yet (Teams arrives with plan 04). */
-export function watcherFor(app: ChatApp): StartWatcher | null {
+/** The watcher for a chat app. */
+export function watcherFor(app: ChatApp): StartWatcher {
   switch (app) {
     case 'discord':
       return discord.startWatcher
     case 'whatsapp':
       return whatsapp.startWatcher
     case 'teams':
-      return null
+      return teams.startWatcher
   }
 }
 

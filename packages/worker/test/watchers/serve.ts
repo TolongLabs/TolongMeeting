@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { BrowserContext, Route } from 'playwright'
+import type { FixtureMessage } from '../teams/serve'
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), '../fixtures')
 
@@ -42,16 +43,37 @@ export interface WhatsAppFixture {
   chats: WhatsAppChat[]
 }
 
-// Plan 04 adds `teams?`.
+export interface TeamsChatFixture {
+  /** The chat link the page is served at (`https://<teams host>/l/chat/<thread>/conversations`). Other paths are 404. */
+  chatUrl: string
+  /** Show the "Continue on this browser" launcher first. */
+  launcher?: boolean
+  /** Redirect the chat to the Microsoft sign-in page, as a signed-out profile is. */
+  loginRequired?: boolean
+  /** Where the list starts; the default is the bottom. */
+  scroll?: 'top' | 'bottom'
+  /** Oldest first. The page shows the newest 20 and loads 20 older ones each time it is scrolled to the top. */
+  messages: FixtureMessage[]
+}
+
 export interface WatcherFixtures {
   discord?: DiscordFixture
   whatsapp?: WhatsAppFixture
+  teams?: TeamsChatFixture
 }
 
 /** What the fixture pages put on `window`. Cast to it in `page.evaluate`: other specs declare their own `__fixture`. */
 export interface DiscordWindow {
   __fixture: DiscordFixture
   __addMessage: (m: DiscordMessage) => void
+  __touched?: boolean
+}
+
+/** What the Teams chat fixture page puts on `window`. `__clicks` is read with `teamsClicks`. */
+export interface TeamsChatWindow {
+  __fixture: TeamsChatFixture
+  __addMessage: (m: FixtureMessage) => void
+  __clicks: string[]
   __touched?: boolean
 }
 
@@ -78,12 +100,14 @@ const redirect = (route: Route, path: string) =>
  * unchanged. Each page gets its fixture as `window.__fixture` from an init script.
  */
 export async function serveWatcherFixtures(context: BrowserContext, f: WatcherFixtures): Promise<void> {
-  const { discord, whatsapp } = f
-  if (discord === undefined && whatsapp === undefined) return
+  const { discord, whatsapp, teams } = f
+  if (discord === undefined && whatsapp === undefined && teams === undefined) return
   // Each host's page reads only its own fixture.
-  const byHost: Record<string, DiscordFixture | WhatsAppFixture | undefined> = {
+  const byHost: Record<string, DiscordFixture | WhatsAppFixture | TeamsChatFixture | undefined> = {
     'discord.com': discord,
-    'web.whatsapp.com': whatsapp
+    'web.whatsapp.com': whatsapp,
+    'teams.microsoft.com': teams,
+    'teams.live.com': teams
   }
   await context.addInitScript((fixtures) => {
     const fixture = fixtures[location.hostname]
@@ -106,4 +130,19 @@ export async function serveWatcherFixtures(context: BrowserContext, f: WatcherFi
         ? page(route, 'whatsapp/web.html')
         : route.fulfill({ status: 404, body: '' })
     )
+  if (teams !== undefined) {
+    const chatPath = new URL(teams.chatUrl).pathname
+    const chat = async (route: Route) => {
+      if (new URL(route.request().url()).pathname !== chatPath) return route.fulfill({ status: 404, body: '' })
+      return teams.loginRequired
+        ? route.fulfill({
+            status: 302,
+            headers: { location: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize' }
+          })
+        : page(route, 'teams/chat.html')
+    }
+    await context.route('https://teams.microsoft.com/**', chat)
+    await context.route('https://teams.live.com/**', chat)
+    await context.route('https://login.microsoftonline.com/**', (route) => page(route, 'teams/signin.html'))
+  }
 }
