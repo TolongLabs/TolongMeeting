@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import type { RunnerConnections } from '../src/runner'
 import type { ExportRow, RunnerStore } from '../src/store-types'
-import type { Connection, ConnectionKind, ExportTargetId, OccurrenceInfo, OccurrenceLookup } from '../src/types'
+import {
+  REPLACED_NOTE,
+  type Connection,
+  type ConnectionKind,
+  type ExportTargetId,
+  type OccurrenceInfo,
+  type OccurrenceLookup
+} from '../src/types'
 
 export interface MemoryStores {
   /** What `tm-exports` uses. Like the real store but in memory; `fail` keeps the message exactly as it was given. */
@@ -44,6 +51,19 @@ export function memoryStores(seed?: {
       if (!next) return null
       next.status = 'running'
       return { ...next }
+    },
+    async replaceEarlierDownloads(row) {
+      const old = rows.filter(
+        (r) =>
+          r.id !== row.id &&
+          r.memberId === row.memberId &&
+          r.occurrenceId === row.occurrenceId &&
+          r.target === row.target &&
+          r.status === 'succeeded' &&
+          r.filePath !== null
+      )
+      for (const r of old) Object.assign(r, { filePath: null, note: REPLACED_NOTE })
+      return old.map((r) => ({ ...r }))
     },
     async succeed(id, title, r) {
       const row = byId(id)

@@ -63,6 +63,33 @@ describe('exports', () => {
     expect(await s1.exports.create(o1, 'zip')).toMatchObject({ ok: true, row: { status: 'queued' } })
   })
 
+  test('a member has at most 3 exports queued or running, and finishing one frees a place', async () => {
+    const active = (target: 'github' | 'gdocs' | 'notion', status: 'queued' | 'running') =>
+      db.insert(exportsTable).values({ occurrenceId: o1, memberId: m1, target, status })
+    await active('github', 'queued')
+    await active('gdocs', 'running')
+    expect((await s1.exports.create(o1, 'zip')).ok).toBe(true)
+    expect(await s1.exports.create(o1, 'pdf')).toEqual({
+      ok: false,
+      code: 'too_many',
+      message: 'You have too many exports running. Wait for one to finish.'
+    })
+    // Another member counts on their own.
+    expect(await db.$count(exportsTable, eq(exportsTable.memberId, m2))).toBe(0)
+    await db.update(exportsTable).set({ status: 'succeeded' }).where(eq(exportsTable.target, 'github'))
+    expect((await s1.exports.create(o1, 'pdf')).ok).toBe(true)
+  })
+
+  test('two requests at once cannot pass the cap together', async () => {
+    await db.insert(exportsTable).values([
+      { occurrenceId: o1, memberId: m1, target: 'github' as const },
+      { occurrenceId: o1, memberId: m1, target: 'gdocs' as const }
+    ])
+    const answers = await Promise.all([s1.exports.create(o1, 'zip'), s1.exports.create(o1, 'pdf')])
+    expect(answers.filter((a) => a.ok)).toHaveLength(1)
+    expect(await db.$count(exportsTable, eq(exportsTable.memberId, m1))).toBe(3)
+  })
+
   test("a member cannot export, read or list another member's meeting", async () => {
     const made = await s1.exports.create(o1, 'zip')
     if (!made.ok) throw new Error('create failed')

@@ -21,6 +21,8 @@ import { redact } from './vault'
 // so two runners never take one row), and ends `succeeded` or `failed`. The policy pg-boss queues state explicitly is
 // stated here the same way:
 //   expire         EXPORT_TIMEOUT_MS: an export that runs longer fails with 'failed' and its calls are aborted.
+//   fairness       `claimNext` serves members in turn (the member whose last claim is oldest first), and a member may
+//                  have at most MAX_ACTIVE_EXPORTS_PER_MEMBER exports queued or running.
 //   retry          none. An export has side effects in the member's own services; the member presses the button again.
 //   dead letter    `failInterrupted` at start-up fails every row still `running` (the process died) and pings.
 //   retention      `purgeDeleted` every PURGE_EVERY_MS removes the rows of deleted meetings; the files go with the
@@ -162,6 +164,8 @@ async function withTimeout<T>(ms: number, work: (signal: AbortSignal) => Promise
 
 interface Progress {
   title: string | null
+  /** The occurrence directory, once the occurrence is known. */
+  dataDir: string | null
 }
 
 async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], progress: Progress): Promise<ExportResult> {
@@ -172,6 +176,7 @@ async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], prog
   if (occurrence.state !== 'completed') {
     throw new ExportError('not_ready', 'This meeting is still being processed.')
   }
+  progress.dataDir = occurrence.dataDir
   const target = deps.targets[row.target]
   if (!target) throw new ExportError('failed', "This export isn't available yet.")
 
@@ -248,13 +253,26 @@ async function announce(row: ExportRow, title: string | null, outcome: Outcome, 
 }
 
 /**
+ * A new download replaces the member's earlier one of the same meeting and target: its row stays, its file goes. The
+ * export itself has succeeded by now, so a failure here is logged (name and code only) and never turns it into a failure.
+ */
+async function dropReplaced(row: ExportRow, dataDir: string, deps: RunnerDeps): Promise<void> {
+  try {
+    for (const old of await deps.store.replaceEarlierDownloads(row))
+      await removeOutputs(join(dataDir, 'exports'), old.id)
+  } catch (e) {
+    deps.log(`export ${row.id} ${row.target} could not remove the replaced file (${errorBrief(e)})`)
+  }
+}
+
+/**
  * Runs one claimed (running) export to its end: it ends `succeeded` or `failed`, never anything else, and the member is
  * pinged. A message is stored only after `redact` has removed the connection's tokens; an error that is not an
  * `ExportError` becomes a fixed sentence around its redacted message, and only its name and code are logged.
  */
 export async function runExport(row: ExportRow, deps: RunnerDeps): Promise<void> {
   const secrets: string[] = []
-  const progress: Progress = { title: null }
+  const progress: Progress = { title: null, dataDir: null }
   let outcome: Outcome
   let detail = ''
   try {
@@ -272,6 +290,7 @@ export async function runExport(row: ExportRow, deps: RunnerDeps): Promise<void>
   if (outcome.ok) {
     await deps.store.succeed(row.id, progress.title ?? 'Meeting', outcome.result)
     deps.log(`export ${row.id} ${row.target} succeeded`)
+    if (outcome.result.filePath !== null && progress.dataDir !== null) await dropReplaced(row, progress.dataDir, deps)
   } else {
     const kind = TARGET_CONNECTION[row.target]
     if (outcome.code === 'reconnect_needed' && kind !== null) await deps.connections.markReconnect(row.memberId, kind)
@@ -293,8 +312,8 @@ async function pause(deps: RunnerDeps, ms: number, signal: AbortSignal): Promise
 }
 
 /**
- * Fails the exports an earlier process left running (and pings them), then runs queued exports one at a time, oldest
- * first, until `signal` aborts. An export in progress finishes first. `purgeDeleted` runs at the start and every
+ * Fails the exports an earlier process left running (and pings them), then runs queued exports one at a time, members
+ * in turn and each member's oldest first, until `signal` aborts. An export in progress finishes first. `purgeDeleted` runs at the start and every
  * `PURGE_EVERY_MS`. An error in one pass is logged by name and code and the loop goes on after `pollMs`.
  */
 export async function runLoop(deps: RunnerDeps, signal: AbortSignal, pollMs = 2000): Promise<void> {

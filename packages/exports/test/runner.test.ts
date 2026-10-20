@@ -94,6 +94,24 @@ async function setup(
   return { deps, pings, stores, dataDir }
 }
 
+test("a new download removes the member's earlier file of the same meeting and target and keeps its row", async () => {
+  const { stores, deps, dataDir } = await setup()
+  const first = await queueAndClaim(stores, 'zip')
+  await runExport(first, deps)
+  const firstFile = join(dataDir, `exports/${first.id}.zip`)
+  expect(existsSync(firstFile)).toBe(true)
+
+  const second = await queueAndClaim(stores, 'zip')
+  await runExport(second, deps)
+  expect(existsSync(firstFile)).toBe(false)
+  expect(existsSync(join(dataDir, `exports/${second.id}.zip`))).toBe(true)
+  expect(await stores.exports.get('m1', first.id)).toMatchObject({ status: 'succeeded', filePath: null })
+  expect(await stores.exports.get('m1', second.id)).toMatchObject({
+    status: 'succeeded',
+    filePath: `exports/${second.id}.zip`
+  })
+})
+
 test('zip success records the file and pings', async () => {
   const { deps, pings, stores, dataDir } = await setup()
   const row = await queueAndClaim(stores, 'zip')

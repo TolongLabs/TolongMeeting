@@ -80,6 +80,27 @@ test('creating an export maps each outcome to its status', async () => {
   })
 })
 
+test('an export over the member cap answers 429 with a fixed message, never the stored text', async () => {
+  const d = deps()
+  const full: ApiDeps = {
+    ...d,
+    exports: { ...d.exports, create: async () => ({ ok: false, code: 'too_many', message: 'stored text' }) }
+  }
+  expect(await createExportRequest('o1', body('zip'), full)).toEqual({
+    status: 429,
+    body: { error: 'too_many_exports', message: 'You have too many exports running. Wait for one to finish.' }
+  })
+})
+
+test('a download whose file a newer export replaced is shown as replaced, with no link', () => {
+  const kept = toExportView(row())
+  expect([kept.replaced, kept.downloadUrl]).toEqual([false, '/api/exports/11111111-1111-4111-8111-111111111111/file'])
+  const gone = toExportView(row({ filePath: null, note: 'Replaced by a newer export.' }))
+  expect([gone.replaced, gone.downloadUrl, gone.note]).toEqual([true, null, 'Replaced by a newer export.'])
+  expect(toExportView(row({ target: 'github', filePath: null })).replaced).toBe(false)
+  expect(toExportView(row({ status: 'queued', filePath: null })).replaced).toBe(false)
+})
+
 test('the body is strict', async () => {
   const d = deps()
   for (const raw of [

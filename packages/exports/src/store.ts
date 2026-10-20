@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { exports as exportsTable, occurrences, type Db } from '@tm/web/db'
 import { safeDbError } from '@tm/web/db/errors'
 import { toExportRow } from '@tm/web/db/exports'
 import type { RunnerStore } from './store-types'
+import { REPLACED_NOTE } from './types'
 import { redact } from './vault'
 
 export const INTERRUPTED_MESSAGE = 'The export was interrupted. Try again.'
@@ -16,7 +17,13 @@ export function runnerStore(db: Db): RunnerStore {
             .select({ id: exportsTable.id })
             .from(exportsTable)
             .where(eq(exportsTable.status, 'queued'))
-            .orderBy(asc(exportsTable.createdAt), asc(exportsTable.id))
+            // Round-robin by member: the member whose latest claim is the oldest goes first (never served: first), and
+            // inside a member the oldest request goes first.
+            .orderBy(
+              sql`(select max(x.started_at) from ${exportsTable} x where x.member_id = ${exportsTable.memberId}) asc nulls first`,
+              asc(exportsTable.createdAt),
+              asc(exportsTable.id)
+            )
             .limit(1)
             .for('update', { skipLocked: true })
           if (!next) return null
@@ -87,6 +94,29 @@ export function runnerStore(db: Db): RunnerStore {
           .orderBy(desc(exportsTable.finishedAt), desc(exportsTable.id))
           .limit(1)
         return found?.url ?? null
+      } catch (e) {
+        throw safeDbError(e)
+      }
+    },
+
+    async replaceEarlierDownloads(row) {
+      try {
+        const rows = await db
+          .update(exportsTable)
+          .set({ filePath: null, note: REPLACED_NOTE })
+          .where(
+            and(
+              eq(exportsTable.memberId, row.memberId),
+              eq(exportsTable.occurrenceId, row.occurrenceId),
+              eq(exportsTable.target, row.target),
+              eq(exportsTable.status, 'succeeded'),
+              isNotNull(exportsTable.filePath),
+              ne(exportsTable.id, row.id)
+            )
+          )
+          .returning()
+        // `returning` shows the new values; the caller needs each file's name, which is its id and the target.
+        return rows.map(toExportRow)
       } catch (e) {
         throw safeDbError(e)
       }

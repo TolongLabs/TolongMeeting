@@ -132,6 +132,24 @@ describe('create and list', () => {
     expect([early.status, ((await early.json()) as { error: string }).error]).toEqual([409, 'not_ready'])
   })
 
+  test('a fourth queued or running export of a member is refused with 429 and a fixed message', async () => {
+    const f = await fixture()
+    const [row] = await db.select().from(occurrences).where(eq(occurrences.id, f.occurrenceId))
+    const memberId = row!.memberId
+    await db
+      .insert(exportsTable)
+      .values(
+        (['github', 'gdocs', 'notion'] as const).map((target) => ({ occurrenceId: f.occurrenceId, memberId, target }))
+      )
+    const res = await createExportResponse(f.mine, f.occurrenceId, post({ target: 'zip' }))
+    expect([res.status, await res.json()]).toEqual([
+      429,
+      { error: 'too_many_exports', message: 'You have too many exports running. Wait for one to finish.' }
+    ])
+    const other = await createExportResponse(f.theirs, f.occurrenceId, post({ target: 'zip' }))
+    expect(other.status).toBe(404)
+  })
+
   test('a remote target needs a connection that is connected, not marked for reconnect, and has its settings', async () => {
     const f = await fixture()
     const refusal = async (target: string) => {

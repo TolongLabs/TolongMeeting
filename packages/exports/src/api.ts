@@ -32,6 +32,8 @@ export interface ExportView {
   status: ExportStatus
   createdAt: string
   finishedAt: string | null
+  /** A download whose file was removed because a newer export of the same meeting and target replaced it. */
+  replaced: boolean
   /** The page the provider made (always https), or null. */
   url: string | null
   downloadUrl: string | null
@@ -49,6 +51,7 @@ export const MESSAGES = {
   alreadyRunning: 'This export is already running.',
   notReady: 'This meeting is still being processed.',
   notFound: 'Meeting not found.',
+  tooMany: 'You have too many exports running. Wait for one to finish.',
   invalidTarget: 'Choose one of the export buttons.',
   failedFallback: 'The export failed. Try again.'
 } as const
@@ -71,10 +74,12 @@ const ERROR_TEXT: Record<ExportErrorCode, string> = {
   failed: MESSAGES.failedFallback
 }
 
+const isDownloadTarget = (target: ExportTargetId): target is 'zip' | 'pdf' => target === 'zip' || target === 'pdf'
+
 /** The download an export row stands for: only a finished zip or PDF, at exactly the path the runner is allowed to write. */
 export function exportDownload(row: ExportRow): { path: string; contentType: string; ext: 'zip' | 'pdf' } | null {
   if (row.status !== 'succeeded') return null
-  if (row.target !== 'zip' && row.target !== 'pdf') return null
+  if (!isDownloadTarget(row.target)) return null
   const path = `exports/${row.id}.${row.target}`
   if (row.filePath !== path) return null
   return { path, ext: row.target, contentType: row.target === 'zip' ? 'application/zip' : 'application/pdf' }
@@ -107,6 +112,7 @@ export function toExportView(row: ExportRow): ExportView {
     status: row.status,
     createdAt: row.createdAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString() ?? null,
+    replaced: isDownloadTarget(row.target) && row.status === 'succeeded' && row.filePath === null,
     url: httpsOrNull(row.url),
     downloadUrl: exportDownload(row) ? `/api/exports/${row.id}/file` : null,
     note: row.note === null ? null : row.note.slice(0, MAX_NOTE_CHARS),
@@ -164,6 +170,7 @@ export async function createExportRequest(occurrenceId: string, rawBody: string,
   if (made.ok) return { status: 202, body: { exportId: made.row.id } }
   if (made.code === 'not_found') return NOT_FOUND
   if (made.code === 'not_ready') return { status: 409, body: { error: 'not_ready', message: MESSAGES.notReady } }
+  if (made.code === 'too_many') return { status: 429, body: { error: 'too_many_exports', message: MESSAGES.tooMany } }
   return { status: 409, body: { error: 'already_running', message: MESSAGES.alreadyRunning } }
 }
 

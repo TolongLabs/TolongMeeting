@@ -33,13 +33,15 @@ export type CreateExportRefusal =
   | { ok: false; code: 'already_running'; message: string }
   | { ok: false; code: 'not_found'; message: string }
   | { ok: false; code: 'not_ready'; message: string }
+  | { ok: false; code: 'too_many'; message: string }
 export type CreateExportResult = { ok: true; row: ExportRow } | CreateExportRefusal
 
 /** The member-facing export operations, bound to one member by a `MemberScope` (`memberExportStores`). */
 export interface MemberExports {
   /**
    * Queues an export. `not_found` for a meeting that is not the member's or is deleted, `not_ready` unless it is
-   * `completed`. The partial unique index allows one queued or running export per occurrence and target.
+   * `completed`. The partial unique index allows one queued or running export per occurrence and target, and a member
+   * may have at most `MAX_ACTIVE_EXPORTS_PER_MEMBER` queued or running in all (`too_many`).
    */
   create(occurrenceId: string, target: ExportTargetId): Promise<CreateExportResult>
   get(id: string): Promise<ExportRow | null>
@@ -69,7 +71,10 @@ export interface MemberOccurrences {
  * never read a token.
  */
 export interface RunnerStore {
-  /** The oldest queued export becomes running. Two runners never claim the same row. */
+  /**
+   * A queued export becomes running: the oldest one of the member whose last claim is the oldest (a member who was
+   * never served goes first), so one member's backlog can't starve the others. Two runners never claim the same row.
+   */
   claimNext(): Promise<ExportRow | null>
   /** Throws when the export is not running (it was purged, or already finished). */
   succeed(id: string, title: string, r: ExportResult): Promise<void>
@@ -77,6 +82,11 @@ export interface RunnerStore {
   fail(id: string, code: ExportErrorCode, message: string, secrets?: readonly string[]): Promise<void>
   /** The `url` of the latest earlier export of the same member, meeting and target that succeeded with one, else null. */
   previousUrl(row: ExportRow): Promise<string | null>
+  /**
+   * After a download (zip or pdf) succeeded: the same member's earlier succeeded downloads of the same meeting and target
+   * keep their row but lose their file path and get `REPLACED_NOTE`. Returns the cleared rows, whose files the caller removes.
+   */
+  replaceEarlierDownloads(row: ExportRow): Promise<ExportRow[]>
   /** Running exports become failed with code 'interrupted' (the runner restarted). Returns them. */
   failInterrupted(): Promise<ExportRow[]>
   /** Deletes the rows of occurrences in state 'deleted'. Returns how many. */

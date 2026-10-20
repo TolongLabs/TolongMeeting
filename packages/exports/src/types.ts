@@ -12,6 +12,11 @@ export const TARGET_LABEL: Record<ExportTargetId, string> = {
   notion: 'Notion'
 }
 
+/** The most exports one member may have queued or running at once, across all meetings. */
+export const MAX_ACTIVE_EXPORTS_PER_MEMBER = 3
+/** The note a download keeps after a newer export of the same meeting and target replaced its file. */
+export const REPLACED_NOTE = 'Replaced by a newer export.'
+
 export const TARGET_CONNECTION: Record<ExportTargetId, ConnectionKind | null> = {
   zip: null,
   pdf: null,

@@ -56,6 +56,33 @@ describe('runner store', () => {
     expect(await runner.claimNext()).toBeNull()
   })
 
+  test('claimNext serves members in turn: the one whose last claim is oldest goes first', async () => {
+    const other = await seedMember(db)
+    const m2 = other.memberId
+    const o3 = other.ids.occurrences
+    await db.update(occurrences).set({ state: 'completed' }).where(eq(occurrences.id, o3))
+    await db.delete(exportsTable)
+    const as2 = (target: 'zip' | 'pdf' | 'github') => memberExports(createScope(db, m2)).create(o3, target)
+    // m1 queues three, then m2 queues one later: a FIFO queue would serve m2 last.
+    const a1 = await queue(o1, 'zip')
+    await Bun.sleep(5)
+    const a2 = await queue(o1, 'pdf')
+    await Bun.sleep(5)
+    const a3 = await queue(o1, 'github')
+    await Bun.sleep(5)
+    const b1 = await as2('zip')
+    if (!b1.ok) throw new Error(b1.message)
+    const order: string[] = []
+    for (let i = 0; i < 4; i++) {
+      const row = (await runner.claimNext())!
+      order.push(row.id)
+      await Bun.sleep(5)
+    }
+    // m1 was never served, so its oldest goes first; then m2 (never served); then m1's turn comes round again.
+    expect(order).toEqual([a1.id, b1.row.id, a2.id, a3.id])
+    expect(await runner.claimNext()).toBeNull()
+  })
+
   test('two runners never claim the same export', async () => {
     await queue(o1, 'zip')
     await queue(o1, 'pdf')
@@ -115,6 +142,26 @@ describe('runner store', () => {
     await runner.claimNext()
     await runner.fail(third.id, 'failed', 'no')
     expect(await runner.previousUrl(second)).toBe('https://www.notion.so/A-1')
+  })
+
+  test('replaceEarlierDownloads clears the file of the earlier downloads of the same meeting and target only', async () => {
+    const done = async (target: 'zip' | 'pdf', title: string) => {
+      const row = await queue(o1, target)
+      await runner.claimNext()
+      await runner.succeed(row.id, title, { url: null, filePath: `exports/${row.id}.${target}`, note: null })
+      return row
+    }
+    const oldZip = await done('zip', 'old')
+    const pdf = await done('pdf', 'pdf')
+    const newZip = await done('zip', 'new')
+    const cleared = await runner.replaceEarlierDownloads(newZip)
+    expect(cleared.map((r) => r.id)).toEqual([oldZip.id])
+    const rows = await db.select().from(exportsTable)
+    const byId = (id: string) => rows.find((r) => r.id === id)!
+    expect(byId(oldZip.id)).toMatchObject({ status: 'succeeded', filePath: null, note: 'Replaced by a newer export.' })
+    expect(byId(pdf.id).filePath).toBe(`exports/${pdf.id}.pdf`)
+    expect(byId(newZip.id).filePath).toBe(`exports/${newZip.id}.zip`)
+    expect(await runner.replaceEarlierDownloads(newZip)).toEqual([])
   })
 
   test('failInterrupted fails running exports and returns them', async () => {

@@ -1,15 +1,16 @@
 import { join } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
-import type {
-  Connection,
-  ConnectionKind,
-  ConnectionSummary,
-  CreateExportResult,
-  ExportRow,
-  MemberConnections,
-  MemberExports,
-  MemberOccurrences
+import {
+  MAX_ACTIVE_EXPORTS_PER_MEMBER,
+  type Connection,
+  type ConnectionKind,
+  type ConnectionSummary,
+  type CreateExportResult,
+  type ExportRow,
+  type MemberConnections,
+  type MemberExports,
+  type MemberOccurrences
 } from '@tm/exports'
 import { safeDbError } from './errors'
 import { connections, exports as exportsTable, occurrences } from './schema'
@@ -24,6 +25,7 @@ const UNIQUE_VIOLATION = '23505'
 const ACTIVE_INDEX = 'exports_one_active_idx'
 
 export const ALREADY_RUNNING_MESSAGE = 'This export is already running.'
+export const TOO_MANY_MESSAGE = 'You have too many exports running. Wait for one to finish.'
 export const NOT_READY_MESSAGE = 'This meeting has no finished summary to export.'
 /** The most exports `listForOccurrence` returns. */
 export const MAX_LISTED_EXPORTS = 50
@@ -63,7 +65,14 @@ export function memberExports(scope: MemberScope): MemberExports {
         return { ok: false, code: 'not_found', message: 'Meeting not found.' }
       if (occurrence.state !== 'completed') return { ok: false, code: 'not_ready', message: NOT_READY_MESSAGE }
       try {
-        return { ok: true, row: toExportRow(await scope.insert(exportsTable, { occurrenceId, target })) }
+        // One create at a time per member, so two requests can't both pass the count.
+        return await scope.transaction(async (tx): Promise<CreateExportResult> => {
+          await tx.lock('exports')
+          const active = await tx.select(exportsTable, inArray(exportsTable.status, ['queued', 'running']))
+          if (active.length >= MAX_ACTIVE_EXPORTS_PER_MEMBER)
+            return { ok: false, code: 'too_many', message: TOO_MANY_MESSAGE }
+          return { ok: true, row: toExportRow(await tx.insert(exportsTable, { occurrenceId, target })) }
+        })
       } catch (e) {
         if (isAlreadyActive(e)) return { ok: false, code: 'already_running', message: ALREADY_RUNNING_MESSAGE }
         throw safeDbError(e)
