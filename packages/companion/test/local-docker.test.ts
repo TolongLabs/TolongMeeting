@@ -329,3 +329,18 @@ describe.skipIf(!daemonUp)('dockerCli against the real docker', () => {
     expect(await docker.port('tm-nonexistent-0', 6080)).toBeNull()
   })
 })
+
+describe('logs', () => {
+  test('reads the last lines of the container stdout with a plain docker logs', async () => {
+    const f = fakeSpawn(() => ({ out: 'one\ndeny-private: ready\n', err: 'ignored' }))
+    expect(await dockerCli(f.spawn).logs('tm-net-o1')).toBe('one\ndeny-private: ready\n')
+    expect(f.calls.map((c) => c.args)).toEqual([['logs', '--tail', '100', 'tm-net-o1']])
+  })
+
+  test('a failing docker logs is a DockerError and a bad name never reaches docker', async () => {
+    const f = fakeSpawn(() => ({ code: 1, err: 'No such container' }))
+    await expect(dockerCli(f.spawn).logs('tm-net-o1')).rejects.toThrow('docker logs failed (exit 1)')
+    await expect(dockerCli(f.spawn).logs('--follow')).rejects.toThrow(UnsafeDockerInput)
+    expect(f.calls).toHaveLength(1)
+  })
+})

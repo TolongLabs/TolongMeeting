@@ -13,6 +13,7 @@ export interface DockerLike {
   pull(ref: string): Promise<boolean>
   run(args: string[]): Promise<string> // the whole argument list, starting with 'run'; resolves stdout once docker exits (the container id with -d)
   wait(name: string): Promise<number> // exit code
+  logs(name: string): Promise<string> // the last lines the container wrote to its stdout (not its stderr)
   stop(name: string, timeoutSec: number): Promise<void>
   rm(name: string): Promise<void>
   volumeRm(name: string): Promise<void>
@@ -237,6 +238,8 @@ const SHORT_MS = 60_000
 const INFO_MS = 15_000
 const PULL_MS = 30 * 60_000
 const INTEGER = /^[0-9]{1,16}$/
+/** `docker logs --tail`: the reader never takes more than this many lines (the caller's spawn also caps the bytes). */
+const LOGS_TAIL_LINES = 100
 
 export interface DockerCliOptions {
   /** Refuse any image outside this repository prefix (the app's `TM_WORKER_IMAGE_PREFIX`). */
@@ -326,6 +329,13 @@ export function dockerCli(spawn: SpawnLike, options: DockerCliOptions = {}): Doc
     async wait(name) {
       assertResource(name, 'a container name')
       return integer('wait', await ok('wait', ['wait', name], null))
+    },
+
+    async logs(name) {
+      assertResource(name, 'a container name')
+      // `docker logs` writes the container's stdout to its stdout and the container's stderr to its stderr; only the
+      // first is read (`SpawnLike.stdout()`), so a line counts only if the container's process wrote it to stdout.
+      return ok('logs', ['logs', '--tail', String(LOGS_TAIL_LINES), name])
     },
 
     async stop(name, timeoutSec) {

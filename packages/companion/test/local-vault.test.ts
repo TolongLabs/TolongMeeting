@@ -55,6 +55,7 @@ function fakeDocker(init: {
       return 'id'
     },
     wait: async () => init.exit ?? 0,
+    logs: async () => '',
     stop: async () => {},
     rm: async (name) => {
       log.removedContainers.push(name)

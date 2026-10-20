@@ -3,7 +3,7 @@
 // (a throwaway user and network namespace, no root needed). Without unshare the real-iptables tests skip, and in CI
 // (CI is set) they fail instead.
 import { afterAll, describe, expect, test } from 'bun:test'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -76,8 +76,9 @@ describe('--print', () => {
   test('a host name is printed as given and not resolved; --hold ends with exec sleep infinity', () => {
     const lines = print('--allow-tcp', 'host.docker.internal:41234', '--hold')
     expect(lines[0]).toBe(`iptables -A ${CHAIN} -p tcp -d host.docker.internal --dport 41234 -j ACCEPT`)
-    expect(lines.at(-1)).toBe('exec sleep infinity')
-    expect(print()).not.toContain('exec sleep infinity')
+    // --print shows the hold step, so it shows the ready line as a command too (it is never run).
+    expect(lines.slice(-2)).toEqual(["echo 'deny-private: ready'", 'exec sleep infinity'])
+    expect(print().join('\n')).not.toMatch(/exec sleep infinity|deny-private: ready/)
   })
 
   test.each([
@@ -200,6 +201,41 @@ real('real iptables in a throwaway namespace', () => {
     expect(disabled.err).toContain('IPv6 rules skipped')
   })
 
+  test('--hold prints one ready line, last, after every rule is in and checked', () => {
+    const out = join(scratch, 'ready.out')
+    // Wait for the line in the file, list the chains at that moment, then stop the holder (`$!` is the sleep it exec'd).
+    const r = inNamespace(
+      `${apply} --allow-tcp 192.168.65.254:41234 --hold > ${out} & pid=$!; ` +
+        `i=0; while ! grep -q '^deny-private: ready$' ${out} && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; ` +
+        `iptables -S ${CHAIN} | grep -c '^-A'; ip6tables -S ${CHAIN} | grep -c '^-A'; ` +
+        `iptables -S OUTPUT | sed -n 2p; ip6tables -S OUTPUT | sed -n 2p; kill $pid`
+    )
+    expect(r.code).toBe(0)
+    const [v4, v6, hook4, hook6] = r.out.trim().split('\n')
+    expect(Number(v4)).toBe(1 + 1 + 1 + V4.length) // relay, replies, loopback, ranges
+    expect(Number(v6)).toBe(1 + 1 + V6.length)
+    expect([hook4, hook6]).toEqual(['-A OUTPUT -j TM-DENY-PRIVATE', '-A OUTPUT -j TM-DENY-PRIVATE'])
+    expect(readFileSync(out, 'utf8')).toBe('deny-private: ready\n')
+  })
+
+  test('a failing --hold run never prints the ready line and never holds', () => {
+    const unresolved = inNamespace(`timeout 10 ${apply} --allow-tcp no-such-host.invalid:5 --hold; echo "code=$?"`)
+    expect(unresolved.out).toMatch(/code=1\b/)
+    expect(unresolved.out).not.toContain('ready')
+
+    const stub = join(scratch, 'bin-fail')
+    Bun.spawnSync(['mkdir', '-p', stub])
+    for (const tool of ['ip6tables', 'ip6tables-restore']) {
+      writeFileSync(join(stub, tool), '#!/bin/sh\necho "stub: no ip6tables support" >&2\nexit 1\n')
+      chmodSync(join(stub, tool), 0o755)
+    }
+    // IPv4 rules go in, then IPv6 is fatal: the ready line must not have been printed before that.
+    const late = inNamespace(`timeout 10 ${apply} --hold; echo "code=$?"`, { PATH: `${stub}:${process.env.PATH}` })
+    expect(late.out).toMatch(/code=1\b/)
+    expect(late.out).not.toContain('ready')
+    expect(late.err).toContain('IPv6 is not disabled')
+  })
+
   test('--hold keeps the namespace alive only after the rules are in', async () => {
     const p = Bun.spawn(
       ['unshare', '-Urn', 'sh', '-c', `${apply} --hold & pid=$!; sleep 1; iptables -S ${CHAIN} | wc -l; kill $pid`],
@@ -207,6 +243,7 @@ real('real iptables in a throwaway namespace', () => {
     )
     const out = await new Response(p.stdout).text()
     await p.exited
-    expect(Number(out.trim())).toBe(1 + 2 + V4.length)
+    // stdout is the ready line, then the rule count.
+    expect(out.trim().split('\n')).toEqual(['deny-private: ready', String(1 + 2 + V4.length)])
   })
 })

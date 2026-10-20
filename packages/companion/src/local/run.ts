@@ -39,7 +39,10 @@ export const WORKER_STOP_SECONDS = 60
 /** `docker stop -t` for a worker that went quiet: it is not answering, so it is not given long. */
 export const SILENT_STOP_SECONDS = 10
 const RESTART_NOTICE_MS = 5000
-const HOLDER_SETTLE_MS = 3000
+/** The one line `deny-private.sh --hold` prints to stdout, after every rule is in and checked and just before it sleeps. */
+export const HOLDER_READY_LINE = 'deny-private: ready'
+const HOLDER_READY_MS = 30_000
+const HOLDER_POLL_MS = 200
 const PREFLIGHT_RETRY_MS = 30_000
 const HOST_PREFIX = 'tm-net-'
 
@@ -70,8 +73,10 @@ export interface LocalRunnerDeps {
   silenceMs?: number
   /** How often the silence check looks. Default 1000. */
   tickMs?: number
-  /** Time a new network holder must stay up before a worker joins it. Default 3000. */
-  holderSettleMs?: number
+  /** How long a new network holder has to print `HOLDER_READY_LINE` before the run fails. Default 30000. */
+  holderReadyMs?: number
+  /** How often the holder's logs are read while waiting for that line. Default 200. */
+  holderPollMs?: number
   /** Time between "restarting" reports. Default 5000. */
   restartNoticeMs?: number
   /** How long the short-lived files may stay when no heartbeat arrives. Default 120000. */
@@ -337,8 +342,11 @@ export class LocalRunner {
   }
 
   /**
-   * Starts the network holder and gives it a moment: `deny-private.sh` exits non-zero when its rules are not in, so a
-   * holder that is still up after the settle time has them, and a worker never joins a namespace without them.
+   * Starts the network holder and waits until it says its rules are in: `deny-private.sh --hold` prints
+   * `HOLDER_READY_LINE` to stdout only after every rule is installed and read back, and exits non-zero (printing
+   * nothing to stdout) when any step fails. A worker joins the namespace only after this line. If the holder exits,
+   * the logs cannot be read, or the deadline passes, this throws: the run fails closed, the cleanup removes the
+   * holder, and no worker starts.
    */
   private async startHolder(a: Active): Promise<void> {
     const { docker } = this.d
@@ -366,14 +374,31 @@ export class LocalRunner {
     void a.holderExit.then(() => {
       if (gen === a.holderGen) a.holderGone = true
     })
-    const settle = new AbortController()
-    const up = await Promise.race([
-      a.holderExit.then(() => false),
-      sleep(this.d.holderSettleMs ?? HOLDER_SETTLE_MS, settle.signal).then(() => true)
-    ])
-    settle.abort()
-    if (!up) throw new Error('The network holder stopped before it was ready')
+    await this.holderReady(a, name)
     a.vncPort = await docker.port(name, NOVNC_PORT)
+  }
+
+  /**
+   * Polls the holder's stdout for `HOLDER_READY_LINE` as a whole line. Nothing else can put that line there: the
+   * holder's only process is `deny-private.sh` (then `sleep`), the worker is not started yet and does not share its
+   * stdout, `docker logs` hands over the container's stdout only (its stderr, where every error goes, is not read),
+   * and no value in the script's input (host names, ports) is ever echoed to stdout.
+   */
+  private async holderReady(a: Active, name: string): Promise<void> {
+    const { docker } = this.d
+    const pollMs = this.d.holderPollMs ?? HOLDER_POLL_MS
+    const deadline = Date.now() + (this.d.holderReadyMs ?? HOLDER_READY_MS)
+    for (;;) {
+      if (a.holderGone) throw new Error('The network holder stopped before it was ready')
+      const out = await docker.logs(name)
+      // Re-check after the read: a holder that died while we read is not trusted even if the line was already out.
+      if (a.holderGone) throw new Error('The network holder stopped before it was ready')
+      if (out.split(/\r?\n/).includes(HOLDER_READY_LINE)) return
+      if (Date.now() >= deadline) throw new Error('The network holder did not report its rules in time')
+      const wake = new AbortController()
+      await Promise.race([a.holderExit, sleep(pollMs, wake.signal)])
+      wake.abort()
+    }
   }
 
   /** One worker container, from its files to its exit. Returns the exit code, or null when it was stopped as crashed. */

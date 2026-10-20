@@ -27,7 +27,13 @@ import {
   workerArgs
 } from '../src/local/containers'
 import { checkRunArgs, type DockerLike } from '../src/local/docker'
-import { LocalRunner, MAX_LOCAL_ATTEMPTS, type LocalOutcome, type LocalRunApi } from '../src/local/run'
+import {
+  HOLDER_READY_LINE,
+  LocalRunner,
+  MAX_LOCAL_ATTEMPTS,
+  type LocalOutcome,
+  type LocalRunApi
+} from '../src/local/run'
 import { startRelay } from '../src/local/relay'
 import { localPaths } from '../src/local/vault'
 import { SecretStore, type SafeStorageLike } from '../src/secrets'
@@ -175,6 +181,8 @@ describe('container argument lists', () => {
     expect(tailOf(holder)).toEqual(['--allow-tcp', 'host.docker.internal:41234', '--hold'])
     for (const flag of ['--allow-tcp', '--hold']) expect(denyUsage).toContain(flag)
     expect(denyPrivate).toContain('exec sleep infinity')
+    // The line the runner waits for is the one the script prints, right before it sleeps.
+    expect(denyPrivate).toContain(`echo "${HOLDER_READY_LINE}"\n  exec sleep infinity`)
   })
 
   test('host name and machine id match what the worker checks before it opens a profile', () => {
@@ -226,6 +234,10 @@ interface Opts {
   running?: { name: string; identityId: string | null }[]
   silenceMs?: number
   holderExitsAtStart?: boolean
+  holderOut?: string // what the holder prints to stdout at start, instead of the ready line ('' for nothing)
+  holderReadyAfterMs?: number // the ready line comes this long after the holder starts (default: at once)
+  holderExitsAfterMs?: number // the holder exits (code 1, no ready line) this long after it starts
+  holderReadyMs?: number // the deadline for the ready line (default 2000)
   failWorkerRun?: boolean
   preflightRejects?: Error
   now?: () => number
@@ -250,6 +262,7 @@ interface Container {
   running: boolean
   removed: boolean
   exit: Promise<number>
+  out: string // stdout, as `docker logs` returns it
   end: (code: number) => void
 }
 
@@ -340,6 +353,7 @@ function build(opts: Opts = {}) {
         running: true,
         removed: false,
         exit,
+        out: '',
         end: (code) => {
           c.running = false
           end(code)
@@ -349,6 +363,15 @@ function build(opts: Opts = {}) {
       containers.set(name, c)
       if (name.startsWith('tm-net-')) {
         if (opts.holderExitsAtStart) c.end(1)
+        else if (opts.holderExitsAfterMs !== undefined) setTimeout(() => c.end(1), opts.holderExitsAfterMs)
+        else if (opts.holderOut !== undefined) c.out = opts.holderOut
+        else if (opts.holderReadyAfterMs !== undefined) {
+          setTimeout(() => {
+            if (!c.running) return
+            log.push('holder ready')
+            c.out = `${HOLDER_READY_LINE}\n`
+          }, opts.holderReadyAfterMs)
+        } else c.out = `${HOLDER_READY_LINE}\n`
       } else if (name.startsWith('tm-run-')) {
         volumesUsed.add('tm-profile-u1')
         const attempt = Number(name.split('-').at(-1))
@@ -366,6 +389,11 @@ function build(opts: Opts = {}) {
       const c = containers.get(name)
       if (!c) throw new Error(`no such container ${name}`)
       return c.exit
+    },
+    async logs(name) {
+      const c = containers.get(name)
+      if (!c) throw new Error(`no such container ${name}`)
+      return c.out
     },
     async stop(name, seconds) {
       log.push(`stop ${name} ${seconds}`)
@@ -481,7 +509,8 @@ function build(opts: Opts = {}) {
     preflightRetryMs: 10,
     silenceMs: opts.silenceMs ?? 5000,
     tickMs: 10,
-    holderSettleMs: 5,
+    holderReadyMs: opts.holderReadyMs ?? 2000,
+    holderPollMs: 5,
     restartNoticeMs: 10,
     ephemeralMaxMs: 2000,
     ...(opts.now ? { now: opts.now } : {}),
@@ -511,6 +540,7 @@ function build(opts: Opts = {}) {
   }
   return {
     runner,
+    docker,
     log,
     argv,
     jobsSeen,
@@ -749,6 +779,60 @@ describe('a worker that crashes', () => {
     expect(w.log.some((l) => l.startsWith('run tm-run-'))).toBe(false)
     expect(w.failures).toEqual(['The PC could not run the meeting'])
     expect(w.afterCalls).toEqual([])
+    await w.expectNothingLeft()
+  })
+})
+
+describe('the holder must report its rules before a worker starts', () => {
+  const noWorker = (w: ReturnType<typeof build>) => expect(w.log.some((l) => l.startsWith('run tm-run-'))).toBe(false)
+
+  test('a ready line that comes late makes the worker wait for it', async () => {
+    const w = build({ holderReadyAfterMs: 150 })
+    await w.runner.run(localJob)
+    const at = (entry: string) => w.log.indexOf(entry)
+    expect(at('holder ready')).toBeGreaterThan(at(`run tm-net-${OCC}`))
+    expect(at(`run tm-run-${OCC}-1`)).toBeGreaterThan(at('holder ready'))
+    await w.expectNothingLeft()
+  })
+
+  test('a holder that stays up but never reports is not trusted: no worker, holder removed, failure reported', async () => {
+    const w = build({ holderOut: '', holderReadyMs: 80 })
+    await expect(w.runner.run(localJob)).rejects.toThrow('holder did not report')
+    noWorker(w)
+    expect(w.log).toContain(`rm ${holderName(OCC)}`)
+    expect(w.failures).toEqual(['The PC could not run the meeting'])
+    expect(w.afterCalls).toEqual([])
+    await w.expectNothingLeft()
+  })
+
+  // By construction nothing else can print the line: the fake `logs` returns only what the holder container wrote, as
+  // the real `docker logs` reader does (the container's stdout, not its stderr), and the worker is not started yet.
+  test('the ready line counts only as a whole line of the holder stdout', async () => {
+    const lookalikes = [`${HOLDER_READY_LINE} soon`, `xx ${HOLDER_READY_LINE}`, HOLDER_READY_LINE.toUpperCase()]
+    const w = build({ holderOut: `${lookalikes.join('\n')}\n`, holderReadyMs: 80 })
+    await expect(w.runner.run(localJob)).rejects.toThrow('holder did not report')
+    noWorker(w)
+    await w.expectNothingLeft()
+  })
+
+  test('a holder that exits before it reports (rules failed) means no worker, holder removed, failure reported', async () => {
+    const w = build({ holderOut: '', holderExitsAfterMs: 40, holderReadyMs: 2000 })
+    await expect(w.runner.run(localJob)).rejects.toThrow('holder stopped before it was ready')
+    noWorker(w)
+    expect(w.log).toContain(`rm ${holderName(OCC)}`)
+    expect(w.failures).toEqual(['The PC could not run the meeting'])
+    await w.expectNothingLeft()
+  })
+
+  test('a holder whose logs cannot be read is not trusted', async () => {
+    const w = build({ holderOut: '', holderReadyMs: 2000 })
+    const logs = w.docker.logs
+    w.docker.logs = async (name) => {
+      await logs(name)
+      throw new Error('docker logs failed')
+    }
+    await expect(w.runner.run(localJob)).rejects.toThrow('docker logs failed')
+    noWorker(w)
     await w.expectNothingLeft()
   })
 })

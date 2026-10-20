@@ -9,7 +9,10 @@
 # --out-iface   apply every rule to traffic leaving through <iface> only (the home-route tunnel); default: all
 # --allow-tcp   let this TCP destination through before the private ranges are rejected (the companion's relay);
 #               host names are resolved with `getent ahostsv4`, and an unresolvable name is an error
-# --hold        after the rules are in, `exec sleep infinity` (the holder keeps the network namespace alive)
+# --hold        after the rules are in and read back, print the one line `deny-private: ready` to stdout, then
+#               `exec sleep infinity` (the holder keeps the network namespace alive). The companion starts the worker
+#               only after it sees that exact line in the holder's logs (packages/companion/src/local/run.ts), so the
+#               line is printed once, last, and never when anything failed. Errors go to stderr, never to stdout.
 #
 # Fail closed and atomic (the lessons of docker/firewall/worker-egress.sh):
 #  1. the chain TM-DENY-PRIVATE is flushed and refilled with every rule in ONE iptables-restore --noflush transaction,
@@ -117,7 +120,10 @@ if [ "$print" = 1 ]; then
   echo "iptables -I OUTPUT 1 -j $CHAIN"
   printf '%s' "$r6" | sed 's/^/ip6tables /'
   echo "ip6tables -I OUTPUT 1 -j $CHAIN"
-  [ "$hold" = 1 ] && echo "exec sleep infinity"
+  if [ "$hold" = 1 ]; then
+    echo "echo 'deny-private: ready'"
+    echo "exec sleep infinity"
+  fi
   exit 0
 fi
 
@@ -160,5 +166,9 @@ else
   die "ip6tables is unavailable and IPv6 is not disabled (net.ipv6.conf.all.disable_ipv6 is not 1)"
 fi
 
-[ "$hold" = 1 ] && exec sleep infinity
+# Everything above is in and checked (set -e: a failure never reaches this line). Nothing before this prints the ready line.
+if [ "$hold" = 1 ]; then
+  echo "deny-private: ready"
+  exec sleep infinity
+fi
 exit 0
