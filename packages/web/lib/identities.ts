@@ -127,7 +127,7 @@ export async function updateIdentity(scope: MemberScope, id: string, input: unkn
     await scope.transaction(async (s) => {
       await assertNameFree(s, value.name, id)
       const changed = await s.update(identities, settings(value), eq(identities.id, id))
-      if (changed === 0) throw new Error('No such identity.')
+      if (changed === 0) throw new InputError('No such identity.')
     })
   } catch (e) {
     throw safeDbError(e)
@@ -201,7 +201,7 @@ export async function deleteIdentity(scope: MemberScope, id: string): Promise<vo
   try {
     await scope.transaction(async (s) => {
       const [profile] = await s.select(profiles, eq(profiles.identityId, id))
-      if (!profile) throw new Error('No such identity.')
+      if (!profile) throw new InputError('No such identity.')
       const [entry] = await s.select(timetableEntries, eq(timetableEntries.identityId, id))
       if (entry) throw new InUseError('This identity has timetable entries.')
       await assertIdentityIdle(s, id, profile)

@@ -7,12 +7,13 @@ import {
   createIdentity,
   deleteIdentity,
   IdentityInputSchema,
+  InputError,
   InUseError,
   listIdentities,
   updateIdentity
 } from '../lib/identities'
 import { createScope, type MemberScope } from '../lib/scope'
-import { createIdentityFor, deleteIdentityFor } from '../lib/action-results'
+import { createIdentityFor, deleteIdentityFor, updateIdentityFor } from '../lib/action-results'
 
 let db: Db
 
@@ -197,10 +198,10 @@ describe('another member’s identity is refused', () => {
     const other = await bare()
     const theirs = await createIdentity(owner.scope, WORK)
 
-    await expect(updateIdentity(other.scope, theirs.id, { ...WORK, zoomGuestName: 'Hijack' })).rejects.toThrow(
-      'No such identity.'
+    await expect(updateIdentity(other.scope, theirs.id, { ...WORK, zoomGuestName: 'Hijack' })).rejects.toBeInstanceOf(
+      InputError
     )
-    await expect(deleteIdentity(other.scope, theirs.id)).rejects.toThrow('No such identity.')
+    await expect(deleteIdentity(other.scope, theirs.id)).rejects.toBeInstanceOf(InputError)
     await expect(accountStatus(other.scope, theirs.id)).rejects.toThrow('No such identity.')
 
     const [row] = await owner.scope.select(identities, eq(identities.id, theirs.id))
@@ -222,5 +223,22 @@ test('the actions return refusals as messages and keep other members’ identiti
     ok: false,
     error: 'This identity is in use by a meeting or a sign-in.'
   })
-  await expect(deleteIdentityFor(other.scope, mine!.id)).rejects.toThrow('No such identity.')
+  expect(await deleteIdentityFor(other.scope, mine!.id)).toEqual({
+    ok: false,
+    error: 'No such identity.'
+  })
+  expect(await updateIdentityFor(other.scope, mine!.id, WORK)).toEqual({
+    ok: false,
+    error: 'No such identity.'
+  })
+  expect(await deleteIdentityFor(owner.scope, '00000000-0000-0000-0000-000000000000')).toEqual({
+    ok: false,
+    error: 'No such identity.'
+  })
+  expect(
+    await updateIdentityFor(owner.scope, '00000000-0000-0000-0000-000000000000', { ...WORK, name: 'Unique' })
+  ).toEqual({
+    ok: false,
+    error: 'No such identity.'
+  })
 })

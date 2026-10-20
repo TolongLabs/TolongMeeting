@@ -53,6 +53,7 @@ export async function saveIdentityFormAction(
   if (id !== '' && !UUID.test(id)) redirect('/accounts?problem=gone')
   const result = id === '' ? await createIdentityAction(values) : await updateIdentityAction(id, values)
   if (!result.ok) {
+    if (result.error === 'No such identity.') redirect('/accounts?problem=gone')
     if (result.error.startsWith('You already have an identity called'))
       return { status: 'error', fields: { name: NAME_TAKEN }, values }
     return { status: 'error', message: SAVE_FAILED, fields: {}, values }
@@ -67,6 +68,7 @@ export async function deleteIdentityFormAction(formData: FormData): Promise<void
   if (!UUID.test(id)) redirect('/accounts?problem=gone')
   const result = await deleteIdentityAction(id)
   if (result.ok) redirect('/accounts?notice=deleted')
+  if (result.error === 'No such identity.') redirect('/accounts?problem=gone')
   const code =
     result.error === 'This identity has timetable entries.'
       ? 'delete_has_entries'

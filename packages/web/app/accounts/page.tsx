@@ -36,7 +36,7 @@ const PROBLEMS: Record<string, string> = {
   delete_has_entries: 'This identity still has timetable entries. Move or delete those entries first.',
   delete_busy: `${NOT_FINISHED} Try again after it ends.`,
   delete_failed: 'The identity could not be deleted. Try again.',
-  gone: 'This identity was not found. Reload the page.'
+  gone: 'That bot profile no longer exists.'
 }
 
 const WHERE: Record<RunLocation, string> = {
