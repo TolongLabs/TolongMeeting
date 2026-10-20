@@ -556,9 +556,8 @@ describe('a member deletes a meeting that is still in the pipeline', () => {
     const { id, worker, release } = await inPostProcessing(alice, 'held')
 
     // The scheduler's delete handler must refuse to touch a directory the pipeline is reading.
-    await requestDeleteNow(alice.scope, id, stack.queue).catch((e: unknown) => {
-      if (!(e instanceof InUseError)) throw e // refused is fine (the finding file says it should be)
-    })
+    expect(await requestDeleteNow(alice.scope, id, stack.queue)).toBe('after_processing')
+    expect(await queuedJobs(stack, QUEUES.deleteOccurrence, id)).toHaveLength(0)
     await expect(deleteOccurrenceData(stack.deps, id, new Date())).rejects.toThrow(OccurrenceActiveError)
     expect(await exists(worker.dataDir)).toBe(true)
 
@@ -569,24 +568,29 @@ describe('a member deletes a meeting that is still in the pipeline', () => {
       'summary'
     )
 
-    // Now it is finished, the delete is allowed (the member asks again, or the queue retries the job).
-    await requestDeleteNow(alice.scope, id, stack.queue)
+    // The consumer queued the delete the member asked for during the run; the scheduler's delete handler now allows it.
+    await until('the delete job', async () => (await queuedJobs(stack, QUEUES.deleteOccurrence, id)).length === 1)
     await deleteOccurrenceData(stack.deps, id, new Date())
     expect(await rowOf(stack, id)).toMatchObject({ state: 'deleted' })
     expect(await exists(worker.dataDir)).toBe(false)
     expect((await fileRoute(alice, id, ['out', 'transcript.md'])).status).toBe(404)
   })
 
-  // FINDING 1 in .superpowers/sdd/e2e-server-findings.md: requestDeleteNow accepts a meeting in post_processing and
-  // overwrites state_reason 'ai_key_error' with 'deleting', so the re-run is refused and the delete can never run.
-  test.skip('at an AI key error: delete now is refused, and the re-run still works', async () => {
+  // Finding 1 (.superpowers/sdd/e2e-server-findings.md): "delete now" while the pipeline owns the meeting must not
+  // overwrite state_reason 'ai_key_error'. It waits (delete_after = now) and the consumer queues the delete after the run.
+  test('at an AI key error: delete now waits for the pipeline, the re-run works, then the delete goes through', async () => {
     const alice = await newMember(stack, 'Hank')
-    const { id } = await inPostProcessing(alice, 'rejected')
-    await expect(requestDeleteNow(alice.scope, id, stack.queue)).rejects.toThrow(InUseError)
+    const { id, worker } = await inPostProcessing(alice, 'rejected')
+    expect(await requestDeleteNow(alice.scope, id, stack.queue)).toBe('after_processing')
     expect((await rowOf(stack, id)).stateReason).toBe('ai_key_error')
+    expect(await queuedJobs(stack, QUEUES.deleteOccurrence, id)).toHaveLength(0)
     stack.ai.validKey = GOOD_KEY
     await rerunPipeline(alice.scope, id, stack.queue)
-    await until('completion', async () => (await rowOf(stack, id)).state === 'completed')
+    await until('the delete job', async () => (await queuedJobs(stack, QUEUES.deleteOccurrence, id)).length === 1)
+    expect(await rowOf(stack, id)).toMatchObject({ state: 'completed', stateReason: 'deleting' })
+    await deleteOccurrenceData(stack.deps, id, new Date())
+    expect((await rowOf(stack, id)).state).toBe('deleted')
+    expect(await exists(worker.dataDir)).toBe(false)
   })
 
   // FINDING 2: retention skips every meeting in transcribing, waiting_for_pc or post_processing for ever, so a meeting

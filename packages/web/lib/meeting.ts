@@ -340,21 +340,50 @@ export async function pasteLink(scope: MemberScope, id: string, url: string): Pr
   if (changed === 0) throw new InUseError('A link can only be pasted before the bot joins.')
 }
 
-/** Marks a finished meeting for deletion and queues the scheduler's delete. Refused while the bot is active. */
-export async function requestDeleteNow(scope: MemberScope, id: string, queue: Queue): Promise<void> {
+/** The states in which the pipeline consumer owns the occurrence: its `state_reason` must not be overwritten. */
+const PIPELINE_STATES: OccurrenceState[] = ['transcribing', 'waiting_for_pc', 'post_processing']
+
+/**
+ * `queued`: the delete job is queued. `after_processing`: the pipeline is still working on the meeting, so the delete
+ * waits ("Deleting as soon as processing finishes"); the pipeline consumer queues it when its run ends, and retention
+ * removes the meeting if that never happens.
+ */
+export type DeleteNowResult = 'queued' | 'after_processing'
+
+/**
+ * Marks a finished meeting for deletion and queues the scheduler's delete. Refused while the bot is active. While the
+ * pipeline owns the meeting (transcribing, waiting for the PC, post-processing) nothing is queued and `state_reason` is
+ * left alone (the pipeline reads it): `delete_after` moves to now, and the consumer sees that when its run ends.
+ */
+export async function requestDeleteNow(scope: MemberScope, id: string, queue: Queue): Promise<DeleteNowResult> {
   if (!UUID.test(id)) throw new InputError(NOT_FOUND)
   const [row] = await scope.select(occurrences, eq(occurrences.id, id))
   if (!row) throw new InputError(NOT_FOUND)
   const tooLate = new InUseError('Make the bot leave before deleting this meeting.')
   if (ACTIVE_STATES.has(row.state)) throw tooLate
+  if (PIPELINE_STATES.includes(row.state)) {
+    // Guarded by the state: when the run ended since the read, the ordinary path below handles the meeting.
+    const waiting = await scope.update(
+      occurrences,
+      { deleteAfter: sql`least(${occurrences.deleteAfter}, now())` as never },
+      and(eq(occurrences.id, id), inArray(occurrences.state, PIPELINE_STATES))!
+    )
+    if (waiting > 0) return 'after_processing'
+  }
   // The state is checked again in the update, so a bot that joined after the read still blocks the delete.
   const changed = await scope.update(
     occurrences,
     { stateReason: 'deleting' },
-    and(eq(occurrences.id, id), ne(occurrences.state, 'deleted'), notInArray(occurrences.state, ACTIVE))!
+    and(
+      eq(occurrences.id, id),
+      ne(occurrences.state, 'deleted'),
+      notInArray(occurrences.state, ACTIVE),
+      notInArray(occurrences.state, PIPELINE_STATES)
+    )!
   )
   if (changed === 0) throw tooLate
   await queue.send(QUEUES.deleteOccurrence, { occurrenceId: id })
+  return 'queued'
 }
 
 /**

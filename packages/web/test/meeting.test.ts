@@ -318,6 +318,32 @@ test('actions follow the occurrence state', async () => {
   expect((await stateOf(scope, occurrenceId)).stateReason).toBe('deleting')
 })
 
+test.each(['transcribing', 'waiting_for_pc', 'post_processing'] as const)(
+  'delete now in %s waits for the pipeline: delete_after moves to now and state_reason is untouched',
+  async (state) => {
+    const { scope, occurrenceId, queue } = await meetingFixture()
+    await scope.update(occurrences, { state, stateReason: 'ai_key_error' }, eq(occurrences.id, occurrenceId))
+    const before = await stateOf(scope, occurrenceId)
+    expect(await requestDeleteNow(scope, occurrenceId, queue)).toBe('after_processing')
+    expect(queue.sent).toEqual([])
+    const after = await stateOf(scope, occurrenceId)
+    expect(after.stateReason).toBe('ai_key_error')
+    expect(after.state).toBe(state)
+    expect(after.deleteAfter.getTime()).toBeLessThanOrEqual(Date.now())
+    expect(after.deleteAfter.getTime()).toBeLessThan(before.deleteAfter.getTime())
+    // The re-run after a key error still works.
+    if (state === 'post_processing') await rerunPipeline(scope, occurrenceId, queue)
+  }
+)
+
+test('delete now in a finished state queues the delete at once', async () => {
+  const { scope, occurrenceId, queue } = await meetingFixture()
+  await scope.update(occurrences, { state: 'failed' }, eq(occurrences.id, occurrenceId))
+  expect(await requestDeleteNow(scope, occurrenceId, queue)).toBe('queued')
+  expect(queue.sent).toEqual([{ name: 'delete-occurrence', data: { occurrenceId }, opts: undefined }])
+  expect((await stateOf(scope, occurrenceId)).stateReason).toBe('deleting')
+})
+
 test('a link can be pasted before the bot joins, only as https, and is never echoed', async () => {
   const { scope, occurrenceId } = await meetingFixture()
   for (const bad of ['http://example.zoom.us/j/1?pwd=SECRETPWD', 'javascript:alert(1)', 'not a url', '']) {

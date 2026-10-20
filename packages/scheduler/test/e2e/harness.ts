@@ -303,6 +303,7 @@ export async function startStack(): Promise<Stack> {
   const pipelineDeps: PipelineDeps = {
     db,
     notifier,
+    queue,
     master: MASTER,
     env,
     // The one seam to the AI provider: the config the consumer built (DashScope URL, the member's own key) goes to the
@@ -333,7 +334,13 @@ export async function startStack(): Promise<Stack> {
     pipelineDeps,
     pipelineConfigs,
     // Retries are 1 s apart instead of 180 s: nothing else differs from the production queue settings.
-    startConsumer: () => workPipeline(boss, pipelineDeps, { ...PIPELINE_QUEUE, retryDelay: 1 }),
+    startConsumer: async () => {
+      // The heartbeat queues the pipeline job to start 20 s later; the test does not wait for that.
+      await db.execute(
+        sql`update pgboss.job set start_after = now() where name = ${QUEUES.pipeline} and state = 'created'`
+      )
+      await workPipeline(boss, pipelineDeps, { ...PIPELINE_QUEUE, retryDelay: 1 })
+    },
     stopConsumer: async () => {
       await boss.offWork(QUEUES.pipeline)
       await boss.offWork(PIPELINE_DEAD_QUEUE)

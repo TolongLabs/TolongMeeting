@@ -5,7 +5,9 @@ import { and, eq, sql } from 'drizzle-orm'
 import { events, occurrences, type Db } from '@tm/web/db'
 import { registerArtefacts } from '@tm/web/db/artefacts'
 import { loadJobConfig } from '@tm/web/db/job-config'
+import { tryPipelineLock } from '@tm/web/db/pipeline-lock'
 import type { Notifier } from '@tm/web/db/notifier'
+import { QUEUES, queueDbOf, type Queue } from '@tm/web/db/queues'
 import { applyTrigger, hashEventData } from '@tm/web/db/transitions'
 import { describeError } from './errors'
 import type { PipelineResult } from './pipeline'
@@ -13,6 +15,8 @@ import type { PipelineResult } from './pipeline'
 export interface PipelineDeps {
   db: Db
   notifier: Notifier
+  /** Queues the delete of a meeting whose member asked to delete it while the pipeline was working. */
+  queue: Queue
   master: Buffer
   env: SpecEnv
   run: (cfg: JobConfig, signal?: AbortSignal) => Promise<PipelineResult>
@@ -59,7 +63,34 @@ export async function handlePipelineJob(
   occurrenceId: string,
   signal?: AbortSignal
 ): Promise<PipelineJobOutcome> {
-  return withOccurrenceLock(deps, occurrenceId, () => handleLocked(deps, occurrenceId, signal))
+  return withOccurrenceLock(deps, occurrenceId, async () => {
+    const outcome = await handleLocked(deps, occurrenceId, signal)
+    if (outcome === 'completed' || outcome === 'failed' || outcome === 'key_error')
+      await queueRequestedDelete(deps, occurrenceId)
+    return outcome
+  })
+}
+
+/**
+ * "Delete now" during the pipeline only moves `delete_after` to the request time (`requestDeleteNow`); the run itself
+ * must not be disturbed. When the run has ended, this queues the delete in one transaction with the reason `deleting`
+ * (the delete is recorded as the member's). A run that stopped on a rejected key is failed first: nobody will re-run
+ * it, and the scheduler refuses to delete a `post_processing` meeting. Retention is the backstop if this never runs.
+ */
+async function queueRequestedDelete(deps: PipelineDeps, id: string): Promise<void> {
+  await deps.db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ state: occurrences.state, due: sql<boolean>`${occurrences.deleteAfter} <= now()` })
+      .from(occurrences)
+      .where(eq(occurrences.id, id))
+      .for('update')
+    if (!row?.due) return
+    if (row.state === 'post_processing') await applyTrigger(tx, id, 'fail', { reason: 'deleting' })
+    else if (row.state === 'completed' || row.state === 'failed')
+      await tx.update(occurrences).set({ stateReason: 'deleting' }).where(eq(occurrences.id, id))
+    else return
+    await deps.queue.send(QUEUES.deleteOccurrence, { occurrenceId: id }, { db: queueDbOf(tx) })
+  })
 }
 
 /**
@@ -87,10 +118,8 @@ export async function handleDeadPipelineJob(deps: PipelineDeps, occurrenceId: st
 async function withOccurrenceLock<T>(deps: PipelineDeps, occurrenceId: string, body: () => Promise<T>): Promise<T> {
   // The transaction only holds the lock (its connection is idle until the body ends); the work uses the pool.
   return deps.db.transaction(async (lock) => {
-    const result = await lock.execute(
-      sql`select pg_try_advisory_xact_lock(hashtextextended(${'pipeline:' + occurrenceId}, 0)) as locked`
-    )
-    if (result.rows[0]?.locked !== true) throw new Error(`pipeline: ${occurrenceId}: another job is running it`)
+    if (!(await tryPipelineLock(lock, occurrenceId)))
+      throw new Error(`pipeline: ${occurrenceId}: another job is running it`)
     return body()
   })
 }

@@ -8,7 +8,7 @@ import { buildEntrySnapshot } from '@tm/web/db/job-config'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { sealColumn } from '@tm/web/db/secrets'
 import { bossQueue, QUEUES } from '@tm/web/db/queues'
-import { createTestDb, dropAllTestDbs, seedMember, testDbUrl } from '@tm/web/db/testing'
+import { createTestDb, dropAllTestDbs, FakeQueue, seedMember, testDbUrl } from '@tm/web/db/testing'
 import { PgBoss } from 'pg-boss'
 import { handleDeadPipelineJob, handlePipelineJob, type PipelineDeps } from '../src/consumer'
 import { PIPELINE_QUEUE, workPipeline } from '../src/consumer-main'
@@ -98,6 +98,7 @@ async function pipelineFixture(o: Options) {
     env,
     notifier,
     memberId,
+    queue: new FakeQueue(),
     runCfgs: [] as JobConfig[],
     remuxed: [] as string[],
     order: [] as string[],
@@ -108,6 +109,7 @@ async function pipelineFixture(o: Options) {
   f.deps = {
     db,
     notifier,
+    queue: f.queue,
     master: MASTER,
     env,
     run: async (cfg): Promise<PipelineResult> => {
@@ -201,6 +203,54 @@ describe('handlePipelineJob', () => {
     const f = await pipelineFixture({ state: 'post_processing', transcription: 'live' })
     expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
     expect(f.runs).toBe(1)
+  })
+
+  describe('delete now asked while the pipeline worked (delete_after has passed)', () => {
+    const askedToDelete = (f: Awaited<ReturnType<typeof pipelineFixture>>) =>
+      f.db
+        .update(occurrences)
+        .set({ deleteAfter: new Date(Date.now() - 1000) })
+        .where(eq(occurrences.id, f.id))
+    const deleteJobs = (f: Awaited<ReturnType<typeof pipelineFixture>>) =>
+      f.queue.sent.filter((s) => s.name === QUEUES.deleteOccurrence).map((s) => s.data)
+
+    test("a completed run queues the delete as the member's", async () => {
+      const f = await pipelineFixture({ state: 'transcribing', transcription: 'live' })
+      await askedToDelete(f)
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+      expect(await f.occurrence()).toMatchObject({ state: 'completed', stateReason: 'deleting' })
+      expect(deleteJobs(f)).toEqual([{ occurrenceId: f.id }])
+    })
+
+    test('a failed run queues the delete', async () => {
+      const f = await pipelineFixture({
+        state: 'transcribing',
+        transcription: 'live',
+        runFails: [new Error('disk full')]
+      })
+      await askedToDelete(f)
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('failed')
+      expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'deleting' })
+      expect(deleteJobs(f)).toEqual([{ occurrenceId: f.id }])
+    })
+
+    test('a rejected key fails the meeting (nobody will re-run it) and queues the delete', async () => {
+      const f = await pipelineFixture({
+        state: 'transcribing',
+        transcription: 'live',
+        runFails: [new AiKeyError(401, 'bad key')]
+      })
+      await askedToDelete(f)
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('key_error')
+      expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'deleting' })
+      expect(deleteJobs(f)).toEqual([{ occurrenceId: f.id }])
+    })
+
+    test('without a request nothing is queued', async () => {
+      const f = await pipelineFixture({ state: 'transcribing', transcription: 'live' })
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+      expect(deleteJobs(f)).toEqual([])
+    })
   })
 
   test('other failures fail the occurrence with one ping and keep the artefacts that exist', async () => {

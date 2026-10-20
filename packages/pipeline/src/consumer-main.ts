@@ -1,5 +1,5 @@
 import type { SpecEnv } from '@tm/core'
-import { QUEUES } from '@tm/web/db/queues'
+import { QUEUES, bossQueue } from '@tm/web/db/queues'
 import { PgBoss } from 'pg-boss'
 import { z } from 'zod'
 import { getDb } from '@tm/web/db'
@@ -85,6 +85,7 @@ if (import.meta.main) {
     master,
     env,
     notifier: memberNotifier(db, master, env.ntfyUrl),
+    queue: bossQueue(boss),
     // The consumer sends the key-problem ping itself, so the pipeline does not.
     run: (cfg, signal) => runPipeline(cfg, { pingOnKeyError: false, signal }),
     remux: remuxRecording
