@@ -2066,14 +2066,14 @@ Reconciled with Notion's docs and the built code (the tests listed above live in
 
 - Create: `packages/exports/src/connections/remove.ts`, `packages/web/app/api/connections/google/route.ts`, `packages/web/app/api/connections/notion/route.ts`, `packages/web/app/connections/page.tsx`, `packages/web/components/connections/github-card.tsx`, `packages/web/components/connections/google-card.tsx`, `packages/web/components/connections/notion-card.tsx`
 - Modify: `packages/web/app/api/connections/github/route.ts` (add `DELETE`), 01c's site navigation (add "Connections" next to the other pages)
-- Test: `packages/exports/src/connections/remove.test.ts`
+- Test: `packages/exports/test/remove.test.ts`, `packages/web/test/connection-remove-route.test.ts`
 
 **Interfaces:**
 
 - Consumes: `ConnectionKind` (task 1); `ConnectionStore` (task 5); `memoryStores` (task 6); `connectionsRequest`, `ApiResult` (task 7); `fakeFetch` and the GitHub route (task 8); the Google routes (task 10); the Notion routes (task 12).
-- Produces: `removeConnection(memberId: string, kind: ConnectionKind, deps: { connections: ConnectionStore; http: typeof fetch }): Promise<ApiResult>` (body `{ message }`); routes `DELETE /api/connections/github`, `DELETE /api/connections/google` and `DELETE /api/connections/notion` (one static route file each, since a dynamic `[kind]` route would lose to the static `github` folder); page `/connections`.
+- Produces: `removeConnection(kind: ConnectionKind, deps: { connections: Pick<MemberConnections, 'get' | 'remove'>; http: typeof fetch; notionClient: OAuthClient | null; log(line: string): void }): Promise<ApiResult>` (body `{ message }`; the stores are already bound to the member, so there is no member id, and a connection the member does not have is 404; Notion is revoked too, since its API has `POST /v1/oauth/revoke`); routes `DELETE /api/connections/github`, `DELETE /api/connections/google` and `DELETE /api/connections/notion` (one static route file each, since a dynamic `[kind]` route would lose to the static `github` folder); page `/connections`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('Google removal revokes with the token in the body, even if revoking fails', async () => {
@@ -2114,12 +2114,12 @@ test('GitHub and Notion removal explain the last step and touch only the caller'
 })
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `bun test packages/exports/src/connections/remove.test.ts`
 Expected: FAIL with `Cannot find module './remove'`.
 
-- [ ] **Step 3: Implement `removeConnection`, the route and the page**
+- [ ] **Step 3: Implement `removeConnection`, the route and the page** (`removeConnection` and the three `DELETE` routes are done; the page is deferred behind the Figma gate)
 
 `removeConnection` for Google posts `token=<refreshToken>` form-encoded to `https://oauth2.googleapis.com/revoke` and ignores its result; for every kind it removes only the signed-in member's row. The page shows one card per connection from `GET /api/connections`, with its status ("Connected as <label>", "Reconnect needed" or "Not connected"), its detail, and Remove (`DELETE /api/connections/<kind>`, then the returned message is shown). Card copy:
 
@@ -2142,9 +2142,9 @@ Buttons: Connect Notion; then a list of shared pages and databases to choose fro
 
 "Pick a folder" loads `https://apis.google.com/js/api.js`, calls `gapi.load('picker')`, fetches `/api/connections/google/picker`, and opens a `google.picker.PickerBuilder` with `setOAuthToken`, `setDeveloperKey(apiKey)`, `setAppId(appId)` and a `DocsView(ViewId.FOLDERS)` with `setSelectFolderEnabled(true)` and `setMimeTypes('application/vnd.google-apps.folder')`; the picked id goes to `PUT /api/connections/google/folder`. If 01c sets a Content-Security-Policy, `/connections` allows scripts from `https://apis.google.com` and frames from `https://docs.google.com`.
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
-Run: `bun test packages/exports/src/connections/remove.test.ts && bun run typecheck`
+Run: `bun test packages/exports/test/remove.test.ts && bun run typecheck`
 Expected: PASS (`0 fail`); typecheck exits 0.
 
 - [ ] **Step 5: Commit**

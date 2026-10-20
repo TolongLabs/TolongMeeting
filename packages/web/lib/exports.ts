@@ -2,8 +2,11 @@ import {
   connectionsRequest,
   createExportRequest,
   listExportsRequest,
+  notionClientFromEnv,
+  removeConnection,
   saveGitHubConnection,
-  type ApiResult
+  type ApiResult,
+  type ConnectionKind
 } from '@tm/exports'
 import { memberExportStores, type MemberExportStores } from '../db/exports'
 import { loadMasterKey } from '../db/secrets'
@@ -51,4 +54,19 @@ export async function saveGitHubResponse(
   http: typeof fetch = fetch
 ): Promise<Response> {
   return send(await saveGitHubConnection(await request.text(), { connections: stores.connections, http }))
+}
+
+/**
+ * Removes the member's connection of `kind` from a `DELETE`, and asks Google or Notion to revoke the grant. `http` is the
+ * network seam. A failed revoke is logged by provider and status only; no token is returned or logged.
+ */
+export async function removeConnectionResponse(
+  stores: MemberExportStores,
+  kind: ConnectionKind,
+  http: typeof fetch = fetch,
+  log: (line: string) => void = (line) => console.error(line)
+): Promise<Response> {
+  return send(
+    await removeConnection(kind, { connections: stores.connections, http, notionClient: notionClientFromEnv(), log })
+  )
 }

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import type { Ping } from '@tm/notify'
 import type { OccurrenceState } from '@tm/core'
 import type { ExportRow } from '../src/store-types'
-import { exportPing, runExport, runLoop, type RunnerDeps } from '../src/runner'
+import { CONNECTION_REMOVED_MESSAGE, exportPing, runExport, runLoop, type RunnerDeps } from '../src/runner'
 import { zipTarget } from '../src/targets/zip'
 import {
   ExportError,
@@ -225,6 +225,41 @@ test('a rotated token is a secret too', async () => {
   expect((await stores.exports.get('m1', row.id))?.error).toBe(
     'Something went wrong: then it broke at [redacted]. Try again.'
   )
+})
+
+test('removing the connection while an export runs stops it before the next call and the next save', async () => {
+  const sent: string[] = []
+  const first = githubConn('removed-token-1234')
+  for (const stage of ['request', 'save'] as const) {
+    sent.length = 0
+    const target: ExportTarget = {
+      id: 'github',
+      async run(_bundle, ctx) {
+        await ctx.http('https://api.example.test/one', {})
+        await removeNow()
+        if (stage === 'request') await ctx.http('https://api.example.test/two', {})
+        else await ctx.saveConnection({ ...(ctx.connection as GitHubConnection), token: 'rotated-token-9999' })
+        return { url: 'https://example.test/done', filePath: null, note: null }
+      }
+    }
+    const { deps, stores, pings } = await setup({ connections: [first], targets: { github: target } })
+    const removeNow = () => stores.connections.remove('m1', 'github')
+    deps.http = (async (input: RequestInfo | URL) => {
+      sent.push(String(input))
+      return new Response('{}')
+    }) as typeof fetch
+    const row = await queueAndClaim(stores, 'github')
+    await runExport(row, deps)
+    expect(await stores.exports.get('m1', row.id)).toMatchObject({
+      status: 'failed',
+      errorCode: 'not_connected',
+      error: CONNECTION_REMOVED_MESSAGE
+    })
+    expect(sent).toEqual(['https://api.example.test/one'])
+    expect(stores.saved).toEqual([])
+    expect(await stores.connections.get('m1', 'github')).toBeNull()
+    expect(pings[0]!.actions?.[0]).toEqual({ label: 'Reconnect', url: 'https://tm.example/connections' })
+  }
 })
 
 test('an export that runs too long fails and its network calls are aborted', async () => {

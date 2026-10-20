@@ -799,6 +799,8 @@ The milestone plans were written in parallel against this page. Each marks the s
   - `packages/exports` with `ExportTarget` and its types;
   - the `tm-exports` process and the Compose service `exports`;
   - `connections` columns and an `exports` table; files `exports/<exportId>.zip` and `.pdf` in the occurrence directory (`exports.file_path` holds the path relative to that directory, and the zip names its summary entry `summary.md`);
+  - `RunnerStore.previousUrl(row)` and `ExportContext.previousUrl` (the `url` of the member's latest earlier successful export of the same meeting and target, else null: Notion updates only that page, and Google Docs never edits it);
+  - `removeConnection(kind, { connections, http, notionClient, log })` and `DELETE /api/connections/{github,google,notion}` (same-origin; the sealed row is deleted first, then Google's `oauth2.googleapis.com/revoke` and Notion's `/v1/oauth/revoke` are called, a failed revoke is logged as `connection <provider> revoke failed (status N)` and never blocks; GitHub has no revoke for an app, so the member deletes the token; a running export stops with `CONNECTION_REMOVED_MESSAGE`);
   - environment: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_API_KEY`, `GOOGLE_APP_ID`, `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`.
 - **08 run locations**:
   - the tables `home_exit_nodes` and `identities.local_device_id`;

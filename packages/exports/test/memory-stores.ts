@@ -11,7 +11,7 @@ export interface MemoryStores {
     create(memberId: string, occurrenceId: string, target: ExportTargetId): Promise<ExportRow>
     get(memberId: string, id: string): Promise<ExportRow | null>
   }
-  connections: RunnerConnections
+  connections: RunnerConnections & { remove(memberId: string, kind: ConnectionKind): Promise<void> }
   occurrences: OccurrenceLookup
   /** The kinds `markReconnect` was called for, in order. */
   markedReconnect: ConnectionKind[]
@@ -121,6 +121,9 @@ export function memoryStores(seed?: {
       async save(memberId, c) {
         saved.push(c)
         connections.set(`${memberId}/${c.kind}`, { connection: c, status: 'ok' })
+      },
+      async remove(memberId, kind) {
+        connections.delete(`${memberId}/${kind}`)
       },
       async markReconnect(memberId, kind) {
         markedReconnect.push(kind)

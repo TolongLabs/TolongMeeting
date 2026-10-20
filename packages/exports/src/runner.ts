@@ -34,6 +34,8 @@ export const MAX_OUTPUT_BYTES = 512 * 1024 * 1024
 export const PURGE_EVERY_MS = 3_600_000
 /** How often `beat` runs while an export is working, so a health check sees a live process during a long export. */
 export const HEARTBEAT_MS = 5_000
+/** What a member sees when they removed the connection while its export was running. */
+export const CONNECTION_REMOVED_MESSAGE = 'The connection was removed, so the export stopped.'
 /** The most characters of an unexpected error's message that a member sees. */
 const MAX_UNEXPECTED_MESSAGE = 300
 
@@ -186,6 +188,12 @@ async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], prog
     connection = found.connection
   }
 
+  // The connection can be removed while the export runs. Before every request and every save the row must still be
+  // there; if it is not, the export stops with a fixed message and the removed token is not used again.
+  const stillConnected = async (): Promise<void> => {
+    if (kind !== null && (await deps.connections.get(row.memberId, kind)) === null)
+      throw new ExportError('not_connected', CONNECTION_REMOVED_MESSAGE)
+  }
   const previousUrl = kind === null ? null : await deps.store.previousUrl(row)
   const outDir = join(occurrence.dataDir, 'exports')
   try {
@@ -201,14 +209,17 @@ async function execute(row: ExportRow, deps: RunnerDeps, secrets: string[], prog
         previousUrl,
         saveConnection: async (c) => {
           // A rotated token is a secret from now on too.
+          await stillConnected()
           secrets.push(...tokensOf(c))
           await deps.connections.save(row.memberId, c)
         },
-        http: ((input, init) =>
-          deps.http(input, {
+        http: (async (input, init) => {
+          await stillConnected()
+          return deps.http(input, {
             ...init,
             signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal
-          })) as typeof fetch,
+          })
+        }) as typeof fetch,
         sleep: (ms) => {
           if (signal.aborted) return Promise.reject(stopped())
           return Promise.race([
