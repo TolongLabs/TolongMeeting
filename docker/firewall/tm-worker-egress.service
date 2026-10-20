@@ -1,0 +1,14 @@
+[Unit]
+Description=TolongMeeting worker network egress rules
+After=docker.service
+Requires=docker.service
+# Restarting Docker re-runs the rules.
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/tm-worker-egress.sh
+
+[Install]
+WantedBy=multi-user.target

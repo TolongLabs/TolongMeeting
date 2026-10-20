@@ -6,12 +6,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "start": "bun run src/main.ts"
   },
   "dependencies": {
     "@tm/core": "workspace:*",
     "@tm/notify": "workspace:*",
+    "@tm/pipeline": "workspace:*",
     "@tm/web": "workspace:*",
-    "drizzle-orm": "0.45.4"
+    "drizzle-orm": "0.45.4",
+    "pg-boss": "^12.38.0",
+    "sharp": "0.35.5",
+    "zod": "^4.6.7"
   }
 }

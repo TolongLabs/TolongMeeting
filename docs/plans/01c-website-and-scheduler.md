@@ -3092,15 +3092,15 @@ git commit -m "feat(scheduler): add retention and backups"
 **Files:**
 
 - Create: `packages/scheduler/src/jobs.ts`, `packages/scheduler/src/main.ts`, `packages/web/app/api/health/route.ts`, `docker/compose.yaml`, `docker/caddy/Caddyfile`, `docker/app/Dockerfile`, `docker/firewall/worker-egress.sh`, `docker/firewall/tm-worker-egress.service`, `docker/firewall/check-egress.sh`, `.env.example`
-- Test: `packages/scheduler/src/jobs.test.ts`, `packages/web/test/env-example.test.ts`
+- Test: `packages/scheduler/test/jobs.test.ts`, `packages/web/test/env-example.test.ts`
 
 **Interfaces:**
 
 - Consumes: every job handler from Tasks 5, 6, 14, 15, 18, 19 and 20; `QUEUES` (Task 6); `WORKER_IMAGE`, `CADDY_WORKER_IP` (Task 13).
-- Produces: `registerJobs(boss: BossLike, h: JobHandlers): Promise<void>`, where `BossLike = { createQueue(name: string): Promise<void>; schedule(name: string, cron: string, data: object, opts: { tz: string }): Promise<void>; work(name: string, opts: { localConcurrency: number }, handler: (jobs: { data: any }[]) => Promise<void>): Promise<string> }` and `JobHandlers = Record<'expand' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck', (data: any) => Promise<void>>`.
+- Produces: `registerJobs(boss: PgBoss, h: JobHandlers, hooks?: { beforeWorkers?(): Promise<void> }): Promise<void>` (`createQueues`, then `hooks.beforeWorkers`, then `startWorkers`, which works each queue and registers the schedules), where `JobHandlers = Record<'expand' | 'launch' | 'signinStart' | 'deleteOccurrence' | 'retention' | 'backup' | 'orgCheck', (data: unknown, signal: AbortSignal) => Promise<void>>`; `JOBS` (the queue, settings, polling interval and cron of each job), `createQueues(boss)`, `startWorkers(boss, h)`, `startLoop({ intervalMs, tick, onError, onBeat })`, `jobKeyOfQueue(queue)` and `PIPELINE_DEAD_OPTIONS` (`packages/scheduler/src/jobs.ts`); `readSchedulerEnv(source)`, `assertWorkerUid(source, uid)`, `buildHandlers(deps, env)`, `parseRunArgs(argv)`, `EnvError` and `HEALTH_FILE` (`packages/scheduler/src/main.ts`).
 - Produces (adds to contracts): compose services `caddy`, `web`, `scheduler`, `pipeline`, `postgres`, `ntfy`, `docker-proxy` and the build-only `worker`; networks `app`, `gate` and `tm-workers`; the environment variable `POSTGRES_PASSWORD` (compose only); the use of `TM_DATA_ROOT` by `web` (read-only, for serving artefacts), of `NTFY_URL` by `scheduler` and `pipeline`, and of `GITHUB_ORG` by `scheduler` (daily check).
 
-`main.ts` reads the environment, loads the master key, starts pg-boss on `DATABASE_URL`, calls `registerJobs`, runs `syncOccurrences` once, and runs `monitorTick` every 5 seconds, skipping a tick while the previous one runs; `main.ts --run <queue>` instead runs that queue's handler once and exits (the acceptance steps use it). Every job's `localConcurrency` is 1. Schedules, all `tz: 'UTC'`: `expand` `0 * * * *`, `retention` `7 * * * *`, `org-check` `30 18 * * *` (02:30 in Malaysia), `backup` `0 19 * * *` (03:00 in Malaysia). `pipeline` is created here but worked by `tm-pipeline`. `/api/health` answers `200 ok` after a `select 1`.
+`main.ts` starts in this order: it checks the environment (a bad or missing variable is named in one `EnvError`, never its value), checks the uid, applies the database migrations, starts pg-boss on `DATABASE_URL`, creates the queues, calls `resumeJobFileWatchers`, starts the workers and schedules, sends one `expand` job and runs `monitorTick` every 5 seconds, skipping a tick while the previous one runs; `main.ts --run <queue> [json]` instead runs that queue's handler once and exits (the acceptance steps use it). On SIGTERM it stops the monitor loop, drains pg-boss (30 s), waits for running remuxes (30 s) and exits. Every job's `localConcurrency` is 1. Schedules, all `tz: 'UTC'` with `missed: 'once'`: `expand` `0 * * * *`, `retention` `7 * * * *`, `org-check` `30 18 * * *` (02:30 in Malaysia), `backup` `0 19 * * *` (03:00 in Malaysia). `pipeline` and `pipeline-dead` are created here with the consumer's settings but worked by `tm-pipeline`. `/api/health` answers `200 ok` after a `select 1` (through `controlDeps`, because only `lib/` opens the database).
 
 `docker/compose.yaml` (key lines; run as `docker compose -f docker/compose.yaml --env-file .env ...`; host paths are the same inside containers so the gate's bind sources are host paths):
 
@@ -3264,7 +3264,7 @@ TM_BACKUP_REMOTE=
 # TM_PROFILE_KEY_FILE is set per container by the launcher, never here.
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/scheduler/src/jobs.test.ts
@@ -3323,25 +3323,25 @@ test('.env.example names every variable and holds no values', async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
-Run: `bun test packages/scheduler/src/jobs.test.ts packages/web/test/env-example.test.ts`
+Run: `bun test packages/scheduler/test/jobs.test.ts packages/web/test/env-example.test.ts`
 
 Expected: FAIL with `Cannot find module './jobs'`.
 
-- [ ] **Step 3: Write the processes and the deployment files**
+- [x] **Step 3: Write the processes and the deployment files**
 
 - [ ] **Step 4: Run tests and validate the deployment files**
 
-Run: `bun test packages/scheduler/src/jobs.test.ts packages/web/test/env-example.test.ts && docker compose -f docker/compose.yaml --env-file .env config --quiet && docker run --rm -e TM_PUBLIC_URL=https://tm.example -e NTFY_URL=https://ntfy.tm.example -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sh -n docker/firewall/worker-egress.sh && sh -n docker/firewall/check-egress.sh && docker compose -f docker/compose.yaml --env-file .env build`
+Run: `bun test packages/scheduler/test/jobs.test.ts packages/web/test/env-example.test.ts && docker compose -f docker/compose.yaml --env-file .env config --quiet && docker run --rm -e TM_PUBLIC_URL=https://tm.example -e NTFY_URL=https://ntfy.tm.example -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sh -n docker/firewall/worker-egress.sh && sh -n docker/firewall/check-egress.sh && docker compose -f docker/compose.yaml --env-file .env build`
 
-Expected: PASS, `2 pass, 0 fail`; compose prints nothing and exits 0 (with a local `.env` filled with example values); Caddy prints `Valid configuration`; both shell checks exit 0; every image builds.
+Expected: PASS; compose prints nothing and exits 0 (with a local `.env` filled with example values); Caddy prints `Valid configuration`; both shell checks exit 0; every image builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/scheduler/src/jobs* packages/scheduler/src/main.ts packages/web/app/api/health packages/web/test/env-example.test.ts docker .env.example
-git commit -m "feat: add compose deployment"
+git commit -m "feat: compose, caddy and scheduler processes"
 ```
 
 ### Task 22: Milestone acceptance
