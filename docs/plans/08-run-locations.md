@@ -787,8 +787,8 @@ git commit -m "feat(companion): keep local profiles encrypted"
 **Files:**
 
 - Create: `packages/companion/src/local/relay.ts`
-- Modify: `packages/companion/src/api.ts` (`heartbeat(jobId, hb): Promise<HeartbeatReply>`)
-- Test: `packages/companion/src/local/relay.test.ts`
+- Modify: none; `api.ts` (03 Task 11) satisfies the local `RelayApi`. `serverHeartbeatApi` in `relay.ts` is the https-only upstream (`redirect: 'error'`, device token in `Authorization`)
+- Test: `packages/companion/test/relay.test.ts`
 
 **Interfaces:**
 
@@ -799,7 +799,7 @@ git commit -m "feat(companion): keep local profiles encrypted"
 export interface Relay {
   port: number
   token: string // 32 random bytes, base64url, per run
-  containerUrl: string // http://host.docker.internal:<port>/heartbeat
+  containerUrl: string // http://host.docker.internal:<port> (origin only: the worker adds /heartbeat and /signin, R8)
   firstHeartbeat(attempt: number): Promise<void>
   lastHeartbeatAt(): number | null // epoch ms
   inject(c: ControlCommand): void // delivered in the next reply, once
@@ -813,7 +813,7 @@ export function startRelay(d: {
 }): Promise<Relay>
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('the relay listens on 127.0.0.1 only', async () => {
@@ -859,7 +859,7 @@ test('a heartbeat for another occurrence is a 400', async () => {
   expect((await post(r, r.token, hb('o2'))).status).toBe(400)
   await r.close()
 })
-test('when the server is unreachable the relay answers 503 and keeps injected commands', async () => {
+test('when the server is unreachable the relay answers a fixed 502 and keeps injected commands', async () => {
   const api = failingThenReplying([])
   const r = await startRelay({ api, jobId: 'j1', occurrenceId: 'o1' })
   r.inject('resume_after_signin')
@@ -883,26 +883,28 @@ test("firstHeartbeat(attempt) resolves on that attempt's first heartbeat", async
 
 `replying(commands)` is a fake `api.heartbeat` that records `sent` and answers `{ ackedEvents: 0, commands }`; `post(relay, token, body)` posts to `http://127.0.0.1:<port>/heartbeat` with the bearer token.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/companion/src/local/relay.test.ts`
+Run: `bun test packages/companion/test/relay.test.ts`
 Expected: FAIL with "Cannot find module './relay'"
 
-- [ ] **Step 3: Implement `relay.ts` with `node:http` and the API method**
+- [x] **Step 3: Implement `relay.ts` with `node:http` and the API method**
 
 Listen on `127.0.0.1` port `0`; accept only `POST /heartbeat` with `Authorization: Bearer <token>` and a body that parses as `Heartbeat` for this occurrence; forward through `api.heartbeat`; append injected commands not already in the reply and clear them only after a 200 reply reaches the worker. The worker's heartbeat client (plan 01c's `startHeartbeat`) posts `Heartbeat` JSON to `control.url` with `Authorization: Bearer <control.token>` and reads a `HeartbeatReply`, so it needs no change.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/companion/src/local/relay.test.ts`
-Expected: PASS (6 tests)
+Run: `bun test packages/companion/test/relay.test.ts`
+Expected: PASS (35 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/companion/src
+git add packages/companion/src/local/relay.ts packages/companion/test/relay.test.ts
 git commit -m "feat(companion): relay worker heartbeats"
 ```
+
+**Built as (security rulings):** bind host is loopback or a private Docker bridge IP only (`isAllowedBindHost`); `POST /heartbeat` and, with an `onSignin` handler, `POST /signin` only, everything else a fixed 404; the token is compared in constant time after hashing and is never logged; bodies are capped at 1 MB (heartbeat) and 16 KB (sign-in), server replies at 64 KB; an unreachable or refusing server is a fixed 502.
 
 ### Task 7: Egress rules
 
