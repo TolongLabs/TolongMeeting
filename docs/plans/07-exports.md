@@ -37,7 +37,7 @@ Contents:
 - Exports run only when the member asks; nothing exports automatically (design non-goal "Automatic exports").
 - Markdown and PDF downloads are always available and need no connection (decision 21).
 - The summary file is named `YYYY-MM-DD HHmm <entry name>.md`, the same name in exports.
-- The Markdown set is the summary file, `transcript.md`, `slides.md` with `slides/NN.webp`, and `chat.md`, in the formats of the session's three-file set (`session-record/techniques.md`, "Write-up format: the three-file set"); exports copy the pipeline's files byte for byte.
+- The Markdown set is the summary file, `transcript.md`, `slides.md` with `slides/NN.webp`, and `chat.md`, in the formats of the session's three-file set (`session-record/techniques.md`, "Write-up format: the three-file set"); exports copy the pipeline's files byte for byte, except that the zip names the summary entry `summary.md` (the title, with spaces and accents, stays in the folder name and the download name) and `slides.md` has its image links rewritten to `slides/NN.webp`.
 - Google Docs: one document per meeting, through Google sign-in with only the `https://www.googleapis.com/auth/drive.file` scope (never `drive` or `drive.readonly`); a "TolongMeeting Exports" folder by default, or a folder the member picks with the Google Picker; the OAuth client is owned by TolongLabs and published "In production", so refresh tokens don't expire after 7 days.
 - GitHub: commit the set to a repository, folder and branch the member configures, with a fine-grained token limited to that repository; commit headers are conventional and at most 50 characters.
 - Notion: one page per meeting under a parent page or database the member shares with the TolongLabs Notion integration (a database is addressed through its data source in the current API).
@@ -459,7 +459,7 @@ git commit -m "feat(exports): add markdown document model"
 test('zip holds the set under one folder', async () => {
   const entries = unzipSync(zipBundle(await loadBundle(fixture)))
   expect(Object.keys(entries)).toEqual([
-    '2026-10-20-1400-data-mining/2026-10-20 1400 Data Mining.md',
+    '2026-10-20-1400-data-mining/summary.md',
     '2026-10-20-1400-data-mining/transcript.md',
     '2026-10-20-1400-data-mining/slides.md',
     '2026-10-20-1400-data-mining/chat.md',
@@ -475,7 +475,7 @@ test('zipTarget writes <exportId>.zip in outDir', async () => {
   const r = await zipTarget.run(await loadBundle(fixture), ctx)
   expect(r).toEqual({
     url: null,
-    filePath: join(ctx.outDir, 'exp-1.zip'),
+    filePath: 'exports/exp-1.zip',
     note: null
   })
   expect((await stat(r.filePath!)).size).toBeGreaterThan(0)
@@ -495,7 +495,7 @@ Expected: FAIL with `Cannot find module './zip'`.
 
 - [x] **Step 3: Implement `writeDownload`, `zipBundle` and `zipTarget`**
 
-`writeDownload` throws `ExportError('meeting_deleted', 'This meeting has been deleted from TolongMeeting.')` when `dirname(ctx.outDir)` doesn't exist, creates `outDir` without `recursive`, ignoring `EEXIST`, and writes `<exportId>.<ext>`. `zipBundle` uses fflate `zipSync`, level 0 for `.webp` entries (already compressed) and level 6 for the rest, paths `<dirName>/<file path>` in bundle order.
+`writeDownload` throws `ExportError('meeting_deleted', 'This meeting has been deleted from TolongMeeting.')` when `dirname(ctx.outDir)` doesn't exist, creates `outDir` without `recursive`, ignoring `EEXIST`, and writes `<exportId>.<ext>`, returning the path relative to the occurrence directory (`exports/<exportId>.<ext>`, the form stored in `ExportRow.filePath`). `zipBundle` uses fflate `zipSync`, level 0 for `.webp` entries (already compressed) and level 6 for the rest, paths `<dirName>/<file path>` in bundle order.
 
 - [x] **Step 4: Run it to see it pass**
 
@@ -550,7 +550,7 @@ test('the PDF holds every section, slides and symbols', async () => {
 })
 test('pdfTarget writes <exportId>.pdf', async () => {
   const ctx = testContext({ exportId: 'exp-2' })
-  expect((await pdfTarget.run(await loadBundle(fixture), ctx)).filePath).toBe(join(ctx.outDir, 'exp-2.pdf'))
+  expect((await pdfTarget.run(await loadBundle(fixture), ctx)).filePath).toBe('exports/exp-2.pdf')
 })
 ```
 
@@ -604,7 +604,7 @@ export interface ExportRow {
   status: ExportStatus
   title: string | null
   url: string | null
-  filePath: string | null
+  filePath: string | null // relative to the occurrence directory, e.g. 'exports/<exportId>.zip'
   note: string | null
   errorCode: ExportErrorCode | null
   error: string | null

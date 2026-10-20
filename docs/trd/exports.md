@@ -11,7 +11,7 @@ Contents:
 
 Each export target is a module behind one interface (`ExportTarget`), so more can be added later.
 
-- **Download**: builds the Markdown zip and the PDF from the occurrence's `out/` directory.
+- **Download**: builds the Markdown zip and the PDF from the occurrence's `out/` directory. The zip holds one folder with the summary as `summary.md`, then `transcript.md`, `slides.md`, `chat.md` and `slides/NN.webp`. The result's file path is relative to the occurrence directory.
 - **Google Docs**: one document per meeting, created through Google sign-in with only the `drive.file` scope. The folder is "TolongMeeting Exports" or one the member picks with the Google Picker.
 - **GitHub**: commits the three-file set and summary through a fine-grained token limited to the repository the member configures.
 - **Notion**: creates one page per meeting under a parent page or database the member shares with the TolongLabs Notion integration.
