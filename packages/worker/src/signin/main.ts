@@ -1,22 +1,16 @@
 import { readFile } from 'node:fs/promises'
-import {
-  SigninJobSchema,
-  controlTokenHash,
-  vncSecret,
-  type AccountCheckData,
-  type FormProvider,
-  type SigninJob
-} from '@tm/core'
+import type { AccountCheckData, SigninJob } from '@tm/core'
+import { SigninJobSchema, controlTokenHash, vncSecret } from '@tm/core'
 import { launchBrowser } from '../chrome/launch'
 import { openSigninTabs, restoreDeskAnchor } from '../control/desk-tabs'
 import { realClock } from '../control/desk-pause'
 import { idleMs, startVnc } from '../control/vnc'
 import { startScreen } from '../display/screen'
-import { checkFormProviders } from '../forms/provider-check'
 import { loadProfileKey } from '../profile/key'
 import { checkpointProfile, prepareProfile, restoreProfile } from '../profile/profile'
 import { setupProfile, type ProfileSetup } from '../profile-setup'
 import type { Screen } from '../types'
+import { checkSigninAccounts } from './accounts'
 import { signinPoster } from './post'
 import { runSignin, type SigninDeps } from './run-signin'
 
@@ -24,9 +18,6 @@ const USAGE = 'usage: signin <job file>'
 
 // Exit codes: 0 the session ended (done, idle or stopped by SIGTERM), 1 it failed, 64 usage, 65 invalid job.
 const EXIT = { ended: 0, failed: 1, usage: 64, invalid: 65 } as const
-
-/** The accounts the container can tell apart: the two form providers. The other kinds have no check yet. */
-const CHECKED_PROVIDERS: FormProvider[] = ['google', 'microsoft']
 
 // Reads and validates the job. A message names the failing paths only: the file holds a token.
 async function loadJob(file: string): Promise<SigninJob | null> {
@@ -82,8 +73,8 @@ export function signinDeps(job: SigninJob, signal?: AbortSignal): SigninDeps {
         },
         checkAccounts: async (): Promise<AccountCheckData[]> => {
           // The member may have closed the anchor tab.
-          const signedOut = await checkFormProviders(await restoreDeskAnchor(browser.desk), CHECKED_PROVIDERS)
-          return CHECKED_PROVIDERS.map((account) => ({ account, signedIn: !signedOut.includes(account) }))
+          const desk = await restoreDeskAnchor(browser.desk)
+          return checkSigninAccounts(desk, browser.context.pages())
         },
         close: async () => {
           try {
