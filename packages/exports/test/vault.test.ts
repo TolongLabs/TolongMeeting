@@ -25,3 +25,46 @@ test('redact leaves ordinary text and plain URLs alone', () => {
   const text = 'GitHub answered 404 for https://api.github.com/repos/acme/notes (Not Found)'
   expect(redact(text, [])).toBe(text)
 })
+
+test('redact removes JSON credential fields', () => {
+  const body =
+    '{"error":"bad","client_secret":"abc def\\"x","access_token": "t1","refresh_token":"t2","api_key":"k","password":"p w","token":"t3","name":"keep"}'
+  const out = redact(body, [])
+  for (const leaked of ['abc def', 't1', 't2', '"k"', 'p w', 't3']) expect(out).not.toContain(leaked)
+  expect(out).toContain('"client_secret":"[redacted]"')
+  expect(out).toContain('"name":"keep"')
+})
+
+test('redact removes Basic credentials', () => {
+  expect(redact('Authorization: Basic dXNlcjpwYXNz', [])).toBe('Authorization: Basic [redacted]')
+})
+
+test('redact removes more credential query parameters', () => {
+  const out = redact('GET /cb?code=4%2F0AbC&key=k1&sig=s1&signature=s2&password=p&secret=s&token=t&state=ok', [])
+  expect(out).toBe(
+    'GET /cb?code=[redacted]&key=[redacted]&sig=[redacted]&signature=[redacted]&password=[redacted]&secret=[redacted]&token=[redacted]&state=ok'
+  )
+})
+
+test('redact removes Google API key and client secret shapes', () => {
+  const key = `AIza${'Sy'.repeat(10)}-_x`
+  expect(redact(`key ${key} and GOCSPX-abc_DEF-123 end`, [])).toBe('key [redacted] and [redacted] end')
+  expect(redact('short AIzaSy stays', [])).toBe('short AIzaSy stays')
+})
+
+test('redact is linear on hostile input', () => {
+  for (const unit of ['a-', 'a.', 'a ', 'Bearer ', 'token=', '"token":"', 'https://a']) {
+    const text = unit.repeat(Math.ceil(200_000 / unit.length))
+    const started = performance.now()
+    const out = redact(text, [])
+    expect(performance.now() - started).toBeLessThan(50)
+    expect(out.length).toBeLessThan(2 * 8 * 1024)
+  }
+})
+
+test('redact cuts long text at a word boundary and keeps no half token', () => {
+  const text = `${'word '.repeat(2000)}ghp_${'x'.repeat(40)}`
+  const out = redact(text, [])
+  expect(out.endsWith('word [truncated]')).toBe(true)
+  expect(out).not.toContain('ghp_')
+})
