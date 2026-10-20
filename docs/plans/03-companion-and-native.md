@@ -250,7 +250,7 @@ export function seedCompanionFixture(db: Db): Promise<{
 }> // fixtures file: two seedMember calls; member A gets devices 'DESKTOP-ABC' and 'LAPTOP-A', member B one device
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const native = (occurrenceId: string) => ({
