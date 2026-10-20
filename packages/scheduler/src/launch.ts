@@ -130,7 +130,7 @@ export async function resumeJobFileWatchers(
 // --- startAttempt --------------------------------------------------------------------------------------------------
 
 /** What is safe to log about a failure: Docker's or the directory check's own short message, else the error's name. */
-export const describe = (e: unknown): string =>
+export const describeFailure = (e: unknown): string =>
   e instanceof DockerError || e instanceof HostDirError ? e.message : e instanceof Error ? e.name : 'unknown'
 
 const ERRNO_CODE = /^E[A-Z0-9]+$/
@@ -148,6 +148,12 @@ export function isLaunchFailure(e: unknown): boolean {
   return typeof code === 'string' && ERRNO_CODE.test(code)
 }
 
+/**
+ * Whether a container may be running after `docker.start` failed with `e`: Docker gave no answer (a timeout, an abort or
+ * an unreachable proxy), so the start may have gone through. An answer that refuses the start means it did not.
+ */
+export const startMayHaveSucceeded = (e: unknown): boolean => !(e instanceof DockerError) || e.status === 0
+
 /** Starts attempt `attempt` of an occurrence. Resolves `false` after failing the occurrence when it can't start. */
 async function startAttemptIn(
   deps: LaunchDeps,
@@ -164,13 +170,17 @@ async function startAttemptIn(
   const base = jobFileBase(spec)
   const { publicUrl } = resolveEnv(env)
 
-  /** Fails the occurrence with `launch_failed`, gives the profile back and queues the ping. */
-  const failLaunch = async (e: unknown): Promise<false> => {
+  /**
+   * Fails the occurrence with `launch_failed` and queues the ping. The profile goes back at once, except when the
+   * container may be running (`mayRun`): then it stays held, and `releaseFinished` frees it once Docker says the
+   * container is gone.
+   */
+  const failLaunch = async (e: unknown, mayRun = false): Promise<false> => {
     // Only the error's name (and Docker's own message) is logged: other messages can carry paths or values.
-    console.error(`launch failed for ${occurrenceId} attempt ${attempt}: ${describe(e)}`)
+    console.error(`launch failed for ${occurrenceId} attempt ${attempt}: ${describeFailure(e)}`)
     await removeJobFiles(base)
     await applyTrigger(db, occurrenceId, 'fail', { reason: 'launch_failed' })
-    await releaseProfile(db, row.identityId, `occ:${occurrenceId}`)
+    if (!mayRun) await releaseProfile(db, row.identityId, `occ:${occurrenceId}`)
     outbox.push(() => failedPing(deps, row, "it couldn't start"))
     return false
   }
@@ -195,15 +205,17 @@ async function startAttemptIn(
   }
   const key = profileKey(deps.master, row.identityId)
 
+  let startIssued = false
   try {
     const jobDir = await prepareHostDirs(env, row.identityId, occurrenceId)
     // The profile is ours alone, so files of earlier containers (a crashed scheduler's leftovers) can go.
     await removeStaleJobFiles(jobDir, base)
     await writeJobFiles(base, job, key)
     const id = await deps.docker.create(name, containerSpec(spec))
+    startIssued = true
     await deps.docker.start(id)
   } catch (e) {
-    if (isLaunchFailure(e)) return failLaunch(e)
+    if (isLaunchFailure(e)) return failLaunch(e, startIssued && startMayHaveSucceeded(e))
     await removeJobFiles(base) // the key never outlives a failed launch, whatever the failure
     throw e
   }

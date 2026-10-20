@@ -207,38 +207,55 @@ export async function monitorTick(deps: LaunchDeps, now: Date): Promise<MonitorR
   const mine = { startedAt: now.getTime() }
   ticking.set(deps.db, mine)
   try {
-    const active = await deps.db
-      .select()
-      .from(occurrences)
-      .where(inArray(occurrences.state, [...ACTIVE_STATES]))
-    const handled = new Set<string>()
-    const keys = new Set(active.map(trackKey))
-    for (const key of unreachable.keys()) if (!keys.has(key)) unreachable.delete(key)
-    for (const [id, at] of lastLogged) if (now.getTime() - at > 10 * LOG_EVERY_MS) lastLogged.delete(id)
-    for (const row of active) {
-      try {
-        const outcome = await watch(deps, row, now)
-        if (outcome === 'restarted' || outcome === 'failed') {
-          handled.add(row.id)
-          result[outcome].push(row.id)
-        }
-      } catch (e) {
-        // A Docker failure for one occurrence leaves it as it was; the next pass looks again.
-        if (!(e instanceof DockerError)) throw e
-        logDocker(row.id, now, e.message)
-        if ((await noteUnreachable(deps, row, now)) === 'failed') {
-          handled.add(row.id)
-          result.failed.push(row.id)
-        }
-      }
+    // The sign-in sessions are their own step: a throw while watching workers can't leave a session unhandled.
+    const errors: unknown[] = []
+    try {
+      await watchWorkers(deps, now, result)
+    } catch (e) {
+      errors.push(e)
     }
-    for (const row of active) if (!handled.has(row.id)) await removeLaunchFiles(deps, row, now)
-    result.released.push(...(await releaseFinished(deps, now)))
-    await monitorSignins(deps, now)
+    try {
+      await monitorSignins(deps, now)
+    } catch (e) {
+      errors.push(e)
+    }
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) throw new AggregateError(errors, 'monitor: the pass failed in more than one step')
     return result
   } finally {
     if (ticking.get(deps.db) === mine) ticking.delete(deps.db)
   }
+}
+
+/** The worker half of a tick: watch every active occurrence, delete launch files, release finished containers. */
+async function watchWorkers(deps: LaunchDeps, now: Date, result: MonitorResult): Promise<void> {
+  const active = await deps.db
+    .select()
+    .from(occurrences)
+    .where(inArray(occurrences.state, [...ACTIVE_STATES]))
+  const handled = new Set<string>()
+  const keys = new Set(active.map(trackKey))
+  for (const key of unreachable.keys()) if (!keys.has(key)) unreachable.delete(key)
+  for (const [id, at] of lastLogged) if (now.getTime() - at > 10 * LOG_EVERY_MS) lastLogged.delete(id)
+  for (const row of active) {
+    try {
+      const outcome = await watch(deps, row, now)
+      if (outcome === 'restarted' || outcome === 'failed') {
+        handled.add(row.id)
+        result[outcome].push(row.id)
+      }
+    } catch (e) {
+      // A Docker failure for one occurrence leaves it as it was; the next pass looks again.
+      if (!(e instanceof DockerError)) throw e
+      logDocker(row.id, now, e.message)
+      if ((await noteUnreachable(deps, row, now)) === 'failed') {
+        handled.add(row.id)
+        result.failed.push(row.id)
+      }
+    }
+  }
+  for (const row of active) if (!handled.has(row.id)) await removeLaunchFiles(deps, row, now)
+  result.released.push(...(await releaseFinished(deps, now)))
 }
 
 const trackKey = (row: OccurrenceRow): string => `${row.id}:${row.attempt}`

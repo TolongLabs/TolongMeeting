@@ -2,7 +2,7 @@ import { resolve, sep } from 'node:path'
 import { symmetricDecrypt } from 'better-auth/crypto'
 import { and, asc, eq, inArray, isNull, ne, notExists, sql, type SQL } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import { ACTIVE_STATES, type ControlCommand } from '@tm/core'
+import { ACTIVE_STATES, ControlCommandSchema, type ControlCommand } from '@tm/core'
 import { getDb, type Db } from '../db/index'
 import { identityClashes, syncOccurrences } from '../db/occurrences'
 import type { Queue } from '../db/queues'
@@ -131,14 +131,25 @@ export function createScope(db: Db, memberId: string, inTransaction = false): Me
     },
 
     async sendCommand(occurrenceId, command) {
+      // A runtime check: a caller that casts past the type can't put an unknown word in a worker's queue.
+      const word = ControlCommandSchema.parse(command)
+      const queue = occurrences.pendingCommands
+      // A `resume_after_signin` still waiting at the end of the queue belongs to a sign-in that is over: the new pause
+      // replaces it, or the worker would pause and resume at once.
+      const next =
+        word === 'pause_for_signin'
+          ? sql`case when ${queue}[cardinality(${queue})] = 'resume_after_signin'
+              then array_append(${queue}[1:cardinality(${queue}) - 1], ${word}) else array_append(${queue}, ${word}) end`
+          : sql`array_append(${queue}, ${word})`
       const rows = await db
         .update(occurrences)
-        .set({ pendingCommands: sql`array_append(${occurrences.pendingCommands}, ${command})` })
+        .set({ pendingCommands: next })
         .where(
           and(
             eq(occurrences.id, occurrenceId),
             eq(occurrences.memberId, memberId),
-            sql`not (${command} = any(${occurrences.pendingCommands}))`
+            inArray(occurrences.state, [...ACTIVE_STATES]),
+            sql`not (${word} = any(${queue}))`
           )
         )
         .returning({ id: occurrences.id })

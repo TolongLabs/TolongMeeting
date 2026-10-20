@@ -571,7 +571,8 @@ export function vncDeps(): VncDeps {
   }
 }
 
-const VNC_PATH = /^\/vnc\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([^?#]*)/
+/** `/vnc/<sessionId>/websockify`, with an optional query that holds no comma (a proxy joins repeated headers with one) or space. */
+const VNC_PATH = /^\/vnc\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/websockify(\?[^,\s]*)?$/
 const VNC_UPSTREAM = /^tm-(worker|signin)-[0-9a-f-]+(-a\d+)?:6080$/
 
 /** Constant-time text comparison. */
@@ -584,8 +585,8 @@ function sameText(a: string, b: string): boolean {
 /**
  * Caddy's `forward_auth` check for `/vnc/<sessionId>/...`. It allows the request only for a signed-in member whose OWN
  * sign-in session, named in the forwarded path, is `ready`; the answer is the upstream to proxy to. No session is a 401;
- * everything else (another member's session, one that isn't ready, a path that isn't `/vnc/<uuid>/`, a `..` or an
- * escape in it) is a 403 that says nothing more. Nothing here reads or returns a secret.
+ * everything else (another member's session, one that isn't ready, a path that isn't `/vnc/<uuid>/websockify`, an
+ * `Origin` other than `TM_PUBLIC_URL`'s) is a 403 that says nothing more. Nothing here reads or returns a secret.
  */
 export async function authoriseVnc(
   deps: VncDeps,
@@ -594,7 +595,14 @@ export async function authoriseVnc(
   const session = await deps.getSession(headers)
   if (!session) return { status: 401 }
   const path = VNC_PATH.exec(headers.get('x-forwarded-uri') ?? '')
-  if (!path || /\.\.|%|\\/.test(path[2]!)) return { status: 403 }
+  if (!path) return { status: 403 }
+  // A browser sends `Origin` on the WebSocket upgrade: a page of another site can't open the view with the member's cookie.
+  const origin = headers.get('origin')
+  if (origin !== null) {
+    const publicUrl = process.env.TM_PUBLIC_URL
+    if (!publicUrl) throw new Error('TM_PUBLIC_URL is not set')
+    if (origin !== new URL(publicUrl).origin) return { status: 403 }
+  }
   const [member] = await deps.db.select({ id: members.id }).from(members).where(eq(members.authUserId, session.userId))
   if (!member) return { status: 403 }
   const [row] = await deps.db.select().from(signinSessions).where(eq(signinSessions.id, path[1]!))

@@ -12,6 +12,7 @@ import {
   DockerError,
   FakeDocker,
   SIGNIN_SILENT_MS,
+  SIGNIN_MAX_MS,
   SIGNIN_START_MS,
   SIGNIN_UNREACHABLE_FAIL_MS,
   monitorTick,
@@ -260,6 +261,30 @@ describe('startSigninContainer', () => {
     ).toEqual([])
   })
 
+  test('a start that may have gone through ends the session but keeps the profile until the container is gone', async () => {
+    const f = await signinLaunchFixture()
+    f.docker.startError = Object.assign(new Error('no answer'), { name: 'TimeoutError' })
+    expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('ended')
+    expect(await f.session()).toMatchObject({ state: 'ended', endReason: 'launch_failed' })
+    expect(
+      (await readdir(`${f.env.profileRoot}/${f.identityId}/job`)).filter((n) => n.startsWith('tm-signin'))
+    ).toEqual([])
+    expect(await f.heldBy()).toBe(`signin:${f.sessionId}`)
+    f.docker.inspectResults.set(f.name, { running: true })
+    await monitorTick(f.deps, f.now)
+    expect(await f.heldBy()).toBe(`signin:${f.sessionId}`)
+    f.docker.inspectResults.set(f.name, null)
+    await monitorTick(f.deps, f.now)
+    expect(await f.heldBy()).toBeNull()
+  })
+
+  test('a start that Docker refused gives the profile back at once', async () => {
+    const f = await signinLaunchFixture()
+    f.docker.startError = new DockerError('start', 500, 'no such image')
+    expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('ended')
+    expect(await f.heldBy()).toBeNull()
+  })
+
   test('a session that does not exist is an error, not a silent no-op', async () => {
     const f = await signinLaunchFixture()
     await expect(startSigninContainer(f.deps, crypto.randomUUID(), f.now)).rejects.toThrow('No sign-in session')
@@ -388,5 +413,141 @@ describe('monitoring sign-in sessions', () => {
       .where(eq(signinSessions.id, f.sessionId))
     await monitorTick(f.deps, new Date(Date.now() + 6000))
     expect(await files()).toEqual([])
+  })
+  test('a session older than an hour is ended however active it is', async () => {
+    const f = await signinLaunchFixture({
+      state: 'ready',
+      holding: true,
+      startedAt: at(-(SIGNIN_MAX_MS + 1000)),
+      lastHeartbeatAt: at(-1000)
+    })
+    await monitorTick(f.deps, f.now)
+    expect(await f.session()).toMatchObject({ state: 'ended', endReason: 'lost' })
+  })
+
+  test('the job files of an ended session go when its container is gone', async () => {
+    const f = await signinLaunchFixture()
+    await startSigninContainer(f.deps, f.sessionId, new Date())
+    await f.db
+      .update(signinSessions)
+      .set({ state: 'ended', endedAt: new Date(), endReason: 'done' })
+      .where(eq(signinSessions.id, f.sessionId))
+    const files = async () =>
+      (await readdir(`${f.env.profileRoot}/${f.identityId}/job`)).filter((n) => n.startsWith('tm-signin'))
+    expect(await files()).toHaveLength(2)
+    f.docker.inspectResults.set(f.name, { running: true })
+    await monitorTick(f.deps, new Date())
+    expect(await files()).toHaveLength(2)
+    f.docker.inspectResults.set(f.name, null)
+    await monitorTick(f.deps, new Date())
+    expect(await files()).toEqual([])
+    expect(await f.heldBy()).toBeNull()
+  })
+
+  /** A second member's session in the same database, silent for long enough to be lost. */
+  async function otherLostSession(f: Awaited<ReturnType<typeof signinLaunchFixture>>) {
+    const other = await seedMember(f.db, { full: false })
+    const [row] = await f.db
+      .insert(signinSessions)
+      .values({
+        memberId: other.memberId,
+        identityId: other.identityId,
+        mode: 'container',
+        state: 'ready',
+        upstream: 'x',
+        startedAt: at(-HOUR),
+        lastHeartbeatAt: at(-(SIGNIN_SILENT_MS + 1000))
+      })
+      .returning()
+    return { ...other, sessionId: row!.id, name: `tm-signin-${row!.id}` }
+  }
+
+  test('one session that throws does not stop the others, and the pass fails loudly after them', async () => {
+    const f = await signinLaunchFixture({
+      state: 'ready',
+      holding: true,
+      startedAt: at(-60_000),
+      lastHeartbeatAt: at(-(SIGNIN_SILENT_MS + 1000))
+    })
+    const g = await otherLostSession(f)
+    const stop = f.docker.stop.bind(f.docker)
+    f.docker.stop = async (id, timeoutS) => {
+      if (id === f.name || id === g.name) {
+        await stop(id, timeoutS)
+        if (id === f.name) throw new Error('boom')
+        return
+      }
+      await stop(id, timeoutS)
+    }
+    const error = await monitorTick(f.deps, f.now).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(AggregateError)
+    expect((error as AggregateError).errors.map((e: Error) => e.message)).toEqual(['boom'])
+    const state = async (id: string) =>
+      (await f.db.select().from(signinSessions).where(eq(signinSessions.id, id)))[0]!.state
+    expect(await state(g.sessionId)).toBe('ended')
+    expect(await state(f.sessionId)).toBe('ready')
+  })
+
+  test('one held profile that throws does not stop another from being released', async () => {
+    const f = await signinLaunchFixture({ state: 'ended', holding: true, endedAt: at(-1000) })
+    const other = await seedMember(f.db, { full: false })
+    const [row] = await f.db
+      .insert(signinSessions)
+      .values({
+        memberId: other.memberId,
+        identityId: other.identityId,
+        mode: 'container',
+        state: 'ended',
+        endedAt: NOW
+      })
+      .returning()
+    await f.db
+      .update(profiles)
+      .set({ heldBy: `signin:${row!.id}` })
+      .where(eq(profiles.identityId, other.identityId))
+    f.docker.inspect = async (id) => {
+      if (id === f.name) throw new Error('boom')
+      return null
+    }
+    await expect(monitorTick(f.deps, f.now)).rejects.toBeInstanceOf(AggregateError)
+    const held = async (identityId: string) =>
+      (await f.db.select().from(profiles).where(eq(profiles.identityId, identityId)))[0]!.heldBy
+    expect(await held(other.identityId)).toBeNull()
+    expect(await held(f.identityId)).toBe(`signin:${f.sessionId}`)
+  })
+
+  test('a worker watch that throws does not skip the sign-in sessions', async () => {
+    const f = await signinLaunchFixture({
+      workerHolding: { state: 'in_meeting', attempt: 1, lastHeartbeatAt: at(-(SIGNIN_SILENT_MS + 1000)) }
+    })
+    const g = await otherLostSession(f)
+    f.docker.inspect = async (id) => {
+      if (id === 'tm-worker-x-a1') throw new Error('boom')
+      return null
+    }
+    await expect(monitorTick(f.deps, f.now)).rejects.toThrow('boom')
+    expect((await f.db.select().from(signinSessions).where(eq(signinSessions.id, g.sessionId)))[0]!.state).toBe('ended')
+  })
+
+  test('queued commands: a lost session drops a pause the worker never got, a new pause drops a stale resume', async () => {
+    const f = await signinLaunchFixture({
+      mode: 'worker',
+      state: 'ready',
+      workerHolding: { state: 'in_meeting', attempt: 1, lastHeartbeatAt: at(-(SIGNIN_SILENT_MS + 1000)) }
+    })
+    await f.db
+      .update(occurrences)
+      .set({ pendingCommands: ['pause_for_signin'] })
+      .where(eq(occurrences.id, f.occurrenceId!))
+    await monitorTick(f.deps, f.now)
+    expect((await f.occurrence()).pendingCommands).toEqual(['resume_after_signin'])
+
+    const g = await signinLaunchFixture({ workerHolding: { state: 'in_meeting', attempt: 1 } })
+    await g.db
+      .update(occurrences)
+      .set({ pendingCommands: ['resume_after_signin'] })
+      .where(eq(occurrences.id, g.occurrenceId!))
+    expect(await startSigninContainer(g.deps, g.sessionId, g.now)).toBe('worker')
+    expect((await g.occurrence()).pendingCommands).toEqual(['pause_for_signin'])
   })
 })

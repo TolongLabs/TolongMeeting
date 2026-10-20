@@ -15,7 +15,9 @@ import {
   FakeDocker,
   dockerClient,
   launchOccurrence,
+  monitorTick,
   resumeJobFileWatchers,
+  settleRemuxes,
   startAttempt,
   stopJobFileWatchers,
   type LaunchDeps
@@ -396,6 +398,33 @@ test('a Docker call that never answers times out and fails the launch with the p
   expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'launch_failed' })
   expect(await f.heldBy()).toBeNull()
   expect(await readdir(`${f.env.profileRoot}/${f.identityId}/job`)).toEqual([])
+})
+
+test('a start that may have gone through keeps the profile held until the container is gone', async () => {
+  const f = await launchFixture()
+  f.docker.startError = Object.assign(new Error('no answer'), { name: 'TimeoutError' })
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(await f.occurrence()).toMatchObject({ state: 'failed', stateReason: 'launch_failed' })
+  expect(await readdir(`${f.env.profileRoot}/${f.identityId}/job`)).toEqual([])
+  const name = `tm-worker-${f.id}-a1`
+  expect(await f.heldBy()).toBe(`occ:${f.id}`)
+  // The fake Docker has the created container running: the profile stays held through the monitor's passes.
+  f.docker.inspectResults.set(name, { running: true })
+  await monitorTick(f.deps, f.tMinus60)
+  await settleRemuxes()
+  expect(await f.heldBy()).toBe(`occ:${f.id}`)
+  f.docker.inspectResults.set(name, null)
+  await monitorTick(f.deps, f.tMinus60)
+  await settleRemuxes()
+  await monitorTick(f.deps, f.tMinus60)
+  expect(await f.heldBy()).toBeNull()
+})
+
+test('a start that Docker refused gives the profile back at once', async () => {
+  const f = await launchFixture()
+  f.docker.startError = new DockerError('start', 500, 'no such image')
+  expect(await launchOccurrence(f.deps, f.job, f.tMinus60)).toBe('failed')
+  expect(await f.heldBy()).toBeNull()
 })
 
 test('an error that is not a Docker or filesystem failure is not hidden as launch_failed, and the key is deleted', async () => {

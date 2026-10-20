@@ -160,6 +160,26 @@ describe('start, finish and status', () => {
     expect(await f.session(r.sessionId)).toMatchObject({ state: 'ended', endReason: 'idle' })
   })
 
+  test('a new pause replaces a resume left over from an earlier sign-in', async () => {
+    const f = await signinFixture({ workerHolding: { state: 'in_meeting', attempt: 1 } })
+    await f.db
+      .update(occurrences)
+      .set({ pendingCommands: ['stop', 'resume_after_signin'] })
+      .where(eq(occurrences.id, f.occurrenceId))
+    await startSignin(f.scope, f.identityId, { queue: f.queue })
+    expect((await f.occurrence()).pendingCommands).toEqual(['stop', 'pause_for_signin'])
+  })
+
+  test('commands go only to an active occurrence of the member, and only known words', async () => {
+    const f = await signinFixture({ workerHolding: { state: 'in_meeting', attempt: 1 } })
+    await expect(f.scope.sendCommand(f.occurrenceId, 'rm -rf' as never)).rejects.toThrow()
+    expect(await f.otherScope.sendCommand(f.occurrenceId, 'stop')).toBe(0)
+    expect(await f.scope.sendCommand(f.occurrenceId, 'stop')).toBe(1)
+    await f.db.update(occurrences).set({ state: 'failed' }).where(eq(occurrences.id, f.occurrenceId))
+    expect(await f.scope.sendCommand(f.occurrenceId, 'leave_now')).toBe(0)
+    expect((await f.occurrence()).pendingCommands).toEqual(['stop'])
+  })
+
   test('a second start does not queue pause_for_signin twice', async () => {
     const f = await signinFixture({ workerHolding: { state: 'in_meeting', attempt: 1 } })
     await startSignin(f.scope, f.identityId, { queue: f.queue })
@@ -240,6 +260,23 @@ describe('forward auth', () => {
     expect(await authoriseVnc(as(stranger), h)).toEqual({ status: 403 })
   })
 
+  test('a page of another site cannot open the view: Origin must be the public URL', async () => {
+    const f = await signinFixture({ readySession: true })
+    const as = { db: f.db, getSession: async () => ({ userId: f.ownerAuthUserId }) }
+    const before = process.env.TM_PUBLIC_URL
+    process.env.TM_PUBLIC_URL = 'https://tm.example/some/path'
+    try {
+      const withOrigin = (origin: string) =>
+        new Headers({ 'x-forwarded-uri': `/vnc/${f.sessionId}/websockify?token=1`, origin })
+      expect((await authoriseVnc(as, withOrigin('https://tm.example'))).status).toBe(200)
+      expect(await authoriseVnc(as, withOrigin('https://evil.example'))).toEqual({ status: 403 })
+      expect(await authoriseVnc(as, withOrigin('null'))).toEqual({ status: 403 })
+    } finally {
+      if (before === undefined) delete process.env.TM_PUBLIC_URL
+      else process.env.TM_PUBLIC_URL = before
+    }
+  })
+
   test('a session that is not ready, or whose path escapes, is refused', async () => {
     const f = await signinFixture({ readySession: true })
     const as = { db: f.db, getSession: async () => ({ userId: f.ownerAuthUserId }) }
@@ -247,7 +284,10 @@ describe('forward auth', () => {
       `/vnc/${f.sessionId}/../../admin`,
       `/vnc/${f.sessionId}/%2e%2e/admin`,
       `/vnc/${f.sessionId.toUpperCase()}x/websockify`,
-      `/vncs/${f.sessionId}/websockify`
+      `/vncs/${f.sessionId}/websockify`,
+      `/vnc/${f.sessionId}/websockify/extra`,
+      `/vnc/${f.sessionId}/websockify?a=1, /vnc/${f.sessionId}/websockify`,
+      `/vnc/${f.sessionId}/websockify?a=1 b`
     ])
       expect(await authoriseVnc(as, new Headers({ 'x-forwarded-uri': bad }))).toEqual({ status: 403 })
     await f.db.update(signinSessions).set({ state: 'starting' }).where(eq(signinSessions.id, f.sessionId))
