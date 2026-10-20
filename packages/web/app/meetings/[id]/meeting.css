@@ -1,0 +1,46 @@
+/* Layout only, like globals.css: no colours or fonts. The visual design comes after the Figma step. */
+main video,
+main .slide img,
+main .shots img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+main .transcript p {
+  margin-block: 0.5rem;
+}
+main .transcript .note,
+main .transcript .heard {
+  font-style: italic;
+}
+main .seek {
+  margin-right: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+main .slide {
+  margin-block: 1.5rem;
+}
+main .slide .slide-text {
+  white-space: pre-wrap;
+}
+main .shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+}
+main .shots img {
+  max-width: 14rem;
+}
+main .markdown blockquote {
+  margin-inline: 0;
+  padding-inline: 1rem;
+  border-left: 0.25rem solid currentColor;
+}
+main .markdown pre {
+  overflow-x: auto;
+}
+main .events {
+  padding-left: 1.25rem;
+}

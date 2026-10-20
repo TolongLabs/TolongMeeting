@@ -1646,7 +1646,7 @@ Run: `bun test packages/web/lib/meeting.test.ts packages/web/lib/files.test.ts`
 
 Expected: FAIL with `Cannot find module './meeting'`.
 
-- [ ] **Step 3: Implement the loader, the file server, the actions, the route and the page**
+- [x] **Step 3: Implement the loader, the file server, the actions, the route and the page**
 
 - [x] **Step 4: Run tests to verify they pass**
 
@@ -1654,7 +1654,7 @@ Run: `bun test packages/web/lib/meeting.test.ts packages/web/lib/files.test.ts &
 
 Expected: PASS, `6 pass, 0 fail`; typecheck exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/web/lib/meeting* packages/web/lib/files* packages/web/app/meetings packages/web/app/api/meetings
