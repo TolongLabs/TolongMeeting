@@ -69,3 +69,22 @@ jobs:
       # The forms project runs headed, so it needs a display.
       - name: Forms specs
         run: xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts --project=forms
+
+  # The whole meeting run against local fakes (fake Zoom, forms, AI, ntfy) in headed Chrome, so it needs a display and
+  # the media tools. No Postgres: the e2e run uses no database.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg xvfb x11-utils
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: End-to-end run
+        run: xvfb-run -a bunx playwright test -c packages/worker/playwright.config.ts --project=e2e
