@@ -149,14 +149,15 @@ describe('icons', () => {
 describe('installer settings', () => {
   test('Electron fuses close the ways to run the app as something else', async () => {
     const pkg = await Bun.file(join(root, 'package.json')).json()
-    expect(pkg.build.electronFuses).toMatchObject({
+    expect(pkg.build.electronFuses).toEqual({
       runAsNode: false,
+      enableCookieEncryption: true,
       enableNodeOptionsEnvironmentVariable: false,
       enableNodeCliInspectArguments: false,
       enableEmbeddedAsarIntegrityValidation: true,
-      onlyLoadAppFromAsar: true,
-      grantFileProtocolExtraPrivileges: false
+      onlyLoadAppFromAsar: true
     })
+    expect(pkg.build.electronFuses.grantFileProtocolExtraPrivileges).toBeUndefined()
     expect(pkg.build.asar).toBe(true)
   })
 

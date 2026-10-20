@@ -156,6 +156,7 @@ async function main(): Promise<void> {
         quitReady = true
         // Open windows would keep the quit from finishing, so they go first.
         windows.dispose()
+        tray?.destroy()
         app.quit()
       })
   })

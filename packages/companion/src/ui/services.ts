@@ -62,7 +62,15 @@ export class PairingService {
       } catch (e) {
         return { ok: false, message: this.explain(e) }
       }
-      await this.d.onPaired()
+      try {
+        await this.d.onPaired()
+      } catch (e) {
+        this.d.onError(e)
+        return {
+          ok: false,
+          message: 'This PC is paired, but the app could not finish setting up. Restart TolongMeeting.'
+        }
+      }
       return { ok: true }
     } finally {
       this.busy = false

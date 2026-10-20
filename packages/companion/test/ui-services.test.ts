@@ -86,6 +86,37 @@ describe('PairingService', () => {
     expect(r.paired()).toBe(1)
   })
 
+  test('if onPaired fails after tokens are stored, reports fixed restart sentence', async () => {
+    const dir = await tmpDir()
+    const settings = defaultSettings(DOCS, SERVER)
+    const settingsPath = join(dir, 'settings.json')
+    const secrets = new SecretStore(join(dir, 'secrets.json'), safe)
+    const state = new StateStore(join(dir, 'state.json'))
+    const errors: unknown[] = []
+    const service = new PairingService({
+      settings,
+      secrets,
+      state,
+      deviceName: () => 'DESKTOP-ABC',
+      saveServerUrl: async (url) => {
+        settings.serverUrl = url
+        await saveSettings(settingsPath, settings)
+      },
+      onPaired: async () => {
+        throw new Error('boom in loop startup')
+      },
+      onError: (e) => void errors.push(e),
+      fetch: fakeFetch(() => Response.json(pairResponse))
+    })
+    const res = await service.submit({ serverUrl: SERVER, code: 'ABCD-1234' })
+    expect(res).toEqual({
+      ok: false,
+      message: 'This PC is paired, but the app could not finish setting up. Restart TolongMeeting.'
+    })
+    expect(errors).toHaveLength(1)
+    expect(await secrets.get('deviceToken')).toBe(pairResponse.token)
+  })
+
   test('the answer never carries a token, and a refused code gives the fixed sentence', async () => {
     const ok = await pairingRig(() => Response.json(pairResponse))
     expect(JSON.stringify(await ok.service.submit({ serverUrl: SERVER, code: 'ABCD-1234' }))).not.toContain('tmd_')

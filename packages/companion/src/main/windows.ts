@@ -6,7 +6,7 @@ import { FolderKindSchema } from '../ui/ipc'
 import { guardedHandler, isTrustedSender, secureWebPreferences, signinPort, vncPageCsp } from '../ui/security'
 import type { PairingService, SettingsService } from '../ui/services'
 import type { SigninClosable } from '../local/signin'
-import { guardSession } from './guard'
+import { guardSession, installConsoleFilter } from './guard'
 
 type PageKind = 'pairing' | 'settings' | 'signin'
 type SingletonKind = Exclude<PageKind, 'signin'>
@@ -37,6 +37,7 @@ export class Windows {
   private readonly report: (error: unknown) => void
 
   constructor(private readonly d: WindowsDeps) {
+    installConsoleFilter()
     this.report = d.onError ?? ((e) => console.error(e))
     const on = <A extends unknown[], R>(channel: string, kind: SingletonKind, fn: (...args: A) => R): void => {
       const run = guardedHandler<A, R>((frame) => {
@@ -49,7 +50,11 @@ export class Windows {
     on(CHANNELS.pairingSubmit, 'pairing', (input: unknown) => d.pairing.submit(input))
     on(CHANNELS.settingsGet, 'settings', () => d.settings.get())
     on(CHANNELS.settingsSave, 'settings', (form: unknown) => d.settings.save(form))
-    on(CHANNELS.settingsChooseFolder, 'settings', (kind: unknown) => this.chooseFolder(FolderKindSchema.parse(kind)))
+    on(CHANNELS.settingsChooseFolder, 'settings', (kind: unknown) => {
+      const parsed = FolderKindSchema.safeParse(kind)
+      if (!parsed.success) throw new Error('Invalid folder kind')
+      return this.chooseFolder(parsed.data)
+    })
     ipcMain.handle(CHANNELS.signinDone, (event: IpcMainInvokeEvent) => {
       const entry = this.signins.get(event.sender.id)
       if (
@@ -125,7 +130,24 @@ export class Windows {
     layout()
     win.on('resize', layout)
     win.on('closed', () => view.webContents.close())
-    view.webContents.loadURL(url).catch((e: unknown) => this.report(e))
+    let loadFailed = false
+    const reportLoadError = (code: string): void => {
+      if (loadFailed) return
+      loadFailed = true
+      this.report(new Error(`Failed to load sign-in page: ${code}`))
+    }
+    view.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+      reportLoadError(errorDescription || String(errorCode))
+    })
+    view.webContents.loadURL(url).catch((e: unknown) => {
+      const code =
+        typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string'
+          ? e.code
+          : typeof e === 'object' && e !== null && 'errno' in e && typeof e.errno === 'number'
+            ? String(e.errno)
+            : 'unknown'
+      reportLoadError(code)
+    })
     return {
       close: () => {
         ended = true

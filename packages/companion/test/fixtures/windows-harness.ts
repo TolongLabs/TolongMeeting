@@ -65,6 +65,9 @@ async function probe(wc: WebContents, windowsBefore: number): Promise<Record<str
   await run(wc, `location.href = 'https://example.com/'`)
   await sleep(500)
   out.afterNavigate = wc.getURL()
+  await run(wc, `location.href = 'about:blank'`)
+  await sleep(500)
+  out.afterAboutBlank = wc.getURL()
   out.windowOpen = await run(wc, `window.open('https://example.com/') === null ? 'null' : 'opened'`)
   await sleep(300)
   out.windowsOpened = BrowserWindow.getAllWindows().length - windowsBefore
@@ -112,6 +115,7 @@ async function main(): Promise<void> {
     { preconnect: () => {} }
   )
   let paired = 0
+  const harnessErrors: string[] = []
   const windows = new Windows({
     distDir: dist,
     pairing: new PairingService({
@@ -127,7 +131,8 @@ async function main(): Promise<void> {
       onError: (e) => console.error('harness pairing error:', e),
       fetch: fakeFetch
     }),
-    settings: new SettingsService({ settings, save: (next) => saveSettings(settingsFile, next) })
+    settings: new SettingsService({ settings, save: (next) => saveSettings(settingsFile, next) }),
+    onError: (e) => harnessErrors.push(e instanceof Error ? e.message : String(e))
   })
   const result: Record<string, unknown> = {}
   const formText = (wc: WebContents): Promise<string> => run(wc, `document.getElementById('message').textContent`)
@@ -277,6 +282,17 @@ async function main(): Promise<void> {
   signin.done = done
   result.signin = signin
   server.close()
+
+  const failingSignin = windows.openSignin(
+    'http://127.0.0.1:1/vnc.html#autoconnect=1&password=PW_SECRET_CHECK',
+    () => {}
+  )
+  await sleep(1500)
+  result.signinErrorCheck = {
+    errors: [...harnessErrors],
+    hasPassword: harnessErrors.some((e) => e.includes('PW_SECRET_CHECK'))
+  }
+  failingSignin.close()
 
   console.log(`HARNESS-RESULT ${JSON.stringify(result)}`)
   windows.dispose()

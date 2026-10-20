@@ -134,6 +134,7 @@ describe.skipIf(!enabled)('Electron smoke test', () => {
       expect(window.inlineScript).toBe('blocked')
       expect(window.geolocation).toBe('denied')
       expect(window.afterNavigate).toBe(page(name))
+      expect(window.afterAboutBlank).toBe(page(name))
       expect(window.windowOpen).toBe('null')
     }
     // Pairing and settings opened no second window. The sign-in toolbar is the one window it opened.
@@ -191,6 +192,11 @@ describe.skipIf(!enabled)('Electron smoke test', () => {
     expect(r.signin.hitsWithFragment).toEqual([])
     // Done ran the controller's callback once and closed the window.
     expect(r.signin.done).toBe(1)
+
+    // Sign-in load failure never leaks the password fragment into errors or logs.
+    expect(r.signinErrorCheck.hasPassword).toBe(false)
+    expect(r.signinErrorCheck.errors[0]).toMatch(/^Failed to load sign-in page: /)
+    expect(run.lines.some((l) => l.includes('PW_SECRET_CHECK'))).toBe(false)
   }, 120_000)
 
   test('a malformed settings file stops the app with an error', async () => {
