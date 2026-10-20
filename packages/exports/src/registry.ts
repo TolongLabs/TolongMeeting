@@ -1,3 +1,4 @@
+import { oauthRedirectUri } from './connections/oauth'
 import { createGdocsTarget } from './targets/gdocs'
 import { githubTarget } from './targets/github'
 import { createNotionTarget } from './targets/notion'
@@ -8,7 +9,8 @@ import type { ExportTarget, ExportTargetId, OAuthClient } from './types'
 /**
  * The OAuth client of a provider from `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` or `NOTION_CLIENT_ID` /
  * `NOTION_CLIENT_SECRET`, or null when either is unset or empty (Compose passes an unset variable as ''). The redirect
- * address is `${TM_PUBLIC_URL}/api/connections/<kind>/callback`.
+ * address is `<TM_PUBLIC_URL origin>/api/connections/<kind>/callback`, built by `oauthRedirectUri` (a trailing slash is
+ * dropped; a path, query or user name in `TM_PUBLIC_URL` is refused).
  */
 export function oauthClientFromEnv(
   kind: 'google' | 'notion',
@@ -20,7 +22,7 @@ export function oauthClientFromEnv(
   if (!clientId || !clientSecret) return null
   const base = env.TM_PUBLIC_URL
   if (!base) throw new Error('TM_PUBLIC_URL is not set')
-  return { clientId, clientSecret, redirectUri: `${base}/api/connections/${kind}/callback` }
+  return { clientId, clientSecret, redirectUri: oauthRedirectUri(base, kind) }
 }
 
 /**

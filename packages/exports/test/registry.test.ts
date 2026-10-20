@@ -22,6 +22,15 @@ test('downloads and GitHub are always there; the other remote targets need their
   ).toBeNull()
 })
 
+test('the Google redirect address is built from the validated origin, whatever the trailing slash', () => {
+  const env = { GOOGLE_CLIENT_ID: 'a', GOOGLE_CLIENT_SECRET: 'b' }
+  expect(oauthClientFromEnv('google', { ...env, TM_PUBLIC_URL: 'https://tm.example/' })?.redirectUri).toBe(
+    'https://tm.example/api/connections/google/callback'
+  )
+  for (const bad of ['https://tm.example/app', 'http://tm.example', 'https://u:p@tm.example', 'tm.example'])
+    expect(() => oauthClientFromEnv('google', { ...env, TM_PUBLIC_URL: bad })).toThrow('TM_PUBLIC_URL must be')
+})
+
 test('an empty variable counts as unset (Compose passes unset variables as empty)', () => {
   expect(
     oauthClientFromEnv('notion', {
