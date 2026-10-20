@@ -20,6 +20,7 @@ import type { Notifier } from '@tm/web/db/notifier'
 import { identityClashes } from '@tm/web/db/occurrences'
 import { QUEUES, queueDbOf, type Queue } from '@tm/web/db/queues'
 import { applyTrigger } from '@tm/web/db/transitions'
+import type { TailscaleApi } from '@tm/web/lib/home-route'
 import { containerName, containerSpec, jobFileBase, resolveEnv, type SpecParams } from './container-spec'
 import { DockerError, type DockerClient } from './docker'
 import {
@@ -61,6 +62,8 @@ export type LaunchDeps = {
   remux: (dir: string, signal?: AbortSignal) => Promise<boolean>
   /** How often to ask Docker whether a worker has exited, to delete its job files. Default 5000. */
   exitPollMs?: number
+  tailscaleApi?: TailscaleApi | Pick<TailscaleApi, 'createAuthKey'>
+  tailscaleVersion?: string
 }
 
 export type LaunchJob = { occurrenceId: string; scheduledStart: string }

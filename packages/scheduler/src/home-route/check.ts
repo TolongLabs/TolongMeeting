@@ -36,7 +36,7 @@ let shared: { id: string; secret: string; tailnet: string; api: TailscaleApi } |
  * The scheduler's Tailscale client, made once per process so its OAuth token is reused between checks. The client
  * secret comes from the environment only (`TM_TAILSCALE_CLIENT_SECRET`); it is never stored, logged or put in a job.
  */
-function tailscaleApi(env: Record<string, string | undefined>): TailscaleApi {
+export function tailscaleApi(env: Record<string, string | undefined>): TailscaleApi {
   const cfg = tailscaleConfigFromEnv(env)
   if (!cfg) throw new Error('The Tailscale OAuth client is not configured (TM_TAILSCALE_CLIENT_ID and _SECRET)')
   if (!shared || shared.id !== cfg.clientId || shared.secret !== cfg.clientSecret || shared.tailnet !== cfg.tailnet) {

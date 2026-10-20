@@ -25,15 +25,18 @@ const STOP_TIMEOUT_S = 5
 
 /** `sidecarName` with the body the gate expects; see `buildSidecarBody` for what is in it. */
 export function sidecarCreateBody(o: {
-  occurrenceId: string
+  occurrenceId?: string
+  subjectId?: string
   identityId: string
   node: Pick<HomeNode, 'nodeId' | 'hostname'>
   tailscaleVersion: string
   env: SpecEnv
 }): SidecarBody {
+  const subjectId = o.subjectId ?? o.occurrenceId
+  if (!subjectId) throw new Error('subjectId or occurrenceId required')
   const { hosts } = resolveEnv(o.env)
   return buildSidecarBody({
-    occurrenceId: o.occurrenceId,
+    occurrenceId: subjectId,
     identityId: o.identityId,
     exitNodeId: o.node.nodeId,
     exitNodeHostname: o.node.hostname,
@@ -43,17 +46,75 @@ export function sidecarCreateBody(o: {
   })
 }
 
-/** What `launchViaHome` needs. `launchWorker` starts the worker inside the sidecar's namespace; false: it failed to start. */
-export type SidecarDeps = {
+/** Dependencies required to ensure a healthy home-route sidecar. */
+export type SidecarStartDeps = {
   api: Pick<TailscaleApi, 'createAuthKey'>
   docker: Pick<DockerClient, 'create' | 'start' | 'stop' | 'remove' | 'inspect'>
   env: SpecEnv
   tailscaleVersion: string
-  launchWorker(cfg: JobConfig, via: { sidecar: string }): Promise<boolean>
-  /** How long the tunnel may take to come up. Default 60000. */
   healthTimeoutMs?: number
-  /** How often to look. Default 1000. */
   pollMs?: number
+}
+
+/**
+ * Ensures the home-route sidecar for `subjectId` (an occurrence or signin session) is running and healthy.
+ * A healthy existing sidecar is reused; any unhealthy or stopped sidecar is removed and recreated.
+ * If the tunnel fails to become healthy in time, the sidecar is cleaned up and `HomeRouteUnavailable` thrown.
+ */
+export async function ensureSidecar(
+  subjectId: string,
+  identityId: string,
+  node: Pick<HomeNode, 'nodeId' | 'hostname'>,
+  d: SidecarStartDeps
+): Promise<string> {
+  const name = sidecarName(subjectId)
+  const keyFile = authKeyPath(d.env.profileRoot, subjectId)
+  const timeoutMs = d.healthTimeoutMs ?? 60_000
+  const pollMs = d.pollMs ?? 1000
+
+  const existing = await d.docker.inspect(name)
+  if (!(existing?.running && existing.health === 'healthy')) {
+    if (existing !== null) await removeSidecar(d.docker, subjectId)
+    const body = sidecarCreateBody({
+      subjectId,
+      identityId,
+      node,
+      tailscaleVersion: d.tailscaleVersion,
+      env: d.env
+    })
+    try {
+      const key = await d.api.createAuthKey({
+        tags: [WORKER_TAG],
+        ephemeral: true,
+        expirySeconds: KEY_SECONDS,
+        description: `tm-worker ${subjectId}`
+      })
+      await writeKeyFile(keyFile, key)
+      const id = await d.docker.create(name, body)
+      await d.docker.start(id)
+      const deadline = Date.now() + timeoutMs
+      for (;;) {
+        const state = await d.docker.inspect(name)
+        if (state === null || !state.running) throw new HomeRouteUnavailable('The home route sidecar stopped.')
+        if (state.health === 'healthy') break
+        if (Date.now() >= deadline) throw new HomeRouteUnavailable('The home route tunnel did not come up in time.')
+        await sleep(pollMs)
+      }
+    } catch (e) {
+      await removeSidecar(d.docker, subjectId).catch(() =>
+        console.error(`home-route: ${subjectId}: sidecar not removed`)
+      )
+      throw e
+    } finally {
+      await rm(keyFile, { force: true })
+    }
+  }
+  return name
+}
+
+/** What `launchViaHome` needs. `launchWorker` starts the worker inside the sidecar's namespace; false: it failed to start. */
+export type SidecarDeps = SidecarStartDeps & {
+  launchWorker(cfg: JobConfig, via: { sidecar: string }): Promise<boolean>
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -108,48 +169,7 @@ async function writeKeyFile(path: string, key: string): Promise<void> {
  */
 export async function launchViaHome(cfg: JobConfig, node: HomeNode, d: SidecarDeps): Promise<void> {
   const occurrenceId = cfg.occurrenceId
-  const name = sidecarName(occurrenceId)
-  const keyFile = authKeyPath(d.env.profileRoot, occurrenceId)
-  const timeoutMs = d.healthTimeoutMs ?? 60_000
-  const pollMs = d.pollMs ?? 1000
-
-  const existing = await d.docker.inspect(name)
-  if (!(existing?.running && existing.health === 'healthy')) {
-    if (existing !== null) await removeSidecar(d.docker, occurrenceId)
-    const body = sidecarCreateBody({
-      occurrenceId,
-      identityId: cfg.identity.id,
-      node,
-      tailscaleVersion: d.tailscaleVersion,
-      env: d.env
-    })
-    try {
-      const key = await d.api.createAuthKey({
-        tags: [WORKER_TAG],
-        ephemeral: true,
-        expirySeconds: KEY_SECONDS,
-        description: `tm-worker ${occurrenceId}`
-      })
-      await writeKeyFile(keyFile, key)
-      const id = await d.docker.create(name, body)
-      await d.docker.start(id)
-      const deadline = Date.now() + timeoutMs
-      for (;;) {
-        const state = await d.docker.inspect(name)
-        if (state === null || !state.running) throw new HomeRouteUnavailable('The home route sidecar stopped.')
-        if (state.health === 'healthy') break
-        if (Date.now() >= deadline) throw new HomeRouteUnavailable('The home route tunnel did not come up in time.')
-        await sleep(pollMs)
-      }
-    } catch (e) {
-      await removeSidecar(d.docker, occurrenceId).catch(() =>
-        console.error(`home-route: ${occurrenceId}: sidecar not removed`)
-      )
-      throw e
-    } finally {
-      await rm(keyFile, { force: true })
-    }
-  }
+  const name = await ensureSidecar(occurrenceId, cfg.identity.id, node, d)
 
   let launched = false
   try {

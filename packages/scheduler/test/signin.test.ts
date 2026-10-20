@@ -4,9 +4,11 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { SigninJobSchema, controlTokenHash } from '@tm/core'
 import { eq } from 'drizzle-orm'
-import { occurrences, profiles, signinSessions } from '@tm/web/db'
+import { identities, occurrences, profiles, signinSessions } from '@tm/web/db'
+import { dbHomeNodeStore } from '@tm/web/db/home-route'
 import { FakeNotifier } from '@tm/web/db/notifier'
 import { FakeQueue, createTestDb, dropAllTestDbs, seedMember } from '@tm/web/db/testing'
+import { homeHostname } from '@tm/web/lib/home-route'
 import { validateRequest } from '../src/docker-gate/validate'
 import {
   DockerError,
@@ -15,10 +17,15 @@ import {
   SIGNIN_MAX_MS,
   SIGNIN_START_MS,
   SIGNIN_UNREACHABLE_FAIL_MS,
+  containerName,
+  containerSpec,
   monitorTick,
+  sidecarName,
   startSigninContainer,
   stopJobFileWatchers,
-  type LaunchDeps
+  type CreateBody,
+  type LaunchDeps,
+  type SidecarBody
 } from '../src/index'
 
 const HOUR = 3_600_000
@@ -48,6 +55,28 @@ interface Options {
   holding?: boolean
   endedAt?: Date
   dockerFails?: boolean
+  runLocation?: 'server' | 'server_via_home'
+  docker?: FakeDocker
+}
+
+class SidecarDocker extends FakeDocker {
+  looks = 0
+  healthyAfter = 2
+  sidecarDies = false
+
+  override async stop(id: string, timeoutS: number): Promise<void> {
+    await super.stop(id, timeoutS)
+    if (id.startsWith('tm-home-')) this.inspectResults.set(id, null)
+  }
+
+  override async inspect(id: string) {
+    if (id.startsWith('tm-home-') && !this.inspectResults.has(id) && this.sidecars.some((s) => s.name === id)) {
+      if (this.sidecarDies) return null
+      this.looks++
+      return { running: true, health: this.looks >= this.healthyAfter ? ('healthy' as const) : ('starting' as const) }
+    }
+    return super.inspect(id)
+  }
 }
 
 async function signinLaunchFixture(o: Options = {}) {
@@ -117,24 +146,33 @@ async function signinLaunchFixture(o: Options = {}) {
       .set({ heldBy: `signin:${sessionId}` })
       .where(eq(profiles.identityId, identityId))
 
+  if (o.runLocation) {
+    await db.update(identities).set({ runLocation: o.runLocation }).where(eq(identities.id, identityId))
+  }
+
   const env = {
     dataRoot: `${tmp}/${sessionId}/data`,
     profileRoot: `${tmp}/${sessionId}/profiles`,
     publicUrl: 'https://tm.example',
     ntfyUrl: 'https://ntfy.tm.example'
   }
-  const docker = new FakeDocker()
+  const docker = o.docker ?? new FakeDocker()
   if (o.dockerFails) docker.createError = new DockerError('create', 404, 'image not found')
   const queue = new FakeQueue()
+  const master = Buffer.alloc(32, 3)
   const deps: LaunchDeps = {
     db,
     queue,
     docker,
     notifier: new FakeNotifier(),
-    master: Buffer.alloc(32, 3),
+    master,
     env,
     remux: async () => false,
-    exitPollMs: 60_000
+    exitPollMs: 60_000,
+    tailscaleVersion: '1.102.5',
+    tailscaleApi: {
+      createAuthKey: async () => 'tskey-auth-test'
+    } as any
   }
   return {
     db,
@@ -302,6 +340,60 @@ describe('startSigninContainer', () => {
     expect(await f.heldBy()).toBeNull()
   })
 
+  test('a via-home sign-in container joins its sidecar, and the docker gate validator accepts both bodies', async () => {
+    const docker = new SidecarDocker()
+    const f = await signinLaunchFixture({ runLocation: 'server_via_home', docker })
+    const node = {
+      nodeId: 'nHOME1CNTRL',
+      hostname: homeHostname(f.deps.master, f.memberId),
+      ipv4: '100.101.102.103',
+      checkedAt: f.now
+    }
+    await dbHomeNodeStore(f.db, f.memberId).save(node)
+
+    expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('started')
+    const sidecar = sidecarName(f.sessionId)
+    expect(docker.sidecars.map((s) => s.name)).toEqual([sidecar])
+    expect(docker.created.map((c) => c.name)).toEqual([f.name])
+
+    const signinBody = docker.created[0]!.body
+    expect(signinBody.HostConfig.NetworkMode).toBe(`container:${sidecar}`)
+    expect(signinBody.Hostname).toBeUndefined()
+    expect(signinBody.HostConfig.Dns).toBeUndefined()
+    expect(signinBody.HostConfig.ExtraHosts).toBeUndefined()
+    expect(signinBody.HostConfig.Sysctls).toBeUndefined()
+
+    // Gate validation accepts both the sidecar and the signin container body
+    const gateCfg = { ...f.env, tailscaleVersion: '1.102.5' }
+    const sidecarReq = { method: 'POST', path: `/containers/create?name=${sidecar}`, body: docker.sidecars[0]!.body }
+    expect(validateRequest(sidecarReq, gateCfg)).toEqual({ ok: true, kind: 'create' })
+    const signinReq = { method: 'POST', path: `/containers/create?name=${f.name}`, body: signinBody }
+    expect(validateRequest(signinReq, gateCfg)).toEqual({ ok: true, kind: 'create' })
+  })
+
+  test('when the sidecar start fails, the session ends as launch_failed and no container is left behind', async () => {
+    const docker = new SidecarDocker()
+    docker.healthyAfter = Infinity
+    const f = await signinLaunchFixture({ runLocation: 'server_via_home', docker })
+    ;(f.deps as any).healthTimeoutMs = 20
+    ;(f.deps as any).pollMs = 5
+    const node = {
+      nodeId: 'nHOME1CNTRL',
+      hostname: homeHostname(f.deps.master, f.memberId),
+      ipv4: '100.101.102.103',
+      checkedAt: f.now
+    }
+    await dbHomeNodeStore(f.db, f.memberId).save(node)
+
+    expect(await startSigninContainer(f.deps, f.sessionId, f.now)).toBe('ended')
+    const session = await f.session()
+    expect(session.state).toBe('ended')
+    expect(session.endReason).toBe('launch_failed')
+    expect(await f.heldBy()).toBeNull()
+    const sidecar = sidecarName(f.sessionId)
+    expect(docker.stopped.map((s) => s.id)).toContain(sidecar)
+  })
+
   test('an ended session whose container is still running is never removed', async () => {
     const f = await signinLaunchFixture()
     f.docker.startError = Object.assign(new Error('no answer'), { name: 'TimeoutError' })
@@ -334,6 +426,21 @@ describe('monitoring sign-in sessions', () => {
     f.docker.inspectResults.set(f.name, null)
     await monitorTick(f.deps, f.now)
     expect(await f.heldBy()).toBeNull()
+  })
+
+  test('when a via-home session ends, monitorTick removes the sidecar', async () => {
+    const docker = new SidecarDocker()
+    const f = await signinLaunchFixture({
+      state: 'ready',
+      holding: true,
+      lastHeartbeatAt: at(-(SIGNIN_SILENT_MS + 1000)),
+      docker
+    })
+    const sidecar = sidecarName(f.sessionId)
+    docker.sidecars.push({ id: 'sidecar-1', name: sidecar, body: {} as any })
+    docker.inspectResults.set(f.name, { running: false })
+    await monitorTick(f.deps, f.now)
+    expect(docker.stopped.map((s) => s.id)).toContain(sidecar)
   })
 
   test('a session that reported 10 seconds ago is left alone', async () => {

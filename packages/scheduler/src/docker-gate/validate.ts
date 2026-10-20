@@ -86,10 +86,10 @@ function validateCreate(
   const identity = Array.isArray(cmd) && typeof cmd[1] === 'string' ? jobRe.exec(cmd[1]) : null
   if (!identity || !UUID_RE.test(identity[1]!)) return refuse('Cmd: job file not allowed')
 
-  // A worker is either on `tm-workers` or in the namespace of the sidecar of its own occurrence, and nowhere else.
+  // A worker or sign-in container is either on `tm-workers` or in the namespace of the sidecar of its own occurrence/session, and nowhere else.
   const network = (b.HostConfig as { NetworkMode?: unknown } | null | undefined)?.NetworkMode
   const sidecar = sidecarName(parsed.subjectId)
-  const via = parsed.kind === 'worker' && network === `container:${sidecar}` ? sidecar : undefined
+  const via = network === `container:${sidecar}` ? sidecar : undefined
   const input: BodyInput = {
     kind: parsed.kind,
     subjectId: parsed.subjectId,

@@ -15,7 +15,14 @@ export {
   type SpecParams
 } from './container-spec'
 export { HomeRouteUnavailable } from './home-route/types'
-export { launchViaHome, removeSidecar, sidecarCreateBody, type SidecarDeps } from './home-route/sidecar'
+export {
+  ensureSidecar,
+  launchViaHome,
+  removeSidecar,
+  sidecarCreateBody,
+  type SidecarDeps,
+  type SidecarStartDeps
+} from './home-route/sidecar'
 export { validateRequest, type GateConfig, type GateRequest, type GateVerdict } from './docker-gate/validate'
 export { createGate, serveGate, type GateOptions, type ServeOptions } from './docker-gate/gate'
 export {

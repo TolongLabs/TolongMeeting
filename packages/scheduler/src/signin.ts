@@ -1,11 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { stat } from 'node:fs/promises'
-import { SigninJobSchema, WORKER_STATES, controlTokenHash, profileKey } from '@tm/core'
+import { SigninJobSchema, WORKER_STATES, controlTokenHash, profileKey, type SpecEnv } from '@tm/core'
 import { and, eq, like, ne, sql } from 'drizzle-orm'
-import { occurrences, profiles, signinSessions, type Db } from '@tm/web/db'
+import { identities, occurrences, profiles, signinSessions, type Db } from '@tm/web/db'
+import { dbHomeNodeStore } from '@tm/web/db/home-route'
+import type { TailscaleApi } from '@tm/web/lib/home-route'
 import { QUEUES } from '@tm/web/db/queues'
-import { containerName, containerSpec, jobFileBase, resolveEnv, type SpecParams } from './container-spec'
+import { containerName, containerSpec, jobFileBase, resolveEnv, sidecarName, type SpecParams } from './container-spec'
 import { DockerError, type DockerClient } from './docker'
+import { ensureSidecar, removeSidecar, HomeRouteUnavailable } from './home-route/sidecar'
+import { tailscaleApi } from './home-route/check'
 import { prepareSigninDirs, removeJobFiles, removeStaleJobFiles, writeJobFiles } from './job-files'
 import {
   LAUNCH_LOCK,
@@ -51,7 +55,10 @@ async function endSession(db: Db, id: string, reason: string, now: Date): Promis
   return rows.length === 1
 }
 
-type Decision = { kind: 'ended' | 'worker' | 'started' } | { kind: 'busy' } | { kind: 'start'; identityId: string }
+type Decision =
+  | { kind: 'ended' | 'worker' | 'started' }
+  | { kind: 'busy' }
+  | { kind: 'start'; identityId: string; memberId: string; runLocation: string }
 
 /**
  * The `signin-start` job: starts the sign-in container of a `container` session.
@@ -93,6 +100,10 @@ export async function startSigninContainer(
       await endSession(tx, sessionId, 'profile_missing', now)
       return { kind: 'ended' }
     }
+    const [identity] = await tx
+      .select({ runLocation: identities.runLocation })
+      .from(identities)
+      .where(eq(identities.id, session.identityId))
     const holder = `signin:${sessionId}`
     // Held by this very session: an earlier run of this job took it and failed before the container started.
     if (profile.heldBy === null || profile.heldBy === holder) {
@@ -100,7 +111,12 @@ export async function startSigninContainer(
         .update(profiles)
         .set({ heldBy: holder, heldSince: now })
         .where(and(eq(profiles.identityId, session.identityId), eq(profiles.memberId, session.memberId)))
-      return { kind: 'start', identityId: session.identityId }
+      return {
+        kind: 'start',
+        identityId: session.identityId,
+        memberId: session.memberId,
+        runLocation: identity?.runLocation ?? 'server'
+      }
     }
     const worker = /^occ:([0-9a-f-]{36})$/.exec(profile.heldBy)
     const [occurrence] = worker
@@ -136,8 +152,16 @@ export async function startSigninContainer(
   }
   if (decision.kind !== 'start') return decision.kind
 
-  const { identityId } = decision
-  const spec: SpecParams = { kind: 'signin', sessionId, identityId, env }
+  const { identityId, memberId, runLocation } = decision
+  const viaHome = runLocation === 'server_via_home'
+  const sidecar = viaHome ? sidecarName(sessionId) : undefined
+  const spec: SpecParams = {
+    kind: 'signin',
+    sessionId,
+    identityId,
+    env,
+    ...(viaHome ? { via: { sidecar: sidecar! } } : {})
+  }
   const name = containerName(spec)
   const base = jobFileBase(spec)
   const { publicUrl } = resolveEnv(env)
@@ -150,7 +174,38 @@ export async function startSigninContainer(
     await removeJobFiles(base)
     await endSession(db, sessionId, 'launch_failed', new Date())
     if (!mayRun) await releaseProfile(db, identityId, `signin:${sessionId}`)
+    if (viaHome) await removeSidecar(deps.docker, sessionId).catch(() => {})
     return 'ended'
+  }
+
+  if (viaHome) {
+    const node = await dbHomeNodeStore(db, memberId).get()
+    if (!node) {
+      return failStart(new HomeRouteUnavailable('The stored home node is missing.'), false)
+    }
+    const tailscaleVersion =
+      deps.tailscaleVersion ??
+      (env as SpecEnv & { tailscaleVersion?: string }).tailscaleVersion ??
+      process.env.TAILSCALE_VERSION
+    if (!tailscaleVersion) {
+      return failStart(new Error('TAILSCALE_VERSION is not set; the home route has no sidecar image'), false)
+    }
+    const api = (deps.tailscaleApi as TailscaleApi) ?? tailscaleApi(process.env)
+    const healthTimeoutMs = (deps as LaunchDeps & { healthTimeoutMs?: number }).healthTimeoutMs ?? 60_000
+    const pollMs = (deps as LaunchDeps & { pollMs?: number }).pollMs ?? 1000
+    try {
+      await ensureSidecar(sessionId, identityId, node, {
+        api,
+        docker: deps.docker,
+        env,
+        tailscaleVersion,
+        healthTimeoutMs,
+        pollMs
+      })
+    } catch (error) {
+      await removeSidecar(deps.docker, sessionId).catch(() => {})
+      return failStart(error, false)
+    }
   }
 
   await db
@@ -173,6 +228,7 @@ export async function startSigninContainer(
     created = await deps.docker.create(name, containerSpec(spec))
     await deps.docker.start(created)
   } catch (error) {
+    if (viaHome) await removeSidecar(deps.docker, sessionId).catch(() => {})
     if (isLaunchFailure(error)) {
       const mayRun = created !== null && (startMayHaveSucceeded(error) || !(await removeRefused(deps.docker, created)))
       return failStart(error, mayRun)
@@ -180,6 +236,8 @@ export async function startSigninContainer(
     await removeJobFiles(base) // the key never outlives a failed start, whatever the failure
     throw error
   }
+  removeFilesWhenExited(deps, name, base)
+  return 'started'
   removeFilesWhenExited(deps, name, base)
   return 'started'
 }
@@ -261,6 +319,7 @@ async function endLost(deps: LaunchDeps, row: SessionRow, now: Date): Promise<bo
   if (row.mode === 'container') {
     try {
       await stopContainer(deps.docker, `tm-signin-${row.id}`)
+      await removeSidecar(deps.docker, row.id)
     } catch (e) {
       // Docker that can't be asked is never read as "gone": the session stays open until the ceiling, and the profile
       // stays held until a later pass sees the container gone.
@@ -360,6 +419,7 @@ async function releaseSignin(deps: LaunchDeps, identityId: string, heldBy: strin
     return
   }
   if (running) return
+  await removeSidecar(deps.docker, sessionId)
   await removeJobFiles(jobFileBase({ kind: 'signin', sessionId, identityId, env: deps.env }))
   await releaseProfile(db, identityId, heldBy)
   lastLogged.delete(sessionId)

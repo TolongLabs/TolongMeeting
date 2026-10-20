@@ -14,7 +14,14 @@ export type SpecParams =
       /** Run in the network namespace of this home-route sidecar (`sidecarName(occurrenceId)`), not on `tm-workers`. */
       via?: { sidecar: string }
     }
-  | { kind: 'signin'; sessionId: string; identityId: string; env: SpecEnv }
+  | {
+      kind: 'signin'
+      sessionId: string
+      identityId: string
+      env: SpecEnv
+      /** Run in the network namespace of this home-route sidecar (`sidecarName(sessionId)`), not on `tm-workers`. */
+      via?: { sidecar: string }
+    }
 
 export type CreateBody = {
   Image: string
@@ -178,8 +185,12 @@ function toInput(p: SpecParams): BodyInput {
   if (p.kind === 'worker' && !(Number.isSafeInteger(attempt) && attempt >= 1)) {
     throw new Error('attempt must be a positive integer')
   }
-  if (p.kind === 'worker' && p.via && p.via.sidecar !== sidecarName(subjectId)) {
-    throw new Error('a worker may join only the home-route sidecar of its own occurrence')
+  if (p.via && p.via.sidecar !== sidecarName(subjectId)) {
+    throw new Error(
+      p.kind === 'worker'
+        ? 'a worker may join only the home-route sidecar of its own occurrence'
+        : 'a sign-in container may join only the home-route sidecar of its own session'
+    )
   }
   return {
     kind: p.kind,
@@ -190,7 +201,7 @@ function toInput(p: SpecParams): BodyInput {
     profileRoot: p.env.profileRoot,
     publicUrl,
     hosts,
-    ...(p.kind === 'worker' && p.via ? { via: p.via.sidecar } : {})
+    ...(p.via ? { via: p.via.sidecar } : {})
   }
 }
 
