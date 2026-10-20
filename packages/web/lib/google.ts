@@ -8,7 +8,8 @@ import {
 } from '@tm/exports'
 import { loadMasterKey } from '../db/secrets'
 import { exportStores } from './exports'
-import { clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
+import { callbackCrashed, clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
+import { providerFetch } from './provider-fetch'
 import type { MemberScope } from './scope'
 
 // The Google Docs connection as the site serves it. Each function takes the member's own scope, so it can only reach
@@ -49,32 +50,42 @@ export function googleStartResponse(scope: MemberScope): Response {
 
 /**
  * `GET .../callback`: Google sends the browser back here, cross-site, so there is no origin to check; the sealed state
- * (member, provider, expiry) and the PKCE verifier are the check. The cookie is cleared whatever the outcome, and the
+ * (member, provider, expiry) and the PKCE verifier are the check. The cookie is cleared whatever the outcome (also when
+ * something unexpected throws), and the
  * member lands on the Connections page with a fixed result code in the query.
  */
 export async function googleCallbackResponse(
   scope: MemberScope,
   request: Request,
-  http: typeof fetch = fetch
+  http: typeof fetch = providerFetch
 ): Promise<Response> {
   const client = oauthClientFromEnv('google')
   if (client === null) return notConfigured()
-  master ??= loadMasterKey()
-  const result = await completeGoogleConnect(scope.memberId, new URL(request.url), readOAuthCookie(request, 'google'), {
-    connections: exportStores(scope).connections,
-    http,
-    client,
-    master
-  })
-  const outcome = result.status === 200 ? 'connected' : (result.body as { error: string }).error
-  const headers = new Headers(NO_STORE)
-  headers.set('Location', `${publicOrigin()}/connections?google=${encodeURIComponent(outcome)}`)
-  headers.append('Set-Cookie', clearOAuthCookie('google'))
-  return new Response(null, { status: 302, headers })
+  try {
+    master ??= loadMasterKey()
+    const result = await completeGoogleConnect(
+      scope.memberId,
+      new URL(request.url),
+      readOAuthCookie(request, 'google'),
+      {
+        connections: exportStores(scope).connections,
+        http,
+        client,
+        master
+      }
+    )
+    const outcome = result.status === 200 ? 'connected' : (result.body as { error: string }).error
+    const headers = new Headers(NO_STORE)
+    headers.set('Location', `${publicOrigin()}/connections?google=${encodeURIComponent(outcome)}`)
+    headers.append('Set-Cookie', clearOAuthCookie('google'))
+    return new Response(null, { status: 302, headers })
+  } catch (e) {
+    return callbackCrashed('google', e)
+  }
 }
 
 /** `GET .../picker`: a short-lived access token, the public API key and the Cloud project number for the Picker. */
-export async function googlePickerResponse(scope: MemberScope, http: typeof fetch = fetch): Promise<Response> {
+export async function googlePickerResponse(scope: MemberScope, http: typeof fetch = providerFetch): Promise<Response> {
   const client = oauthClientFromEnv('google')
   if (client === null) return notConfigured()
   return send(
@@ -92,7 +103,7 @@ export async function googlePickerResponse(scope: MemberScope, http: typeof fetc
 export async function googleFolderResponse(
   scope: MemberScope,
   request: Request,
-  http: typeof fetch = fetch
+  http: typeof fetch = providerFetch
 ): Promise<Response> {
   const client = oauthClientFromEnv('google')
   if (client === null) return notConfigured()

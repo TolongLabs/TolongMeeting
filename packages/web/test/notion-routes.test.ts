@@ -112,6 +112,20 @@ test('routes refuse a cross-site caller before anything else', async () => {
   }
 })
 
+test('a callback that gets no answer from Notion clears its cookie and tells the member', async () => {
+  const a = await seedMember(db)
+  const scope = createScope(db, a.memberId)
+  const start = notionStartResponse(scope)
+  const state = new URL(start.headers.get('location')!).searchParams.get('state')!
+  const down = (async () => {
+    throw new TypeError('fetch failed')
+  }) as unknown as typeof fetch
+  const res = await notionCallbackResponse(scope, callbackRequest(state, cookieOf(start)), down)
+  expect(res.status).toBe(302)
+  expect(res.headers.get('location')).toBe('https://tm.example/connections?notion=notion_unavailable')
+  expect(res.headers.get('set-cookie')).toContain('Max-Age=0')
+})
+
 test('sign-in, parent choice and isolation between members', async () => {
   const a = await seedMember(db)
   const b = await seedMember(db)

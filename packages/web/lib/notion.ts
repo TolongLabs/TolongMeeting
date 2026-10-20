@@ -9,7 +9,8 @@ import {
 } from '@tm/exports'
 import { loadMasterKey } from '../db/secrets'
 import { exportStores } from './exports'
-import { clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
+import { callbackCrashed, clearOAuthCookie, readOAuthCookie, setOAuthCookie } from './oauth-cookie'
+import { providerFetch } from './provider-fetch'
 import type { MemberScope } from './scope'
 
 // The Notion connection as the site serves it. Each function takes the member's own scope, so it can only reach that
@@ -58,32 +59,42 @@ export function notionStartResponse(scope: MemberScope): Response {
 
 /**
  * `GET .../callback`: Notion sends the browser back here, cross-site, so there is no origin to check; the sealed state
- * (member, provider, expiry) is the check (Notion has no PKCE). The cookie is cleared whatever the outcome, and the
+ * (member, provider, expiry) is the check (Notion has no PKCE). The cookie is cleared whatever the outcome (also when
+ * something unexpected throws), and the
  * member lands on the Connections page with a fixed result code in the query.
  */
 export async function notionCallbackResponse(
   scope: MemberScope,
   request: Request,
-  http: typeof fetch = fetch
+  http: typeof fetch = providerFetch
 ): Promise<Response> {
   const client = notionClientFromEnv()
   if (client === null) return notConfigured()
-  master ??= loadMasterKey()
-  const result = await completeNotionConnect(scope.memberId, new URL(request.url), readOAuthCookie(request, 'notion'), {
-    connections: exportStores(scope).connections,
-    http,
-    client,
-    master
-  })
-  const outcome = result.status === 200 ? 'connected' : (result.body as { error: string }).error
-  const headers = new Headers(NO_STORE)
-  headers.set('Location', `${publicOrigin()}/connections?notion=${encodeURIComponent(outcome)}`)
-  headers.append('Set-Cookie', clearOAuthCookie('notion'))
-  return new Response(null, { status: 302, headers })
+  try {
+    master ??= loadMasterKey()
+    const result = await completeNotionConnect(
+      scope.memberId,
+      new URL(request.url),
+      readOAuthCookie(request, 'notion'),
+      {
+        connections: exportStores(scope).connections,
+        http,
+        client,
+        master
+      }
+    )
+    const outcome = result.status === 200 ? 'connected' : (result.body as { error: string }).error
+    const headers = new Headers(NO_STORE)
+    headers.set('Location', `${publicOrigin()}/connections?notion=${encodeURIComponent(outcome)}`)
+    headers.append('Set-Cookie', clearOAuthCookie('notion'))
+    return new Response(null, { status: 302, headers })
+  } catch (e) {
+    return callbackCrashed('notion', e)
+  }
 }
 
 /** `GET .../parents`: the pages and databases shared with the integration. */
-export async function notionParentsResponse(scope: MemberScope, http: typeof fetch = fetch): Promise<Response> {
+export async function notionParentsResponse(scope: MemberScope, http: typeof fetch = providerFetch): Promise<Response> {
   const client = notionClientFromEnv()
   if (client === null) return notConfigured()
   return send(
@@ -95,7 +106,7 @@ export async function notionParentsResponse(scope: MemberScope, http: typeof fet
 export async function notionParentResponse(
   scope: MemberScope,
   request: Request,
-  http: typeof fetch = fetch
+  http: typeof fetch = providerFetch
 ): Promise<Response> {
   const client = notionClientFromEnv()
   if (client === null) return notConfigured()

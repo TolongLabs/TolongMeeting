@@ -139,6 +139,48 @@ test('routes refuse a cross-site caller before anything else', async () => {
   expect(typeof callbackGET).toBe('function')
 })
 
+test('a callback that gets no answer from Google clears its cookie and tells the member', async () => {
+  const a = await seedMember(db)
+  await db.delete(connections).where(eq(connections.memberId, a.memberId))
+  const scope = createScope(db, a.memberId)
+  for (const fail of [
+    () => new TypeError('fetch failed'),
+    () => new DOMException('The operation timed out.', 'TimeoutError')
+  ]) {
+    const start = googleStartResponse(scope)
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!
+    const down = (async () => {
+      throw fail()
+    }) as unknown as typeof fetch
+    const res = await googleCallbackResponse(scope, callbackRequest(state, cookieOf(start)), down)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('https://tm.example/connections?google=google_unavailable')
+    expect(res.headers.get('set-cookie')).toContain('tm_oauth_google=;')
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0')
+  }
+  expect(await exportStores(scope).connections.get('google')).toBeNull()
+})
+
+test('a callback that throws something unexpected is still a 500, with the cookie cleared and no message logged', async () => {
+  const a = await seedMember(db)
+  const scope = createScope(db, a.memberId)
+  const start = googleStartResponse(scope)
+  const state = new URL(start.headers.get('location')!).searchParams.get('state')!
+  const logged: unknown[][] = []
+  const original = console.error
+  console.error = (...args: unknown[]) => void logged.push(args)
+  try {
+    const res = await googleCallbackResponse(scope, callbackRequest(state, cookieOf(start)), (async () => {
+      throw new RangeError('secret-looking-message')
+    }) as unknown as typeof fetch)
+    expect(res.status).toBe(500)
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0')
+  } finally {
+    console.error = original
+  }
+  expect(logged).toEqual([['google callback failed (RangeError)']])
+})
+
 test('start, callback, picker and folder work for the signed-in member only', async () => {
   const a = await seedMember(db)
   const b = await seedMember(db)

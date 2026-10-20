@@ -21,6 +21,18 @@ export function clearOAuthCookie(provider: CookieProvider): string {
   return `${oauthCookieName(provider)}=; ${attributes(provider, 0)}`
 }
 
+/**
+ * The answer when a sign-in callback threw something it did not expect (a database error, a bug): still a 500, so the
+ * failure stays loud, but the cookie is cleared and only the error's name is logged (a message could carry a token).
+ */
+export function callbackCrashed(provider: CookieProvider, e: unknown): Response {
+  console.error(`${provider} callback failed (${e instanceof Error ? e.name : 'unknown'})`)
+  return Response.json(
+    { error: 'internal_error' },
+    { status: 500, headers: { 'Cache-Control': 'no-store', 'Set-Cookie': clearOAuthCookie(provider) } }
+  )
+}
+
 /** The sealed state from the request's `Cookie` header, or null. */
 export function readOAuthCookie(request: Request, provider: CookieProvider): string | null {
   const name = `${oauthCookieName(provider)}=`

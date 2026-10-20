@@ -10,6 +10,7 @@ import {
 } from '@tm/exports'
 import { memberExportStores, type MemberExportStores } from '../db/exports'
 import { loadMasterKey } from '../db/secrets'
+import { providerFetch } from './provider-fetch'
 import type { MemberScope } from './scope'
 
 // The export API as the site serves it. Every function takes the member's own stores (made from their `MemberScope`),
@@ -51,7 +52,7 @@ export async function connectionsResponse(stores: MemberExportStores): Promise<R
 export async function saveGitHubResponse(
   stores: MemberExportStores,
   request: Request,
-  http: typeof fetch = fetch
+  http: typeof fetch = providerFetch
 ): Promise<Response> {
   return send(await saveGitHubConnection(await request.text(), { connections: stores.connections, http }))
 }
@@ -63,7 +64,7 @@ export async function saveGitHubResponse(
 export async function removeConnectionResponse(
   stores: MemberExportStores,
   kind: ConnectionKind,
-  http: typeof fetch = fetch,
+  http: typeof fetch = providerFetch,
   log: (line: string) => void = (line) => console.error(line)
 ): Promise<Response> {
   return send(
