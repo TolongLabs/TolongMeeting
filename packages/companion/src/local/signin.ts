@@ -429,9 +429,8 @@ export class SigninController {
   }
 
   private show(s: Session, url: string): void {
-    // TODO(figma-gate): `openWindow` is where the sign-in BrowserWindow opens (renderer/signin.html with one `Done`
-    // button; contextIsolation, no node integration, sandbox; `will-navigate` and `setWindowOpenHandler` refuse any
-    // URL that fails `isAllowedSigninUrl(url, port)`). It waits for the approved design.
+    // `openWindow` opens the sign-in window (`Windows.openSignin`: a `Done` toolbar page and a remote view that loads
+    // only the loopback noVNC address, with navigation and new windows blocked).
     const handle = this.d.openWindow(url, () => void this.done(s.identityId).catch(this.onError))
     s.window = handle ?? null
   }

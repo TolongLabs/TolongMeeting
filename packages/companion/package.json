@@ -9,25 +9,35 @@
     "pack": "bun run build && electron-builder --win --dir",
     "dist": "bun run build && electron-builder --win",
     "electron:install": "node node_modules/electron/install.js",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "icons": "bun scripts/make-icons.ts"
   },
   "build": {
     "appId": "com.tolonglabs.tolongmeeting",
     "productName": "TolongMeeting",
     "files": [
       "dist/**",
-      "assets/**",
-      "src/renderer/**"
+      "assets/**"
     ],
     "directories": {
       "output": "release"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": true,
       "perMachine": false
+    },
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
     }
   },
   "dependencies": {

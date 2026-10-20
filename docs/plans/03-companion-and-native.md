@@ -1224,7 +1224,7 @@ Expected: FAIL with "Cannot find module './settings'"
 Run: `bun test packages/companion/src/shell.test.ts && bun run typecheck && cd packages/companion && bun run pack`
 Expected: PASS (5 tests); no type errors; `packages/companion/release/win-unpacked/TolongMeeting.exe` exists
 
-> Built without the Figma-gated UI (`tray.ts`, `preload.ts`, `renderer/settings.html`, `assets/`: see the `TODO(figma-gate)` in `main/index.ts`). Deviations: tests are in `packages/companion/test/` (`shell`, `ports`, and the opt-in `smoke` run with `TM_ELECTRON_SMOKE=1 xvfb-run -a`); the bundle is `dist/main/index.cjs` built by `scripts/build.ts`; no root `trustedDependencies` (run `bun run electron:install` where the binary is needed); `pack`/`dist` need a Windows runner and were not run here.
+> Built in two steps. First the headless shell; then the plain, unstyled windows and tray (the user decided to build them before the Figma step; they are restyled after it): `main/tray.ts` and `tray-menu.ts`, `main/windows.ts`, `main/guard.ts`, `ui/`, one preload per window in `src/preload/` (not one `preload.ts`), `src/renderer/{pairing,settings,signin}.{html,ts}` with `ui.css`, and the generated `assets/` (`scripts/make-icons.ts`). Deviations: tests are in `packages/companion/test/` (`shell`, `ports`, `ui-*`, `tray-menu`, and the opt-in `smoke` run with `TM_ELECTRON_SMOKE=1 xvfb-run -a`); the bundle is `dist/main/index.cjs` built by `scripts/build.ts` (with `dist/preload/` and `dist/renderer/`; `files` is `dist/**` and `assets/**`); the tray adds `Pair this PC` while unpaired; `electronFuses` are set in the electron-builder config; no root `trustedDependencies` (run `bun run electron:install` where the binary is needed); `pack`/`dist` need a Windows runner and were not run here.
 
 - [x] **Step 5: Commit**
 
@@ -1380,7 +1380,7 @@ Expected: FAIL with "Cannot find module './api'"
 
 - [x] **Step 3: Implement `api.ts`, `pairing.ts`, the pairing view and the wiring**
 
-The pairing view has two fields, "Website address" (prefilled with `Settings.serverUrl`) and "Pairing code", and shows the server's error text on failure. `ntfy.url` and `ntfy.topic` go into `state.json`; the ntfy token goes only into the `SecretStore`. The device name is `os.hostname()`.
+The pairing view has two fields, "Website address" (prefilled with `Settings.serverUrl`) and "Pairing code", and shows the server's error text on failure. `ntfy.url` and `ntfy.topic` go into `state.json`; the ntfy token goes only into the `SecretStore`. The device name is `os.hostname()`. _(Built as `renderer/pairing.html`, `PairingService` in `ui/services.ts` and `Windows.openPairing`; it shows only the app's own fixed sentences. The window opens on a first run that is not `--hidden`, from the tray's `Pair this PC`, and from the unpaired notification.)_
 
 - [x] **Step 4: Run test to verify it passes**
 
@@ -1959,7 +1959,7 @@ test('the companion never changes power settings', async () => {
 Run: `bun test packages/companion/src/jobs/native-runner.test.ts`
 Expected: FAIL with "Cannot find module './whisper'"
 
-- [ ] **Step 3: Implement `keep-awake.ts`, `whisper.ts`, `native-runner.ts` and the wiring**
+- [ ] **Step 3: Implement `keep-awake.ts`, `whisper.ts`, `native-runner.ts` and the wiring** _(The Settings window with the whisper command, folder and model fields is built: `renderer/settings.html`, `SettingsService`.)_
 
 Per job, in order: `claim` (skip on `null`); `keepAwake.acquire(jobId)`; every `progressMs` call `progress`; `downloadAudio` to `<jobsDir>\<jobId>\audio.flac`; run `buildWhisperArgv(settings.whisper.command, { audio, model: settings.whisper.model, outDir: <jobsDir>\<jobId>\out })` in `settings.whisper.cwd` with `whisperTimeoutMs(payload.durationSec)`; expect `out\audio.txt`, `out\audio.srt` and `out\audio.json`; `uploadTranscript`, retrying every `uploadRetryMs` until it succeeds or the job is lost (404); then delete the job folder; finally release the keep-awake and stop progress calls. On a whisper failure, a spawn error (reported as its message, for example `spawn uv ENOENT`), a timeout or missing output, call `fail` with the last 2 KB of stderr (the server uses the first line) and delete the job folder. `buildWhisperArgv` splits the template on whitespace outside double quotes, then replaces `{audio}`, `{model}` and `{outDir}` inside each token. The "Set up native transcription" notification opens the Settings window on click and is shown once per companion start.
 

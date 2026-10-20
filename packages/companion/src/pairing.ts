@@ -5,9 +5,9 @@ import type { DesktopNotifier } from './notifier'
 import type { SecretStore } from './secrets'
 import type { StateStore } from './state'
 
-// TODO(figma-gate): `renderer/pairing.html` (fields "Website address" and "Pairing code", prefilled from `Settings.serverUrl`),
-// the pairing window, and the `main/index.ts` wiring (`completePairing` on first run, `handleRevoked` from `onRevoked`)
-// wait for the Figma design approval (docs/DESIGN.md). Errors shown there are the fixed sentences thrown below.
+// The pairing window (`renderer/pairing.html`, with the fields "Website address" and "Pairing code") and its handler
+// (`ui/services.ts`) call `completePairing`; `main/index.ts` also calls `handleRevoked` from `Loops`. The errors the window
+// shows are the fixed sentences thrown below.
 
 const PairRefusal = z.strictObject({ error: z.literal('invalid_code') })
 const PAIR_TIMEOUT_MS = 30_000
