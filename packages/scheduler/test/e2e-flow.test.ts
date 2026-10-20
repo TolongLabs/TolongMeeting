@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process'
 import { access, readdir, readFile, stat } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { eq } from 'drizzle-orm'
+import { stripPasscode } from '@tm/core'
 import { artefacts, events, forms, profiles } from '@tm/web/db'
 import { QUEUES } from '@tm/web/db/queues'
 import { InUseError } from '@tm/web/lib/identities'
@@ -142,7 +143,8 @@ describe('a lecture from the timetable to retention', () => {
     const launched = await rowOf(stack, id)
     expect(launched).toMatchObject({ state: 'starting', attempt: 1, containerName: `tm-worker-${id}-a1` })
     expect(launched.lastHeartbeatAt).toEqual(tMinus60)
-    expect(launched.linkUsed).toBe(ZOOM_LINK) // the passcode lives only while the worker may need it
+    expect(launched.linkUsed).toBe(stripPasscode(ZOOM_LINK)) // the used link is stored without its passcode
+    expect(launched.linkUsed).not.toContain('pwd=')
     expect(stack.docker.created).toHaveLength(1)
     const spec = containerSpec({
       kind: 'worker',
@@ -266,7 +268,10 @@ describe('a lecture from the timetable to retention', () => {
     expect(view.summaryMd).toContain('Data Mining')
     expect(view.summaryMd).toContain('Submit assignment 2')
     expect(view.chatMd).toContain('Assignment 2 is due Sunday')
-    expect(JSON.stringify(view)).not.toMatch(/SECRETPASSCODE|pwd=|zoom\.us/)
+    // the joined link is shown masked (host and meeting id); nothing else names the meeting
+    expect(view.occurrence.joinedLink).toEqual({ host: 'example.zoom.us', meetingId: '81234567890' })
+    expect(JSON.stringify(view)).not.toMatch(/SECRETPASSCODE|pwd=/)
+    expect(JSON.stringify({ ...view, occurrence: { ...view.occurrence, joinedLink: null } })).not.toMatch(/zoom\.us/)
     const kinds = (await db.select().from(artefacts).where(eq(artefacts.occurrenceId, id))).map((a) => a.kind)
     expect(new Set(kinds)).toEqual(
       new Set(['recording', 'summary', 'transcript', 'slides', 'slides_json', 'slide_image', 'chat', 'form_screenshot'])
