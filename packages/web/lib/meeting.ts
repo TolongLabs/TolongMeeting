@@ -430,6 +430,9 @@ export async function controlState(scope: MemberScope, id: string): Promise<{ st
 }
 
 /** Stores a link the member pasted for a meeting that has not started. The link is never echoed in an error. */
+/** The one error a bad pasted link gets: only links the worker can join are kept. */
+export const PASTE_LINK_MESSAGE = 'Paste a Zoom, Teams or Meet meeting link that starts with https://.'
+
 export async function pasteLink(scope: MemberScope, id: string, url: string): Promise<void> {
   if (!UUID.test(id)) throw new InputError(NOT_FOUND)
   const clean = url.trim()
@@ -437,9 +440,10 @@ export async function pasteLink(scope: MemberScope, id: string, url: string): Pr
     clean.length > MAX_LINK_LENGTH ||
     /\p{Cc}/u.test(clean) ||
     !URL.canParse(clean) ||
-    new URL(clean).protocol !== 'https:'
+    new URL(clean).protocol !== 'https:' ||
+    normaliseMeetingLink(clean) === null
   ) {
-    throw new InputError('Paste a link that starts with https://.')
+    throw new InputError(PASTE_LINK_MESSAGE)
   }
   const changed = await scope.update(
     occurrences,

@@ -542,9 +542,13 @@ test.describe('pasting a meeting link', () => {
     await page.getByRole('button', { name: 'Save link' }).click()
 
     await expect(page).toHaveURL(/\?error=link_bad$/)
-    await expect(page.getByRole('main').getByRole('alert')).toContainText('Paste a link that starts with https://.')
+    await expect(page.getByRole('main').getByRole('alert')).toContainText(
+      'Paste a Zoom, Teams or Meet meeting link that starts with https://.'
+    )
     await expect(linkInput).toHaveAttribute('aria-invalid', 'true')
-    await expect(page.locator('#meeting-link-error')).toHaveText('Error: Paste a link that starts with https://.')
+    await expect(page.locator('#meeting-link-error')).toHaveText(
+      'Error: Paste a Zoom, Teams or Meet meeting link that starts with https://.'
+    )
 
     // Submit valid link with passcode
     const secretPass = 'SUPERSECRETPASS'

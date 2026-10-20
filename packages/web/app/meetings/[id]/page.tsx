@@ -10,7 +10,7 @@ import { PageHeader } from '../../../components/PageHeader'
 import { RelativeTime } from '../../../components/RelativeTime'
 import { SubmitButton } from '../../../components/SubmitButton'
 import { STATE_LABELS } from '../../../lib/labels'
-import { meetingData, PASTE_STATES, type FormView, type MeetingView } from '../../../lib/meeting'
+import { meetingData, PASTE_LINK_MESSAGE, PASTE_STATES, type FormView, type MeetingView } from '../../../lib/meeting'
 import {
   clock,
   eventDetail,
@@ -39,7 +39,7 @@ const ERRORS: Record<string, string> = {
   rerun_nothing: 'This meeting has nothing to run again.',
   delete_blocked: 'Make the bot leave before deleting this meeting.',
   missing: 'This meeting does not exist.',
-  link_bad: 'Paste a link that starts with https://.',
+  link_bad: PASTE_LINK_MESSAGE,
   link_too_late: 'A link can only be pasted before the bot joins.'
 }
 

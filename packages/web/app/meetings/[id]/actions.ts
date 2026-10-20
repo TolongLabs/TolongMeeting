@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { InputError, InUseError } from '../../../lib/identities'
-import { pasteLink, requestDeleteNow, rerunPipeline } from '../../../lib/meeting'
+import { PASTE_LINK_MESSAGE, pasteLink, requestDeleteNow, rerunPipeline } from '../../../lib/meeting'
 import { getQueue } from '../../../lib/queue'
 import { requireMember } from '../../../lib/session'
 
@@ -59,7 +59,7 @@ export async function pasteLinkAction(form: FormData): Promise<void> {
   } catch (e) {
     if (e instanceof InUseError) outcome = { error: 'link_too_late' }
     else if (e instanceof InputError) {
-      outcome = { error: e.message === 'Paste a link that starts with https://.' ? 'link_bad' : 'missing' }
+      outcome = { error: e.message === PASTE_LINK_MESSAGE ? 'link_bad' : 'missing' }
     } else throw e
   }
   back(id, outcome)

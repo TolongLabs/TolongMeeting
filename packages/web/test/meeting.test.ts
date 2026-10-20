@@ -417,7 +417,13 @@ test('delete now in a finished state queues the delete at once', async () => {
 
 test('a link can be pasted before the bot joins, only as https, and is never echoed', async () => {
   const { scope, occurrenceId } = await meetingFixture()
-  for (const bad of ['http://example.zoom.us/j/1?pwd=SECRETPWD', 'javascript:alert(1)', 'not a url', '']) {
+  for (const bad of [
+    'http://example.zoom.us/j/1?pwd=SECRETPWD',
+    'https://evil.example/j/12345678901',
+    'javascript:alert(1)',
+    'not a url',
+    ''
+  ]) {
     const error = await pasteLink(scope, occurrenceId, bad).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(InputError)
     expect(String((error as Error).message)).not.toContain('SECRETPWD')
@@ -430,12 +436,12 @@ test('pasting a link is allowed across all PASTE_STATES and refused in other sta
   const { scope, occurrenceId } = await meetingFixture()
   for (const state of PASTE_STATES) {
     await scope.update(occurrences, { state }, eq(occurrences.id, occurrenceId))
-    await pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/12345')
-    expect((await stateOf(scope, occurrenceId)).pastedLink).toBe('https://example.zoom.us/j/12345')
+    await pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/12345678901')
+    expect((await stateOf(scope, occurrenceId)).pastedLink).toBe('https://example.zoom.us/j/12345678901')
   }
   for (const state of ['joining', 'in_meeting', 'completed', 'no_link'] as const) {
     await scope.update(occurrences, { state }, eq(occurrences.id, occurrenceId))
-    await expect(pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/12345')).rejects.toThrow(InUseError)
+    await expect(pasteLink(scope, occurrenceId, 'https://example.zoom.us/j/12345678901')).rejects.toThrow(InUseError)
   }
 })
 
@@ -456,7 +462,7 @@ test("a member's actions cannot touch another member's meeting", async () => {
   const queue = new FakeQueue()
   const id = a.ids.occurrences
   await expect(makeBotLeave(scopeB, id)).rejects.toThrow()
-  await expect(pasteLink(scopeB, id, 'https://example.zoom.us/j/1')).rejects.toThrow()
+  await expect(pasteLink(scopeB, id, 'https://example.zoom.us/j/12345678901')).rejects.toThrow()
   await expect(requestDeleteNow(scopeB, id, queue)).rejects.toThrow(InputError)
   await expect(rerunPipeline(scopeB, id, queue)).rejects.toThrow(InputError)
   expect(queue.sent).toEqual([])
