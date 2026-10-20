@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UPLOAD_CHUNK_MAX_BYTES, type DeviceAuth, type OccurrenceState } from '@tm/core'
@@ -12,6 +12,7 @@ import { QUEUES } from '../db/queues'
 import { createTestDb, dropAllTestDbs, FakeQueue } from '../db/testing'
 import {
   OCCURRENCE_UPLOAD_MAX_BYTES,
+  OCCURRENCE_UPLOAD_MAX_FILES,
   completeLocalRun,
   handleFilesRequest,
   handleHeartbeatRequest,
@@ -21,12 +22,15 @@ import {
   type LocalRunDeps
 } from '../lib/companion/local-runs'
 import { handleFailRequest, reportFailure, type FailDeps } from '../lib/companion/native'
+import { handleDeviceHeartbeat } from '../lib/control'
 import { createDeviceScope } from '../lib/companion/scope'
 
 afterAll(dropAllTestDbs, 60_000)
 
 const JOB_URL = 'https://tm.example/api/companion/jobs/x'
 const WHISPER = JSON.stringify({ segments: [{ start: 1, end: 2, text: ' hello' }] })
+/** The start of a Matroska file: the EBML header's magic, then filler. */
+const MKV = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4])
 
 let db: Db
 let f: Awaited<ReturnType<typeof seedCompanionFixture>>
@@ -77,6 +81,25 @@ async function claimedRun(
 const stateOf = async () => (await db.select().from(occurrences).where(eq(occurrences.id, f.occA)))[0]!
 const jobOf = async (id: string) => (await db.select().from(companionJobs).where(eq(companionJobs.id, id)))[0]!
 const bytes = (n: number, fill = 7) => new Uint8Array(n).fill(fill)
+
+/** A body that sends `first` and then does what `then` says. */
+const bodyThen = (
+  first: Uint8Array,
+  then: (c: ReadableStreamDefaultController<Uint8Array>) => void | Promise<void>
+) => {
+  let sent = false
+  return new ReadableStream<Uint8Array>({
+    async pull(c) {
+      if (!sent) {
+        sent = true
+        c.enqueue(first)
+      } else {
+        await Bun.sleep(20)
+        await then(c)
+      }
+    }
+  })
+}
 
 // --- Heartbeats ---
 
@@ -141,6 +164,47 @@ describe('a heartbeat through the PC', () => {
     // An event inside the window is stored.
     await beat(f.a1, id, hb(f.occA, 'in_meeting', 1, { events: [event(stamp(-1000))] }))
     expect((await db.select({ n: count() }).from(events).where(eq(events.type, 'joined')))[0]!.n).toBe(1)
+  })
+
+  test('stores the link the worker joined with without its passcode, and ignores a link that is not a meeting', async () => {
+    const id = await claimedRun(f.a1, { state: 'joining' })
+    const linkUsed = await db.select({ link: occurrences.linkUsed }).from(occurrences).where(eq(occurrences.id, f.occA))
+    expect(linkUsed[0]!.link).toBeNull()
+    await beat(
+      f.a1,
+      id,
+      hb(f.occA, 'in_lobby', 1, { linkUsed: 'https://us02web.zoom.us/j/84123456789?pwd=hunter2&uname=Bot' })
+    )
+    const stored = async () =>
+      (await db.select({ link: occurrences.linkUsed }).from(occurrences).where(eq(occurrences.id, f.occA)))[0]!.link
+    const first = await stored()
+    expect(first).toContain('/j/84123456789')
+    expect(first).not.toContain('hunter2')
+    await beat(f.a1, id, hb(f.occA, 'in_lobby', 1, { linkUsed: 'https://evil.example/phish?pwd=hunter2' }))
+    expect(await stored()).toBe(first)
+  })
+
+  test('a failed write reaches the logs without its SQL parameters', async () => {
+    const id = await claimedRun(f.a1, { state: 'in_meeting' })
+    // A constraint that refuses the event: the insert fails with the event's data among its parameters.
+    await db.execute(sql`alter table events add constraint no_secret_events check (type <> 'joined')`)
+    const event = {
+      occurrenceId: f.occA,
+      attempt: 1,
+      at: new Date().toISOString(),
+      type: 'joined',
+      data: { who: 'secret-name' }
+    }
+    const error = await handleDeviceHeartbeat(
+      { db, queue, notifier, publicUrl: 'https://tm.example', now: new Date() },
+      f.a1,
+      id,
+      hb(f.occA, 'in_meeting', 1, { events: [event] })
+    ).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(
+      `${(error as Error).message} ${(error as Error).stack} ${JSON.stringify((error as Error).cause)}`
+    ).not.toMatch(/secret|insert into|params/i)
   })
 
   test('holds a reported transcribing at uploading and never queues the pipeline', async () => {
@@ -407,13 +471,11 @@ describe('uploads', () => {
 
   test('a lease that ends while the body arrives takes nothing', async () => {
     const id = await claimedRun()
-    const body = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        controller.enqueue(bytes(5))
-        await releaseJob(db, f.a1, id)
-        controller.enqueue(bytes(5))
-        controller.close()
-      }
+    // The lease ends in the middle of the body, after the first bytes have been taken.
+    const body = bodyThen(bytes(5), async (c) => {
+      await releaseJob(db, f.a1, id)
+      c.enqueue(bytes(5))
+      c.close()
     })
     expect((await put(f.a1, id, 'chat.jsonl', 'bytes 0-9/10', body)).status).toBe(404)
     expect(await readdir(occDir(f.occA))).toEqual(['chat.jsonl.part'])
@@ -470,10 +532,176 @@ describe('uploads', () => {
   })
 })
 
+describe('uploads that the PC or a worker makes hard', () => {
+  const partOf = (path: string) => join(occDir(f.occA), `${path}.part`)
+
+  test('a body that breaks off is a 400, truncated back to where the chunk started', async () => {
+    const id = await claimedRun()
+    expect((await put(f.a1, id, 'chat.jsonl', 'bytes 0-4/10', bytes(5))).status).toBe(204)
+    const broken = bodyThen(bytes(3), (c) => c.error(new Error('the connection broke')))
+    const res = await put(f.a1, id, 'chat.jsonl', 'bytes 5-9/10', broken)
+    expect(res.status).toBe(400)
+    expect((await stat(partOf('chat.jsonl'))).size).toBe(5)
+    // The chunk's claimed bytes were given back: the same chunk goes through.
+    expect((await put(f.a1, id, 'chat.jsonl', 'bytes 5-9/10', bytes(5))).status).toBe(204)
+    expect((await stat(join(occDir(f.occA), 'chat.jsonl'))).size).toBe(10)
+  })
+
+  test('a body that sends too much is a 400 and leaves the file as it was', async () => {
+    const id = await claimedRun()
+    expect(
+      (
+        await put(
+          f.a1,
+          id,
+          'chat.jsonl',
+          'bytes 0-4/10',
+          bodyThen(bytes(4), (c) => c.enqueue(bytes(4)))
+        )
+      ).status
+    ).toBe(400)
+    expect((await stat(partOf('chat.jsonl'))).size).toBe(0)
+  })
+
+  test('a name that is not a lone regular file is the fixed 409, and a pipe does not hang the request', async () => {
+    const id = await claimedRun()
+    await mkdir(occDir(f.occA), { recursive: true })
+    // A folder, a pipe and a second name for another file, each planted where the `.part` goes.
+    await mkdir(partOf('chat.jsonl'))
+    expect(Bun.spawnSync(['mkfifo', partOf('events.jsonl')]).exitCode).toBe(0)
+    await writeFile(join(root, 'other'), 'keep')
+    await link(join(root, 'other'), partOf('transcript.jsonl'))
+    for (const path of ['chat.jsonl', 'events.jsonl']) {
+      const res = await put(f.a1, id, path, 'bytes 0-1/2', bytes(2))
+      expect([path, res.status, await res.json()]).toEqual([path, 409, { error: 'out_of_step' }])
+    }
+    await mkdir(join(occDir(f.occA), 'transcript'))
+    await link(join(root, 'other'), join(occDir(f.occA), 'transcript', 'live.jsonl.part'))
+    expect((await put(f.a1, id, 'transcript/live.jsonl', 'bytes 0-1/2', bytes(2))).status).toBe(409)
+    expect(await readFile(join(root, 'other'), 'utf8')).toBe('keep')
+  })
+
+  test('parallel chunks cannot go over the occurrence total together', async () => {
+    const id = await claimedRun()
+    await mkdir(occDir(f.occA), { recursive: true })
+    const fill = await open(join(occDir(f.occA), 'filler'), 'w')
+    await fill.truncate(OCCURRENCE_UPLOAD_MAX_BYTES - 15)
+    await fill.close()
+    // The first chunk has claimed its 10 bytes while its body is still arriving.
+    let release!: () => void
+    const stalled = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(bytes(5))
+        release = () => {
+          c.enqueue(bytes(5))
+          c.close()
+        }
+      }
+    })
+    const first = put(f.a1, id, 'chat.jsonl', 'bytes 0-9/10', stalled)
+    await Bun.sleep(100)
+    expect((await put(f.a1, id, 'events.jsonl', 'bytes 0-9/10', bytes(10))).status).toBe(413)
+    release()
+    expect((await first).status).toBe(204)
+    // A failed chunk gives its bytes back.
+    expect((await put(f.a1, id, 'events.jsonl', 'bytes 0-4/5', bytes(5))).status).toBe(204)
+  })
+
+  test('an occurrence holds at most as many files as the PC will ever send', async () => {
+    const id = await claimedRun()
+    const dir = join(occDir(f.occA), 'frames')
+    await mkdir(dir, { recursive: true })
+    const handle = await open(join(dir, 'x'), 'w')
+    await handle.close()
+    for (let from = 0; from < OCCURRENCE_UPLOAD_MAX_FILES; from += 500) {
+      await Promise.all(
+        Array.from({ length: Math.min(500, OCCURRENCE_UPLOAD_MAX_FILES - from) }, (_, i) =>
+          writeFile(join(dir, `${String(from + i).padStart(4, '0')}_000001.png`), '')
+        )
+      )
+    }
+    // 20 000 pictures and the stray file are there; one more file is too many, and so is a new .part.
+    const res = await put(f.a1, id, 'chat.jsonl', 'bytes 0-1/2', bytes(2))
+    expect([res.status, await res.json()]).toEqual([413, { error: 'too_large' }])
+    expect(await readdir(occDir(f.occA))).toEqual(['frames'])
+  }, 60_000)
+
+  test('an empty file is sent as bytes */0 with no body, and is a finished file', async () => {
+    const id = await claimedRun()
+    const empty = () => put(f.a1, id, 'chat.jsonl', 'bytes */0', null)
+    expect((await empty()).status).toBe(204)
+    expect((await stat(join(occDir(f.occA), 'chat.jsonl'))).size).toBe(0)
+    expect(await offsetOf(id, 'chat.jsonl')).toBe(0)
+    expect((await empty()).status).toBe(204) // a repeat after a lost answer
+    // An empty range with bytes in the body is not empty.
+    expect((await put(f.a1, id, 'events.jsonl', 'bytes */0', bytes(3))).status).toBe(400)
+    expect((await readdir(occDir(f.occA))).sort()).toEqual(['chat.jsonl', 'events.jsonl.part'])
+    // A finished non-empty file is not replaced by an empty one.
+    await send(id, 'transcript/live.jsonl', 'x')
+    expect((await put(f.a1, id, 'transcript/live.jsonl', 'bytes */0', null)).status).toBe(409)
+  })
+
+  test('are refused once the occurrence is no longer running, and a deleted one is gone', async () => {
+    const id = await claimedRun()
+    expect((await put(f.a1, id, 'chat.jsonl', 'bytes 0-1/4', bytes(2))).status).toBe(204)
+    for (const [state, status] of [
+      ['failed', 404],
+      ['completed', 404],
+      ['deleted', 410]
+    ] as const) {
+      await db.update(occurrences).set({ state }).where(eq(occurrences.id, f.occA))
+      expect([state, (await put(f.a1, id, 'chat.jsonl', 'bytes 2-3/4', bytes(2))).status]).toEqual([state, status])
+      expect([state, (await head(f.a1, id, 'chat.jsonl')).status]).toEqual([state, status])
+      expect([state, await completeLocalRun(deps, f.a1, id)]).toEqual([state, status === 410 ? 'gone' : null])
+    }
+    expect((await stat(partOf('chat.jsonl'))).size).toBe(2)
+    expect((await jobOf(id)).state).toBe('claimed')
+  })
+
+  test('a lease that ends because the occurrence was deleted during the body takes nothing', async () => {
+    const id = await claimedRun()
+    const body = bodyThen(bytes(5), async (c) => {
+      await db.update(occurrences).set({ state: 'deleted' }).where(eq(occurrences.id, f.occA))
+      c.enqueue(bytes(5))
+      c.close()
+    })
+    expect((await put(f.a1, id, 'chat.jsonl', 'bytes 0-9/10', body)).status).toBe(410)
+    expect((await stat(partOf('chat.jsonl'))).size).toBe(0)
+  })
+})
+
+describe('the small bodies have read deadlines too', () => {
+  const stalled = () => new ReadableStream<Uint8Array>({ start: (c) => c.enqueue(new TextEncoder().encode('{')) })
+  const slow = () => ({ ...deps, deadlines: { idleMs: 80 } })
+  const post = (body: ReadableStream<Uint8Array>) =>
+    new Request(JOB_URL, {
+      method: 'POST',
+      body,
+      // @ts-expect-error Bun and Node need `duplex` for a streamed body
+      duplex: 'half'
+    })
+
+  test('a stalled heartbeat, pre-flight or failure report is a 408 and changes nothing', async () => {
+    const id = await claimedRun(f.a1, { state: 'uploading' })
+    const beatRes = await handleHeartbeatRequest(post(stalled()), scope(f.a1), slow(), id)
+    const preRes = await handlePreflightRequest(post(stalled()), scope(f.a1), slow(), id)
+    const failRes = await handleFailRequest(
+      post(stalled()),
+      scope(f.a1),
+      { ...failDeps, deadlines: { idleMs: 80 } },
+      id
+    )
+    expect([beatRes.status, preRes.status, failRes.status]).toEqual([408, 408, 408])
+    expect(await failRes.json()).toEqual({ error: 'body_too_slow' })
+    expect(await jobOf(id)).toMatchObject({ state: 'claimed', error: null })
+    expect((await stateOf()).state).toBe('uploading')
+  })
+})
+
 // --- Completion ---
 
 describe('completion', () => {
-  const uploaded = async (id: string, files: Record<string, string>) => {
+  const uploaded = async (id: string, files: Record<string, string | Uint8Array>) => {
     for (const [path, content] of Object.entries(files)) await send(id, path, content)
   }
   const NATIVE = {
@@ -485,7 +713,7 @@ describe('completion', () => {
   test('needs events.jsonl, and the native transcript when there is a recording in native mode', async () => {
     const id = await claimedRun(f.a1, { native: true, state: 'uploading' })
     expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: false, missing: ['events.jsonl'] })
-    await uploaded(id, { 'events.jsonl': '{}\n', 'recording/meeting.mkv': 'mkv' })
+    await uploaded(id, { 'events.jsonl': '{}\n', 'recording/meeting.mkv': MKV })
     expect(await completeLocalRun(deps, f.a1, id)).toEqual({
       ok: false,
       missing: Object.keys(NATIVE)
@@ -496,7 +724,7 @@ describe('completion', () => {
 
   test('moves the occurrence on exactly once and queues the pipeline in the transaction', async () => {
     const id = await claimedRun(f.a1, { native: true, state: 'uploading' })
-    await uploaded(id, { 'events.jsonl': '{}\n', 'recording/meeting.mkv': 'mkv', ...NATIVE })
+    await uploaded(id, { 'events.jsonl': '{}\n', 'recording/meeting.mkv': MKV, ...NATIVE })
     expect(await completeLocalRun(deps, f.a2, id)).toBeNull()
     expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: true })
     expect((await stateOf()).state).toBe('transcribing')
@@ -520,6 +748,90 @@ describe('completion', () => {
     expect(await completeLocalRun(deps, f.a1, id)).toBe('conflict')
     expect((await jobOf(id)).state).toBe('claimed')
     expect(queue.sent).toEqual([])
+  })
+
+  test('a recording that is not Matroska is reported missing and removed, so the PC sends it again', async () => {
+    for (const native of [false, true]) {
+      await rm(occDir(f.occA), { recursive: true, force: true })
+      const id = await claimedRun(f.a1, { native, state: 'uploading' })
+      await uploaded(id, { 'events.jsonl': '{}\n', 'recording/meeting.mkv': 'not a recording, just a name' })
+      expect([native, await completeLocalRun(deps, f.a1, id)]).toEqual([
+        native,
+        { ok: false, missing: ['recording/meeting.mkv'] }
+      ])
+      // Gone, so the next upload starts at 0; the native transcript is asked for only once the recording is whole.
+      expect(await offsetOf(id, 'recording/meeting.mkv')).toBe(0)
+      await uploaded(id, { 'recording/meeting.mkv': MKV })
+      expect(await completeLocalRun(deps, f.a1, id)).toEqual(
+        native ? { ok: false, missing: Object.keys(NATIVE) } : { ok: true }
+      )
+      await db.update(companionJobs).set({ state: 'failed' }).where(eq(companionJobs.id, id))
+    }
+  })
+
+  test('a recording that is a link, a short file or has no name at all is not a recording either', async () => {
+    const id = await claimedRun(f.a1, { state: 'uploading' })
+    await uploaded(id, { 'events.jsonl': '{}\n' })
+    const dir = join(occDir(f.occA), 'recording')
+    await mkdir(dir)
+    await writeFile(join(root, 'target'), MKV)
+    await symlink(join(root, 'target'), join(dir, 'meeting.mkv'))
+    expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: false, missing: ['recording/meeting.mkv'] })
+    await rm(join(dir, 'meeting.mkv'), { force: true })
+    await writeFile(join(dir, 'meeting.mkv'), MKV.subarray(0, 3))
+    expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: false, missing: ['recording/meeting.mkv'] })
+    await rm(join(dir, 'meeting.mkv'), { force: true })
+    // No recording at all (the run never joined) needs none.
+    expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: true })
+    expect(await readFile(join(root, 'target'))).toEqual(Buffer.from(MKV))
+  })
+
+  test('an empty events.jsonl, sent as an empty file, completes the run', async () => {
+    const id = await claimedRun(f.a1, { state: 'uploading' })
+    expect((await put(f.a1, id, 'events.jsonl', 'bytes */0', null)).status).toBe(204)
+    expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: true })
+  })
+
+  test('catching up a run whose last states were lost stamps the end of the meeting once', async () => {
+    const id = await claimedRun(f.a1, { state: 'in_meeting' })
+    const before = Date.now()
+    await uploaded(id, { 'events.jsonl': '{}\n' })
+    expect((await stateOf()).actualEnd).toBeNull()
+    expect(await completeLocalRun(deps, f.a1, id)).toEqual({ ok: true })
+    const end = (await stateOf()).actualEnd
+    expect(end!.getTime()).toBeGreaterThanOrEqual(before - 1000)
+    // A run that reported its own end keeps that time.
+    await rm(occDir(f.occA), { recursive: true, force: true })
+    const stamp = new Date('2026-10-21T15:00:00Z')
+    const again = await claimedRun(f.a1, { state: 'leaving' })
+    await db.update(occurrences).set({ actualEnd: stamp }).where(eq(occurrences.id, f.occA))
+    await uploaded(again, { 'events.jsonl': '{}\n' })
+    expect(await completeLocalRun(deps, f.a1, again)).toEqual({ ok: true })
+    expect((await stateOf()).actualEnd).toEqual(stamp)
+  })
+
+  test('complete, complete and fail at once: exactly one wins and the pipeline is queued at most once', async () => {
+    const id = await claimedRun(f.a1, { state: 'uploading' })
+    await uploaded(id, { 'events.jsonl': '{}\n' })
+    const [one, two, fail] = await Promise.all([
+      completeLocalRun(deps, f.a1, id),
+      completeLocalRun(deps, f.a1, id),
+      reportFailure(failDeps, scope(f.a1), id, 'worker_crashed')
+    ])
+    const completed = [one, two].filter((r) => r !== null && r !== 'conflict' && r !== 'gone' && r.ok)
+    const job = await jobOf(id)
+    if (job.state === 'done') {
+      expect(completed).toHaveLength(1)
+      expect(fail.status).toBe(404)
+      expect(queue.sent).toHaveLength(1)
+      expect((await stateOf()).state).toBe('transcribing')
+    } else {
+      expect(completed).toHaveLength(0)
+      expect(fail.status).toBe(204)
+      expect(job).toMatchObject({ state: 'failed', error: 'worker_crashed' })
+      expect(queue.sent).toEqual([])
+      expect((await stateOf()).state).toBe('failed')
+    }
   })
 
   test('a partial file is not a finished one', async () => {
