@@ -18,6 +18,9 @@
   "build": {
     "appId": "com.tolonglabs.tolongmeeting",
     "productName": "TolongMeeting",
+    "extraMetadata": {
+      "name": "tolongmeeting"
+    },
     "files": [
       "dist/**",
       "assets/**"
