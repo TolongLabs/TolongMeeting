@@ -10,14 +10,14 @@
   },
   "dependencies": {
     "@tm/core": "workspace:*",
-    "docx": "9.13.0",
+    "docx": "9.8.1",
     "fflate": "0.8.3",
-    "marked": "18.1.1",
-    "pdfmake": "0.3.12",
+    "marked": "18.1.0",
+    "pdfmake": "0.3.11",
     "sharp": "0.35.5",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "unpdf": "1.9.1"
+    "unpdf": "1.8.1"
   }
 }
