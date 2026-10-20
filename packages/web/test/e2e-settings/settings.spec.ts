@@ -20,6 +20,8 @@ interface Sent {
   url: string
   action: string | null
   body: string
+  status?: number
+  cacheControl?: string
 }
 
 /** Everything the server sent while the test ran: pages, redirects and action replies. */
@@ -30,13 +32,34 @@ let showTokenAction: string | null = null
 test.beforeEach(async ({ page }) => {
   const { name, value } = state().cookie
   await page.context().addCookies([{ name, value, url: 'http://127.0.0.1' }])
+  // Server action replies are read in a route handler: once the page has used one, the browser may drop its body (seen
+  // on CI), and a dropped body would let a secret slip past the sweep below.
+  await page.route(
+    () => true,
+    async (route) => {
+      const request = route.request()
+      const action = request.headers()['next-action']
+      if (request.method() !== 'POST' || action === undefined) return route.continue()
+      const response = await route.fetch()
+      const headers = response.headers()
+      sent.push({
+        url: request.url(),
+        action,
+        body: await response.text(),
+        status: response.status(),
+        cacheControl: headers['cache-control']
+      })
+      await route.fulfill({ response })
+    }
+  )
   page.on('response', async (response) => {
     const request = response.request()
+    if (request.headers()['next-action'] !== undefined) return // recorded by the route above
     // A redirect has no body to read.
     const body = ['document', 'fetch', 'xhr'].includes(request.resourceType())
       ? await response.text().catch(() => '')
       : ''
-    sent.push({ url: response.url(), action: request.headers()['next-action'] ?? null, body })
+    sent.push({ url: response.url(), action: null, body })
   })
 })
 
@@ -112,24 +135,14 @@ test('Notifications: set up, show the token on request, test ping', async ({ pag
   expect(await page.content()).not.toContain(NTFY_TOKEN)
   await expectNoAxeViolations(page)
 
-  // Show token: the token appears, from this click's reply only, which is not cached. The reply is read in a route
-  // handler: once the page has used it, the browser may drop its body (seen on CI), so reading it afterwards flakes.
-  let reply: { status: number; headers: Record<string, string>; body: string } | undefined
-  const notificationsPage = (url: URL) => url.pathname === '/notifications'
-  await page.route(notificationsPage, async (route) => {
-    const request = route.request()
-    if (request.method() !== 'POST' || request.headers()['next-action'] === undefined) return route.continue()
-    showTokenAction = request.headers()['next-action']!
-    const response = await route.fetch()
-    reply = { status: response.status(), headers: response.headers(), body: await response.text() }
-    await route.fulfill({ response })
-  })
+  // Show token: the token appears, from this click's reply only, which is not cached.
+  const before = sent.length
   await page.getByRole('button', { name: 'Show token' }).click()
   await expect(page.getByText(NTFY_TOKEN, { exact: true })).toBeVisible()
-  await page.unroute(notificationsPage)
+  const reply = sent.slice(before).find((s) => s.action !== null && s.body.includes(NTFY_TOKEN))
   expect(reply?.status).toBe(200)
-  expect(reply?.headers['cache-control']).toContain('no-store')
-  expect(reply?.body).toContain(NTFY_TOKEN)
+  expect(reply?.cacheControl).toContain('no-store')
+  showTokenAction = reply!.action
   await expectNoAxeViolations(page)
   await page.getByRole('button', { name: 'Hide token' }).click()
   await expect(page.getByText(NTFY_TOKEN, { exact: true })).toHaveCount(0)

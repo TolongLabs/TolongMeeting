@@ -1,5 +1,8 @@
 {
   "name": "@tm/companion",
+  "version": "0.1.0",
+  "description": "TolongMeeting desktop app: pairing, notifications, summaries and on-PC meetings",
+  "author": "TolongLabs",
   "private": true,
   "type": "module",
   "main": "dist/main/index.cjs",
