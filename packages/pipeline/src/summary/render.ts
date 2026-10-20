@@ -2,7 +2,7 @@ import { localParts, type JobConfig } from '@tm/core'
 import { scrub } from '../scrub'
 import { parseDue, type Inventory, type InventoryItem } from './inventory'
 
-type Source = InventoryItem['source']
+type Source = InventoryItem['source'] | 'participant_chat'
 
 // What `chooseDue` reads: a lecture item and a work action item both have it.
 export interface Dated {
@@ -14,8 +14,13 @@ export interface Dated {
 export const SECTION_CAP = 5
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const RANK: Record<Source, number> = { slide: 0, lecturer_chat: 1, speech: 2 }
-const SAYS: Record<Source, string> = { slide: 'slide says', lecturer_chat: 'chat says', speech: 'heard as' }
+const RANK: Record<Source, number> = { slide: 0, lecturer_chat: 1, speech: 2, participant_chat: 3 }
+const SAYS: Record<Source, string> = {
+  slide: 'slide says',
+  lecturer_chat: 'chat says',
+  speech: 'heard as',
+  participant_chat: 'a participant wrote'
+}
 const NOTHING_TO_DO = 'nothing to do from this session'
 
 // "Sun 1 Nov 2026" or "Sun 1 Nov 2026, 23:59" from "YYYY-MM-DD[THH:mm]". The string has no zone, so it is read as

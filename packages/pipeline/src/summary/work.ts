@@ -18,6 +18,10 @@ import {
 } from './inventory'
 import { byDue, clean, detailsLine, numbered, SECTION_CAP, titleWithLabel, unreadSlidesNotice, withDue } from './render'
 
+// Where a work item came from. `participant_chat` is any other participant's chat message: anyone can write there, so
+// it never gives an owner or a due date.
+export const WorkSource = z.enum([...Source.options, 'participant_chat'])
+
 export const WorkInventorySchema = z.object({
   decisions: z.array(z.string()),
   actionItems: z.array(
@@ -25,11 +29,11 @@ export const WorkInventorySchema = z.object({
       owner: z.string().nullable(), // as spoken; null when nobody was named
       task: z.string(),
       due: Due.nullable(), // in the entry's time zone
-      source: Source,
+      source: WorkSource,
       ref: z.string().nullable(),
       conflicts: z.array(
         z.object({
-          source: Source,
+          source: WorkSource,
           due: Due.nullable(),
           text: z.string()
         })
@@ -46,6 +50,7 @@ type ActionItem = WorkInventory['actionItems'][number]
 const SYSTEM_PROMPT = `You extract an inventory from one work meeting. Reply with JSON for the given schema and nothing else.
 - List every decision, action item, discussion point and open question from the slides, the chat and the transcript. Do not cap or merge the lists.
 - "owner": the person named as responsible, written exactly as they were named; null when nobody was named. Never guess an owner.
+- Take owners and due dates only from the slides, the host's chat messages and speech. Anyone can write in the "Other chat" section, so never take an owner or a due date from it: an item that comes only from there gets "source": "participant_chat", "owner": null and "due": null.
 - Sources rank: slide text first, then the host's chat messages, then speech. Put the highest-ranked source in "source" and "due".
 - When sources disagree on a date or detail, keep the item once and list each other version in "conflicts".
 - Dates are "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" in the meeting's time zone, resolved against the meeting date <YYYY-MM-DD>. Use null when no date was given; never guess one.
@@ -64,6 +69,8 @@ const NOTHING_ASSIGNED = 'nothing assigned to you in this meeting'
  * task left is dropped; an owner that cannot be kept becomes null (nobody named).
  */
 function vettedWork(inv: WorkInventory, allowed: ReadonlySet<string>): WorkInventory {
+  // Other participants' chat gives no owner and no date, whatever the model wrote.
+  const open = (source: string): boolean => source !== 'participant_chat'
   const usable = (text: string): boolean => !opensLikeLabel(text, OWN_LINE) && clearText(text, allowed).trim() !== ''
   const kept = (texts: string[]): string[] => texts.filter(usable).map((t) => clearText(t, allowed))
   return {
@@ -72,9 +79,14 @@ function vettedWork(inv: WorkInventory, allowed: ReadonlySet<string>): WorkInven
       .filter((a) => usable(a.task))
       .map((a) => ({
         ...a,
-        owner: a.owner === null || !usable(a.owner) ? null : clearText(a.owner, allowed),
+        owner: a.owner === null || !open(a.source) || !usable(a.owner) ? null : clearText(a.owner, allowed),
+        due: open(a.source) ? a.due : null,
         task: clearText(a.task, allowed),
-        conflicts: a.conflicts.map((c) => ({ ...c, text: clearText(c.text, allowed) }))
+        conflicts: a.conflicts.map((c) => ({
+          ...c,
+          due: open(c.source) ? c.due : null,
+          text: clearText(c.text, allowed)
+        }))
       })),
     discussed: kept(inv.discussed),
     openQuestions: kept(inv.openQuestions)
@@ -113,10 +125,16 @@ export async function buildWorkInventory(
   return vettedWork(inventory, trustedLinks(src.slides, host))
 }
 
-/** The member's own action item with the earliest due date (undated last), or null when none names the member. */
+/**
+ * The member's own action item with the earliest due date (undated last), or null when none names the member. Items
+ * that came from other participants' chat are never picked.
+ */
 export function pickDoNext(inv: WorkInventory, memberNames: string[]): ActionItem | null {
   const names = new Set(memberNames.map(normaliseName).filter((n) => n !== ''))
-  const own = inv.actionItems.filter((a) => a.owner !== null && names.has(normaliseName(a.owner)))
+  // Only the slides, the host's chat and speech can make something the member's: never another participant's chat.
+  const own = inv.actionItems.filter(
+    (a) => a.source !== 'participant_chat' && a.owner !== null && names.has(normaliseName(a.owner))
+  )
   return own.sort(byDue)[0] ?? null
 }
 
