@@ -338,7 +338,7 @@ process(msgs), in order:
 candidate = { url, source: 'watched_chat', sender: m.sender || null, senderRole: 'unknown', seenAt: m.seenAt }
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // packages/worker/src/watchers/loop.test.ts
@@ -489,21 +489,21 @@ test('stop ends a sleeping loop at once; an open error rejects the start', async
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/worker/src/watchers/loop.test.ts`
 Expected: FAIL with `Cannot find module './loop'`.
 
-- [ ] **Step 3: Implement `packages/worker/src/watchers/loop.ts`**
+- [x] **Step 3: Implement `packages/worker/src/watchers/loop.ts`**
 
 Keep the env in one module-level object that `configureWatchers` merges into; read it on every use, so a phase or paste change applies at the next decision. Seen signatures live in a `Set` per watcher.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/worker/src/watchers/loop.test.ts`
 Expected: PASS, `11 pass, 0 fail`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/worker/src/watchers/loop* docs/TRD.md
