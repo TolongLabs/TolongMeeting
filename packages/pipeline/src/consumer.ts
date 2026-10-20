@@ -37,6 +37,9 @@ type OccurrenceRow = typeof occurrences.$inferSelect
  *   the work. The cost is that a long run uses up retries of its twin (`retryLimit` with a backoff); that twin then
  *   ends as failed in the queue, which is harmless. A job for an occurrence that is not waiting for the pipeline is
  *   dropped (`stale`).
+ * - The pipeline never touches the occurrence directory while the worker may still run: a job whose occurrence still
+ *   has a `container_name` (cleared by the monitor once Docker reports the container gone) throws before it changes
+ *   anything, and pg-boss retries it after its backoff.
  * - `transcribing`: a `native` occurrence waits for the member's PC (`waiting_for_pc`); a `live` one moves on to
  *   `post_processing`. A job that dies in `post_processing` is run again by pg-boss and starts from there.
  * - The recording is remuxed first, then the pipeline runs with the member's AI config built here (`loadJobConfig`),
@@ -80,8 +83,10 @@ async function handleLocked(deps: PipelineDeps, id: string, signal?: AbortSignal
       await deps.notifier.notify(occ.memberId, pings.waitingForPc({ entry: occ.entryName, meetingUrl }))
       return 'waiting_for_pc'
     }
+    await assertWorkerGone(db, id)
     await applyTrigger(db, id, 'transcript_ready')
   } else if (occ.state === 'post_processing' && RUNNABLE_REASONS.has(occ.stateReason)) {
+    await assertWorkerGone(db, id)
     // The reasons of an earlier stop are cleared as the run starts, so a run that dies leaves a plain `post_processing`.
     if (occ.stateReason !== null) await setReason(db, id, null)
   } else {
@@ -110,6 +115,21 @@ async function handleLocked(deps: PipelineDeps, id: string, signal?: AbortSignal
   await registerArtefacts(db, occ, dir, { recording })
   await applyTrigger(db, id, 'summary_done')
   return 'completed'
+}
+
+/**
+ * Throws while the occurrence still names a worker container. The monitor clears `container_name` only after Docker
+ * reports the container gone, so until then the worker may still be writing the occurrence directory, which must not be
+ * remuxed or read. The job fails and pg-boss runs it again after its backoff.
+ */
+async function assertWorkerGone(db: Db, id: string): Promise<void> {
+  const [row] = await db
+    .select({ containerName: occurrences.containerName })
+    .from(occurrences)
+    .where(eq(occurrences.id, id))
+  if (row?.containerName != null) {
+    throw new Error(`pipeline: ${id}: worker container ${row.containerName} is not gone yet; retrying later`)
+  }
 }
 
 /**

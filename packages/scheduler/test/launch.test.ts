@@ -142,7 +142,16 @@ async function launchFixture(o: Options = {}) {
   if (o.dockerFails) docker.createError = new DockerError('create', 404, 'image not found')
   const queue = new FakeQueue()
   const notifier = new FakeNotifier()
-  const deps: LaunchDeps = { db, queue, docker, notifier, master: MASTER, env, exitPollMs: 10 }
+  const deps: LaunchDeps = {
+    db,
+    queue,
+    docker,
+    notifier,
+    master: MASTER,
+    env,
+    remux: async () => false,
+    exitPollMs: 10
+  }
   const one = async (table: typeof occurrences, rowId: string) =>
     (await db.select().from(table).where(eq(table.id, rowId)))[0]!
   return {

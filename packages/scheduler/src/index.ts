@@ -58,5 +58,6 @@ export {
   UNREACHABLE_PING_MS,
   monitorTick,
   restartOccurrence,
+  settleRemuxes,
   type MonitorResult
 } from './monitor'

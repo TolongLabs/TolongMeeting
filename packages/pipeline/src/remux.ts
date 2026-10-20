@@ -141,6 +141,19 @@ async function recordingDirOf(dir: string): Promise<{ root: string; recording: s
   return { root, recording }
 }
 
+/** A work directory left behind by a remux that died is deleted after this long. */
+const STALE_WORK_MS = 10 * 60_000
+
+/** Deletes `.remux-*` and `.join-*` directories (real directories only, never links) older than ten minutes. */
+async function removeStaleWork(root: string): Promise<void> {
+  for (const name of await readdir(root)) {
+    if (!name.startsWith('.remux-') && !name.startsWith('.join-')) continue
+    const info = await infoOf(join(root, name))
+    if (info === null || !info.isDirectory() || Date.now() - info.mtimeMs < STALE_WORK_MS) continue
+    await rm(join(root, name), { recursive: true, force: true })
+  }
+}
+
 /**
  * Makes `<dir>/recording/meeting.mp4` from the recording and deletes `meeting.mkv` once the copy is as long as the
  * original (within one second). A worker that stopped before it joined the segments has them joined first. Returns
@@ -152,13 +165,16 @@ async function recordingDirOf(dir: string): Promise<{ root: string; recording: s
  * are read as Matroska with only the `file` protocol; the copy is written to a fresh temporary directory in the
  * occurrence directory and renamed into place (which replaces a planted link instead of writing through it). A stale
  * or partial `meeting.mp4` is deleted before remuxing. A copy that fails or is too short is discarded, the `.mkv`
- * stays and the error is thrown. A worker that swaps a file after these checks is not guarded against; the worker
- * container has exited by the time this runs.
+ * stays and the error is thrown. Leftover `.remux-*` and `.join-*` work directories older than ten minutes are
+ * deleted first. A worker that swaps a file after these checks is not guarded against; that is safe only because both
+ * callers run this after the occurrence's `container_name` has been cleared, which the monitor does only once Docker
+ * reports the worker container gone (the pipeline consumer throws, to be retried, while it is set).
  */
 export async function remuxRecording(dir: string, signal?: AbortSignal): Promise<boolean> {
   const where = await recordingDirOf(dir)
   if (where === null) return false
   const { root, recording } = where
+  await removeStaleWork(root)
   const mkv = join(recording, 'meeting.mkv')
   const mp4 = join(recording, 'meeting.mp4')
 
@@ -185,6 +201,6 @@ export async function remuxRecording(dir: string, signal?: AbortSignal): Promise
   } finally {
     await rm(work, { recursive: true, force: true })
   }
-  await rm(mkv)
+  await rm(mkv, { force: true })
   return true
 }

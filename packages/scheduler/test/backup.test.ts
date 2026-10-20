@@ -83,6 +83,7 @@ function depsFor(profileRoot: string, run: Run) {
     docker: new FakeDocker(),
     notifier: new FakeNotifier(),
     master: Buffer.alloc(32, 3),
+    remux: async () => false,
     env: { dataRoot: `${root}/data`, profileRoot, publicUrl: 'https://tm.example', ntfyUrl: 'https://ntfy.tm.example' }
   }
   return { ...base, remote: 'tm-backup:', databaseUrl: DB_URL, run }

@@ -37,10 +37,10 @@ export type LaunchDeps = {
   env: SpecEnv
   /**
    * Makes the browser MP4 of a recording in an occurrence's data directory (`remuxRecording` of `@tm/pipeline`); true when
-   * a checked `meeting.mp4` is in place. The monitor calls it for a meeting that ends without the pipeline. Left out,
-   * such a meeting's recording is not registered.
+   * a checked `meeting.mp4` is in place. The monitor calls it for a meeting that ends without the pipeline, once the
+   * worker container is gone.
    */
-  remux?: (dir: string, signal?: AbortSignal) => Promise<boolean>
+  remux: (dir: string, signal?: AbortSignal) => Promise<boolean>
   /** How often to ask Docker whether a worker has exited, to delete its job files. Default 5000. */
   exitPollMs?: number
 }

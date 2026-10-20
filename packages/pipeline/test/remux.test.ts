@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { remuxArgs, remuxRecording } from '../src/remux'
 
 let tmp: string
@@ -176,6 +176,29 @@ describe('remuxRecording', () => {
     await writeFile(`${dir}/recording/attempt_1_seg_002.mkv`, `ffconcat version 1.0\nfile '${secret}'\n`)
     expect(await remuxRecording(dir)).toBe(false)
     expect(await exists(`${dir}/recording/meeting.mp4`)).toBe(false)
+  })
+
+  test('work directories older than ten minutes are removed; recent ones, files and links are kept', async () => {
+    const dir = await occurrenceDir('stale')
+    clip(`${dir}/recording/meeting.mkv`, 2)
+    const old = new Date(Date.now() - 11 * 60_000)
+    for (const name of ['.remux-old', '.join-old']) {
+      await mkdir(`${dir}/${name}`)
+      await writeFile(`${dir}/${name}/meeting.mp4`, 'half')
+      await utimes(`${dir}/${name}`, old, old)
+    }
+    await mkdir(`${dir}/.remux-recent`)
+    await writeFile(`${dir}/.remux-file`, 'x')
+    await utimes(`${dir}/.remux-file`, old, old)
+    await mkdir(`${tmp}/stale-target`, { recursive: true })
+    await symlink(`${tmp}/stale-target`, `${dir}/.join-link`)
+    expect(await remuxRecording(dir)).toBe(true)
+    expect((await readdir(dir)).filter((n) => n.startsWith('.')).sort()).toEqual([
+      '.join-link',
+      '.remux-file',
+      '.remux-recent'
+    ])
+    expect(await exists(`${tmp}/stale-target`)).toBe(true)
   })
 
   test('a playlist named meeting.mkv is not read as one', async () => {

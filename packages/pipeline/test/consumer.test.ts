@@ -151,6 +151,22 @@ describe('handlePipelineJob', () => {
     expect(f.notifier.sent).toEqual([])
   })
 
+  test.each(['transcribing', 'post_processing'] as const)(
+    'a %s occurrence whose worker container is not gone throws before anything is touched',
+    async (state) => {
+      const f = await pipelineFixture({ state, transcription: 'live' })
+      await f.db.update(occurrences).set({ containerName: 'tm-worker-x-a1' }).where(eq(occurrences.id, f.id))
+      await expect(handlePipelineJob(f.deps, f.id)).rejects.toThrow('not gone yet')
+      expect(f.remuxed).toEqual([])
+      expect(f.runs).toBe(0)
+      expect((await f.occurrence()).state).toBe(state)
+      // The monitor clears the name once Docker says the container is gone; the retry then runs.
+      await f.db.update(occurrences).set({ containerName: null }).where(eq(occurrences.id, f.id))
+      expect(await handlePipelineJob(f.deps, f.id)).toBe('completed')
+      expect(f.order).toEqual(['remux', 'run'])
+    }
+  )
+
   test('native mode waits for the PC with one ping', async () => {
     const f = await pipelineFixture({ state: 'transcribing', transcription: 'native' })
     expect(await handlePipelineJob(f.deps, f.id)).toBe('waiting_for_pc')

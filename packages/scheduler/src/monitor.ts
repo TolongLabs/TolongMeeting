@@ -440,26 +440,24 @@ const REMUX_TIMEOUT_MS = 10 * 60_000
 async function registerFinished(deps: LaunchDeps, row: OccurrenceRow): Promise<void> {
   const dir = `${deps.env.dataRoot}/occurrences/${row.id}`
   let recording = false
-  if (deps.remux !== undefined) {
-    try {
-      recording = await deps.remux(dir, AbortSignal.timeout(REMUX_TIMEOUT_MS))
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      console.error(`monitor: ${row.id}: REMUX FAILED, the meeting page will have no player: ${message}`)
-      const data = { reason: 'remux_failed', message }
-      await deps.db
-        .insert(events)
-        .values({
-          occurrenceId: row.id,
-          memberId: row.memberId,
-          attempt: row.attempt,
-          at: new Date(),
-          type: 'error',
-          data,
-          dataHash: hashEventData(data)
-        })
-        .onConflictDoNothing()
-    }
+  try {
+    recording = await deps.remux(dir, AbortSignal.timeout(REMUX_TIMEOUT_MS))
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    console.error(`monitor: ${row.id}: REMUX FAILED, the meeting page will have no player: ${message}`)
+    const data = { reason: 'remux_failed', message }
+    await deps.db
+      .insert(events)
+      .values({
+        occurrenceId: row.id,
+        memberId: row.memberId,
+        attempt: row.attempt,
+        at: new Date(),
+        type: 'error',
+        data,
+        dataHash: hashEventData(data)
+      })
+      .onConflictDoNothing()
   }
   await registerArtefacts(deps.db, row, dir, { recording })
 }
@@ -467,7 +465,9 @@ async function registerFinished(deps: LaunchDeps, row: OccurrenceRow): Promise<v
 /**
  * An occurrence that is no longer active but still names a container: once Docker says the container is gone, forget
  * it, give the profile back and record the newest checkpoint. The recording of an occurrence that ends without the
- * pipeline is remuxed, and its files are registered as artefacts, so they show on the meeting page. A row that throws is
+ * pipeline is remuxed and its files are registered as artefacts (so they show on the meeting page) by a detached task:
+ * the tick does not wait for it, a later tick skips the row while the task runs, and the container name is cleared and
+ * the profile released only when the task is done (so those rows are not in the returned list). A row that throws is
  * logged and left as it was (its container name is still set), and the next pass tries it again; the other rows go on.
  */
 async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
@@ -487,8 +487,17 @@ async function releaseFinished(deps: LaunchDeps, now: Date): Promise<string[]> {
   return released
 }
 
+/** Rows whose recording is being remuxed right now (by occurrence id), so a later tick leaves them alone. Per process. */
+const remuxing = new Map<string, Promise<void>>()
+
+/** Waits for every remux the monitor has started (graceful shutdown, tests). */
+export async function settleRemuxes(): Promise<void> {
+  while (remuxing.size > 0) await Promise.allSettled([...remuxing.values()])
+}
+
 async function releaseOne(deps: LaunchDeps, row: OccurrenceRow, now: Date): Promise<boolean> {
   const { db } = deps
+  if (remuxing.has(row.id)) return false
   if ((await containerView(deps.docker, row.containerName, { id: row.id, now })) !== 'gone') return false
   // The checkpoint is recorded first: if this pass dies half way, the container name is still set and the next pass
   // does it again.
@@ -506,11 +515,27 @@ async function releaseOne(deps: LaunchDeps, row: OccurrenceRow, now: Date): Prom
         .set({ latestCheckpoint: path, checkpointAt: info.mtime })
         .where(and(eq(profiles.identityId, row.identityId), eq(profiles.memberId, row.memberId)))
   }
-  if (WITHOUT_PIPELINE.has(row.state)) await registerFinished(deps, row)
-  await db
+  if (WITHOUT_PIPELINE.has(row.state)) {
+    // The remux can take minutes, so it runs off the tick: the container name and the profile stay until it is done.
+    // A scheduler restart forgets this map; the row is then selected again and the remux (idempotent) runs again.
+    const task = registerFinished(deps, row)
+      .then(() => forget(deps, row))
+      .catch((e) =>
+        console.error(`monitor: ${row.id}: not released, will retry: ${e instanceof Error ? e.message : String(e)}`)
+      )
+      .finally(() => remuxing.delete(row.id))
+    remuxing.set(row.id, task)
+    return false
+  }
+  await forget(deps, row)
+  return true
+}
+
+/** Clears the container name of a finished occurrence and gives its profile back. */
+async function forget(deps: LaunchDeps, row: OccurrenceRow): Promise<void> {
+  await deps.db
     .update(occurrences)
     .set({ containerName: null })
     .where(and(eq(occurrences.id, row.id), eq(occurrences.containerName, row.containerName!)))
-  await releaseProfile(db, row.identityId, `occ:${row.id}`)
-  return true
+  await releaseProfile(deps.db, row.identityId, `occ:${row.id}`)
 }

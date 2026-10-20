@@ -56,6 +56,7 @@ async function retentionFixture(o: Options = {}) {
     docker: new FakeDocker(),
     notifier,
     master: Buffer.alloc(32, 3),
+    remux: async () => false,
     env
   }
 

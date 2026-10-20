@@ -17,6 +17,7 @@ import {
   launchOccurrence,
   monitorTick,
   restartOccurrence,
+  settleRemuxes,
   stopJobFileWatchers,
   type LaunchDeps
 } from '../src/index'
@@ -31,7 +32,10 @@ let tmp: string
 beforeAll(async () => {
   tmp = await mkdtemp('/home/user/.cache/tm-tmp/monitor-')
 })
-afterEach(stopJobFileWatchers)
+afterEach(async () => {
+  await settleRemuxes()
+  await stopJobFileWatchers()
+})
 afterAll(async () => {
   await dropAllTestDbs()
   await rm(tmp, { recursive: true, force: true })
@@ -100,7 +104,16 @@ async function monitorFixture(o: Options = {}) {
   const docker = new FakeDocker()
   const notifier = new FakeNotifier()
   const queue = new FakeQueue()
-  const deps: LaunchDeps = { db, queue, docker, notifier, master: MASTER, env, exitPollMs: 60_000 }
+  const deps: LaunchDeps = {
+    db,
+    queue,
+    docker,
+    notifier,
+    master: MASTER,
+    env,
+    remux: async () => false,
+    exitPollMs: 60_000
+  }
   const launched = await launchOccurrence(
     deps,
     { occurrenceId: id, scheduledStart: START.toISOString() },
@@ -369,7 +382,8 @@ describe('a worker that cannot be checked', () => {
 
     // Once Docker answers and the container is gone, the profile is freed.
     f.docker.inspect = async () => null
-    expect((await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS + 10_000))).released).toEqual([f.id])
+    await monitorTick(f.deps, at(UNREACHABLE_FAIL_MS + 10_000))
+    await settleRemuxes()
     expect(await f.heldBy()).toBeNull()
   })
 
@@ -573,8 +587,11 @@ describe('finished containers', () => {
       await writeFile(`${dir}/recording/meeting.mp4`, 'mp4')
       await writeFile(`${dir}/forms/a1b2c3d4e5f60718/filled.png`, 'png')
       await writeFile(`${dir}/chat.jsonl`, '{}')
-      expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+      await monitorTick(f.deps, now)
+      await settleRemuxes()
       expect(remuxed).toEqual([dir])
+      expect((await f.occurrence()).containerName).toBeNull()
+      expect(await f.heldBy()).toBeNull()
       const rows = await f.db.select().from(artefacts).where(eq(artefacts.occurrenceId, f.id))
       expect(rows.map((r) => r.path).sort()).toEqual(['forms/a1b2c3d4e5f60718/filled.png', 'recording/meeting.mp4'])
     }
@@ -592,7 +609,8 @@ describe('finished containers', () => {
     await writeFile(`${dir}/recording/meeting.mp4`, 'half a file')
     await writeFile(`${dir}/forms/a1b2c3d4e5f60718/filled.png`, 'png')
     try {
-      expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+      await monitorTick(f.deps, now)
+      await settleRemuxes()
       expect(logged.mock.calls.some((c) => String(c[0]).includes('REMUX FAILED'))).toBe(true)
     } finally {
       logged.mockRestore()
@@ -601,6 +619,31 @@ describe('finished containers', () => {
     expect(rows.map((r) => r.path)).toEqual(['forms/a1b2c3d4e5f60718/filled.png'])
     const errors = await f.db.select().from(events).where(eq(events.occurrenceId, f.id))
     expect(errors.filter((e) => e.type === 'error').map((e) => e.data.reason)).toEqual(['remux_failed'])
+  })
+
+  test('a slow remux is off the tick: the row is kept until it ends and is never remuxed twice at once', async () => {
+    const slow = await monitorFixture({ state: 'denied', containerGone: true })
+    const crashed = await monitorFixture({ lastHeartbeat: new Date(now.getTime() - 31_000) })
+    let calls = 0
+    let finish!: (recorded: boolean) => void
+    slow.deps.remux = () => {
+      calls++
+      return new Promise<boolean>((resolve) => (finish = resolve))
+    }
+    // The tick returns while the remux is still running.
+    expect((await monitorTick(slow.deps, now)).released).toEqual([])
+    expect(calls).toBe(1)
+    // The next tick (any occurrence) is not held up, and it does not start a second remux of the same row.
+    expect((await monitorTick(slow.deps, now)).released).toEqual([])
+    expect((await monitorTick(crashed.deps, now)).restarted).toEqual([crashed.id])
+    expect(calls).toBe(1)
+    expect((await slow.occurrence()).containerName).not.toBeNull()
+    expect(await slow.heldBy()).toBe(`occ:${slow.id}`)
+    finish(false)
+    await settleRemuxes()
+    expect((await slow.occurrence()).containerName).toBeNull()
+    expect(await slow.heldBy()).toBeNull()
+    expect(calls).toBe(1)
   })
 
   test('a row that throws while it is released is logged and the next row is still released', async () => {
@@ -624,12 +667,15 @@ describe('finished containers', () => {
     }
     const logged = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      expect((await monitorTick(f.deps, now)).released).toEqual([second!.id])
+      await monitorTick(f.deps, now)
+      await settleRemuxes()
       expect(logged.mock.calls.some((c) => String(c[0]).includes(f.id) && String(c[0]).includes('boom'))).toBe(true)
     } finally {
       logged.mockRestore()
     }
     expect((await f.occurrence()).containerName).not.toBeNull()
+    const [other] = await f.db.select().from(occurrences).where(eq(occurrences.id, second!.id))
+    expect(other!.containerName).toBeNull()
   })
 
   test('an occurrence in the pipeline states leaves artefacts to the pipeline', async () => {
@@ -643,7 +689,9 @@ describe('finished containers', () => {
 
   test('an occurrence without checkpoints on disk is still released', async () => {
     const f = await monitorFixture({ state: 'failed', containerGone: true })
-    expect((await monitorTick(f.deps, now)).released).toEqual([f.id])
+    await monitorTick(f.deps, now)
+    await settleRemuxes()
+    expect((await f.occurrence()).containerName).toBeNull()
     expect((await f.profile()).latestCheckpoint).toBeNull()
   })
 })
