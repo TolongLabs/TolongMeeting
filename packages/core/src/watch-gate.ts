@@ -29,7 +29,10 @@ function choose<T extends string>(
   return hit
 }
 
-/** Reads `TM_WHATSAPP_FROM_SERVER` (default `home_only`) and `TM_DISCORD_FROM_SERVER` (default `allowed`). */
+/**
+ * Reads `TM_WHATSAPP_FROM_SERVER` (default `home_only`) and `TM_DISCORD_FROM_SERVER` (default `allowed`). An unset
+ * variable takes the default; an empty one is an error, so compose must omit a variable rather than pass `''`.
+ */
 export function watchGateFromEnv(env: Record<string, string | undefined>): WatchGate {
   return {
     whatsapp: choose(env, 'TM_WHATSAPP_FROM_SERVER', ['allowed', 'home_only', 'none'], 'home_only'),
@@ -37,11 +40,14 @@ export function watchGateFromEnv(env: Record<string, string | undefined>): Watch
   }
 }
 
+/** The run locations `home_only` allows: everything that is not the server's own identity. */
+const HOME_LOCATIONS: readonly RunLocation[] = ['server_via_home', 'local']
+
 export function chatWatchAllowed(app: ChatApp, runLocation: RunLocation, gate: WatchGate): boolean {
   if (app === 'teams') return true
   const rule = gate[app]
   if (rule === 'allowed') return true
-  if (rule === 'home_only') return runLocation !== 'server'
+  if (rule === 'home_only') return HOME_LOCATIONS.includes(runLocation)
   return false
 }
 

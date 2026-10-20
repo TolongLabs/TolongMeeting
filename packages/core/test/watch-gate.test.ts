@@ -24,6 +24,15 @@ test('a bad gate value is named but never echoed', () => {
   expect(() => watchGateFromEnv({ TM_WHATSAPP_FROM_SERVER: 'hunter2' })).not.toThrow('hunter2')
 })
 
+test('an empty gate value is an error, not the default', () => {
+  expect(() => watchGateFromEnv({ TM_WHATSAPP_FROM_SERVER: '' })).toThrow(
+    'TM_WHATSAPP_FROM_SERVER must be allowed, home_only or none'
+  )
+  expect(() => watchGateFromEnv({ TM_DISCORD_FROM_SERVER: '' })).toThrow(
+    'TM_DISCORD_FROM_SERVER must be allowed or home_only'
+  )
+})
+
 test('home_only refuses only server identities; none refuses all', () => {
   const g: WatchGate = { whatsapp: 'home_only', discord: 'allowed' }
   expect(chatWatchAllowed('whatsapp', 'server', g)).toBe(false)
