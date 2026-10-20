@@ -56,6 +56,7 @@ jobs:
           Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
           $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'TolongMeeting.exe' | Select-Object -First 1
           if (-not $exe) { throw 'the installer did not install TolongMeeting.exe' }
+          if ($exe.Directory.Name -ne 'tolongmeeting') { throw "installed in $($exe.Directory.FullName), not ...\Programs\tolongmeeting" }
           Write-Output "installed at $($exe.FullName)"
           "TM_ELECTRON_PACKAGED=$($exe.FullName)" >> $env:GITHUB_ENV
       - name: Boot the installed app
