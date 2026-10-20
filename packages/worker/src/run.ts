@@ -1252,8 +1252,12 @@ class OccurrenceRun {
         case 'in_meeting':
           return this.entered()
         case 'signin_required':
-          await this.ev('state', { account: 'zoom', signedIn: false } satisfies AccountCheckData)
-          this.alerter.alert('zoom_signin')
+          // Teams signs in with a Microsoft account.
+          await this.ev('state', {
+            account: adapter!.platform === 'teams' ? 'microsoft' : 'zoom',
+            signedIn: false
+          } satisfies AccountCheckData)
+          this.alerter.alert(adapter!.platform === 'teams' ? 'teams_signin' : 'zoom_signin')
           return failed('signin_required')
         case 'account_busy':
           this.alerter.alert('join_failed', 'the account is busy')
@@ -1519,6 +1523,7 @@ class OccurrenceRun {
       await this.guard('participantCount', async () => {
         this.participants = await adapter!.participantCount(this.stage!)
       })
+      await this.guard('ensureLayout', () => adapter!.ensureLayout(this.stage!))
     }
     await this.guard('audio level', () => this.watchAudio(now))
 

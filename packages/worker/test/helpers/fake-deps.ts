@@ -31,6 +31,8 @@ export interface FakeWatcherOptions {
 }
 
 export interface FakeOptions {
+  /** The adapter's platform. Default: zoom. */
+  platform?: PlatformAdapter['platform']
   /** A chat watcher for chat entries. Without it `startWatcher` answers null: the app has no watcher. */
   watcher?: FakeWatcherOptions
   /** What `meetingState` answers, one entry per call; the last entry repeats. */
@@ -89,6 +91,8 @@ export interface FakeDeps extends RunDeps {
   pings: Ping[]
   joinCount: number
   joinOpts: unknown[]
+  /** How many times the run called `ensureLayout` (`calls` holds only the first). */
+  layoutCalls: number
   /** Every URL the stage pages were sent to, in order. */
   gotos: string[]
   leftAt: Date | null
@@ -184,6 +188,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
     pings,
     joinCount: 0,
     joinOpts: [] as unknown[],
+    layoutCalls: 0,
     gotos: [] as string[],
     leftAt: null as Date | null,
     forms: null as FakeDeps['forms'],
@@ -232,7 +237,7 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
   }
 
   const adapter: PlatformAdapter = {
-    platform: 'zoom',
+    platform: opts.platform ?? 'zoom',
     normaliseLink: (url) => url,
     join: async (_page, joinOpts) => {
       rec('join')
@@ -256,7 +261,10 @@ export function fakeDeps(opts: FakeOptions = {}): FakeDeps {
       opts.assertDevices?.(deviceChecks)
     },
     connectOutputAudio: async () => rec('connectOutputAudio'),
-    ensureLayout: async () => rec('ensureLayout'),
+    ensureLayout: async () => {
+      rec('ensureLayout')
+      fake.layoutCalls += 1
+    },
     readChat: async () => {
       throw new Error('the chat is read by startChatCapture, which is faked')
     },

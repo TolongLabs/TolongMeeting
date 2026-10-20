@@ -1100,7 +1100,7 @@ git commit -m "feat(worker): keep teams share large and chat open"
 - Produces: `teamsAdapter: PlatformAdapter` (with `platform: 'teams'`) and `TEAMS_TIMEOUTS` in `packages/worker/src/adapters/teams/index.ts`; `adapterFor(url)` returns `teamsAdapter` for any URL `normaliseTeamsLink` accepts.
 - Produces (adds to contracts): `AlertKind` gains `teams_signin`; the `breakout` alert copy changes (below); `runOccurrence` calls `adapter.ensureLayout` on its 10-second refresh as well as after joining, and pings `teams_signin` instead of `zoom_signin` when a Teams `join` returns `signin_required`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { expect, test } from 'bun:test'
@@ -1160,12 +1160,12 @@ test('the layout is kept on every refresh, not only after joining', async () => 
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `bun test packages/worker/src/adapters/teams/index.test.ts packages/worker/src/run.test.ts packages/notify/src/messages.test.ts` and `bunx playwright test -c packages/worker/playwright.config.ts test/teams/adapter.spec.ts`
 Expected: FAIL: `adapterFor` returns `null` for the Teams link; `teams_signin` is not an `AlertKind`; `ensureLayout` is called once; `../../src/adapters/teams` not found.
 
-- [ ] **Step 3: Implement `teamsAdapter`, register it and change the run**
+- [x] **Step 3: Implement `teamsAdapter`, register it and change the run**
 
 Each method loads `teamsSelectors()` once (on first use) and delegates: `normaliseLink` → `normaliseTeamsLink`; `join` → `joinTeams`; `connectOutputAudio` → `connectTeamsOutputAudio`; `ensureLayout` → `ensureTeamsLayout`; `waitUntilAdmitted` → `waitTeamsAdmitted`; `assertDevicesOff` → `assertTeamsDevicesOff`; `readChat` → `readTeamsChat`; `sweepChat` → `sweepTeamsChat`; `sharedScreenRegion` → `teamsSharedScreenRegion`; `participantCount` → `teamsParticipantCount`; `meetingState` → `teamsMeetingState`; `dismissNotices` → `dismissTeamsNotices`; `leave` → `leaveTeams`. Like 01a's Zoom adapter, it enforces its own timeouts: every method except `normaliseLink` and `waitUntilAdmitted` (bounded by its deadline) races its step against these limits and rejects with `Error('teams <method> timed out after <ms> ms')`; `runOccurrence` then saves the screenshot and `ariaSnapshot()` under `errors/` and pings, as it does for Zoom.
 
@@ -1187,17 +1187,17 @@ export const TEAMS_TIMEOUTS = {
 
 `adapterFor` tries the Zoom adapter, then `teamsAdapter`, and returns the first whose `normaliseLink` isn't null. In `run.ts`, step 5 pings `teams_signin` (with plan 01c's "Sign in again" action, as for `zoom_signin`) when the adapter's platform is `teams`, and step 8 calls `ensureLayout` with each 10-second refresh of `sharedScreenRegion` and `participantCount` (harmless for Zoom, whose `ensureLayout` only reopens a closed chat). In `messages.ts`, add `teams_signin` with the copy in the test, and replace the `breakout` copy with the one in the test, because Teams can move participants into a room without asking.
 
-- [ ] **Step 4: Run them to verify they pass**
+- [x] **Step 4: Run them to verify they pass**
 
 Run: the commands of Step 2
 Expected: PASS, including 01a's existing `run.test.ts` and `messages.test.ts` cases.
 
-- [ ] **Step 5: Run the whole worker suite and the type check**
+- [x] **Step 5: Run the whole worker suite and the type check**
 
 Run: `bun test packages/worker packages/notify` then `bunx playwright test -c packages/worker/playwright.config.ts` then `bun run typecheck`
 Expected: all pass; `tsc` reports no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/src/adapters packages/worker/src/run.ts packages/worker/src/run.test.ts packages/notify/src packages/worker/test/teams/adapter.spec.ts docs/TRD.md
