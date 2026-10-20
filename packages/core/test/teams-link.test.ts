@@ -190,8 +190,8 @@ describe('normaliseMeetingLink', () => {
     expect(normaliseMeetingLink(MEET)).toBe(MEET)
   })
 
-  test('Meet links, chats and junk are null until plan 05', () => {
-    for (const input of ['https://meet.google.com/abc-defg-hij', CHAT, 'not a url', '']) {
+  test('Teams chats and junk are null', () => {
+    for (const input of [CHAT, 'not a url', '']) {
       expect(normaliseMeetingLink(input)).toBeNull()
     }
   })

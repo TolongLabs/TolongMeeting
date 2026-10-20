@@ -269,3 +269,46 @@ test('the Teams and Meeting schemes added to the lists are removed', () => {
   ])
     expect(gate(`see ${url} now`), url).toBe('see [link removed] now')
 })
+
+test('every Meet link is removed outright: meet.google.com, g.co/meet and tel.meet', () => {
+  for (const url of [
+    'https://meet.google.com/abc-defg-hij',
+    'https://meet.google.com/abc-defg-hij?authuser=1&hs=122',
+    'https://meet.google.com/lookup/testclass',
+    'https://MEET.GOOGLE.COM/ABC-DEFG-HIJ',
+    'meet.google.com/abc-defg-hij',
+    'https://meet.google.com./abc-defg-hij',
+    'https://meet.google.com:443/abc-defg-hij',
+    'https://g.co/meet/abc-defg-hij',
+    'g.co/meet/abc-defg-hij',
+    'https://g.co/meet/abc-defg-hij?x=1',
+    'https://tel.meet/abc-defg-hij?pin=1234567890123'
+  ])
+    expect(scrub(`join ${url} now`), url).toBe(`join ${REMOVED} now`)
+  expect(scrub('Use meet.google.com.')).toBe(`Use ${REMOVED}.`)
+})
+
+test('a Meet link percent-encoded in another link is removed, including g.co/meet', () => {
+  expect(scrub('https://example.com/r?u=https%3A%2F%2Fg.co%2Fmeet%2Fabc-defg-hij')).toBe(REMOVED)
+  expect(scrub('see https://example.com/r?u=https%253A%252F%252Fmeet.google.com%252Flookup%252Fx ok')).toBe(
+    `see ${REMOVED} ok`
+  )
+  expect(scrub('https://www.google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij&sa=D')).toBe(REMOVED)
+})
+
+test('names that only look like Meet hosts are not treated as Meet links', () => {
+  for (const text of ['see g.com/meet/x', 'see mymeet.google.com.au/x', 'see eg.co/meeting', 'see g.co/meetings/x'])
+    expect(scrub(text), text).not.toContain(REMOVED)
+})
+
+test('a Meet code after a word that names it is cut; a hyphenated phrase on its own stays', () => {
+  expect(scrub('Meeting code: abc-defg-hij')).toBe('Meeting code: [removed]')
+  expect(scrub('the meet code is abc-defg-hij, see you')).toBe('the meet code: [removed], see you')
+  expect(scrub('Google Meet code abc defg hij.')).toBe('Google Meet code: [removed].')
+  expect(scrub('Video call ID = ABC-DEFG-HIJ')).toBe('Video call ID: [removed]')
+  expect(scrub('join code is abc-defg-hij')).toBe('join code: [removed]')
+  expect(scrub('Meeting ID: 123 4567 8901')).toBe('Meeting ID: [removed]')
+  expect(scrub('a one-time-pad and an end-user-bug')).toBe('a one-time-pad and an end-user-bug')
+  expect(scrub('the meeting code is explained in week two')).toBe('the meeting code is explained in week two')
+  expect(scrub(scrub('Meeting code: abc-defg-hij'))).toBe('Meeting code: [removed]')
+})

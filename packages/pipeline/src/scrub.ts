@@ -28,14 +28,17 @@ const PORT_PATH = `(?::\\d+)?(?:[/?#]\\S*${END})?`
 
 // Every form of a meeting join link: Zoom (any link on zoom.us, *.zoom.us or zoomgov.com, and the zoommtg:// and
 // zoomus:// schemes), Teams (any link on teams.microsoft.com, *.teams.microsoft.com or teams.live.com: join links
-// come in many shapes, and the msteams: and ms-teams: schemes) and Meet.
+// come in many shapes, and the msteams: and ms-teams: schemes) and Meet (any link on meet.google.com, the g.co/meet
+// short link and the tel.meet dial-in link, which carries a PIN).
 const MEETING_LINKS: RegExp[] = [
   new RegExp(`\\bzoom(?:mtg|us):\\/\\/\\S*${END}`, 'gi'),
   new RegExp(`\\b(?:msteams|ms-teams):\\S*${END}`, 'gi'),
   new RegExp(`${START}${SUBDOMAINS}(?:zoom\\.us|zoomgov\\.com)${HOST_END}${PORT_PATH}`, 'gi'),
   new RegExp(`${START}${SUBDOMAINS}teams\\.microsoft\\.com${HOST_END}${PORT_PATH}`, 'gi'),
   new RegExp(`${START}teams\\.live\\.com${HOST_END}${PORT_PATH}`, 'gi'),
-  new RegExp(`${START}meet\\.google\\.com\\/[\\w-]+(?:\\S*${END})?`, 'gi')
+  new RegExp(`${START}meet\\.google\\.com${HOST_END}${PORT_PATH}`, 'gi'),
+  new RegExp(`${START}g\\.co${HOST_END}\\/meet(?:\\/\\S*${END}|(?![\\w-]))`, 'gi'),
+  new RegExp(`${START}tel\\.meet${HOST_END}${PORT_PATH}`, 'gi')
 ]
 const ANY_URL = new RegExp(`https?:\\/\\/\\S*${END}`, 'gi')
 
@@ -75,6 +78,10 @@ const PASSCODE_MARKED = new RegExp(
 )
 const PASSCODE_BARE = new RegExp(`${PASS_WORD}\\s+(?:${SPELLED(1)}|(?=\\S*\\d)\\S+${GROUPS})`, 'gi')
 const MEETING_ID_PHRASE = /\b(meeting\s*(?:id|number|code))\b\s*(?:is\s+)?[:#=]?\s*\d[\d \t-]*\d/gi
+// A Meet code (`abc-defg-hij`, also spoken as "abc defg hij") after a word that names it. Like a Zoom meeting ID, a
+// code on its own is not found: `one-time-pad` has the same shape.
+const MEET_CODE_PHRASE =
+  /\b((?:(?:google\s+)?meet|meeting|join(?:ing)?|video\s*call)\s*(?:id|number|code))\b\s*(?:is\s+)?[:#=]?\s*[a-z]{3}[ \t-][a-z]{4}[ \t-][a-z]{3}\b/gi
 
 // The name of a query pair, percent-decoded as a whole, so `pwd%3Dabc` reads as `pwd=abc`.
 function pairName(pair: string): string {
@@ -121,6 +128,7 @@ export function scrub(text: string): string {
     .replace(PASSCODE_MARKED, (_all, word: string) => `${word}: ${CODE_REMOVED}`)
     .replace(PASSCODE_BARE, (_all, word: string) => `${word}: ${CODE_REMOVED}`)
     .replace(MEETING_ID_PHRASE, (_all, label: string) => `${label}: ${CODE_REMOVED}`)
+    .replace(MEET_CODE_PHRASE, (_all, label: string) => `${label}: ${CODE_REMOVED}`)
 }
 
 // Every IANA TLD (and `xn--` punycode, which linkify-it always accepts), bare hosts, IP addresses and emails.
