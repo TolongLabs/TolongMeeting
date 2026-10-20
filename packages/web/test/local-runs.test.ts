@@ -285,7 +285,7 @@ const head = (device: DeviceAuth, id: string, path: string) =>
   )
 const offsetOf = async (id: string, path: string) => Number((await head(f.a1, id, path)).headers.get('upload-offset'))
 const send = async (id: string, path: string, content: Uint8Array | string) => {
-  const data = typeof content === 'string' ? new TextEncoder().encode(content) : content
+  const data = typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(content)
   const res = await put(f.a1, id, path, `bytes 0-${data.length - 1}/${data.length}`, data)
   expect(res.status).toBe(204)
 }
