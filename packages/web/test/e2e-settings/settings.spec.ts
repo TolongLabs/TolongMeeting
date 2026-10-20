@@ -112,17 +112,24 @@ test('Notifications: set up, show the token on request, test ping', async ({ pag
   expect(await page.content()).not.toContain(NTFY_TOKEN)
   await expectNoAxeViolations(page)
 
-  // Show token: the token appears, from this click's reply only, which is not cached.
-  const showReply = page.waitForResponse(
-    (r) => r.request().method() === 'POST' && r.request().headers()['next-action'] !== undefined
-  )
+  // Show token: the token appears, from this click's reply only, which is not cached. The reply is read in a route
+  // handler: once the page has used it, the browser may drop its body (seen on CI), so reading it afterwards flakes.
+  let reply: { status: number; headers: Record<string, string>; body: string } | undefined
+  const notificationsPage = (url: URL) => url.pathname === '/notifications'
+  await page.route(notificationsPage, async (route) => {
+    const request = route.request()
+    if (request.method() !== 'POST' || request.headers()['next-action'] === undefined) return route.continue()
+    showTokenAction = request.headers()['next-action']!
+    const response = await route.fetch()
+    reply = { status: response.status(), headers: response.headers(), body: await response.text() }
+    await route.fulfill({ response })
+  })
   await page.getByRole('button', { name: 'Show token' }).click()
-  const reply = await showReply
-  showTokenAction = reply.request().headers()['next-action']!
-  expect(reply.status()).toBe(200)
-  expect(reply.headers()['cache-control']).toContain('no-store')
-  expect(await reply.text()).toContain(NTFY_TOKEN)
   await expect(page.getByText(NTFY_TOKEN, { exact: true })).toBeVisible()
+  await page.unroute(notificationsPage)
+  expect(reply?.status).toBe(200)
+  expect(reply?.headers['cache-control']).toContain('no-store')
+  expect(reply?.body).toContain(NTFY_TOKEN)
   await expectNoAxeViolations(page)
   await page.getByRole('button', { name: 'Hide token' }).click()
   await expect(page.getByText(NTFY_TOKEN, { exact: true })).toHaveCount(0)
