@@ -222,7 +222,10 @@ test.each(SUBMIT_LINKS)(
 
 // Copy for each failed reason, from the Task 4 copy block. Typed over every StopReason except the two untrusted
 // reasons, so adding a reason fails to compile until its copy is written here.
-const FAILED_REASON_TEXT: Record<Exclude<StopReason, 'untrusted_source' | 'not_org_restricted'>, string> = {
+const FAILED_REASON_TEXT: Record<
+  Exclude<StopReason, 'untrusted_source' | 'not_org_restricted' | 'submit_unconfirmed'>,
+  string
+> = {
   tab_not_on_desk: "its tab didn't open on the unrecorded side",
   open_timeout: "it didn't load within 15 seconds",
   signin_required_again: 'it asked for sign-in again after you signed in',
@@ -235,8 +238,6 @@ const FAILED_REASON_TEXT: Record<Exclude<StopReason, 'untrusted_source' | 'not_o
   fill_failed: "an answer didn't stay filled in",
   next_failed: "its next page didn't open",
   submit_failed: "it didn't confirm the submission (check whether your response was recorded)",
-  submit_unconfirmed:
-    'it may have been submitted but never confirmed it (please check whether your response was recorded)',
   deadline: "it wasn't ready to submit within 2 minutes",
   interrupted: 'the worker restarted while handling it',
   interrupted_submitting: 'the worker restarted while submitting it (check whether your response was recorded)',
@@ -254,6 +255,15 @@ test.each(Object.entries(FAILED_REASON_TEXT) as Array<[FailedReason, string]>)(
     expect(ping?.message).toContain(`because ${text}.`)
   }
 )
+
+test('an unconfirmed submit says the bot pressed Submit and asks the member to check before resubmitting', () =>
+  expect(formPing({ ...base, state: 'failed', reason: 'submit_unconfirmed' }, opts)).toEqual({
+    title: 'Form needs you',
+    priority: 'high',
+    actions: open,
+    message:
+      "Example lecture: The bot pressed Submit but couldn't confirm it went through. Check whether your response was recorded before submitting again."
+  }))
 
 test('states that do not ping return null', () => {
   const quiet: FormState[] = [
