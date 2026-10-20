@@ -87,13 +87,13 @@ const LinkSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('paste') })
 ])
 
-const SavedDetailSchema = z.object({
+export const SavedDetailSchema = z.object({
   key: nonEmpty,
   value: z.string(),
   labels: z.array(z.string())
 })
 
-const EntrySchema = z
+export const JobEntrySchema = z
   .object({
     name: nonEmpty,
     type: z.enum(['lecture', 'work']),
@@ -112,30 +112,40 @@ const EntrySchema = z
     }
   })
 
+export const JobIdentitySchema = z.object({
+  id: nonEmpty,
+  name: nonEmpty,
+  zoomGuestName: nonEmpty,
+  formProviders: z.array(z.enum(['google', 'microsoft'])),
+  organisation: z.object({ name: nonEmpty, emailDomain: nonEmpty }).nullable().default(null)
+})
+
+export const JobMemberSchema = z.object({
+  id: nonEmpty,
+  displayName: nonEmpty,
+  mentionNames: z.array(z.string()),
+  details: z.array(SavedDetailSchema)
+})
+
+export const JobAiSchema = z.object({
+  baseUrl: z.url(),
+  apiKey: nonEmpty,
+  asrUrl: z.string().startsWith('wss://'),
+  models: z.object({ summary: nonEmpty, vision: nonEmpty, formMatch: nonEmpty, asr: nonEmpty })
+})
+
+export const JobNtfySchema = z.object({ url: z.url(), topic: nonEmpty, token: nonEmpty })
+
+export const OccurrenceIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
+
 export const JobConfigSchema: z.ZodType<JobConfig> = z.object({
-  occurrenceId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  occurrenceId: OccurrenceIdSchema,
   attempt: z.number().int().min(1),
-  entry: EntrySchema,
-  identity: z.object({
-    id: nonEmpty,
-    name: nonEmpty,
-    zoomGuestName: nonEmpty,
-    formProviders: z.array(z.enum(['google', 'microsoft'])),
-    organisation: z.object({ name: nonEmpty, emailDomain: nonEmpty }).nullable().default(null)
-  }),
-  member: z.object({
-    id: nonEmpty,
-    displayName: nonEmpty,
-    mentionNames: z.array(z.string()),
-    details: z.array(SavedDetailSchema)
-  }),
-  ai: z.object({
-    baseUrl: z.url(),
-    apiKey: nonEmpty,
-    asrUrl: z.string().startsWith('wss://'),
-    models: z.object({ summary: nonEmpty, vision: nonEmpty, formMatch: nonEmpty, asr: nonEmpty })
-  }),
-  ntfy: z.object({ url: z.url(), topic: nonEmpty, token: nonEmpty }),
+  entry: JobEntrySchema,
+  identity: JobIdentitySchema,
+  member: JobMemberSchema,
+  ai: JobAiSchema,
+  ntfy: JobNtfySchema,
   dataDir: z.string().startsWith('/'),
   profileDir: z.string().startsWith('/'),
   control: z.object({ url: z.url(), token: z.string() }).nullable()

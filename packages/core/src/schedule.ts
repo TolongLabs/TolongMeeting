@@ -107,3 +107,13 @@ export function formatDay(d: Date, timeZone: string): string {
 export function formatWhen(d: Date, timeZone: string): string {
   return `${formatDay(d, timeZone)}, ${DateTime.fromJSDate(d, { zone: timeZone }).toFormat('HH:mm')}`
 }
+
+/** `14:00` in the member's time zone. */
+export function formatTime(d: Date, timeZone: string): string {
+  return DateTime.fromJSDate(d, { zone: timeZone }).toFormat('HH:mm')
+}
+
+/** The member-facing page of one meeting: `<origin of PUBLIC_URL>/meetings/<occurrence id>`. */
+export function meetingUrl(publicUrl: string, occurrenceId: string): string {
+  return `${new URL(publicUrl).origin}/meetings/${encodeURIComponent(occurrenceId)}`
+}

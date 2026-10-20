@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { expandEntry, findClashes, formatDay, formatWhen, RepeatRuleSchema } from '../src'
+import { expandEntry, findClashes, formatDay, formatTime, formatWhen, meetingUrl, RepeatRuleSchema } from '../src'
 
 const now = new Date('2026-10-20T00:00:00Z')
 
@@ -219,5 +219,15 @@ describe('RepeatRuleSchema', () => {
     expect(RepeatRuleSchema.safeParse({ kind: 'once', date: '2026-02-30' }).success).toBe(false)
     expect(RepeatRuleSchema.safeParse({ kind: 'weekly', days: [8], from: '2026-10-01' }).success).toBe(false)
     expect(RepeatRuleSchema.safeParse({ kind: 'weekly', days: [], from: '2026-10-01' }).success).toBe(false)
+  })
+})
+
+describe('formatTime and meetingUrl', () => {
+  test('formatTime is HH:mm in the member time zone', () => {
+    expect(formatTime(new Date('2026-10-21T06:05:00Z'), 'Asia/Kuala_Lumpur')).toBe('14:05')
+  })
+  test('meetingUrl keeps only the origin of the public URL', () => {
+    expect(meetingUrl('https://meet.example.com/', 'occ_1')).toBe('https://meet.example.com/meetings/occ_1')
+    expect(meetingUrl('https://meet.example.com:8443/app', 'a b')).toBe('https://meet.example.com:8443/meetings/a%20b')
   })
 })
