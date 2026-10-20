@@ -80,8 +80,8 @@ async function main(): Promise<void> {
   await app.whenReady()
   const probePreload = join(dir!, 'probe-preload.cjs')
   await writeFile(probePreload, PROBE_PRELOAD)
-  session.defaultSession.setPreloads([probePreload])
-  app.on('session-created', (created) => created.setPreloads([probePreload]))
+  session.defaultSession.registerPreloadScript({ type: 'frame', filePath: probePreload })
+  app.on('session-created', (created) => created.registerPreloadScript({ type: 'frame', filePath: probePreload }))
   installGuards(app, session.defaultSession)
   const dist = process.env.HARNESS_DIST
   if (!dist) throw new Error('HARNESS_DIST is not set')
@@ -271,7 +271,7 @@ async function main(): Promise<void> {
   await sleep(300)
   signin.windowsOpened = BrowserWindow.getAllWindows().length - before
   signin.hitsWithFragment = hits.filter((h) => h.includes('pw_1') || h.includes('password'))
-  await run(toolbar, `document.getElementById('done').click()`)
+  void run(toolbar, `document.getElementById('done').click()`).catch(() => {})
   await until('the window to close', () => BrowserWindow.getAllWindows().length === before)
   await sleep(200)
   signin.done = done
