@@ -72,7 +72,7 @@ test('lectures default to live and work meetings to native, without lecture-only
   })
 })
 
-test('chat sources are normalised; Teams waits for plan 04', () => {
+test('chat sources are normalised', () => {
   const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
   const parse = (link: unknown) => EntryInputSchema.safeParse({ ...base, identityId, link })
   expect(
@@ -110,12 +110,23 @@ test('chat sources are normalised; Teams waits for plan 04', () => {
   ]) {
     expect(parse({ kind: 'chat', app: 'discord', chat }).error?.issues[0]?.message).toBe(discordMessage)
   }
-  expect(
-    parse({ kind: 'chat', app: 'teams', chat: 'https://teams.microsoft.com/l/chat/x' }).error?.issues[0]?.message
-  ).toBe('Watching a Teams chat arrives with Teams support.')
-  expect(
-    parse({ kind: 'chat', app: 'teams', chat: 'http://teams.microsoft.com/l/chat/x' }).error?.issues[0]?.message
-  ).toBe('Enter a Teams chat link.')
+})
+
+test('a Teams chat must be given by its link, and is stored normalised', () => {
+  const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
+  const chat = 'https://teams.microsoft.com/l/chat/19%3ATESTCHAT%40thread.v2/conversations'
+  const parse = (value: string) =>
+    EntryInputSchema.safeParse({ ...base, identityId, link: { kind: 'chat', app: 'teams', chat: value } })
+  const message = "Paste the chat's link from Teams (open the chat, then More options, then Copy link)."
+  for (const bad of [
+    'MSc class group',
+    'https://teams.microsoft.com/l/chat/x',
+    'http://teams.microsoft.com/l/chat/19%3ATESTCHAT%40thread.v2/conversations',
+    'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_TESTTHREAD%40thread.v2/0'
+  ]) {
+    expect(parse(bad).error?.issues[0]?.message).toBe(message)
+  }
+  expect(parse(` ${chat}?context=x `).data?.link).toEqual({ kind: 'chat', app: 'teams', chat })
 })
 
 test('saving a WhatsApp chat on a server identity follows the gate', async () => {
@@ -159,6 +170,21 @@ test('a fixed link is accepted only if the worker would accept it, and the trimm
     'https://example.zoom.us/signin',
     'https://example.zoom.us/j/0000\t0000000',
     'not a url'
+  ]) {
+    expect(parse(url).success).toBe(false)
+  }
+})
+
+test('a fixed Teams meeting link is accepted and stored as pasted', () => {
+  const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
+  const parse = (url: string) => EntryInputSchema.safeParse({ ...base, identityId, link: { kind: 'fixed', url } })
+  const meeting = 'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_TESTTHREAD%40thread.v2/0?context=%7B%7D'
+  expect(parse(`  ${meeting}  `).data?.link).toEqual({ kind: 'fixed', url: meeting })
+  expect(parse('https://teams.live.com/meet/9876543210987?p=TESTPASS').success).toBe(true)
+  for (const url of [
+    'https://teams.microsoft.com/l/chat/19%3ATESTCHAT%40thread.v2/conversations',
+    'https://teams.microsoft.com.evil.example/l/meetup-join/19%3Ameeting_TESTTHREAD%40thread.v2/0',
+    'http://teams.live.com/meet/9876543210987'
   ]) {
     expect(parse(url).success).toBe(false)
   }
@@ -276,6 +302,17 @@ test('pausing removes future sessions and unpausing restores them', async () => 
 
   await setPaused(scope, entryId, false, deps)
   expect(await count()).toBe(2)
+})
+
+test('a masked Teams link shows the host only, never the passcode or thread', () => {
+  const link = (url: string) => maskedLink({ link: { kind: 'fixed', url } })
+  const masked = link('https://teams.live.com/meet/9876543210987?p=TESTPASS')
+  expect(masked).toEqual({ kind: 'fixed', host: 'teams.live.com', meetingId: null })
+  expect(JSON.stringify(masked)).not.toContain('TESTPASS')
+  expect(
+    link('https://teams.microsoft.com/l/meetup-join/19%3Ameeting_TESTTHREAD%40thread.v2/0?context=%7B%7D')
+  ).toEqual({ kind: 'fixed', host: 'teams.microsoft.com', meetingId: null })
+  expect(() => link('https://example.com/j/1')).toThrow('stored link is not a Zoom or Teams meeting link')
 })
 
 test("another member's entry can't be paused or deleted", async () => {

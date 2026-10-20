@@ -5,6 +5,8 @@ import {
   chatWatchAllowed,
   formatWhen,
   normaliseDiscordChannelUrl,
+  normaliseMeetingLink,
+  normaliseTeamsChatUrl,
   normaliseZoomLink,
   RepeatRuleSchema,
   watchGateFromEnv,
@@ -57,7 +59,7 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 
 const text = (max: number) => z.string().trim().min(1).max(max).refine(noControlCharacters, NO_CONTROL_MESSAGE)
 
-// Meeting links only for the platforms this build can join: Zoom in 1C. Teams and Meet arrive with plans 04 and 05.
+// Meeting links only for the platforms this build can join: Zoom and Teams. Meet arrives with plan 05.
 // A link is accepted only if the worker would accept it (the one rule in `@tm/core`). The trimmed original is stored.
 const FixedLinkSchema = z.object({
   kind: z.literal('fixed'),
@@ -65,16 +67,21 @@ const FixedLinkSchema = z.object({
     .string()
     .trim()
     .max(2048)
-    .refine((url) => normaliseZoomLink(url) !== null, 'Enter a Zoom meeting link that starts with https://.')
+    .refine(
+      (url) => normaliseMeetingLink(url) !== null,
+      'Enter a Zoom or Teams meeting link that starts with https://.'
+    )
 })
 
 const WHATSAPP_NAME_MESSAGE = "Type the chat's name exactly as WhatsApp shows it."
+const TEAMS_CHAT_MESSAGE = "Paste the chat's link from Teams (open the chat, then More options, then Copy link)."
 const DISCORD_MESSAGE = "Paste the channel's address, such as https://discord.com/channels/<server>/<channel>."
 const LINE_BREAKS = /[\p{Cc}\u2028\u2029]/u
 
 /**
  * A chat source: a WhatsApp chat's exact name (NFC-normalised, 1 to 100 characters, one line), a Discord channel's
- * address (stored as `https://discord.com/channels/<server>/<channel>`), or a Teams chat's web address.
+ * address (stored as `https://discord.com/channels/<server>/<channel>`), or a Teams chat's link (stored as
+ * `https://<host>/l/chat/<thread>/conversations`).
  */
 export const ChatLinkSchema = z
   .object({
@@ -97,18 +104,13 @@ export const ChatLinkSchema = z
       const length = Array.from(chat).length
       return length < 1 || length > 100 || LINE_BREAKS.test(chat) ? fail(WHATSAPP_NAME_MESSAGE) : { ...link, chat }
     }
-    const ok =
-      noControlCharacters(trimmed) &&
-      URL.canParse(trimmed) &&
-      new URL(trimmed).protocol === 'https:' &&
-      new URL(trimmed).hostname === 'teams.microsoft.com'
-    return ok ? { ...link, chat: trimmed } : fail('Enter a Teams chat link.')
+    const chat = normaliseTeamsChatUrl(trimmed)
+    return chat === null ? fail(TEAMS_CHAT_MESSAGE) : { ...link, chat }
   })
 
-// WhatsApp and Discord chats are watched (plan 02). A Teams chat is still refused until plan 04 adds Teams support.
 const LinkSchema = z.discriminatedUnion('kind', [
   FixedLinkSchema,
-  ChatLinkSchema.refine((link) => link.app !== 'teams', 'Watching a Teams chat arrives with Teams support.'),
+  ChatLinkSchema,
   z.object({ kind: z.literal('paste') }),
   // An edit sends this (or no link) to leave the stored link as it is, so the passcode never has to be shown again.
   z.object({ kind: z.literal('keep') })
@@ -162,11 +164,12 @@ function parseId(id: unknown): string {
 }
 
 /**
- * What an edit page may show of a stored link: the host and meeting id of a Zoom link, never the passcode or any other
- * query. A chat source shows only its app, and a pasted link has nothing to show.
+ * What an edit page may show of a stored link: the host and meeting id of a Zoom link, or the host alone of a Teams
+ * link (`meetingId: null`), never the passcode, thread or any other query. A chat source shows only its app, and a
+ * pasted link has nothing to show.
  */
 export type MaskedLink =
-  | { kind: 'fixed'; host: string; meetingId: string }
+  | { kind: 'fixed'; host: string; meetingId: string | null }
   | { kind: 'chat'; app: 'whatsapp' | 'discord' | 'teams' }
   | { kind: 'paste' }
 
@@ -174,10 +177,14 @@ export function maskedLink(entry: { link: LinkSource }): MaskedLink {
   const { link } = entry
   if (link.kind === 'paste') return { kind: 'paste' }
   if (link.kind === 'chat') return { kind: 'chat', app: link.app }
-  const normal = normaliseZoomLink(link.url)
-  if (normal === null) throw new Error('stored link is not a Zoom meeting link')
-  const { host, pathname } = new URL(normal)
-  return { kind: 'fixed', host, meetingId: pathname.slice('/wc/join/'.length) }
+  const zoom = normaliseZoomLink(link.url)
+  if (zoom !== null) {
+    const { host, pathname } = new URL(zoom)
+    return { kind: 'fixed', host, meetingId: pathname.slice('/wc/join/'.length) }
+  }
+  const meeting = normaliseMeetingLink(link.url)
+  if (meeting === null) throw new Error('stored link is not a Zoom or Teams meeting link')
+  return { kind: 'fixed', host: new URL(meeting).host, meetingId: null }
 }
 
 /** The `Record<string, string>` the form details are stored as: the fields the member filled in. */

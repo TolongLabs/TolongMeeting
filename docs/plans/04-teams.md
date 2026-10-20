@@ -1208,14 +1208,15 @@ git commit -m "feat(worker): register the teams adapter"
 
 **Files:**
 
-- Create: `packages/core/src/teams-chat.ts`
-- Test: `packages/core/src/teams-chat.test.ts`
-- Modify: `packages/web/lib/timetable.ts` (01c's `ChatLinkSchema`: Teams chats by link, stored normalised; plan 02's Teams refusal removed), `packages/web/lib/timetable.test.ts` (plan 02's "Teams waits for plan 04" case)
+- Test: `packages/core/test/teams-link.test.ts` (done in Task 2: `normaliseTeamsChatUrl` lives in `core/src/teams-link.ts`, so there is no `teams-chat.ts`)
+- Modify: `packages/web/lib/timetable.ts` (01c's `ChatLinkSchema`: Teams chats by link, stored normalised; plan 02's Teams refusal removed), `packages/web/test/timetable.test.ts` (plan 02's "Teams waits for plan 04" case)
 - Create: `packages/worker/test/fixtures/teams/chat.html`
 - Modify: plan 02's `packages/worker/test/watchers/serve.ts` (a `teams` fixture)
 - Create: `packages/worker/src/watchers/teams.ts`
 - Modify: plan 02's `packages/worker/src/watchers/index.ts` and `packages/worker/src/watchers/index.test.ts` (`watcherFor('teams')`)
 - Test: `packages/worker/test/watchers/teams.spec.ts`
+
+**Split:** Task 9a (web side: Steps 1 to 4 for `timetable.ts`, `FixedLinkSchema` and `maskedLink` via core `normaliseMeetingLink`) is done; Task 9b (the watcher: Steps 5 to 10) comes later. Any website UI for the Teams chat field is Task 10 and stays behind the Figma gate.
 
 **Interfaces:**
 
@@ -1282,7 +1283,7 @@ test('a Teams chat must be given by its link, and is stored normalised', () => {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `bun test packages/core/src/teams-chat.test.ts packages/web/lib/timetable.test.ts`
+Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: FAIL, module `./teams-chat` not found, and the Teams entry is still refused with "Watching a Teams chat arrives with Teams support."
 
 - [ ] **Step 3: Implement `normaliseTeamsChatUrl` and accept Teams chats**
@@ -1291,7 +1292,7 @@ Unwrap one Safe Links level by its `url` parameter (core can't import the worker
 
 - [ ] **Step 4: Run them to verify they pass**
 
-Run: `bun test packages/core/src/teams-chat.test.ts packages/web/lib/timetable.test.ts`
+Run: `bun test packages/core/test/teams-link.test.ts packages/web/test/timetable.test.ts`
 Expected: PASS (9 new core cases; the timetable tests, with the replaced Teams case).
 
 - [ ] **Step 5: Build the chat fixture**
@@ -1438,7 +1439,7 @@ Expected: PASS (4 browser tests; the `watcherFor` test).
 - [ ] **Step 10: Commit**
 
 ```bash
-git add packages/core/src/teams-chat.ts packages/core/src/teams-chat.test.ts packages/web/lib/timetable.ts packages/web/lib/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/TRD.md
+git add packages/web/lib/timetable.ts packages/web/test/timetable.test.ts packages/worker/test/fixtures/teams/chat.html packages/worker/test/watchers packages/worker/src/watchers docs/TRD.md
 git commit -m "feat(worker): watch a teams chat for links"
 ```
 
