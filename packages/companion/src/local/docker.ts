@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs'
-import { delimiter, dirname, isAbsolute, join, win32 } from 'node:path'
+import { dirname, isAbsolute, join, posix, win32 } from 'node:path'
 import type { SpawnLike } from '../jobs/whisper'
 
 // The only code that starts `docker` on the member's PC. Every call is an argv array through `SpawnLike` (no shell,
@@ -335,10 +335,10 @@ export function findDocker(
   const path = (win ? (env.Path ?? env.PATH) : env.PATH) ?? ''
   const dockerIn = win
     ? (dir: string) => `${dir.replace(/[\\/]+$/, '')}\\docker.exe`
-    : (dir: string) => join(dir, 'docker')
-  for (const dir of path.split(win ? ';' : delimiter)) {
+    : (dir: string) => posix.join(dir, 'docker')
+  for (const dir of path.split(win ? ';' : ':')) {
     const clean = dir.replace(/^"|"$/g, '')
-    if (clean === '' || !(win ? /^[A-Za-z]:[\\/]/.test(clean) : isAbsolute(clean))) continue
+    if (clean === '' || !(win ? /^[A-Za-z]:[\\/]/.test(clean) : posix.isAbsolute(clean))) continue
     const candidate = dockerIn(clean)
     if (isFile(candidate)) return candidate
   }

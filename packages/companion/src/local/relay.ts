@@ -127,8 +127,16 @@ function readBody(req: IncomingMessage, cap: number): Promise<string> {
 
 /** After a refusal that left the body unread: drain it briefly (a reset would hide the answer), then drop the socket. */
 function drainThenClose(req: IncomingMessage): void {
+  req.socket.on('error', () => {})
+  req.on('data', () => {})
   req.resume()
-  setTimeout(() => req.socket.destroy(), 1000).unref()
+  const timer = setTimeout(() => {
+    if (!req.socket.destroyed) req.socket.destroy()
+  }, 1000)
+  timer.unref?.()
+  req.once('end', () => {
+    clearTimeout(timer)
+  })
 }
 
 function send(res: ServerResponse, status: number, body: string, after?: () => void) {
@@ -194,11 +202,13 @@ export async function startRelay(d: RelayDeps): Promise<Relay> {
     } catch (e) {
       if (e instanceof BodyTooLarge) {
         log('relay: refused a body over the cap')
-        return send(res, 413, FIXED[413], () => drainThenClose(req))
+        drainThenClose(req)
+        return send(res, 413, FIXED[413])
       }
       if (e instanceof BodyTimeout) {
         log('relay: cut off a slow body')
-        return send(res, 408, FIXED[408], () => drainThenClose(req))
+        drainThenClose(req)
+        return send(res, 408, FIXED[408])
       }
       throw e
     }
