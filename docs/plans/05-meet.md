@@ -563,11 +563,11 @@ git commit -m "feat(worker): read meet lobby and call state"
   - `connectMeetOutputAudio(page: Page, sel: MeetSelectors): Promise<void>`.
   - `leaveMeet(page: Page, sel: MeetSelectors): Promise<void>`.
 
-- [ ] **Step 1: Extend the fixture**
+- [x] **Step 1: Extend the fixture**
 
 Add `MeetFixtureConfig.notices: { role: 'dialog' | 'alert'; text: string; button: string }[]` (each a container with that role, its text and one button) and `host: boolean` (clicking "Leave call" opens a `role="dialog"` with "End the call for everyone" and "Just leave the call"; otherwise it switches to `left`). Give the side panel a header button `aria-label="Close"`. Add `MeetFixtureConfig.audioElements: number` (default 2) for the `meeting` scene.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 import { expect, test } from '@playwright/test'
@@ -663,23 +663,23 @@ test('leaves without ending the call for everyone, even as host', async ({ page 
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/controls.spec.ts`
 Expected: FAIL, cannot resolve `../../src/adapters/meet/controls`.
 
-- [ ] **Step 4: Implement the four functions in `packages/worker/src/adapters/meet/controls.ts`**
+- [x] **Step 4: Implement the four functions in `packages/worker/src/adapters/meet/controls.ts`**
 
 - `dismissMeetNotices`: for each visible `noticeContainers` element outside `sidePanel` whose text matches no `texts.breakoutPrompt`, click each visible button whose trimmed text or `aria-label` equals an entry of `noticeAllowlist` (case-insensitive).
 - `connectMeetOutputAudio`: Meet has no output control to click and plays call audio through page `audio` elements. Wait up to 10 seconds for at least one `audio` element and throw `Error('no meeting audio element')` if none appears; the sink-level check after it is 01a's.
 - `leaveMeet`: click `leaveButton`; if a dialog appears within 2 seconds, click the button whose text matches `texts.leaveConfirm`; then wait up to 15 seconds for `texts.ended` or `texts.endScreen`.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bunx playwright test -c packages/worker/playwright.config.ts test/meet/controls.spec.ts`
 Expected: PASS (4 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/worker/test/fixtures/meet packages/worker/test/meet packages/worker/src/adapters/meet/controls.ts
