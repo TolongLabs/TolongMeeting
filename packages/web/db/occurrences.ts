@@ -3,6 +3,8 @@ import { expandEntry, findClashes, type OccurrenceState } from '@tm/core'
 import type { Db } from './index'
 import { aiKeys, members, occurrences, timetableEntries } from './schema'
 import { QUEUES, queueDbOf, type Queue } from './queues'
+import { cancelNativeJobs } from './companion'
+import { applyTrigger } from './transitions'
 
 type OccurrenceRow = typeof occurrences.$inferSelect
 
@@ -201,4 +203,31 @@ export async function identityClashes(
     rank: (r.entryCreatedAt ?? r.occurrence.createdAt).getTime()
   }))
   return findClashes(slots).map((c) => ({ winner: byId.get(c.winner)!, loser: byId.get(c.loser)! }))
+}
+
+/**
+ * "Delete now" for a meeting that waits for a PC (`waiting_for_pc`): no pipeline job is running for it, so nothing would
+ * ever queue the delete. In one transaction this fails the meeting with the reason `deleting` (so the tombstone says
+ * `member`), cancels its native job and queues the delete. Returns `false`, changing nothing, when the occurrence is
+ * not this member's or is not `waiting_for_pc` any more (a PC claimed the job since the caller looked).
+ */
+export async function deleteWaitingMeeting(
+  db: Db,
+  queue: Queue,
+  memberId: string,
+  occurrenceId: string,
+  now: Date = new Date()
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ state: occurrences.state })
+      .from(occurrences)
+      .where(and(eq(occurrences.id, occurrenceId), eq(occurrences.memberId, memberId)))
+      .for('update')
+    if (row?.state !== 'waiting_for_pc') return false
+    await applyTrigger(tx, occurrenceId, 'fail', { reason: 'deleting' })
+    await cancelNativeJobs(tx, { occurrenceId }, now)
+    await queue.send(QUEUES.deleteOccurrence, { occurrenceId }, { db: queueDbOf(tx) })
+    return true
+  })
 }

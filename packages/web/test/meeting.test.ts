@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { artefacts, events, forms, occurrences, type Db } from '../db'
+import { createCompanionJob, getJob } from '../db/companion'
 import { hashEventData } from '../db/transitions'
 import { createTestDb, dropAllTestDbs, FakeQueue, seedMember } from '../db/testing'
 import { InputError, InUseError } from '../lib/identities'
@@ -323,7 +324,7 @@ test('actions follow the occurrence state', async () => {
   expect((await stateOf(scope, occurrenceId)).stateReason).toBe('deleting')
 })
 
-test.each(['transcribing', 'waiting_for_pc', 'post_processing'] as const)(
+test.each(['transcribing', 'post_processing'] as const)(
   'delete now in %s waits for the pipeline: delete_after moves to now and state_reason is untouched',
   async (state) => {
     const { scope, occurrenceId, queue } = await meetingFixture()
@@ -340,6 +341,28 @@ test.each(['transcribing', 'waiting_for_pc', 'post_processing'] as const)(
     if (state === 'post_processing') await rerunPipeline(scope, occurrenceId, queue)
   }
 )
+
+test('delete now in waiting_for_pc fails the meeting, cancels its native job and queues the delete', async () => {
+  const { scope, occurrenceId, queue, memberId } = await meetingFixture()
+  await scope.update(occurrences, { state: 'waiting_for_pc' }, eq(occurrences.id, occurrenceId))
+  const jobId = await createCompanionJob(db, {
+    memberId,
+    occurrenceId,
+    kind: 'native_transcription',
+    payload: {
+      occurrenceId,
+      entryName: 'Data Mining',
+      start: '2026-10-21T14:00:00+08:00',
+      timeZone: 'Asia/Kuala_Lumpur',
+      durationSec: 5400,
+      flacBytes: 1000
+    }
+  })
+  expect(await requestDeleteNow(scope, occurrenceId, queue)).toBe('queued')
+  expect(queue.sent).toEqual([{ name: 'delete-occurrence', data: { occurrenceId }, opts: { db: expect.anything() } }])
+  expect(await stateOf(scope, occurrenceId)).toMatchObject({ state: 'failed', stateReason: 'deleting' })
+  expect((await getJob(db, jobId))?.state).toBe('cancelled')
+})
 
 test('delete now in a finished state queues the delete at once', async () => {
   const { scope, occurrenceId, queue } = await meetingFixture()

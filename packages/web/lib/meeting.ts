@@ -435,16 +435,18 @@ export async function pasteLink(scope: MemberScope, id: string, url: string): Pr
 const PIPELINE_STATES: OccurrenceState[] = ['transcribing', 'waiting_for_pc', 'post_processing']
 
 /**
- * `queued`: the delete job is queued. `after_processing`: the pipeline is still working on the meeting, so the delete
- * waits ("Deleting as soon as processing finishes"); the pipeline consumer queues it when its run ends, and retention
- * removes the meeting if that never happens.
+ * `queued`: the delete job is queued. `after_processing`: the pipeline is still working on the meeting (transcribing
+ * or post-processing), so the delete waits ("Deleting as soon as processing finishes"); the pipeline consumer queues it
+ * when its run ends, and retention removes the meeting if that never happens.
  */
 export type DeleteNowResult = 'queued' | 'after_processing'
 
 /**
  * Marks a finished meeting for deletion and queues the scheduler's delete. Refused while the bot is active. While the
- * pipeline owns the meeting (transcribing, waiting for the PC, post-processing) nothing is queued and `state_reason` is
- * left alone (the pipeline reads it): `delete_after` moves to now, and the consumer sees that when its run ends.
+ * pipeline owns the meeting (transcribing, post-processing) nothing is queued and `state_reason` is left alone (the
+ * pipeline reads it): `delete_after` moves to now, and the consumer sees that when its run ends. A meeting that waits
+ * for a PC has no pipeline job running: it is failed with the reason `deleting`, its native job is cancelled and the
+ * delete is queued at once (`queued`).
  */
 export async function requestDeleteNow(scope: MemberScope, id: string, queue: Queue): Promise<DeleteNowResult> {
   if (!UUID.test(id)) throw new InputError(NOT_FOUND)
@@ -452,6 +454,9 @@ export async function requestDeleteNow(scope: MemberScope, id: string, queue: Qu
   if (!row) throw new InputError(NOT_FOUND)
   const tooLate = new InUseError('Make the bot leave before deleting this meeting.')
   if (ACTIVE_STATES.has(row.state)) throw tooLate
+  // No pipeline job runs for a meeting that waits for a PC, so nothing would queue the delete: do it here, and cancel the
+  // native job so no PC claims it afterwards. When a PC claimed the job since the read, the pipeline owns the meeting again.
+  if (row.state === 'waiting_for_pc' && (await scope.deleteWaitingMeeting(id, queue))) return 'queued'
   if (PIPELINE_STATES.includes(row.state)) {
     // Guarded by the state: when the run ended since the read, the ordinary path below handles the meeting.
     const waiting = await scope.update(

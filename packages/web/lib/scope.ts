@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, isNull, ne, notExists, sql, type SQL } from 'dri
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { ACTIVE_STATES, ControlCommandSchema, type ControlCommand } from '@tm/core'
 import { getDb, type Db } from '../db/index'
-import { identityClashes, syncOccurrences } from '../db/occurrences'
+import { deleteWaitingMeeting, identityClashes, syncOccurrences } from '../db/occurrences'
 import { queueDbOf, type Queue, type QueueName, type SendOpts } from '../db/queues'
 import {
   artefacts,
@@ -61,6 +61,11 @@ export interface MemberScope {
   artefactFile(occurrenceId: string, relPath: string): Promise<string | null>
   /** Brings this member's future scheduled occurrences in line with their timetable (see `syncOccurrences`). */
   syncOccurrences(queue: Queue, now: Date): Promise<{ created: number; removed: number }>
+  /**
+   * Fails a `waiting_for_pc` occurrence of this member with the reason `deleting`, cancels its native job and queues the
+   * delete, in one transaction (see `deleteWaitingMeeting`). `false` when it is not waiting for a PC.
+   */
+  deleteWaitingMeeting(occurrenceId: string, queue: Queue): Promise<boolean>
   /** Overlapping occurrences of one of this member's identities in `[from, to)`, winner first. */
   identityClashes(identityId: string, from: Date, to: Date): ReturnType<typeof identityClashes>
 }
@@ -206,6 +211,10 @@ export function createScope(db: Db, memberId: string, inTransaction = false): Me
 
     identityClashes(identityId, from, to) {
       return identityClashes(db, identityId, from, to, memberId)
+    },
+
+    deleteWaitingMeeting(occurrenceId, queue) {
+      return deleteWaitingMeeting(db, queue, memberId, occurrenceId)
     }
   }
 }
