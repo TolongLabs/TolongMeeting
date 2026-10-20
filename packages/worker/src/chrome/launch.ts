@@ -34,6 +34,12 @@ export function chromeArgs(screen: Screen): string[] {
   ]
 }
 
+// Chrome shows a 56 px "unsupported command-line flag" infobar above the stage for flags such as
+// --disable-blink-features. In the image, the managed policy CommandLineFlagSecurityWarningsEnabled (from
+// docker/worker/chrome-policy.json) hides it. A developer host or CI runner has no such policy, so there --test-type
+// hides it instead; the worker image never passes it.
+const hostOnlyArgs = (): string[] => (process.env.TM_IN_IMAGE === '1' ? [] : ['--test-type'])
+
 // Playwright adds --no-sandbox unless chromiumSandbox is true. Chrome's sandbox needs user namespaces, which Docker
 // usually denies, so inside the worker image (TM_IN_IMAGE=1) the sandbox is off and the container is the isolation
 // boundary. Everywhere else (a developer host) the sandbox stays on.
@@ -43,7 +49,7 @@ const launchOptions = (screen: Screen, extraArgs: string[]) => ({
   chromiumSandbox: process.env.TM_IN_IMAGE !== '1',
   viewport: null,
   ignoreDefaultArgs: ['--enable-automation'],
-  args: [...chromeArgs(screen), ...extraArgs]
+  args: [...chromeArgs(screen), ...hostOnlyArgs(), ...extraArgs]
 })
 
 const PreferencesSchema = z.record(z.string(), z.unknown())
