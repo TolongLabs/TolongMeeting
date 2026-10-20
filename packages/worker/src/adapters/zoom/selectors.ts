@@ -1,22 +1,5 @@
 import { z } from 'zod'
-import { loadSelectors } from '../selectors'
-
-const selector = z.string().min(1)
-// A regular expression source: compiled here, so a bad one fails when the map loads and not on a live meeting.
-const pattern = z
-  .string()
-  .min(1)
-  .refine(
-    (source) => {
-      try {
-        new RegExp(source, 'i')
-        return true
-      } catch {
-        return false
-      }
-    },
-    { message: 'not a valid regular expression' }
-  )
+import { loadSelectors, pattern, selector } from '../selectors'
 
 export const ZoomSelectorsSchema = z.object({
   rootIframe: selector,
