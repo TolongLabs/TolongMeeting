@@ -501,3 +501,29 @@ test('a Microsoft date picker that names no format is not answered', async ({ pa
   )
   expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual(['needs_member', ['Date'], 0])
 })
+
+test('a Google 12-hour time group is not filled: the member is pinged and nothing is sent', async ({ page: desk }) => {
+  const { ctx, pings } = testContext(desk, testJob(dir))
+  const rec = await handleForm(candidate('google', 'attendance-time-12h', 'qr'), ctx)
+  expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual(['needs_member', ['Time'], 0])
+  expect(pings.map((p) => p.ping.title)).toEqual(['Form needs you'])
+})
+
+// A Microsoft text picker's format comes only from its placeholder, so a date that reads differently with day and month
+// swapped (5 October is 5/10 or 10/5) is not written. 10 October survives the swap.
+test('a Microsoft text date that day and month swap would change is not filled', async ({ page: desk }) => {
+  const job = testJob(dir)
+  const ambiguous = { ...job, entry: { ...job.entry, start: '2026-10-05T12:00:00Z', end: '2026-10-05T14:00:00Z' } }
+  const { ctx, pings } = testContext(desk, ambiguous)
+  const rec = await handleForm(candidate('microsoft', 'attendance-date', 'qr'), ctx)
+  expect([rec.state, rec.unmatched, fx.submissions.length]).toEqual(['needs_member', ['Date'], 0])
+  expect(pings.map((p) => p.ping.title)).toEqual(['Form needs you'])
+})
+
+test('a Microsoft text date whose day equals its month is filled', async ({ page: desk }) => {
+  const job = testJob(dir)
+  const same = { ...job, entry: { ...job.entry, start: '2026-10-10T12:00:00Z', end: '2026-10-10T14:00:00Z' } }
+  const rec = await handleForm(candidate('microsoft', 'attendance-date', 'qr'), testContext(desk, same).ctx)
+  expect(rec.state).toBe('submitted')
+  expect(fx.submissions[0]!.answers).toMatchObject({ Date: '10/10/2026' })
+})

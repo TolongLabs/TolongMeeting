@@ -72,6 +72,7 @@ interface RawWidget {
   value: string // the input's value
   hour: string | null // a group's hour and minute inputs; null when absent
   minute: string | null
+  parts: number // a group's interactive descendants (input, select, button, [role]); 0 for an input
 }
 
 interface QuestionSelectors {
@@ -134,7 +135,8 @@ function extractQuestions(elements: Element[], s: QuestionSelectors): RawQuestio
           placeholder: isInput ? el.placeholder : '',
           value: isInput ? el.value : '',
           hour: part(s.hour),
-          minute: part(s.minute)
+          minute: part(s.minute),
+          parts: isInput ? 0 : el.querySelectorAll('input, select, button, [role]').length
         }
       }
     } else if (dates.length + times.length === 0 && first !== null && q.querySelector(s.unsupported) === null) {
@@ -211,15 +213,16 @@ function stripLabel(raw: RawQuestion): string {
 }
 
 // A date or time widget is typed only when the driver can write it and read it back: an input[type=date] or
-// input[type=time], a text date input that names its format, or a time group with hour and minute inputs. Any other
-// widget is 'other', so a question the driver cannot verify is never answered.
+// input[type=time], a text date input that names its format, or a time group whose only interactive parts are its hour
+// and minute inputs (an AM/PM control or anything else in the group makes it 'other': a 12-hour clock written as 24-hour
+// text would be wrong). Any other widget is 'other', so a question the driver cannot verify is never answered.
 function settle(raw: RawQuestion): RawQuestion {
   const w = raw.widget
   if (w === null) return raw
   const writable =
     raw.kind === 'date'
       ? w.type === 'date' || (w.type === 'text' && parseDateFormat(w.placeholder) !== null)
-      : w.type === 'time' || (w.type === '' && w.hour !== null && w.minute !== null)
+      : w.type === 'time' || (w.type === '' && w.hour !== null && w.minute !== null && w.parts === 2)
   return writable ? raw : { ...raw, kind: 'other', widget: null }
 }
 
@@ -366,8 +369,13 @@ export function createDriver(
       else if (raw.kind === 'checkbox') {
         const chosen = raw.options.filter((o) => o.checked).map((o) => o.text)
         value = chosen.length > 0 ? chosen : null
-      } else if (raw.kind === 'date' || raw.kind === 'time') value = widgetValue(raw)
-      else if (raw.kind === 'dropdown') {
+      } else if (raw.kind === 'date' || raw.kind === 'time') {
+        value = widgetValue(raw)
+        // A text date picker whose format came only from its placeholder lists that format as its one option, so the
+        // planner can tell it from an input[type=date] (ISO, no options). types.ts documents no options for a date.
+        if (raw.kind === 'date' && raw.widget!.type === 'text')
+          options = [parseDateFormat(raw.widget!.placeholder)!.text]
+      } else if (raw.kind === 'dropdown') {
         value = raw.triggerText === '' || placeholders.has(normaliseText(raw.triggerText)) ? null : raw.triggerText
         options = await dropdownOptions(page, questions(page).nth(n), stripLabel(raw))
       }

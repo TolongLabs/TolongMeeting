@@ -567,3 +567,29 @@ test('a Microsoft date input that names no format is typed other, and one that n
   await page.goto(microsoftUrl('attendance-date-dmy'))
   expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({ label: 'Date', type: 'date' })
 })
+
+test('a Google time group with an AM/PM control is typed other', async ({ page, context }) => {
+  await routeFormFixtures(context)
+  const driver = await driverFor('google')
+  await page.goto(googleUrl('attendance-time-12h'))
+  expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({ label: 'Time', type: 'other' })
+  await page.goto(googleUrl('attendance-time'))
+  expect((await driver.readPage(page, 1)).questions[1]).toMatchObject({ label: 'Time', type: 'time' })
+})
+
+test('a Microsoft text date lists its placeholder format; a native date input lists none', async ({
+  page,
+  context
+}) => {
+  await routeFormFixtures(context)
+  await page.goto(microsoftUrl('attendance-date'))
+  expect((await (await driverFor('microsoft')).readPage(page, 1)).questions[1]).toMatchObject({
+    type: 'date',
+    options: ['M/d/yyyy']
+  })
+  await page.goto(googleUrl('attendance-date'))
+  expect((await (await driverFor('google')).readPage(page, 1)).questions[1]).toMatchObject({
+    type: 'date',
+    options: []
+  })
+})

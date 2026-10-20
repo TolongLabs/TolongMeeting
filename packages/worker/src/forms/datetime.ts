@@ -13,6 +13,7 @@ export interface DateFormat {
   fields: [Field, Field, Field] // left to right
   padded: { M: boolean; d: boolean } // "MM" and "dd" write two digits, "M" and "d" as many as needed
   separator: string
+  text: string // the format as the placeholder names it, e.g. "M/d/yyyy"
 }
 
 function validDate(year: number, month: number, day: number): boolean {
@@ -42,8 +43,18 @@ export function parseDateFormat(placeholder: string): DateFormat | null {
   return {
     fields: fields as DateFormat['fields'],
     padded: { M: tokens.includes('MM'), d: tokens.includes('dd') },
-    separator: m[2]!
+    separator: m[2]!,
+    text: m[0]
   }
+}
+
+// True when swapping day and month leaves the date unchanged (the day is above 12, or equals the month), so a widget
+// that reads it in the other order still shows the same day.
+export function swapSafe(iso: string): boolean {
+  const m = ISO_DATE.exec(iso)
+  if (m === null) return false
+  const day = Number(m[3])
+  return day > 12 || day === Number(m[2])
 }
 
 // Writes an ISO date the way the widget expects it.

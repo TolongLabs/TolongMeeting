@@ -453,3 +453,19 @@ test('verifyFill refuses a date or time left in a question that was not answered
   const stray = pageOf([{ ...q('p1q0', 'Date', 'date'), value: '2026-10-20' }])
   expect(verifyFill({ answers: [], unmatchedRequired: [] }, stray)).toBe(false)
 })
+
+test('a text date picker is filled only when day and month swap leaves the date unchanged', () => {
+  const at = (start: string) => buildDetailPool({ ...testJob(DIR), entry: { ...testJob(DIR).entry, start } })
+  const text = [{ ...q('p1q0', 'Date', 'date', ['M/d/yyyy'], true) }]
+  const answers = (start: string, questions: FormQuestion[]) => {
+    const pl = at(start)
+    return planPage(pageOf(questions), pl, exactLabelMatches(pageOf(questions), pl), new Map())
+  }
+  expect(answers('2026-10-05T12:00:00Z', text).unmatchedRequired.map((x) => x.id)).toEqual(['p1q0'])
+  expect(answers('2026-10-20T12:00:00Z', text).answers).toEqual([dateAnswer('p1q0', '2026-10-20')])
+  expect(answers('2026-10-10T12:00:00Z', text).answers).toEqual([dateAnswer('p1q0', '2026-10-10')])
+  // input[type=date] lists no format: it is ISO, so an ambiguous day is still written.
+  expect(answers('2026-10-05T12:00:00Z', [q('p1q0', 'Date', 'date', [], true)]).answers).toEqual([
+    dateAnswer('p1q0', '2026-10-05')
+  ])
+})

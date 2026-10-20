@@ -33,6 +33,7 @@ export const FormSelectorsSchema = z
     listbox: selector, // dropdown trigger, inside question
     listboxOption: selector, // options, searched page-wide once the listbox is open
     listboxPlaceholders: z.array(phrase), // trigger texts that mean nothing is chosen
+    // dateInput, timeInput, timeHour and timeMinute are unverified against live forms (fixtures only).
     dateInput: selector, // inside question: the date picker, an input[type=date] or a text input that names its format
     timeInput: selector, // inside question: the time widget, an input[type=time] or a group of hour and minute inputs
     timeHour: selector.nullable(), // inside timeInput; null when the widget is itself the input

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { clockTime, formatDate, isoDate, joinTime, parseDate, parseDateFormat } from '../src/forms/datetime'
+import { clockTime, formatDate, isoDate, joinTime, parseDate, parseDateFormat, swapSafe } from '../src/forms/datetime'
 
 const format = (placeholder: string) => parseDateFormat(placeholder)!
 
@@ -7,7 +7,8 @@ test('a date format is read from the placeholder', () => {
   expect(format('Please input date (M/d/yyyy)')).toEqual({
     fields: ['M', 'd', 'y'],
     padded: { M: false, d: false },
-    separator: '/'
+    separator: '/',
+    text: 'M/d/yyyy'
   })
   expect(format('dd/MM/yyyy').padded).toEqual({ M: true, d: true })
   expect(format('yyyy-MM-dd').fields).toEqual(['y', 'M', 'd'])
@@ -54,4 +55,9 @@ test('iso dates and clock times are checked as real values', () => {
   expect(joinTime('25', '00')).toBeNull()
   expect(joinTime('', '00')).toBeNull()
   expect(joinTime('ab', '00')).toBeNull()
+})
+
+test('a date is swap-safe when its day is above 12 or equals its month', () => {
+  expect(['2026-10-20', '2026-10-10', '2026-03-13'].map(swapSafe)).toEqual([true, true, true])
+  expect(['2026-10-05', '2026-03-04', 'not a date'].map(swapSafe)).toEqual([false, false, false])
 })
