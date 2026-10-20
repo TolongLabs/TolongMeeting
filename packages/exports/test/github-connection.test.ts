@@ -8,7 +8,23 @@ test('normaliseRepoFolder', () => {
   expect(normaliseRepoFolder('docs\\meetings//2026')).toBe('docs/meetings/2026')
   expect(normaliseRepoFolder('./a/./b')).toBe('a/b')
   expect(normaliseRepoFolder('')).toBe('')
-  for (const bad of ['docs/../x', '..', '.git/hooks', 'a/.git', 'a/.GIT/b', '..\\x', 'a/\u0000b'])
+  for (const bad of [
+    'docs/../x',
+    '..',
+    '.git/hooks',
+    'a/.git',
+    'a/.GIT/b',
+    '..\\x',
+    'a/\u0000b',
+    '.git.',
+    'a/.git..',
+    'a/GIT~1/b',
+    'git~1.',
+    'a\u200Bb',
+    '.git\u200B',
+    'x/\u202E',
+    'a/\uFEFFb'
+  ])
     expect(() => normaliseRepoFolder(bad)).toThrow('Use a folder path inside the repository, without ".." or ".git".')
 })
 

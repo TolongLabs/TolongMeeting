@@ -18,7 +18,10 @@ const MAX_FOLDER_CHARS = 200
 const OWNER = /^[A-Za-z0-9_.-]{1,39}$/
 const REPO = /^[A-Za-z0-9_.-]{1,100}$/
 const TOKEN = /^github_pat_\w{1,500}$/
-const CONTROL = /\p{Cc}/u
+/** Control characters and invisible format characters (zero-width space and joiners, bidi marks, the byte order mark). */
+const CONTROL = /[\p{Cc}\p{Cf}]/u
+/** Names Git treats as its own folder: `.git`, `.git.` and `.git ` (Windows drops trailing dots and spaces), and `git~1`. */
+const GIT_DIR = /^(\.git|git~1)$/i
 
 /** `.` and `..` match the name patterns but would climb out of `/repos/<owner>/<repo>` in a URL path. */
 function isDotName(name: string): boolean {
@@ -42,7 +45,7 @@ export function isBranch(branch: string): boolean {
 
 /**
  * The folder inside the repository, as `a/b/c` or '' for the root. Backslashes count as slashes, empty and `.` segments
- * go, and a `..` or `.git` segment (or a control character) is refused. A leading slash is dropped, so the result is
+ * go, and a `..` segment, a `.git` or `git~1` segment (also with trailing dots or spaces) or a control or zero-width character is refused. A leading slash is dropped, so the result is
  * always relative.
  */
 export function normaliseRepoFolder(input: string): string {
@@ -53,7 +56,7 @@ export function normaliseRepoFolder(input: string): string {
     .map((part) => part.trim())
     .filter((part) => part !== '' && part !== '.')
   for (const part of parts) {
-    if (part === '..' || part.toLowerCase() === '.git' || CONTROL.test(part))
+    if (part === '..' || GIT_DIR.test(part.replace(/[. ]+$/, '')) || CONTROL.test(part))
       throw new ExportError('invalid_settings', FOLDER_MESSAGE)
   }
   const folder = parts.join('/')
