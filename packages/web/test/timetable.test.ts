@@ -228,6 +228,24 @@ test('a fixed Teams meeting link is accepted and stored as pasted', () => {
   }
 })
 
+test('a fixed Meet link is accepted and stored as pasted, and a lookalike host is refused', () => {
+  const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
+  const parse = (url: string) => EntryInputSchema.safeParse({ ...base, identityId, link: { kind: 'fixed', url } })
+  const meet = 'https://meet.google.com/abc-defg-hij?authuser=1&pli=1'
+  expect(parse(`  ${meet}  `).data?.link).toEqual({ kind: 'fixed', url: meet })
+  expect(parse('https://g.co/meet/abc-defg-hij').success).toBe(true)
+  for (const url of [
+    'https://meet.google.com.evil.example/abc-defg-hij',
+    'http://meet.google.com/abc-defg-hij',
+    'https://meet.google.com/new'
+  ]) {
+    expect(parse(url).success).toBe(false)
+  }
+  expect(parse('https://meet.google.com.evil.example/abc-defg-hij').error?.issues[0]?.message).toBe(
+    'Enter a Zoom, Teams or Meet meeting link that starts with https://.'
+  )
+})
+
 test('entry name and lists reject control characters and are length-capped', () => {
   const identityId = '5f2d8f0e-1b7a-4c2e-9a3e-0d8f6c1b2a10'
   expect(EntryInputSchema.safeParse({ ...base, identityId, name: 'Data\tMining' }).success).toBe(false)
@@ -350,7 +368,18 @@ test('a masked Teams link shows the host only, never the passcode or thread', ()
   expect(
     link('https://teams.microsoft.com/l/meetup-join/19%3Ameeting_TESTTHREAD%40thread.v2/0?context=%7B%7D')
   ).toEqual({ kind: 'fixed', host: 'teams.microsoft.com', meetingId: null })
-  expect(() => link('https://example.com/j/1')).toThrow('stored link is not a Zoom or Teams meeting link')
+  expect(() => link('https://example.com/j/1')).toThrow('stored link is not a Zoom, Teams or Meet meeting link')
+})
+
+test('a masked Meet link shows the host only, never the meeting code', async () => {
+  const { scope, identityId, deps } = await member()
+  const url = 'https://meet.google.com/abc-defg-hij?authuser=1'
+  const { entryId } = await saveEntry(scope, { ...base, identityId, link: { kind: 'fixed', url } }, deps)
+  const [row] = await scope.select(timetableEntries, eq(timetableEntries.id, entryId))
+  expect(row?.link).toEqual({ kind: 'fixed', url })
+  const masked = maskedLink({ link: row!.link })
+  expect(masked).toEqual({ kind: 'fixed', host: 'meet.google.com', meetingId: null })
+  expect(JSON.stringify(masked)).not.toContain('abc-defg-hij')
 })
 
 test("another member's entry can't be paused or deleted", async () => {

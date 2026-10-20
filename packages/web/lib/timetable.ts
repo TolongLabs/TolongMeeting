@@ -59,7 +59,7 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 
 const text = (max: number) => z.string().trim().min(1).max(max).refine(noControlCharacters, NO_CONTROL_MESSAGE)
 
-// Meeting links only for the platforms this build can join: Zoom and Teams. Meet arrives with plan 05.
+// Meeting links only for the platforms this build can join: Zoom, Teams and Meet.
 // A link is accepted only if the worker would accept it (the one rule in `@tm/core`). The trimmed original is stored.
 const FixedLinkSchema = z.object({
   kind: z.literal('fixed'),
@@ -69,7 +69,7 @@ const FixedLinkSchema = z.object({
     .max(2048)
     .refine(
       (url) => normaliseMeetingLink(url) !== null,
-      'Enter a Zoom or Teams meeting link that starts with https://.'
+      'Enter a Zoom, Teams or Meet meeting link that starts with https://.'
     )
 })
 
@@ -164,9 +164,9 @@ function parseId(id: unknown): string {
 }
 
 /**
- * What an edit page may show of a stored link: the host and meeting id of a Zoom link, or the host alone of a Teams
- * link (`meetingId: null`), never the passcode, thread or any other query. A chat source shows only its app, and a
- * pasted link has nothing to show.
+ * What an edit page may show of a stored link: the host and meeting id of a Zoom link, or the host alone of a Teams or
+ * Meet link (`meetingId: null`), never the passcode, thread, meeting code or any other query. A chat source shows only
+ * its app, and a pasted link has nothing to show.
  */
 export type MaskedLink =
   | { kind: 'fixed'; host: string; meetingId: string | null }
@@ -183,7 +183,7 @@ export function maskedLink(entry: { link: LinkSource }): MaskedLink {
     return { kind: 'fixed', host, meetingId: pathname.slice('/wc/join/'.length) }
   }
   const meeting = normaliseMeetingLink(link.url)
-  if (meeting === null) throw new Error('stored link is not a Zoom or Teams meeting link')
+  if (meeting === null) throw new Error('stored link is not a Zoom, Teams or Meet meeting link')
   return { kind: 'fixed', host: new URL(meeting).host, meetingId: null }
 }
 
