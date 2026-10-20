@@ -66,6 +66,16 @@ async function inPool<T>(items: T[], limit: number, task: (item: T) => Promise<v
 
 const dropSql = (name: string) => `drop database if exists "${name}" with (force)`
 
+// The forced drop ends every connection still open on that database, including ones a library opened that a test
+// can't reach (pg-boss, a route's shared pool). Such a pool then emits 57P01 (admin_shutdown) with nobody listening,
+// which bun reports as an unhandled error between tests. That is the drop working, so only that one error is let pass.
+const emitOnPool = Pool.prototype.emit
+Pool.prototype.emit = function (this: Pool, event: string | symbol, ...args: unknown[]): boolean {
+  const code = (args[0] as { code?: unknown } | undefined)?.code
+  if (event === 'error' && code === '57P01' && this.listenerCount('error') === 0) return false
+  return emitOnPool.call(this, event, ...args)
+}
+
 /**
  * Drops the `tm_web_*` and `tm_tpl_*` databases that a dead run left behind: the pid in the name has no `/proc/<pid>`
  * and the creation time (base36, next in the name) is older than ten minutes. Only on Linux with `/proc`; a pid that

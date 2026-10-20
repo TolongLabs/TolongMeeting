@@ -336,9 +336,11 @@ describe('NativeRunner', () => {
   })
 
   test('losing the lease while the transcriber runs kills it and reports nothing', async () => {
-    api.progressStatus = 409
     const runner = runnerWith({ mode: 'hang', progressMs: 20 })
     runner.offer([pending('j1')])
+    // The lease is lost only once the transcriber has started, so there is a process to kill on any machine speed.
+    await until(() => existsSync(r.pidsFile('hang')))
+    api.progressStatus = 409
     await idle(runner)
     expect(api.failures).toEqual([])
     expect(api.uploads).toEqual([])
