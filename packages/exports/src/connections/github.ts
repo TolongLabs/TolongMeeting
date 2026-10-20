@@ -49,6 +49,10 @@ export function isBranch(branch: string): boolean {
  * always relative.
  */
 export function normaliseRepoFolder(input: string): string {
+  // Checked before `trim`, which would also drop a byte order mark or a zero-width space at the edge of a segment.
+  // Plain white space around the whole input is still forgiven (a pasted line end).
+  if (CONTROL.test(input.replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, '')))
+    throw new ExportError('invalid_settings', FOLDER_MESSAGE)
   const parts = input
     .trim()
     .replaceAll('\\', '/')
@@ -56,7 +60,7 @@ export function normaliseRepoFolder(input: string): string {
     .map((part) => part.trim())
     .filter((part) => part !== '' && part !== '.')
   for (const part of parts) {
-    if (part === '..' || GIT_DIR.test(part.replace(/[. ]+$/, '')) || CONTROL.test(part))
+    if (part === '..' || GIT_DIR.test(part.replace(/[. ]+$/, '')))
       throw new ExportError('invalid_settings', FOLDER_MESSAGE)
   }
   const folder = parts.join('/')

@@ -8,6 +8,7 @@ test('normaliseRepoFolder', () => {
   expect(normaliseRepoFolder('docs\\meetings//2026')).toBe('docs/meetings/2026')
   expect(normaliseRepoFolder('./a/./b')).toBe('a/b')
   expect(normaliseRepoFolder('')).toBe('')
+  expect(normaliseRepoFolder('docs/meetings\n')).toBe('docs/meetings')
   for (const bad of [
     'docs/../x',
     '..',
