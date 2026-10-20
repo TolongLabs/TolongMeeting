@@ -10,7 +10,10 @@ import { buildWhisperArgv, collectOutputs, runWhisper, whisperTimeoutMs, type Sp
 type NativeJob = CompanionJob & { kind: 'native_transcription'; payload: NativeJobPayload }
 
 export interface NativeRunnerDeps {
-  api: Pick<CompanionApi, 'claim' | 'progress' | 'fail' | 'downloadAudio' | 'uploadTranscript'>
+  api: Pick<CompanionApi, 'claim' | 'progress' | 'fail' | 'downloadAudio' | 'uploadTranscript'> & {
+    /** Hands a claimed job back at once (08 Task 3's endpoint). Without it a paused job returns when its lease lapses. */
+    release?(jobId: string): Promise<void>
+  }
   settings: () => Settings
   /** Under the app's own data folder. Each job gets a fresh folder here, deleted when the job ends. */
   jobsDir: string
@@ -64,6 +67,8 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export class NativeRunner {
   private working = false
   private stopped = false
+  private paused = false
+  private claimedJob: NativeJob | null = null
   private notified = false
   private current: Promise<void> = Promise.resolve()
   private abort: AbortController | null = null
@@ -76,7 +81,7 @@ export class NativeRunner {
 
   /** Claims one pending native job from `jobs` when idle. Does nothing while a job runs. */
   offer(jobs: CompanionJob[]): void {
-    if (this.working || this.stopped) return
+    if (this.working || this.stopped || this.paused) return
     const pending = jobs.filter((j): j is NativeJob => isNative(j) && j.state === 'pending')
     if (pending.length === 0) return
     if (this.d.settings().whisper.cwd === null) {
@@ -99,6 +104,29 @@ export class NativeRunner {
     this.stopped = true
     this.abort?.abort()
     await this.current
+  }
+
+  /**
+   * Makes room for a local meeting (ASR-02: never both at once): the transcriber and its children end, the job folder
+   * goes, the claimed job is handed back, and `offer` takes no new job until `resume`. Nothing is reported as failed.
+   */
+  async pause(): Promise<void> {
+    this.paused = true
+    this.abort?.abort()
+    await this.current
+    const job = this.claimedJob
+    this.claimedJob = null
+    if (job === null || this.d.api.release === undefined) return
+    try {
+      await this.d.api.release(job.id)
+    } catch (e) {
+      if (!isLost(e)) throw e
+    }
+  }
+
+  /** Lets `offer` take jobs again. The job paused earlier is offered again by the next poll. */
+  resume(): void {
+    this.paused = false
   }
 
   private notifyOnce(): void {
@@ -126,6 +154,7 @@ export class NativeRunner {
       }
     }
     if (job === null) return
+    this.claimedJob = job
 
     const release = this.d.keepAwake.acquire(job.id)
     try {
@@ -133,6 +162,8 @@ export class NativeRunner {
       const ticker = setInterval(() => void this.renew(job, ctl), this.d.progressMs ?? 60_000)
       try {
         await this.runJob(job, dir, ctl)
+        // Done or reported: nothing to hand back. A run cut short by `pause` or `stop` keeps its claim.
+        if (!ctl.signal.aborted) this.claimedJob = null
       } finally {
         clearInterval(ticker)
         await rm(dir, { recursive: true, force: true })

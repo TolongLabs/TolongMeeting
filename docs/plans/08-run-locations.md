@@ -947,7 +947,7 @@ git commit -m "feat(docker): add private-range egress rules"
 
 - Create: `packages/companion/src/local/containers.ts`, `packages/companion/src/local/run.ts`
 - Modify: `packages/companion/src/api.ts` (`secrets(jobId)`, `release(jobId)`); `packages/companion/src/jobs/native-runner.ts` (`pause(): Promise<void>` stops whisper and releases the current job; `resume(): void`); `packages/companion/src/jobs/poller.ts` consumer in `main/index.ts` (`local_run` jobs go to `LocalRunner`, native jobs to `NativeRunner`; on start, `recoverStaleVolumes`)
-- Test: `packages/companion/src/local/run.test.ts`
+- Test: `packages/companion/test/local-run.test.ts`, `packages/companion/test/native-runner-pause.test.ts` (R5, R6, R7, R8: arg lists end in the entrypoint's `--job <file>` mode or in `deny-private.sh`'s flags; the holder takes the host name and the worker binds the machine-id file; the profile volume mounts at `vol`, the profile is `vol/work`; `control.url` is the relay origin; the checkpoint is `checkpointVolume` from Task 5, so `checkpointArgs` is not built; `api.ts` gets `secrets`/`release` with Task 3's endpoints, so `LocalRunApi` names what the runner needs)
 
 **Interfaces:**
 
@@ -1001,7 +1001,7 @@ export class LocalRunner {
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 const mounts = {
@@ -1174,12 +1174,12 @@ test('an open sign-in container for the identity is stopped and checkpointed bef
 
 `runnerWith(opts)` builds a `LocalRunner` over fakes that append to `log` (`DockerLike`, relay, `KeepAwake`, `NativeRunner`, `after`) and an `api` fake recording `preflights` and `failures`; `localJob` is a claimed `local_run` job for occurrence `o1`, identity `u1`; `REF`, `payload`, `details` and `ntfy` are fixtures.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/companion/src/local/run.test.ts`
+Run: `bun test packages/companion/test/local-run.test.ts`
 Expected: FAIL with "Cannot find module './containers'"
 
-- [ ] **Step 3: Implement `containers.ts`, `run.ts` and the wiring**
+- [x] **Step 3: Implement `containers.ts`, `run.ts` and the wiring**
 
 `LocalRunner.run`, in order:
 
@@ -1191,15 +1191,15 @@ Expected: FAIL with "Cannot find module './containers'"
 
 Containers are created with `docker run -d`; `workerArgs` is `run -d --name tm-run-<occurrenceId>-<attempt> --label tm.identity=<identityId> --shm-size=2g --network container:tm-net-<occurrenceId>`, the four `-v` mounts and three `-e` paths above, the image, then `tm-worker --job /run/tm/job.json`. `checkpointArgs` runs the image with the profile volume, checkpoints mount and a short-lived `/run/tm` folder, `--network none` and `tm-worker --checkpoint-only <identityId>`; it backs `recoverStaleVolumes`' `checkpoint`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
-Run: `bun test packages/companion/src/local/run.test.ts`
-Expected: PASS (10 tests)
+Run: `bun test packages/companion/test/local-run.test.ts packages/companion/test/native-runner-pause.test.ts`
+Expected: PASS (34 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add packages/companion/src
+git add packages/companion/src/local/containers.ts packages/companion/src/local/run.ts packages/companion/src/jobs/native-runner.ts packages/companion/test
 git commit -m "feat(companion): run meeting workers locally"
 ```
 
