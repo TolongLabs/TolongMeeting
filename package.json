@@ -14,6 +14,7 @@
     "lint:fix": "prettier --write .",
     "prepare": "husky",
     "test": "bun test --pass-with-no-tests",
+    "tm-exports": "bun run packages/exports/src/main.ts",
     "tm-pipeline": "bun packages/pipeline/src/cli.ts",
     "tm-worker": "node packages/worker/dist/cli.js",
     "typecheck": "tsc && bun --filter '@tm/*' typecheck"

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tm/core": "workspace:*",
+    "@tm/notify": "workspace:*",
     "@tm/web": "workspace:*",
     "drizzle-orm": "0.45.4",
     "docx": "9.8.1",
