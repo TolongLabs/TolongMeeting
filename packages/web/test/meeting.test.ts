@@ -21,6 +21,7 @@ import {
   SLIDE_UNREADABLE
 } from '../lib/meeting'
 import { createScope, type MemberScope } from '../lib/scope'
+import type { JobConfig } from '@tm/core'
 // The real 01a writer, so the parser is tested against what it produces, not against a copy of the format.
 import { buildTranscript } from '../../pipeline/src/transcript'
 import { liveLine, makeOccurrence, removeOccurrence, writeAttempts, writeLines } from '../../pipeline/test/helpers'
@@ -403,28 +404,142 @@ test('submitting a re-run twice queues one job, and a failed send puts the reaso
   expect((await stateOf(scope, occurrenceId)).stateReason).toBe('ai_key_error')
 })
 
-test('take over queues once and returns the link without its passcode', async () => {
+const FIXED = 'https://example.zoom.us/j/00000000000?pwd=PASSCODE'
+const snapshot = (link: JobConfig['entry']['link']): JobConfig['entry'] => ({
+  name: 'Data Mining',
+  type: 'lecture',
+  start: '2026-10-21T06:00:00Z',
+  end: '2026-10-21T08:00:00Z',
+  timeZone: 'Asia/Kuala_Lumpur',
+  link,
+  trustedSenders: [],
+  transcription: 'live',
+  formDetails: {},
+  attendanceKeywords: []
+})
+
+test('take over queues once and returns the owner the full fixed link, passcode included', async () => {
   const { scope, occurrenceId } = await meetingFixture()
   await scope.update(
     occurrences,
-    { state: 'in_meeting', linkUsed: 'https://example.zoom.us/j/00000000000?pwd=PASSCODE' },
+    {
+      state: 'in_meeting',
+      linkUsed: 'https://example.zoom.us/j/00000000000',
+      pastedLink: null,
+      entrySnapshot: snapshot({ kind: 'fixed', url: FIXED })
+    },
     eq(occurrences.id, occurrenceId)
   )
-  expect(await takeOver(scope, occurrenceId)).toEqual({ link: 'https://example.zoom.us/j/00000000000' })
-  expect(await takeOver(scope, occurrenceId)).toEqual({ link: 'https://example.zoom.us/j/00000000000' })
+  const expected = { link: FIXED, passcodeFromChat: false, alreadyLeft: false }
+  expect(await takeOver(scope, occurrenceId)).toEqual(expected)
+  expect(await takeOver(scope, occurrenceId)).toEqual(expected)
   expect((await stateOf(scope, occurrenceId)).pendingCommands).toEqual(['take_over'])
+})
+
+test('take over returns the pasted link when the bot joined that one', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  const pasted = 'https://example.zoom.us/j/22222222222?pwd=PASTEDPWD'
+  await scope.update(
+    occurrences,
+    {
+      state: 'in_meeting',
+      linkUsed: 'https://example.zoom.us/j/22222222222',
+      pastedLink: pasted,
+      entrySnapshot: snapshot({ kind: 'fixed', url: FIXED })
+    },
+    eq(occurrences.id, occurrenceId)
+  )
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: pasted, passcodeFromChat: false, alreadyLeft: false })
+})
+
+test('a link from a watched chat has no passcode here: the member is told to take it from the chat', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  await scope.update(
+    occurrences,
+    {
+      state: 'in_meeting',
+      linkUsed: 'https://example.zoom.us/j/33333333333?pwd=CHATPWD&next=https://evil.com#frag',
+      pastedLink: null,
+      entrySnapshot: snapshot({ kind: 'chat', app: 'whatsapp', chat: 'Class group' })
+    },
+    eq(occurrences.id, occurrenceId)
+  )
+  const got = await takeOver(scope, occurrenceId)
+  // Only the host and the meeting id are kept: no passcode, no query, no fragment.
+  expect(got).toEqual({
+    link: 'https://example.zoom.us/wc/join/33333333333',
+    passcodeFromChat: true,
+    alreadyLeft: false
+  })
+})
+
+test('take over hands the passcode to the owner only and stores nothing new', async () => {
+  const { a, scopeA, scopeB } = await twoMembers()
+  const id = a.ids.occurrences
+  await scopeA.update(
+    occurrences,
+    {
+      state: 'in_meeting',
+      linkUsed: 'https://example.zoom.us/j/00000000000',
+      pastedLink: null,
+      entrySnapshot: snapshot({ kind: 'fixed', url: FIXED })
+    },
+    eq(occurrences.id, id)
+  )
+  const before = await stateOf(scopeA, id)
+  const eventsBefore = await scopeA.select(events, eq(events.occurrenceId, id))
+  expect(await takeOver(scopeB, id)).toBeNull()
+  expect((await stateOf(scopeA, id)).pendingCommands).toEqual([])
+  expect((await takeOver(scopeA, id))!.link).toBe(FIXED)
+  const after = await stateOf(scopeA, id)
+  // Only the queued command changed: the passcode went into no column and no event, and the view never holds it.
+  expect({ ...after, pendingCommands: [] }).toEqual({ ...before, pendingCommands: [] })
+  expect([after.linkUsed, after.pastedLink]).toEqual(['https://example.zoom.us/j/00000000000', null])
+  expect(await scopeA.select(events, eq(events.occurrenceId, id))).toEqual(eventsBefore)
+  expect(JSON.stringify(await meetingData(scopeA, id))).not.toContain('PASSCODE')
 })
 
 test('take over gives no link when the stored one is not an https meeting link', async () => {
   const { scope, occurrenceId } = await meetingFixture()
-  await scope.update(
-    occurrences,
-    { state: 'in_meeting', linkUsed: 'javascript:alert(1)' },
-    eq(occurrences.id, occurrenceId)
-  )
-  expect(await takeOver(scope, occurrenceId)).toEqual({ link: null })
+  for (const bad of ['javascript:alert(1)', 'https://evil.com/j/1', 'https://zoom.us.evil.com/j/1']) {
+    await scope.update(occurrences, { state: 'in_meeting', linkUsed: bad }, eq(occurrences.id, occurrenceId))
+    expect(await takeOver(scope, occurrenceId), bad).toEqual({
+      link: null,
+      passcodeFromChat: false,
+      alreadyLeft: false
+    })
+  }
   await scope.update(occurrences, { linkUsed: null }, eq(occurrences.id, occurrenceId))
-  expect(await takeOver(scope, occurrenceId)).toEqual({ link: null })
+  expect(await takeOver(scope, occurrenceId)).toEqual({ link: null, passcodeFromChat: false, alreadyLeft: false })
+})
+
+test('a bot that is leaving or uploading has already left: take over says so and queues nothing', async () => {
+  for (const state of ['leaving', 'uploading'] as const) {
+    const { scope, occurrenceId } = await meetingFixture()
+    await scope.update(occurrences, { state }, eq(occurrences.id, occurrenceId))
+    const got = await takeOver(scope, occurrenceId)
+    expect(got?.alreadyLeft, state).toBe(true)
+    expect((await stateOf(scope, occurrenceId)).pendingCommands, state).toEqual([])
+  }
+})
+
+test('the joined link shown on the page is cut to the host and meeting id', async () => {
+  const { scope, occurrenceId } = await meetingFixture()
+  const shown = async (linkUsed: string) => {
+    await scope.update(occurrences, { linkUsed }, eq(occurrences.id, occurrenceId))
+    return (await meetingData(scope, occurrenceId))!.occurrence.joinedLink
+  }
+  for (const stored of [
+    'https://example.zoom.us/j/123?a=1;pwd=SECRETPWD',
+    'https://example.zoom.us/j/123?pwd%3DSECRETPWD',
+    'https://example.zoom.us/j/123#success?pwd=SECRETPWD',
+    'https://example.zoom.us/j/123?next=https://evil.com#@evil.com'
+  ]) {
+    const joined = await shown(stored)
+    expect(joined, stored).toEqual({ host: 'example.zoom.us', meetingId: '123' })
+    expect(JSON.stringify(joined)).not.toMatch(/SECRETPWD|evil/)
+  }
+  expect(await shown('https://evil.com/j/123')).toBeNull()
 })
 
 test("a finished meeting refuses take over; another member's is not found", async () => {

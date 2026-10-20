@@ -1,11 +1,16 @@
 import { ACTIVE_STATES, type OccurrenceState } from '@tm/core'
 
+/** Active states after the bot has left the meeting: it is only wrapping up its files. */
+export const PAST_LEAVING: ReadonlySet<OccurrenceState> = new Set<OccurrenceState>(['leaving', 'uploading'])
+
 /** The words on the leave and take-over pages. `<entry>` is replaced by the entry name. */
 export const CONTROL_COPY: Record<
   | 'takeOverIntro'
   | 'takeOverButton'
   | 'waiting'
   | 'takeOverNoLink'
+  | 'takeOverPasscodeFromChat'
+  | 'takeOverAlreadyLeft'
   | 'takeOverTimeout'
   | 'takeOverAnyway'
   | 'leaveIntro'
@@ -20,6 +25,9 @@ export const CONTROL_COPY: Record<
   takeOverButton: 'Take over now',
   waiting: 'Waiting for the bot to leave…',
   takeOverNoLink: 'The bot has left. Open the meeting from where its link was posted.',
+  takeOverPasscodeFromChat:
+    'The bot joined with a link from a chat, so this link has no passcode. Enter the passcode from that chat.',
+  takeOverAlreadyLeft: 'The bot has already left. You can open the meeting now.',
   takeOverTimeout: "The bot hasn't confirmed that it left. If you join now, the meeting may disconnect one of you.",
   takeOverAnyway: 'Open the meeting anyway',
   leaveIntro: 'The bot will leave <entry> and stop recording. What it recorded so far stays on the meeting page.',
@@ -30,7 +38,8 @@ export const CONTROL_COPY: Record<
 }
 
 /**
- * Polls `getState` until the bot is out of the active states (`'left'`) or `timeoutMs` has passed (`'timeout'`).
+ * Polls `getState` until the bot is out of the meeting (`'left'`: any state outside the active ones, or `leaving` and
+ * `uploading`, where it only wraps up its files) or `timeoutMs` has passed (`'timeout'`).
  * It asks once, then sleeps `intervalMs` between asks.
  */
 export async function waitUntilLeft(
@@ -42,7 +51,8 @@ export async function waitUntilLeft(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   let waited = 0
   for (;;) {
-    if (!ACTIVE_STATES.has(await getState())) return 'left'
+    const state = await getState()
+    if (!ACTIVE_STATES.has(state) || PAST_LEAVING.has(state)) return 'left'
     if (waited >= timeoutMs) return 'timeout'
     await sleep(intervalMs)
     waited += intervalMs

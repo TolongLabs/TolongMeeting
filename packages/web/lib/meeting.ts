@@ -17,6 +17,7 @@ import { artefacts, events, forms, occurrences } from '../db/schema'
 import type { Queue } from '../db/queues'
 import { QUEUES } from '../db/queues'
 import { openMemberFile } from './files'
+import { PAST_LEAVING } from './meeting-control'
 import { InputError, InUseError } from './identities'
 import type { MemberScope } from './scope'
 
@@ -188,21 +189,19 @@ function redact(value: unknown, depth = 0): unknown {
 }
 
 /**
- * The link the bot joined with, without its passcode, or null when it is not an https meeting link. `link_used` is
- * written by the worker's heartbeat (passcode already cut) and by the launch (from a fixed link, which may carry one), so
- * every read cuts it again.
+ * The link the bot joined with, cut down to its host and meeting id (`https://<host><path>`), or null when it is not a
+ * Zoom, Teams or Meet join link. `link_used` is written by the worker's heartbeat (passcode already cut) and by the
+ * launch (from a fixed link, which may carry one), so every read cuts the passcode again, runs the one meeting-link rule
+ * and drops the query and fragment, so nothing the stored text held beyond the meeting id is ever shown.
  */
 const MAX_JOINED_LINK_LENGTH = 2048
 
 function cleanJoinedLink(stored: string | null): string | null {
-  if (stored === null) return null
-  const clean = stripPasscode(stored)
-  return clean !== '' &&
-    clean.length <= MAX_JOINED_LINK_LENGTH &&
-    URL.canParse(clean) &&
-    new URL(clean).protocol === 'https:'
-    ? clean
-    : null
+  if (stored === null || stored.length > MAX_JOINED_LINK_LENGTH) return null
+  const meeting = normaliseMeetingLink(stripPasscode(stored))
+  if (meeting === null) return null
+  const { origin, pathname } = new URL(meeting)
+  return `${origin}${pathname}`
 }
 
 function maskedJoinedLink(stored: string | null): MeetingOccurrence['joinedLink'] {
@@ -355,20 +354,53 @@ export async function makeBotLeave(scope: MemberScope, id: string): Promise<void
   if (changed === 0) throw new InUseError('The bot is not in this meeting.')
 }
 
+/** What `takeOver` hands back: the link to open, and whether the passcode must come from the chat instead. */
+export interface TakeOverLink {
+  link: string | null
+  /** True when the bot joined a link the server doesn't hold (one a chat watcher found): `link` has no passcode. */
+  passcodeFromChat: boolean
+  /** True when the bot is already out of the meeting (`leaving`, `uploading`): nothing is queued and nothing is waited for. */
+  alreadyLeft: boolean
+}
+
+// Which meeting a link names, with the passcode and every other parameter gone.
+const meetingOf = (link: string): string | null => normaliseMeetingLink(stripPasscode(link))
+
+/**
+ * The link the bot joined with, passcode included, for the owner's take-over response only. The bot reports its link
+ * without the passcode, so the full link is the one the server already holds that names the same meeting: the link
+ * pasted for this occurrence, else the entry's fixed link from `entry_snapshot`. A link a chat watcher found is not
+ * held here, so the member gets the masked link and enters the passcode from the chat. Nothing is stored or logged.
+ */
+function takeOverLink(row: typeof occurrences.$inferSelect): TakeOverLink {
+  const masked = cleanJoinedLink(row.linkUsed)
+  if (masked === null) return { link: null, passcodeFromChat: false, alreadyLeft: false }
+  const joined = meetingOf(masked)
+  const fixed = row.entrySnapshot?.link.kind === 'fixed' ? row.entrySnapshot.link.url : null
+  for (const held of [row.pastedLink, fixed]) {
+    if (held !== null && joined !== null && meetingOf(held) === joined)
+      return { link: held, passcodeFromChat: false, alreadyLeft: false }
+  }
+  return { link: masked, passcodeFromChat: true, alreadyLeft: false }
+}
+
 /**
  * Asks the bot to leave and hands the member the link it joined with, so the page can open the meeting once the bot is
  * out. Null when this is not the member's meeting. Only while the bot is in the meeting (or on its way in or out). The
- * command is queued once however often this is called. The link has no passcode.
+ * command is queued once however often this is called. The link carries its passcode when the server holds it (see
+ * `takeOverLink`); it is returned only here, to the owner, and stored nowhere new.
  */
-export async function takeOver(scope: MemberScope, id: string): Promise<{ link: string | null } | null> {
+export async function takeOver(scope: MemberScope, id: string): Promise<TakeOverLink | null> {
   if (!UUID.test(id)) return null
   return scope.transaction(async (s) => {
     const [row] = await s.select(occurrences, eq(occurrences.id, id))
     if (!row) return null
     if (!ACTIVE_STATES.has(row.state)) throw new InUseError('The bot is not in this meeting.')
+    // A bot that is leaving or uploading is out of the meeting: say so at once instead of waiting through the upload.
+    if (PAST_LEAVING.has(row.state)) return { ...takeOverLink(row), alreadyLeft: true }
     // `sendCommand` adds the word once and only while the state is active; 0 rows means it is already queued.
     await s.sendCommand(id, 'take_over')
-    return { link: cleanJoinedLink(row.linkUsed) }
+    return takeOverLink(row)
   })
 }
 

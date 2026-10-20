@@ -31,7 +31,7 @@ Contents:
 - **Mention ping**: high priority, at most one per 2 minutes per worker attempt (`MENTION_DEBOUNCE_MS = 120_000`), with the last 30 seconds of transcript cut to its final 1,500 characters, and the buttons "Open meeting page" and "Take over". Every match is still logged as a `mention` event with its offset only. The bot never responds in the meeting.
 - **Commands**: ping buttons are ntfy `view` actions that open website pages; opening a page never acts; the page's button (a server action) queues `leave_now` or `take_over` only for the member's own occurrence while it is in `ACTIVE_STATES`.
 - **Take over**: the worker leaves first, confirms within 10 seconds that it is no longer in the meeting (otherwise closes the stage page), and only then reports `left_by_member`; the page opens the meeting link only after it sees that state, or after 60 seconds if the member chooses to open it anyway.
-- **Passcodes**: the meeting link reaches the browser only in the take-over action's response to the owning member; it never appears in ping text, URL query strings of the app's own API, events or logs.
+- **Passcodes**: the full meeting link (passcode included) reaches the browser only in the take-over action's response to the owning member (session, and Next's same-origin check on server actions). The server builds it from the occurrence's `entry_snapshot` fixed link or its `pasted_link`, whichever names the meeting the bot joined (`link_used`, passcode already cut); it is never stored anywhere new and never appears in ping text, URL query strings of the app's own API, events or logs. When the bot joined a link from a watched chat, which the server does not hold, the response carries the masked link (host and meeting id) and `passcodeFromChat: true`, and the page tells the member to enter the passcode from the chat. The meeting page shows only the host and meeting id of the joined link.
 - **Pings**: at most 3 actions each (ntfy's limit); wording exactly as in the tasks; times through `formatWhen` in the member's time zone.
 - **Copy and commits**: plain British English; conventional commits with headers of at most 50 characters; each task's commit copies its "adds to contracts" names into `docs/TRD.md`.
 
@@ -639,7 +639,10 @@ git commit -m "feat(worker): leave first on take over"
 
 ```ts
 // packages/web/lib/meeting.ts
-export function takeOver(scope: MemberScope, id: string): Promise<{ link: string | null } | null> // null: not this member's occurrence
+export function takeOver(
+  scope: MemberScope,
+  id: string
+): Promise<{ link: string | null; passcodeFromChat: boolean; alreadyLeft: boolean } | null> // null: not this member's occurrence
 export function controlState(scope: MemberScope, id: string): Promise<{ state: OccurrenceState } | null>
 
 // packages/web/lib/meeting-control.ts
@@ -648,6 +651,8 @@ export const CONTROL_COPY: Record<
   | 'takeOverButton'
   | 'waiting'
   | 'takeOverNoLink'
+  | 'takeOverPasscodeFromChat'
+  | 'takeOverAlreadyLeft'
   | 'takeOverTimeout'
   | 'takeOverAnyway'
   | 'leaveIntro'
@@ -669,10 +674,10 @@ export function waitUntilLeft(
 
 Rules:
 
-- `takeOver`: null when the scope finds no such occurrence; `InUseError('The bot is not in this meeting.')` outside `ACTIVE_STATES`; otherwise append `take_over` to `pending_commands` unless it is already there, and return `{ link: link_used }`, read in the same transaction while the passcode is still stored.
+- `takeOver`: null when the scope finds no such occurrence; `InUseError('The bot is not in this meeting.')` outside `ACTIVE_STATES`; in `leaving` or `uploading` the bot is already out: nothing is queued and the result has `alreadyLeft: true`; otherwise append `take_over` to `pending_commands` unless it is already there. The result is `{ link, passcodeFromChat, alreadyLeft }`: `link` is the occurrence's `pasted_link`, else the `entry_snapshot` fixed link, whichever names the same meeting as `link_used` (full, passcode included, read in the same transaction); if neither does (a chat watcher found it) it is the masked link (`https://<host><meeting path>`, no query or fragment) with `passcodeFromChat: true`; null when `link_used` is not a Zoom, Teams or Meet link. Nothing is written for the link.
 - `handleHeartbeat`: when `body.linkUsed` is present and the occurrence is in `ACTIVE_STATES`, set `link_used` to it. It goes in no event.
-- `waitUntilLeft` resolves `'left'` as soon as `getState()` returns a state outside `ACTIVE_STATES`, else `'timeout'` after `timeoutMs`.
-- **Pages**: `/meetings/<id>/leave` and `/meetings/<id>/take-over` are server components that show the entry name and the intro and button from `CONTROL_COPY` (or `notRunning`, or a 404 when `meetingData` is null), and change nothing when opened. `ControlPanel` (client) calls `leaveAction(id)` (01c's `makeBotLeave`) or `takeOverAction(id)` (`takeOver`), shows `waiting`, then runs `waitUntilLeft` over `GET /api/meetings/<id>/state` (`controlState`, 404 for other members). On `'left'`, take over calls `window.location.assign(link)`, or shows `takeOverNoLink` when the link is null; leave shows `leaveDone`. On `'timeout'`, take over shows `takeOverTimeout` with a `takeOverAnyway` button, and leave shows `leaveTimeout`. The link lives only in the component's memory.
+- `waitUntilLeft` resolves `'left'` as soon as `getState()` returns a state outside `ACTIVE_STATES` or `leaving` or `uploading` (the bot is then only wrapping up its files), else `'timeout'` after `timeoutMs`.
+- **Pages**: `/meetings/<id>/leave` and `/meetings/<id>/take-over` are server components that show the entry name and the intro and button from `CONTROL_COPY` (or `notRunning`, or a 404 when `meetingData` is null), and change nothing when opened. `ControlPanel` (client) calls `leaveAction(id)` (01c's `makeBotLeave`) or `takeOverAction(id)` (`takeOver`), shows `waiting`, then runs `waitUntilLeft` over `GET /api/meetings/<id>/state` (`controlState`, 404 for other members). When `alreadyLeft` the page shows `takeOverAlreadyLeft` and does not wait. On `'left'`, take over calls `window.location.assign(link)` (with `takeOverPasscodeFromChat` shown first when `passcodeFromChat`), or shows `takeOverNoLink` when the link is null; leave shows `leaveDone`. On `'timeout'`, take over shows `takeOverTimeout` with a `takeOverAnyway` button, and leave shows `leaveTimeout`. The link lives only in the component's memory.
 
 `CONTROL_COPY` (exact; `<entry>` is the entry name):
 
@@ -681,6 +686,8 @@ takeOverIntro    The bot will leave <entry> first, then this page opens the meet
 takeOverButton   Take over now
 waiting          Waiting for the bot to leave…
 takeOverNoLink   The bot has left. Open the meeting from where its link was posted.
+takeOverPasscodeFromChat  The bot joined with a link from a chat, so this link has no passcode. Enter the passcode from that chat.
+takeOverAlreadyLeft       The bot has already left. You can open the meeting now.
 takeOverTimeout  The bot hasn't confirmed that it left. If you join now, the meeting may disconnect one of you.
 takeOverAnyway   Open the meeting anyway
 leaveIntro       The bot will leave <entry> and stop recording. What it recorded so far stays on the meeting page.

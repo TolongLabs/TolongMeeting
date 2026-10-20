@@ -31,3 +31,17 @@ test('the take-over copy warns before it acts', () => {
   expect(CONTROL_COPY.takeOverIntro).toStartWith('The bot will leave <entry> first')
   expect(CONTROL_COPY.takeOverButton).toBe('Take over now')
 })
+
+test('a bot that is leaving or uploading counts as left: nothing waits through the upload', async () => {
+  for (const state of ['leaving', 'uploading'] as const) {
+    let slept = 0
+    expect(await waitUntilLeft(async () => state, { sleep: async () => void slept++ })).toBe('left')
+    expect(slept).toBe(0)
+  }
+  expect(await waitUntilLeft(async () => 'restarting', { timeoutMs: 0, sleep: async () => {} })).toBe('timeout')
+})
+
+test('the take-over copy tells the member to take the passcode from the chat, and that the bot already left', () => {
+  expect(CONTROL_COPY.takeOverPasscodeFromChat).toContain('Enter the passcode from that chat')
+  expect(CONTROL_COPY.takeOverAlreadyLeft).toStartWith('The bot has already left')
+})
